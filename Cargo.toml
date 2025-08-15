@@ -24,3 +24,7 @@ edition = "2024"
 [[bin]]
 name = "main"
 path = "src/main.rs"
+
+[dependencies]
+pest = "2.8.1"
+pest_derive = "2.8.1"
