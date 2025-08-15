@@ -44,24 +44,26 @@ fn lint() {
     );
 }
 
-fn header() -> &'static str {
-    r#"// Licensed to Julian Hyde under one or more contributor license
-// agreements.  See the NOTICE file distributed with this work
-// for additional information regarding copyright ownership.
-// Julian Hyde licenses this file to you under the Apache
-// License, Version 2.0 (the "License"); you may not use this
-// file except in compliance with the License.  You may obtain a
-// copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing,
-// software distributed under the License is distributed on an
-// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
-// either express or implied.  See the License for the specific
-// language governing permissions and limitations under the
-// License.
-"#
+fn header(line_prefix: &str) -> String {
+    let raw = r#"^Licensed to Julian Hyde under one or more contributor license
+^agreements.  See the NOTICE file distributed with this work
+^for additional information regarding copyright ownership.
+^Julian Hyde licenses this file to you under the Apache
+^License, Version 2.0 (the "License"); you may not use this
+^file except in compliance with the License.  You may obtain a
+^copy of the License at
+^
+^http://www.apache.org/licenses/LICENSE-2.0
+^
+^Unless required by applicable law or agreed to in writing,
+^software distributed under the License is distributed on an
+^"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+^either express or implied.  See the License for the specific
+^language governing permissions and limitations under the
+^License.
+"#;
+    raw.replace("^\n", format!("{}\n", line_prefix).as_str())
+        .replace("^", format!("{} ", line_prefix).as_str())
 }
 
 /// Checks that a file starts with a header comment.
@@ -83,11 +85,21 @@ fn lint_file(file_name: &str, warnings: &mut Vec<String>) {
 /// Returns the appropriate header for a file based on its extension,
 /// or `None` if no header is needed.
 fn header_for(file_name: &str) -> Option<String> {
-    if file_name.ends_with(".rs") {
-        Some(header().to_owned())
-    } else if file_name.ends_with(".toml") || file_name.ends_with(".gitignore") {
-        Some(header().replace("// ", "# ").replace("//\n", "#\n"))
-    } else {
-        None
+    use phf::{Map, phf_map};
+
+    static SUFFIX_MAP: Map<&'static str, &'static str> = phf_map! {
+        "gitignore" => "#",
+        "rs" => "//",
+        "pest" => "//",
+        "toml" => "#",
+    };
+
+    let suffix = file_name.split('.').last();
+    if suffix.is_some() {
+        let option = SUFFIX_MAP.get(suffix.unwrap());
+        if option.is_some() {
+            return Some(header(option.unwrap()));
+        }
     }
+    None
 }
