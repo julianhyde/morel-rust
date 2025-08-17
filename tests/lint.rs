@@ -16,7 +16,6 @@
 // License.
 
 use phf::{Map, Set, phf_map, phf_set};
-use regex::Regex;
 use std::fs;
 
 #[test]
@@ -46,8 +45,7 @@ fn lint() {
     );
 }
 
-static RAW_HEADER: &str =
-    r#"^Licensed to Julian Hyde under one or more contributor license
+static RAW_HEADER: &str = r#"^Licensed to Julian Hyde under one or more contributor license
 ^agreements.  See the NOTICE file distributed with this work
 ^for additional information regarding copyright ownership.
 ^Julian Hyde licenses this file to you under the Apache
@@ -66,12 +64,10 @@ static RAW_HEADER: &str =
 "#;
 
 fn header_for_suffix(line_prefix: &str) -> String {
-    RAW_HEADER.replace("^\n", format!("{}\n", line_prefix).as_str())
+    RAW_HEADER
+        .replace("^\n", format!("{}\n", line_prefix).as_str())
         .replace("^", format!("{} ", line_prefix).as_str())
 }
-
-static REGEX: std::sync::LazyLock<Regex> =
-    std::sync::LazyLock::new(|| Regex::new(r" +\n").unwrap());
 
 /// Checks that a file starts with a header comment.
 ///
@@ -93,7 +89,8 @@ fn lint_file(file_name: &str, warnings: &mut Vec<String>) {
         contents.lines().for_each(|l| {
             line += 1;
             if l.ends_with(' ') {
-                warnings.push(format!("{}:{}: Trailing spaces", file_name, line));
+                warnings
+                    .push(format!("{}:{}: Trailing spaces", file_name, line));
             }
         });
     }
