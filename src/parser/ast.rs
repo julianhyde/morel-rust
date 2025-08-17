@@ -24,6 +24,7 @@ use pest::iterators::Pairs;
 
 /// Trait possessed by all abstract syntax tree (AST) nodes
 /// (declarations and expressions).
+#[allow(dead_code)]
 pub trait Ast {
     /// Returns the string representation of the AST node.
     fn unparse(&self, s: &mut String);
@@ -33,17 +34,20 @@ pub trait Ast {
 }
 
 /// Tagged union of expressions and declarations.
+#[allow(dead_code)]
 pub enum Node<'a> {
     Expr(Expr<'a>),
     Decl(Decl<'a>),
 }
 
 /// Abstract syntax tree (AST) of a declaration.
+#[allow(dead_code)]
 pub enum Decl<'a> {
     ValDecl(Span<'a>, ValDecl_<'a>),
 }
 
 /// Abstract syntax tree (AST) of an expression.
+#[allow(dead_code)]
 pub enum Expr<'a> {
     Identifier(Span<'a>, String),
     IntegerLiteral(Span<'a>, String),
@@ -51,6 +55,7 @@ pub enum Expr<'a> {
 }
 
 /// Abstract syntax tree (AST) of a pattern.
+#[allow(dead_code)]
 pub enum Pat<'a> {
     IdPat(Span<'a>, String),
 }
@@ -129,13 +134,15 @@ impl Ast for Pat<'_> {
     }
 }
 
+#[allow(dead_code)]
 pub struct ValDecl_<'a> {
-    pat: Pat<'a>,
-    expr: Expr<'a>,
+    pub pat: Pat<'a>,
+    pub expr: Expr<'a>,
 }
 
 /// Builds a program (expression or declaration) from parsed pairs.
-pub fn build_program(pair: Pair<Rule>) -> Node<'_> {
+#[allow(dead_code)]
+pub fn build_program(pair: Pair<'_, Rule>) -> Node<'_> {
     match pair.as_rule() {
         Rule::statement => build_statement(sub(pair)),
         _ => todo!("Unexpected rule: {:?}", pair.as_rule()),
@@ -143,7 +150,8 @@ pub fn build_program(pair: Pair<Rule>) -> Node<'_> {
 }
 
 /// Builds a statement (expression or declaration) from parsed pairs.
-pub fn build_statement(pair: Pair<Rule>) -> Node<'_> {
+#[allow(dead_code)]
+pub fn build_statement(pair: Pair<'_, Rule>) -> Node<'_> {
     match pair.as_rule() {
         Rule::decl => Node::Decl(build_decl(sub(pair))),
         Rule::expr => Node::Expr(build_expr(sub(pair))),
@@ -152,7 +160,7 @@ pub fn build_statement(pair: Pair<Rule>) -> Node<'_> {
 }
 
 /// Builds an expression from parsed pairs.
-pub fn build_expr(pair: Pair<Rule>) -> Expr<'_> {
+pub fn build_expr(pair: Pair<'_, Rule>) -> Expr<'_> {
     match pair.as_rule() {
         Rule::literal => build_literal(sub(pair)),
         Rule::identifier => Expr::Identifier(
@@ -164,7 +172,7 @@ pub fn build_expr(pair: Pair<Rule>) -> Expr<'_> {
 }
 
 /// Builds a literal from parsed pairs.
-pub fn build_literal(pair: Pair<Rule>) -> Expr<'_> {
+pub fn build_literal(pair: Pair<'_, Rule>) -> Expr<'_> {
     match pair.as_rule() {
         Rule::numeric_literal => {
             Expr::IntegerLiteral(pair.as_span(), pair.as_str().to_string())
@@ -193,7 +201,7 @@ pub fn build_decl(pair: Pair<Rule>) -> Decl {
 }
 
 /// Builds a pattern from parsed pairs.
-pub fn build_pat(pair: Pair<Rule>) -> Pat<'_> {
+pub fn build_pat(pair: Pair<'_, Rule>) -> Pat<'_> {
     match pair.as_rule() {
         Rule::identifier => {
             Pat::IdPat(pair.as_span(), pair.as_str().to_string())

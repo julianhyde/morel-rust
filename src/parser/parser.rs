@@ -25,7 +25,7 @@ use pest_derive::Parser;
 #[grammar = "src/parser/morel.pest"]
 struct MorelParser;
 
-pub fn parse(input: &str) -> Node {
+pub fn parse(input: &str) -> Node<'_> {
     let mut pairs =
         MorelParser::parse(Rule::literal, input).expect("should be valid");
     if let Some(pair) = pairs.next() {
