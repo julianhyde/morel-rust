@@ -16,15 +16,15 @@
 // License.
 
 extern crate core;
-use crate::parser::parser::parse;
 use crate::parser::ast::Ast;
+use crate::parser::parser::parse;
 
 mod parser;
 
 fn main() {
     println!("Morel Rust Parser");
     println!("A Standard ML interpreter with relational extensions");
-    
+
     // Test string and char literals to verify our format! fix
     let test_cases = vec![
         ("42", "Integer"),
@@ -33,10 +33,10 @@ fn main() {
         ("true", "Boolean"),
         ("()", "Unit"),
     ];
-    
+
     for (example, description) in test_cases {
         println!("\nParsing {} example: {}", description, example);
-        
+
         match std::panic::catch_unwind(|| parse(example)) {
             Ok(node) => {
                 let mut output = String::new();
@@ -49,7 +49,6 @@ fn main() {
         }
     }
 }
-
 
 #[cfg(test)]
 mod test {

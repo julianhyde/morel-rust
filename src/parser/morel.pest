@@ -52,9 +52,9 @@ expr_andalso = { expr_o ~ ("andalso" ~ expr_o)* }
 
 expr_o = { expr_relational ~ ("o" ~ expr_relational)* }
 
-expr_relational = { 
+expr_relational = {
     expr_cons ~ (
-        ("=" | "<>" | "<" | ">" | "<=" | ">=" | "elem" | "notelem") ~ 
+        ("=" | "<>" | "<" | ">" | "<=" | ">=" | "elem" | "notelem") ~
         expr_cons
     )*
 }

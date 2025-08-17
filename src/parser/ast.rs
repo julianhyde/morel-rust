@@ -33,10 +33,11 @@ impl Span {
             end: span.end(),
         }
     }
-    
+
     /// Convert back to line/column using the original input
     pub fn to_line_col(&self, input: &str) -> ((usize, usize), (usize, usize)) {
-        let start_pos = pest::Position::new(input, self.start).unwrap().line_col();
+        let start_pos =
+            pest::Position::new(input, self.start).unwrap().line_col();
         let end_pos = pest::Position::new(input, self.end).unwrap().line_col();
         (start_pos, end_pos)
     }
@@ -68,13 +69,13 @@ pub enum Expr {
     CharLiteral(Span, String),
     BoolLiteral(Span, bool),
     UnitLiteral(Span),
-    
+
     // Identifiers and selectors
     Identifier(Span, String),
     RecordSelector(Span, String),
     Current(Span),
     Ordinal(Span),
-    
+
     // Binary operations
     Plus(Span, Box<Expr>, Box<Expr>),
     Minus(Span, Box<Expr>, Box<Expr>),
@@ -83,7 +84,7 @@ pub enum Expr {
     Div(Span, Box<Expr>, Box<Expr>),
     Mod(Span, Box<Expr>, Box<Expr>),
     Caret(Span, Box<Expr>, Box<Expr>),
-    
+
     // Comparison operations
     Equal(Span, Box<Expr>, Box<Expr>),
     NotEqual(Span, Box<Expr>, Box<Expr>),
@@ -91,44 +92,44 @@ pub enum Expr {
     LessThanOrEqual(Span, Box<Expr>, Box<Expr>),
     GreaterThan(Span, Box<Expr>, Box<Expr>),
     GreaterThanOrEqual(Span, Box<Expr>, Box<Expr>),
-    
+
     // List operations
     Cons(Span, Box<Expr>, Box<Expr>),
     Append(Span, Box<Expr>, Box<Expr>),
-    
+
     // Logical operations
     AndAlso(Span, Box<Expr>, Box<Expr>),
     OrElse(Span, Box<Expr>, Box<Expr>),
     Implies(Span, Box<Expr>, Box<Expr>),
-    
+
     // Relational operations
     Elem(Span, Box<Expr>, Box<Expr>),
     NotElem(Span, Box<Expr>, Box<Expr>),
-    
+
     // Unary operations
     Negate(Span, Box<Expr>),
-    
+
     // Function operations
     Apply(Span, Box<Expr>, Box<Expr>),
     O(Span, Box<Expr>, Box<Expr>), // function composition
-    
+
     // Aggregate operations
     Aggregate(Span, Box<Expr>, Box<Expr>), // expr over expr
-    
+
     // Control structures
     If(Span, Box<Expr>, Box<Expr>, Box<Expr>),
     Case(Span, Box<Expr>, Vec<CaseArm>),
     Let(Span, Vec<Decl>, Box<Expr>),
     Fn(Span, Vec<FunMatch>),
-    
+
     // Data structures
     Tuple(Span, Vec<Expr>),
     List(Span, Vec<Expr>),
     Record(Span, Vec<NamedExpr>),
-    
+
     // Relational expressions
     From(Span, Box<FromExpr>),
-    
+
     // Type annotation
     Annotated(Span, Box<Expr>, Type),
 }
@@ -286,9 +287,13 @@ impl Ast for Expr {
             Expr::Identifier(_, name) => s.push_str(name),
             Expr::IntLiteral(_, value) => s.push_str(value),
             Expr::RealLiteral(_, value) => s.push_str(value),
-            Expr::StringLiteral(_, value) => write!(s, "\"{}\"", value).unwrap(),
+            Expr::StringLiteral(_, value) => {
+                write!(s, "\"{}\"", value).unwrap()
+            }
             Expr::CharLiteral(_, value) => write!(s, "#\"{}\"", value).unwrap(),
-            Expr::BoolLiteral(_, value) => s.push_str(if *value { "true" } else { "false" }),
+            Expr::BoolLiteral(_, value) => {
+                s.push_str(if *value { "true" } else { "false" })
+            }
             Expr::UnitLiteral(_) => s.push_str("()"),
             _ => s.push_str("<expr>"), // TODO: implement for all variants
         }
@@ -318,7 +323,9 @@ impl Ast for Decl {
                         s.push_str("rec ");
                     }
                     first_bind.pat.unparse(s);
-                    if let Some(ref type_annotation) = first_bind.type_annotation {
+                    if let Some(ref type_annotation) =
+                        first_bind.type_annotation
+                    {
                         s.push_str(": ");
                         match type_annotation {
                             Type::Con(_, name) => s.push_str(name),
@@ -373,7 +380,6 @@ pub fn build_statement(pair: Pair<Rule>) -> Node {
 
 /// Builds an expression from parsed pairs.
 pub fn build_expr(pair: Pair<Rule>) -> Expr {
-    
     match pair.as_rule() {
         Rule::expr => {
             // If it's an expr rule, get the inner expression
@@ -444,14 +450,16 @@ pub fn build_expr(pair: Pair<Rule>) -> Expr {
         }
         _ => {
             let span = Span::from_span(&pair.as_span());
-            Expr::Identifier(span, format!("<unknown_expr:{:?}>", pair.as_rule()))
+            Expr::Identifier(
+                span,
+                format!("<unknown_expr:{:?}>", pair.as_rule()),
+            )
         }
     }
 }
 
 /// Builds a literal from parsed pairs.
 pub fn build_literal(pair: Pair<Rule>) -> Expr {
-    
     match pair.as_rule() {
         Rule::literal => {
             // If it's a literal rule, get the inner literal type
@@ -475,14 +483,14 @@ pub fn build_literal(pair: Pair<Rule>) -> Expr {
             let span = Span::from_span(&pair.as_span());
             let content = pair.as_str();
             // Remove quotes and handle escapes
-            let unquoted = &content[1..content.len()-1];
+            let unquoted = &content[1..content.len() - 1];
             Expr::StringLiteral(span, unquoted.to_string())
         }
         Rule::char_literal => {
             let span = Span::from_span(&pair.as_span());
             let content = pair.as_str();
             // Remove #" and "
-            let unquoted = &content[2..content.len()-1];
+            let unquoted = &content[2..content.len() - 1];
             Expr::CharLiteral(span, unquoted.to_string())
         }
         Rule::bool_literal => {
@@ -496,7 +504,10 @@ pub fn build_literal(pair: Pair<Rule>) -> Expr {
         }
         _ => {
             let span = Span::from_span(&pair.as_span());
-            Expr::IntLiteral(span, format!("<unknown_literal:{:?}>", pair.as_rule()))
+            Expr::IntLiteral(
+                span,
+                format!("<unknown_literal:{:?}>", pair.as_rule()),
+            )
         }
     }
 }
@@ -514,14 +525,14 @@ pub fn build_decl(pair: Pair<Rule>) -> Decl {
 pub fn build_val_decl(pair: Pair<Rule>) -> Decl {
     let span = Span::from_span(&pair.as_span());
     let mut inner = pair.into_inner();
-    
+
     // The grammar should produce: "val" pat [":" type_expr] ["=" expr]
     // We need to process all the inner parts
     let mut has_rec = false;
     let mut pat = None;
     let mut type_annotation = None;
     let mut expr = None;
-    
+
     while let Some(part) = inner.next() {
         match part.as_rule() {
             Rule::val_bind => {
@@ -530,7 +541,9 @@ pub fn build_val_decl(pair: Pair<Rule>) -> Decl {
                 while let Some(val_part) = val_inner.next() {
                     match val_part.as_rule() {
                         Rule::pat => pat = Some(build_pat(val_part)),
-                        Rule::type_expr => type_annotation = Some(build_type(val_part)),
+                        Rule::type_expr => {
+                            type_annotation = Some(build_type(val_part))
+                        }
                         Rule::expr => expr = Some(build_expr(val_part)),
                         _ if val_part.as_str() == "rec" => has_rec = true,
                         _ => {} // Skip other tokens like "=" and ":"
@@ -544,7 +557,7 @@ pub fn build_val_decl(pair: Pair<Rule>) -> Decl {
             _ => {} // Skip tokens like "val", "=", ":"
         }
     }
-    
+
     let val_bind = ValBind {
         rec: has_rec,
         pat: pat.unwrap_or_else(|| {
@@ -557,7 +570,7 @@ pub fn build_val_decl(pair: Pair<Rule>) -> Decl {
             Expr::UnitLiteral(dummy_span)
         }),
     };
-    
+
     Decl::Val(span, vec![val_bind])
 }
 

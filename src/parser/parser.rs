@@ -39,9 +39,9 @@ pub fn parse(input: &str) -> Node {
 mod test {
     use crate::parser::ast;
     use crate::parser::ast::Ast;
-    use pest::iterators::Pair;
-    use pest::Parser;
     use crate::parser::parser::Rule;
+    use pest::Parser;
+    use pest::iterators::Pair;
 
     /// Test fixture.
     struct Fixture {
@@ -114,7 +114,10 @@ mod test {
 
     /// Creates a matcher that asserts a line is of a given syntactic type and
     /// matches a given string.
-    fn has_rule_str(rule_matcher: impl Fn(Rule), matcher: impl Fn(&str)) -> impl Fn(&Pair<Rule>) {
+    fn has_rule_str(
+        rule_matcher: impl Fn(Rule),
+        matcher: impl Fn(&str),
+    ) -> impl Fn(&Pair<Rule>) {
         move |line: &Pair<Rule>| {
             rule_matcher(line.as_rule());
             matcher(line.as_str());
