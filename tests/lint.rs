@@ -64,9 +64,13 @@ static RAW_HEADER: &str = r#"^Licensed to Julian Hyde under one or more contribu
 "#;
 
 fn header_for_suffix(line_prefix: &str) -> String {
-    RAW_HEADER
-        .replace("^\n", format!("{}\n", line_prefix).as_str())
-        .replace("^", format!("{} ", line_prefix).as_str())
+    let mut h = String::from(RAW_HEADER);
+    h = h.replace("^\n", format!("{}\n", line_prefix.trim_end()).as_str());
+    h = h.replace("^", format!("{}", line_prefix).as_str());
+    if line_prefix == " * " {
+        h = format!("(*\n{}", h);
+    }
+    h
 }
 
 /// Checks that a file starts with a header comment.
@@ -122,11 +126,12 @@ impl FileType {
 }
 
 static SUFFIX_MAP: Map<&'static str, &'static str> = phf_map! {
-    "gitignore" => "#",
-    "rs" => "//",
-    "pest" => "//",
-    "toml" => "#",
-    "yml" => "#",
+    "gitignore" => "# ",
+    "rs" => "// ",
+    "pest" => "// ",
+    "smli" => " * ",
+    "toml" => "# ",
+    "yml" => "# ",
 };
 
 /// File suffixes of files that are considered text files.
