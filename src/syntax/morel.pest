@@ -37,7 +37,7 @@ keywords = {
 
 // Top-level program
 program = { SOI ~ (WHITE_SPACE | COMMENT)* ~ statement_semicolon+ ~ EOI }
-program_single = { ws? ~ statement }
+statement_plus = { ws? ~ statement ~ ";" }
 statement_semicolon = { statement ~ ";" }
 statement = { decl | expr }
 ws = { (WHITESPACE | COMMENT)* }

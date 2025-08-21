@@ -21,7 +21,7 @@ use pest::iterators::Pair;
 use std::fmt::Write;
 use std::rc::Rc;
 
-/// A location in the source text
+/// A location in the source text.
 #[derive(Debug, Clone)]
 pub struct Span {
     input: Rc<str>,
@@ -36,25 +36,35 @@ pub struct Span {
 }
 
 impl Span {
-    pub(crate) fn make(input: Rc<str>, sp: pest::Span) -> Self {
+    /// Creates the 'null' span for a source document.
+    pub fn zero(input: Rc<str>) -> Self {
+        Span {
+            input,
+            start: 0,
+            end: 0,
+        }
+    }
+
+    /// Creates a span.
+    pub fn make(input: Rc<str>, sp: pest::Span) -> Self {
         Span {
             input,
             start: sp.start(),
             end: sp.end(),
         }
     }
-    /// Takes the union of the two spans. Assumes that the spans come from the same input.
-    /// This will also capture any input between the spans.
+
+    /// Creates the union of two spans.
     pub fn union(&self, other: &Span) -> Self {
         use std::cmp::{max, min};
-        Span {
-            input: self.input.clone(),
-            start: min(self.start, other.start),
-            end: max(self.start, other.start),
-        }
+        let input = self.input.clone();
+        let start = min(self.start, other.start);
+        let end = max(self.start, other.start);
+        Span { input, start, end }
     }
 
     /// Merges another span into this.
+    /// Requires that the spans come from the same input.
     pub fn merge(&mut self, other: &Span) {
         if self.input != other.input {
             panic!("Cannot merge spans from different inputs");
@@ -92,23 +102,12 @@ pub enum StatementKind {
     Decl(DeclKind),
 }
 
-impl MorelNode for StatementKind {
-    fn unparse(&self, s: &mut String) {
-        match self {
-            StatementKind::Expr(e) => e.unparse(s),
-            StatementKind::Decl(d) => d.unparse(s),
-        }
-    }
-}
-
 /// Abstract syntax tree (AST) of an expression.
 #[derive(Debug, Clone)]
 pub struct Expr {
     pub kind: ExprKind<Expr>,
     pub span: Span,
 }
-
-pub type UnspannedExpr = ExprKind<Expr>;
 
 /// Kind of expression.
 #[derive(Debug, Clone)]

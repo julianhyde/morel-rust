@@ -35,24 +35,27 @@ pub type ParseResult<T> = Result<T, ParseError>;
 #[grammar = "src/syntax/morel.pest"]
 pub struct MorelParser;
 
+/// Parses a Morel statement and returns its AST.
+///
+/// The statement may be preceded by whitespace and/or comments;
+/// the statement must end with a semicolon.
 pub fn parse_statement(input: &str) -> ParseResult<Statement> {
+    let rc_input_str = input.to_string().into();
+    let nodes =
+        MorelParser::parse_with_userdata(Rule::statement_plus, input, rc_input_str)?;
+    Ok(match_nodes!(<MorelParser>; nodes;
+        [statement_plus(e)] => e,
+    ))
+}
+
+/// Parses a statement (with no whitepace, comments or semicolon)
+/// and returns its AST.
+pub fn parse_unadorned_statement(input: &str) -> ParseResult<Statement> {
     let rc_input_str = input.to_string().into();
     let nodes =
         MorelParser::parse_with_userdata(Rule::statement, input, rc_input_str)?;
     Ok(match_nodes!(<MorelParser>; nodes;
-        [statement(e)] => e,
-    ))
-}
-
-pub fn parse_program_single(input: &str) -> ParseResult<Statement> {
-    let rc_input_str = input.to_string().into();
-    let nodes = MorelParser::parse_with_userdata(
-        Rule::program_single,
-        input,
-        rc_input_str,
-    )?;
-    Ok(match_nodes!(<MorelParser>; nodes;
-        [program_single(s)] => s,
+        [statement(s)] => s,
     ))
 }
 
@@ -109,7 +112,7 @@ impl MorelParser {
         Ok(true)
     }
 
-    fn program_single(input: ParseInput) -> ParseResult<Statement> {
+    fn statement_plus(input: ParseInput) -> ParseResult<Statement> {
         Ok(match_nodes!(input.children();
             [ws(ws), statement(s)] => s,
         ))
