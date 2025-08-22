@@ -19,11 +19,12 @@ License.
 {% endcomment %}
 -->
 [![Build Status](https://github.com/hydromatic/morel-rust/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/hydromatic/morel-rust/actions?query=branch%3Amain)
-<img align="right" alt="Morel mushroom (credit: OldDesignShop.com)" src="etc/morel-1200x1200.jpg" with="300" height="300">
+<img align="right" alt="Morel mushroom (credit: OldDesignShop.com)"
+  src="etc/morel-1200x1200.jpg" with="300" height="300">
 
 # Morel
 
-A functional query language
+A functional query language.
 
 ### Download and build
 

@@ -94,12 +94,8 @@ pub struct Statement {
 impl MorelNode for Statement {
     fn unparse(&self, s: &mut String) {
         match &self.kind {
-            StatementKind::Expr(x) => {
-                x.spanned(&self.span).unparse(s)
-            },
-            StatementKind::Decl(x) => {
-                x.spanned(&self.span).unparse(s)
-            },
+            StatementKind::Expr(x) => x.spanned(&self.span).unparse(s),
+            StatementKind::Decl(x) => x.spanned(&self.span).unparse(s),
         }
     }
 
@@ -172,8 +168,8 @@ pub enum ExprKind<SubExpr> {
     Fn(Vec<(Pat, Expr)>),
 
     // Constructors for data structures
-    Tuple(Vec<Expr>),       // e.g. `(x, y, z)`
-    List(Vec<Expr>),        // e.g. `[x, y, z]`
+    Tuple(Vec<Expr>),         // e.g. `(x, y, z)`
+    List(Vec<Expr>),          // e.g. `[x, y, z]`
     Record(Vec<LabeledExpr>), // e.g. `{ r with x = 1, y = 2 }`, `{x = 1, y}`
 
     // Relational expressions
@@ -403,7 +399,8 @@ pub struct ValBind {
 }
 
 impl ValBind {
-    /// Creates a value binding with the given pattern, type annotation, and expression.
+    /// Creates a value binding with the given pattern, type annotation, and
+    /// expression.
     pub fn of(pat: Pat, type_annotation: Option<Type>, expr: Expr) -> Self {
         ValBind {
             pat,
@@ -514,7 +511,7 @@ impl MorelNode for Literal {
             LiteralKind::Char(value) => write!(s, "#\"{}\"", value).unwrap(),
             LiteralKind::Bool(value) => {
                 s.push_str(if *value { "true" } else { "false" })
-            },
+            }
             LiteralKind::Unit => s.push_str("()"),
         }
     }

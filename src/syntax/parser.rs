@@ -15,9 +15,14 @@
 // language governing permissions and limitations under the
 // License.
 
-use crate::syntax::ast::{ConBind, DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunBind, Label, LabeledExpr, Literal, LiteralKind, Pat, PatField, PatKind, Span, Statement, StatementKind, Step, StepKind, Type, TypeBind, TypeField, TypeKind, ValBind};
-use pest_consume::match_nodes;
+use crate::syntax::ast::{
+    ConBind, DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunBind, Label,
+    LabeledExpr, Literal, LiteralKind, Pat, PatField, PatKind, Span, Statement,
+    StatementKind, Step, StepKind, Type, TypeBind, TypeField, TypeKind,
+    ValBind,
+};
 use pest_consume::Parser;
+use pest_consume::match_nodes;
 use std::rc::Rc;
 
 type ParseInput<'input> = pest_consume::Node<'input, Rule, Rc<str>>;
@@ -36,8 +41,11 @@ pub struct MorelParser;
 /// the statement must end with a semicolon.
 pub fn parse_statement(input: &str) -> ParseResult<Statement> {
     let rc_input_str: Rc<str> = input.to_string().into();
-    let nodes =
-        MorelParser::parse_with_userdata(Rule::statement_plus, input, rc_input_str)?;
+    let nodes = MorelParser::parse_with_userdata(
+        Rule::statement_plus,
+        input,
+        rc_input_str,
+    )?;
     Ok(match_nodes!(<MorelParser>; nodes;
         [statement_plus(e)] => e,
     ))
@@ -133,7 +141,9 @@ impl MorelParser {
     fn expr_annotated(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr_implies(e)] => e,
-            [expr_implies(e), type_(t)] => ExprKind::Annotated(Box::new(e), Box::new(t)).wrap(input),
+            [expr_implies(e), type_(t)] => {
+                ExprKind::Annotated(Box::new(e), Box::new(t)).wrap(input)
+            },
         ))
     }
 
@@ -177,17 +187,19 @@ impl MorelParser {
         Ok(match_nodes!(input.children();
             [expr_cons(e)] => e,
             [expr_cons(e), expr_comp_op(op), expr_comp(e2)] => {
+                let b1 = Box::new(e);
+                let b2 = Box::new(e2);
                 match op.as_str() {
-                    "=" => ExprKind::Equal(Box::new(e), Box::new(e2)).wrap(input),
-                    "<>" => ExprKind::NotEqual(Box::new(e), Box::new(e2)).wrap(input),
-                    "<" => ExprKind::LessThan(Box::new(e), Box::new(e2)).wrap(input),
-                    "<=" => ExprKind::LessThanOrEqual(Box::new(e), Box::new(e2)).wrap(input),
-                    ">" => ExprKind::GreaterThan(Box::new(e), Box::new(e2)).wrap(input),
-                    ">=" => ExprKind::GreaterThanOrEqual(Box::new(e), Box::new(e2)).wrap(input),
-                    "elem" => ExprKind::Elem(Box::new(e), Box::new(e2)).wrap(input),
-                    "notelem" => ExprKind::NotElem(Box::new(e), Box::new(e2)).wrap(input),
+                    "=" => ExprKind::Equal(b1, b2),
+                    "<>" => ExprKind::NotEqual(b1, b2),
+                    "<" => ExprKind::LessThan(b1, b2),
+                    "<=" => ExprKind::LessThanOrEqual(b1, b2),
+                    ">" => ExprKind::GreaterThan(b1, b2),
+                    ">=" => ExprKind::GreaterThanOrEqual(b1, b2),
+                    "elem" => ExprKind::Elem(b1, b2),
+                    "notelem" => ExprKind::NotElem(b1, b2),
                     _ => unreachable!("Unexpected comparison operator"),
-                }
+                }.wrap(input)
             },
         ))
     }
@@ -239,7 +251,8 @@ impl MorelParser {
                     first.unwrap().clone(),
                     |acc, e| {
                         let span = &acc.span.union(&e.span);
-                        ExprKind::Apply(Box::new(acc), Box::new(e.clone())).spanned(span)
+                        ExprKind::Apply(Box::new(acc), Box::new(e.clone()))
+                            .spanned(span)
                     }
                 )},
         ))
@@ -252,7 +265,8 @@ impl MorelParser {
                     e,
                     |acc, id| {
                         let span = &acc.span.union(&id.span);
-                        ExprKind::Apply(Box::new(acc), Box::new(id)).spanned(span)
+                        ExprKind::Apply(Box::new(acc), Box::new(id))
+                            .spanned(span)
                     }
                 )},
         ))
@@ -328,8 +342,11 @@ impl MorelParser {
     fn if_expr(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr(cond), expr(then_expr), expr(else_expr)] => {
-                ExprKind::If(Box::new(cond), Box::new(then_expr), Box::new(else_expr))
-                    .wrap(input)
+                ExprKind::If(
+                    Box::new(cond),
+                    Box::new(then_expr),
+                    Box::new(else_expr),
+                ).wrap(input)
             },
         ))
     }
@@ -415,7 +432,9 @@ impl MorelParser {
 
     fn first_scan(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
-            [pat(p), expr(e)] => StepKind::Join(p, Box::new(e), None).wrap(input),
+            [pat(p), expr(e)] => {
+                StepKind::Join(p, Box::new(e), None).wrap(input)
+            }
         ))
     }
 
@@ -509,7 +528,7 @@ impl MorelParser {
 
     fn id_pat(input: ParseInput) -> ParseResult<Pat> {
         Ok(match_nodes!(input.children();
-            [identifier(i)] => PatKind::Identifier(i).spanned(&input_to_span(input)),
+            [identifier(i)] => PatKind::Identifier(i).wrap(input),
         ))
     }
 
@@ -521,7 +540,7 @@ impl MorelParser {
 
     fn tuple_pat(input: ParseInput) -> ParseResult<Pat> {
         Ok(match_nodes!(input.children();
-            [pat(pats)..] => PatKind::Tuple(pats.collect()).spanned(&input_to_span(input)),
+            [pat(pats)..] => PatKind::Tuple(pats.collect()).wrap(input),
         ))
     }
 
@@ -567,7 +586,7 @@ impl MorelParser {
 
     fn list_pat(input: ParseInput) -> ParseResult<Pat> {
         Ok(match_nodes!(input.children();
-            [pat(pats)..] => PatKind::List(pats.collect()).spanned(&input_to_span(input)),
+            [pat(pats)..] => PatKind::List(pats.collect()).wrap(input),
         ))
     }
 
@@ -601,8 +620,8 @@ impl MorelParser {
 
     fn val_decl(input: ParseInput) -> ParseResult<DeclKind> {
         Ok(match_nodes!(input.children();
-            [rec(rec), val_bind(binds)..] => DeclKind::Val(rec, binds.collect()),
-            [val_bind(binds)..] => DeclKind::Val(false, binds.collect()),
+            [rec(rec), val_bind(b)..] => DeclKind::Val(rec, b.collect()),
+            [val_bind(b)..] => DeclKind::Val(false, b.collect()),
         ))
     }
 
@@ -629,7 +648,8 @@ impl MorelParser {
             [identifier(name), pat_atom(p).., type_(t), expr(e)] => {
                 let pats = p.collect::<Vec<_>>();
                 let span = input_to_span(input);
-                FunBind {span, name, pats, type_: Some(Box::new(t)), expr: Box::new(e)}
+                let type_ = Some(Box::new(t));
+                FunBind {span, name, pats, type_, expr: Box::new(e)}
             },
             [identifier(name), pat_atom(p).., expr(e)] => {
                 let pats = p.collect::<Vec<_>>();
@@ -669,12 +689,14 @@ impl MorelParser {
     fn datatype_bind(input: ParseInput) -> ParseResult<DatatypeBind> {
         Ok(match_nodes!(input.children();
             [identifier(i), con_bind(cons)..] => {
-        let span = input_to_span(input);
-                DatatypeBind {span, type_vars: vec![], name: i, constructors: cons.collect()}
+                let span = input_to_span(input);
+                let constructors = cons.collect();
+                DatatypeBind {span, type_vars: vec![], name: i, constructors}
             },
             [type_vars(vars), identifier(i), con_bind(cons)..] => {
-        let span = input_to_span(input);
-                DatatypeBind {span, type_vars: vars, name: i, constructors: cons.collect()}
+                let span = input_to_span(input);
+                let constructors = cons.collect();
+                DatatypeBind {span, type_vars: vars, name: i, constructors}
             },
         ))
     }
@@ -901,7 +923,7 @@ impl MorelParser {
 #[cfg(test)]
 mod test {
     use crate::syntax::ast::MorelNode;
-    use crate::syntax::parser::{parse_unadorned_statement, Rule};
+    use crate::syntax::parser::{Rule, parse_unadorned_statement};
     use pest::iterators::Pair;
 
     /// Test fixture.
@@ -911,8 +933,8 @@ mod test {
 
     impl Fixture {
         fn assert_statement(&self, matcher: impl Fn(&str)) {
-            let expr =
-                parse_unadorned_statement(self.s.as_str()).expect("parse should succeed");
+            let expr = parse_unadorned_statement(self.s.as_str())
+                .expect("parse should succeed");
             let mut s = String::new();
             expr.unparse(&mut s);
             matcher(&s);

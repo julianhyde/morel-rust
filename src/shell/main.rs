@@ -213,7 +213,10 @@ impl Shell {
         if statement.is_err() {
             let string = statement.unwrap_err().to_string();
             println!("Failed to parse: {}, err {}", code, string);
-            Err(Error::Parse(format!("Failed to parse: {}, err {}", code, string)))
+            Err(Error::Parse(format!(
+                "Failed to parse: {}, err {}",
+                code, string,
+            )))
         } else if expected_output.is_some() {
             // We are running in idempotent mode,
             // and we cannot yet evaluate expressions.
@@ -298,7 +301,7 @@ impl Session {
         // Check if file exists
         if !path.exists() {
             return Err(Error::FileNotFound(format!(
-                "use failed: Io: openIn failed on {}, No such file or directory",
+                "use failed: File not found: {}",
                 path.display()
             )));
         }

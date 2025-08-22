@@ -70,10 +70,15 @@ expr_comp = { expr_cons ~ (expr_comp_op ~ expr_comp)? } // 4
 expr_comp_op = {
   "=" | "<>" | "<" | ">" | "<=" | ">=" | "elem" | "notelem"
 }
-expr_cons = { expr_additive ~ ("::" ~ expr_additive | "@" ~ expr_additive)* } // 5
-expr_additive = { expr_multiplicative ~ (("+" | "-" | "^") ~ expr_multiplicative)* } // 6
-expr_multiplicative = { expr_over ~ (("*" | "/" | "div" | "mod") ~ expr_over)* } // 7
-// expr_over = { expr_application ~ ("over" ~ expr_cons)* } // 7.5
+expr_cons = { // 5
+  expr_additive ~ ("::" ~ expr_additive | "@" ~ expr_additive)*
+}
+expr_additive = { // 6
+  expr_multiplicative ~ (("+" | "-" | "^") ~ expr_multiplicative)*
+}
+expr_multiplicative = { // 7
+  expr_over ~ (("*" | "/" | "div" | "mod") ~ expr_over)*
+}
 expr_over = { expr_application ~ ("over" ~ expr)* } // 7.5
 expr_application = { expr_postfix ~ expr_postfix* } // 8
 expr_postfix = { atom ~ ("." ~ identifier_expr)* } // 9
