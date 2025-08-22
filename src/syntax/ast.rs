@@ -16,13 +16,11 @@
 // License.
 
 use crate::syntax::ast;
-use crate::syntax::parser::Rule;
-use pest::iterators::Pair;
 use std::fmt::Write;
 use std::rc::Rc;
 
 /// A location in the source text.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Span {
     input: Rc<str>,
     /// # Safety
@@ -78,9 +76,16 @@ impl Span {
 pub trait MorelNode {
     /// Returns the string representation of the AST node.
     fn unparse(&self, s: &mut String);
+
+    /// Returns the span.
+    fn span(&self) -> &Span;
+
+    /// Returns a copy of the AST node with a new span.
+    fn with_span(&self, span: &Span) -> Self;
 }
 
 /// Abstract syntax tree (AST) of a statement (expression or declaration).
+#[derive(Debug, Clone)]
 pub struct Statement {
     pub kind: StatementKind,
     pub span: Span,
@@ -89,8 +94,23 @@ pub struct Statement {
 impl MorelNode for Statement {
     fn unparse(&self, s: &mut String) {
         match &self.kind {
-            StatementKind::Expr(x) => x.unparse(s),
-            StatementKind::Decl(x) => x.unparse(s),
+            StatementKind::Expr(x) => {
+                x.spanned(&self.span).unparse(s)
+            },
+            StatementKind::Decl(x) => {
+                x.spanned(&self.span).unparse(s)
+            },
+        }
+    }
+
+    fn span(&self) -> &Span {
+        &self.span
+    }
+
+    fn with_span(&self, span: &Span) -> Self {
+        Statement {
+            kind: self.kind.clone(),
+            span: span.clone(),
         }
     }
 }
@@ -154,7 +174,7 @@ pub enum ExprKind<SubExpr> {
     // Constructors for data structures
     Tuple(Vec<Expr>),       // e.g. `(x, y, z)`
     List(Vec<Expr>),        // e.g. `[x, y, z]`
-    Record(Vec<NamedExpr>), // e.g. `{ r with x = 1, y = 2 }`, `{x = 1, y}`
+    Record(Vec<LabeledExpr>), // e.g. `{ r with x = 1, y = 2 }`, `{x = 1, y}`
 
     // Relational expressions
     From(Vec<Step>),
@@ -215,8 +235,6 @@ pub struct Literal {
     pub span: Span,
 }
 
-impl Literal {}
-
 /// Kind of literal.
 #[derive(Debug, Clone)]
 pub enum LiteralKind {
@@ -229,19 +247,40 @@ pub enum LiteralKind {
 }
 
 impl LiteralKind {
-    pub fn spanned(self, span: &Span) -> Literal {
-        Literal {
-            kind: self.clone(),
+    pub fn spanned(&self, span_: &Span) -> Literal {
+        let kind = self.clone();
+        let span = span_.clone();
+        Literal { kind, span }
+    }
+}
+
+/// Label within a record expression or record pattern.
+#[derive(Debug, Clone)]
+pub struct Label {
+    pub span: Span,
+    pub name: String,
+}
+
+impl Label {
+    pub(crate) fn new(name: &String, span: &Span) -> Label {
+        Label {
             span: span.clone(),
+            name: name.clone(),
         }
     }
 }
 
-/// Named expression for records and relational operations
+/// Labeled expression in a record
 #[derive(Debug, Clone)]
-pub struct NamedExpr {
-    pub name: Option<String>,
-    pub expr: Expr,
+pub struct LabeledExpr {
+    pub label: Option<Label>,
+    pub expr: Box<Expr>,
+}
+
+impl LabeledExpr {
+    pub fn new(label: Option<Label>, expr: Box<Expr>) -> Self {
+        LabeledExpr { label, expr }
+    }
 }
 
 /// Abstract syntax tree (AST) of a step in a query.
@@ -298,7 +337,7 @@ pub enum PatKind {
     Cons(Box<Pat>, Box<Pat>), // e.g. `x :: xs`
     Constructor(String, Option<Box<Pat>>), // e.g. `Empty` or `Leaf x`
     As(Box<Pat>, String),
-    Annotated(Box<Pat>, Type),
+    Annotated(Box<Pat>, Box<Type>),
 }
 
 impl PatKind {
@@ -379,7 +418,9 @@ impl ValBind {
 pub struct FunBind {
     pub span: Span,
     pub name: String,
-    pub matches: Vec<(Pat, Expr)>,
+    pub pats: Vec<Pat>,
+    pub type_: Option<Box<Type>>,
+    pub expr: Box<Expr>,
 }
 
 /// Type binding
@@ -388,7 +429,7 @@ pub struct TypeBind {
     pub span: Span,
     pub type_vars: Vec<String>,
     pub name: String,
-    pub type_expr: Type,
+    pub type_: Type,
 }
 
 /// Datatype binding
@@ -405,7 +446,7 @@ pub struct DatatypeBind {
 pub struct ConBind {
     pub span: Span,
     pub name: String,
-    pub type_expr: Option<Type>,
+    pub type_: Option<Type>,
 }
 
 /// Abstract syntax tree (AST) of a type.
@@ -417,16 +458,18 @@ pub struct Type {
 
 #[derive(Debug, Clone)]
 pub enum TypeKind {
+    Unit,
+    Id(String),
     Var(String),
     Con(String),
     Fn(Box<Type>, Box<Type>),
     Tuple(Vec<Type>),
     Record(Vec<TypeField>),
-    App(Box<Type>, Vec<Type>),
+    App(Vec<Type>, Box<Type>),
 }
 
 impl TypeKind {
-    pub(crate) fn spanned(&self, span: &Span) -> Type {
+    pub fn spanned(&self, span: &Span) -> Type {
         Type {
             kind: self.clone(),
             span: span.clone(),
@@ -437,46 +480,67 @@ impl TypeKind {
 /// Type field in record types
 #[derive(Debug, Clone)]
 pub struct TypeField {
-    pub name: String,
-    pub type_expr: Type,
+    pub label: Label,
+    pub type_: Type,
 }
 
-impl MorelNode for ExprKind<Expr> {
+impl MorelNode for Expr {
     fn unparse(&self, s: &mut String) {
-        match self {
+        match &self.kind {
             ExprKind::Identifier(name) => s.push_str(name),
-            ExprKind::Literal(value) => value.kind.unparse(s),
+            ExprKind::Literal(value) => value.unparse(s),
             _ => s.push_str("<expr>"), // TODO: implement for all variants
+        }
+    }
+
+    fn span(&self) -> &Span {
+        &self.span
+    }
+
+    fn with_span(&self, span: &Span) -> Self {
+        Expr {
+            kind: self.kind.clone(),
+            span: span.clone(),
         }
     }
 }
 
-impl MorelNode for LiteralKind {
+impl MorelNode for Literal {
     fn unparse(&self, s: &mut String) {
-        match self {
+        match &self.kind {
             LiteralKind::Int(value) => s.push_str(value),
             LiteralKind::Real(value) => s.push_str(value),
             LiteralKind::String(value) => write!(s, "\"{}\"", value).unwrap(),
             LiteralKind::Char(value) => write!(s, "#\"{}\"", value).unwrap(),
             LiteralKind::Bool(value) => {
                 s.push_str(if *value { "true" } else { "false" })
-            }
+            },
             LiteralKind::Unit => s.push_str("()"),
-            _ => s.push_str("<expr>"), // TODO: implement for all variants
+        }
+    }
+
+    fn span(&self) -> &Span {
+        &self.span
+    }
+
+    fn with_span(&self, span: &Span) -> Self {
+        Literal {
+            kind: self.kind.clone(),
+            span: span.clone(),
         }
     }
 }
 
-impl MorelNode for DeclKind {
+impl MorelNode for Decl {
     fn unparse(&self, s: &mut String) {
-        match self {
+        match &self.kind {
             DeclKind::Val(rec, binds) => {
                 s.push_str("val ");
                 if let Some(first_bind) = binds.first() {
                     if *rec {
                         s.push_str("rec ");
                     }
-                    first_bind.pat.kind.unparse(s);
+                    first_bind.pat.unparse(s);
                     if let Some(ref type_annotation) =
                         first_bind.type_annotation
                     {
@@ -487,221 +551,68 @@ impl MorelNode for DeclKind {
                         }
                     }
                     s.push_str(" = ");
-                    first_bind.expr.kind.unparse(s);
+                    first_bind.expr.unparse(s);
                 }
             }
             _ => s.push_str("<decl>"),
         }
     }
+
+    fn span(&self) -> &Span {
+        &self.span
+    }
+
+    fn with_span(&self, span: &Span) -> Self {
+        Decl {
+            kind: self.kind.clone(),
+            span: span.clone(),
+        }
+    }
 }
 
-impl MorelNode for PatKind {
+impl MorelNode for Pat {
     fn unparse(&self, s: &mut String) {
-        match self {
+        match &self.kind {
             PatKind::Identifier(name) => s.push_str(name),
             PatKind::Wildcard => s.push('_'),
             _ => s.push_str("<pat>"),
         }
     }
-}
 
-/// Builds a statement (expression or declaration) from parsed pairs.
-pub fn build_statement(pair: Pair<Rule>) -> StatementKind {
-    let inner = pair.into_inner().next().unwrap();
-    match inner.as_rule() {
-        // Rule::expr => StatementKind::Expr(build_expr(inner)),
-        // Rule::decl => StatementKind::Decl(build_decl(inner)),
-        _ => panic!("Unexpected rule in statement: {:?}", inner.as_rule()),
+    fn span(&self) -> &Span {
+        &self.span
     }
-}
 
-/// Builds an expression from parsed pairs.
-pub fn build_expr(pair: Pair<Rule>) -> Expr {
-    match pair.as_rule() {
-        // Rule::expr => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::expr_annotated => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::expr_implies => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::expr_orelse => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::expr_andalso => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::expr_o => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::expr_relational => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::expr_cons => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::expr_additive => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::expr_multiplicative => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::expr_over => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::expr_unary => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::expr_application => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::expr_postfix => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::atom => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_expr(inner)
-        // }
-        // Rule::literal => build_literal(pair),
-        // Rule::identifier => {
-        //     let span = Span::make(&pair.as_span());
-        //     Expr::of(span, ExprKind::Identifier(pair.as_str().to_string()))
-        // }
-        _ => {
-            todo!()
-            // ExprKind::Identifier(
-            //     span,
-            //     format!("<unknown_expr:{:?}>", pair.as_rule()),
-            // )
+    fn with_span(&self, span: &Span) -> Self {
+        Pat {
+            kind: self.kind.clone(),
+            span: span.clone(),
         }
     }
 }
 
-/// Builds a literal from parsed pairs.
-pub fn build_literal(pair: Pair<Rule>) -> Expr {
-    match pair.as_rule() {
-        // Rule::literal => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_literal(inner)
-        // }
-        // Rule::numeric_literal => {
-        //     let inner = pair.into_inner().next().unwrap();
-        //     build_literal(inner)
-        // }
-        // Rule::non_negative_integer_literal | Rule::negative_integer_literal => {
-        //     let span = Span::from_span(&pair.as_span());
-        //     Expr::of(span, ExprKind::IntLiteral(pair.as_str().to_string()))
-        // }
-        // Rule::real_literal | Rule::scientific_literal => {
-        //     let span = Span::from_span(&pair.as_span());
-        //     Expr::of(span, ExprKind::RealLiteral(pair.as_str().to_string()))
-        // }
-        // Rule::string_literal => {
-        //     let span = Span::from_span(&pair.as_span());
-        //     let content = pair.as_str();
-        //     let unquoted = &content[1..content.len() - 1];
-        //     Expr::of(span, ExprKind::StringLiteral(unquoted.to_string()))
-        // }
-        // Rule::char_literal => {
-        //     let span = Span::from_span(&pair.as_span());
-        //     let content = pair.as_str();
-        // // Remove #" and "
-        // let unquoted = &content[2..content.len() - 1];
-        // Expr::of(span, ExprKind::CharLiteral(unquoted.to_string()))
-        // }
-        // Rule::bool_literal => {
-        //     let span = Span::from_span(&pair.as_span());
-        //     let value = pair.as_str() == "true";
-        //     Expr::of(span, ExprKind::BoolLiteral(value))
-        // }
-        // Rule::unit_literal => {
-        //     let span = Span::from_span(&pair.as_span());
-        //     Expr::of(span, ExprKind::UnitLiteral)
-        // }
-        _ => {
-            todo!()
+impl Type {
+    pub fn with_span(&self, span: &Span) -> Type {
+        if span.eq(&self.span) {
+            return self.clone();
+        }
+        Type {
+            kind: self.kind.clone(),
+            span: span.clone(),
         }
     }
 }
 
-/// Builds a declaration from parsed pairs.
-pub fn build_decl(pair: Pair<Rule>) -> Decl {
-    let inner = pair.into_inner().next().unwrap();
-    match inner.as_rule() {
-        // Rule::val_decl => {
-        // let span = Span::from_span(&pair.as_span());
-        // Decl::of(span, build_val_decl(inner))
-        // },
-        _ => panic!("Unexpected declaration rule: {:?}", inner.as_rule()),
-    }
-}
-
-/// Builds a value declaration from parsed pairs.
-pub fn build_val_decl(pair: Pair<Rule>) -> DeclKind {
-    let mut inner = pair.into_inner();
-
-    // The grammar should produce: "val" pat [":" type_expr] ["=" expr]
-    // We need to process all the inner parts
-    let mut has_rec = false;
-    let mut pat = None;
-    let mut type_annotation = None;
-    let mut expr = None;
-
-    while let Some(part) = inner.next() {
-        match part.as_rule() {
-            Rule::val_bind => {
-                // Process the val_bind rule
-                let mut val_inner = part.into_inner();
-                while let Some(val_part) = val_inner.next() {
-                    match val_part.as_rule() {
-                        Rule::pat => pat = Some(build_pat(val_part)),
-                        Rule::type_expr => {
-                            type_annotation = Some(build_type(val_part))
-                        }
-                        Rule::expr => expr = Some(build_expr(val_part)),
-                        _ if val_part.as_str() == "rec" => has_rec = true,
-                        _ => {} // Skip other tokens like "=" and ":"
-                    }
-                }
-            }
-            Rule::pat => pat = Some(build_pat(part)),
-            Rule::type_expr => type_annotation = Some(build_type(part)),
-            Rule::expr => expr = Some(build_expr(part)),
-            _ if part.as_str() == "rec" => has_rec = true,
-            _ => {} // Skip tokens like "val", "=", ":"
-        }
+impl MorelNode for Type {
+    fn unparse(&self, s: &mut String) {
+        todo!()
     }
 
-    let val_bind = ValBind {
-        pat: pat.unwrap_or_else(|| todo!()),
-        type_annotation,
-        expr: expr.unwrap_or_else(|| todo!()),
-    };
+    fn span(&self) -> &Span {
+        &self.span
+    }
 
-    DeclKind::Val(has_rec, vec![val_bind])
-}
-
-fn build_pat(p0: Pair<Rule>) -> Pat {
-    todo!()
-}
-
-/// Builds a type from parsed pairs.
-pub fn build_type(pair: Pair<Rule>) -> Type {
-    todo!()
+    fn with_span(&self, span: &Span) -> Self {
+        self.with_span(span)
+    }
 }

@@ -15,14 +15,9 @@
 // language governing permissions and limitations under the
 // License.
 
-use crate::syntax::ast;
-use crate::syntax::ast::{
-    ConBind, DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunBind, Literal,
-    LiteralKind, Pat, PatField, PatKind, Span, Statement, StatementKind, Step,
-    StepKind, Type, TypeBind, TypeKind, ValBind,
-};
-use pest_consume::Parser;
+use crate::syntax::ast::{ConBind, DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunBind, Label, LabeledExpr, Literal, LiteralKind, Pat, PatField, PatKind, Span, Statement, StatementKind, Step, StepKind, Type, TypeBind, TypeField, TypeKind, ValBind};
 use pest_consume::match_nodes;
+use pest_consume::Parser;
 use std::rc::Rc;
 
 type ParseInput<'input> = pest_consume::Node<'input, Rule, Rc<str>>;
@@ -40,7 +35,7 @@ pub struct MorelParser;
 /// The statement may be preceded by whitespace and/or comments;
 /// the statement must end with a semicolon.
 pub fn parse_statement(input: &str) -> ParseResult<Statement> {
-    let rc_input_str = input.to_string().into();
+    let rc_input_str: Rc<str> = input.to_string().into();
     let nodes =
         MorelParser::parse_with_userdata(Rule::statement_plus, input, rc_input_str)?;
     Ok(match_nodes!(<MorelParser>; nodes;
@@ -48,7 +43,7 @@ pub fn parse_statement(input: &str) -> ParseResult<Statement> {
     ))
 }
 
-/// Parses a statement (with no whitepace, comments or semicolon)
+/// Parses a statement (with no whitespace, comments or semicolon)
 /// and returns its AST.
 pub fn parse_unadorned_statement(input: &str) -> ParseResult<Statement> {
     let rc_input_str = input.to_string().into();
@@ -61,6 +56,12 @@ pub fn parse_unadorned_statement(input: &str) -> ParseResult<Statement> {
 
 fn input_to_span(input: ParseInput) -> Span {
     Span::make(input.user_data().clone(), input.as_pair().as_span())
+}
+
+impl LiteralKind {
+    pub fn wrap(&self, input: ParseInput) -> Literal {
+        self.spanned(&input_to_span(input))
+    }
 }
 
 impl ExprKind<Expr> {
@@ -95,6 +96,12 @@ impl PatKind {
     }
 }
 
+impl TypeKind {
+    pub fn wrap(&self, input: ParseInput) -> Type {
+        self.spanned(&input_to_span(input))
+    }
+}
+
 impl StepKind {
     pub fn wrap(&self, input: ParseInput) -> Step {
         self.spanned(&input_to_span(input))
@@ -104,17 +111,9 @@ impl StepKind {
 // #[pest_consume::parser(parser = MorelParser, rule = Rule)]
 #[pest_consume::parser(parser = MorelParser)]
 impl MorelParser {
-    fn EOI(_input: ParseInput) -> ParseResult<()> {
-        Ok(())
-    }
-
-    fn ws(input: ParseInput) -> ParseResult<bool> {
-        Ok(true)
-    }
-
     fn statement_plus(input: ParseInput) -> ParseResult<Statement> {
         Ok(match_nodes!(input.children();
-            [ws(ws), statement(s)] => s,
+            [statement(s), EOI(_)] => s,
         ))
     }
 
@@ -134,7 +133,7 @@ impl MorelParser {
     fn expr_annotated(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr_implies(e)] => e,
-            [expr_implies(e), type_expr(t)] => ExprKind::Annotated(Box::new(e), Box::new(t)).wrap(input),
+            [expr_implies(e), type_(t)] => ExprKind::Annotated(Box::new(e), Box::new(t)).wrap(input),
         ))
     }
 
@@ -217,8 +216,8 @@ impl MorelParser {
 
     fn expr_over(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [expr_unary(e)] => e,
-            [expr_unary(e1), expr_cons(e2)] => {
+            [expr_application(e)] => e,
+            [expr_application(e1), expr(e2)] => {
                 ExprKind::Aggregate(Box::new(e1), Box::new(e2)).wrap(input)
             }
         ))
@@ -233,34 +232,96 @@ impl MorelParser {
 
     fn expr_application(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [expr_postfix(e)] => e,
+            [expr_postfix(exprs)..] => {
+                let mut rest = exprs.into_iter();
+                let first = rest.next();
+                rest.fold(
+                    first.unwrap().clone(),
+                    |acc, e| {
+                        let span = &acc.span.union(&e.span);
+                        ExprKind::Apply(Box::new(acc), Box::new(e.clone())).spanned(span)
+                    }
+                )},
         ))
     }
 
     fn expr_postfix(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [atom(e)] => e,
+            [atom(e), identifier_expr(ids)..] => {
+                ids.fold(
+                    e,
+                    |acc, id| {
+                        let span = &acc.span.union(&id.span);
+                        ExprKind::Apply(Box::new(acc), Box::new(id)).spanned(span)
+                    }
+                )},
+        ))
+    }
+
+    fn tuple_expr(input: ParseInput) -> ParseResult<Expr> {
+        Ok(match_nodes!(input.children();
+            [expr(exprs)..] => {
+                let expr_vec: Vec<_> = exprs.collect();
+                match expr_vec.len() {
+                    0 => {
+                        let literal = LiteralKind::Unit.wrap(input);
+                        let span = &literal.span.clone();
+                        ExprKind::Literal(literal).spanned(span)
+                        },
+                    1 => expr_vec[0].clone(),
+                    _ => ExprKind::Tuple(expr_vec).wrap(input),
+                }
+            },
+        ))
+    }
+
+    fn list_expr(input: ParseInput) -> ParseResult<Expr> {
+        Ok(match_nodes!(input.children();
+            [expr(exprs)..] => {
+                ExprKind::Tuple(exprs.collect()).wrap(input)
+            },
+        ))
+    }
+
+    fn record_expr(input: ParseInput) -> ParseResult<Expr> {
+        Ok(match_nodes!(input.children();
+            [labeled_expr(exprs)..] => {
+                ExprKind::Record(exprs.collect()).wrap(input)
+            },
+        ))
+    }
+
+    fn labeled_expr(input: ParseInput) -> ParseResult<LabeledExpr> {
+        Ok(match_nodes!(input.children();
+            [label(l), expr(e)] => LabeledExpr::new(Some(l), Box::new(e)),
+            [expr(e)] => LabeledExpr::new(None, Box::new(e)),
+        ))
+    }
+
+    fn label(input: ParseInput) -> ParseResult<Label> {
+        Ok(match_nodes!(input.children();
+            [quoted_identifier(i)] => Label::new(&i, &input_to_span(input)),
+            [unquoted_identifier(i)] => Label::new(&i, &input_to_span(input)),
+            [non_negative_integer(i)] => Label::new(&i, &input_to_span(input)),
         ))
     }
 
     fn atom(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [literal(l)] => ExprKind::Literal(l).wrap(input),
-            [identifier(i)] => ExprKind::Identifier(i).wrap(input),
+            [identifier_expr(e)] => e,
             [record_selector(r)] => ExprKind::RecordSelector(r).wrap(input),
+            [current(_)] => ExprKind::Current.wrap(input),
+            [ordinal(_)] => ExprKind::Current.wrap(input),
+            [tuple_expr(e)] => e,
+            [list_expr(e)] => e,
+            [record_expr(e)] => e,
             [if_expr(e)] => e,
             [case_expr(e)] => e,
             [let_expr(e)] => e,
             [fn_expr(e)] => e,
             [from_expr(e)] => e,
             [expr(e)] => e,
-        ))
-    }
-
-    fn named_expr(input: ParseInput) -> ParseResult<(String, Expr)> {
-        Ok(match_nodes!(input.children();
-            [identifier(i), expr(e)] => (i, e),
-            [expr(e)] => ("".to_string(), e),
         ))
     }
 
@@ -361,7 +422,6 @@ impl MorelParser {
     fn scan(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
             [pat(p), expr(e), on(c)] => {
-                let span = p.span.union(&e.span).union(&c.span);
                 StepKind::Join(p, Box::new(e), Some(Box::new(c))).wrap(input)
             },
             [pat(p), expr(e)] => {
@@ -390,9 +450,9 @@ impl MorelParser {
         ))
     }
 
-    fn compute(input: ParseInput) -> ParseResult<Vec<(String, Expr)>> {
+    fn compute(input: ParseInput) -> ParseResult<Vec<LabeledExpr>> {
         Ok(match_nodes!(input.children();
-            [named_expr(exprs)..] => exprs.collect(),
+            [labeled_expr(exprs)..] => exprs.collect(),
         ))
     }
 
@@ -404,13 +464,16 @@ impl MorelParser {
 
     fn pat(input: ParseInput) -> ParseResult<Pat> {
         Ok(match_nodes!(input.children();
-            [pat_annotated(p)] => p,
+            [annotated_pat(p)] => p,
         ))
     }
 
-    fn pat_annotated(input: ParseInput) -> ParseResult<Pat> {
+    fn annotated_pat(input: ParseInput) -> ParseResult<Pat> {
         Ok(match_nodes!(input.children();
             [pat_as(p)] => p,
+            [pat_as(p), type_(t)] => {
+                PatKind::Annotated(Box::new(p), Box::new(t)).wrap(input)
+            },
         ))
     }
 
@@ -550,7 +613,7 @@ impl MorelParser {
     fn val_bind(input: ParseInput) -> ParseResult<ValBind> {
         Ok(match_nodes!(input.children();
             [pat(p), expr(e)] => ValBind::of(p, None, e),
-            [pat(p), type_expr(t), expr(e)] => ValBind::of(p, Some(t), e),
+            [pat(p), type_(t), expr(e)] => ValBind::of(p, Some(t), e),
         ))
     }
 
@@ -563,8 +626,16 @@ impl MorelParser {
 
     fn fun_bind(input: ParseInput) -> ParseResult<FunBind> {
         Ok(match_nodes!(input.children();
-            [identifier(name), match_list(matches)] =>
-            FunBind {span: input_to_span(input), name, matches},
+            [identifier(name), pat_atom(p).., type_(t), expr(e)] => {
+                let pats = p.collect::<Vec<_>>();
+                let span = input_to_span(input);
+                FunBind {span, name, pats, type_: Some(Box::new(t)), expr: Box::new(e)}
+            },
+            [identifier(name), pat_atom(p).., expr(e)] => {
+                let pats = p.collect::<Vec<_>>();
+                let span = input_to_span(input);
+                FunBind {span, name, pats, type_: None, expr: Box::new(e)}
+            },
         ))
     }
 
@@ -577,13 +648,13 @@ impl MorelParser {
 
     fn type_bind(input: ParseInput) -> ParseResult<TypeBind> {
         Ok(match_nodes!(input.children();
-            [identifier(i), type_expr(t)] => {
+            [identifier(i), type_(t)] => {
         let span = input_to_span(input);
-                TypeBind {span, type_vars: vec![], name: i, type_expr: t}
+                TypeBind {span, type_vars: vec![], name: i, type_: t}
             },
-            [type_vars(vars), identifier(i), type_expr(t)] => {
+            [type_vars(vars), identifier(i), type_(t)] => {
         let span = input_to_span(input);
-                TypeBind {span, type_vars: vars, name: i, type_expr: t}
+                TypeBind {span, type_vars: vars, name: i, type_: t}
             },
         ))
     }
@@ -612,22 +683,28 @@ impl MorelParser {
         Ok(match_nodes!(input.children();
             [identifier(i)] => {
                 let span = input_to_span(input);
-        ConBind {span, name: i, type_expr: None}
-                },
-            [identifier(i), type_expr(t)] => {
+                ConBind {span, name: i, type_: None}
+            },
+            [identifier(i), type_(t)] => {
                 let span = input_to_span(input);
-        ConBind {span, name: i, type_expr: Some(t)}
-                },
+                ConBind {span, name: i, type_: Some(t)}
+            },
         ))
     }
 
-    fn type_expr(input: ParseInput) -> ParseResult<Type> {
+    fn type_(input: ParseInput) -> ParseResult<Type> {
         Ok(match_nodes!(input.children();
-            [type_fn(t)] => t,
+            [fn_type(t)] => t,
         ))
     }
 
-    fn type_fn(input: ParseInput) -> ParseResult<Type> {
+    fn named_type(input: ParseInput) -> ParseResult<Type> {
+        Ok(match_nodes!(input.children();
+            [identifier(i)] => TypeKind::Id(i).wrap(input),
+        ))
+    }
+
+    fn fn_type(input: ParseInput) -> ParseResult<Type> {
         Ok(match_nodes!(input.children();
             [type_tuple(t)] => t,
         ))
@@ -635,21 +712,40 @@ impl MorelParser {
 
     fn type_tuple(input: ParseInput) -> ParseResult<Type> {
         Ok(match_nodes!(input.children();
-            [type_app(t)] => t,
+            [apply_type(t)] => t,
         ))
     }
 
-    fn type_app(input: ParseInput) -> ParseResult<Type> {
+    fn apply_type(input: ParseInput) -> ParseResult<Type> {
         Ok(match_nodes!(input.children();
-            [type_atom(t)] => t,
+            [atomic_type(t), named_type(types)..] => {
+                let type_vec: Vec<_> = types.collect();
+                if type_vec.is_empty() {
+                    t.with_span(&input_to_span(input))
+                } else {
+                    type_vec.iter().fold(
+                        t,
+                        |acc, t2| {
+                            let span = &acc.span.union(&t2.span);
+                            let type_args = match &acc.kind {
+                                TypeKind::Tuple(types) => types.clone(),
+                                _ => vec![acc.clone()],
+                            };
+                        TypeKind::App(type_args, Box::new(t2.clone()))
+                            .spanned(span)
+                    }
+                )}
+            },
         ))
     }
 
-    fn type_atom(input: ParseInput) -> ParseResult<Type> {
+    fn atomic_type(input: ParseInput) -> ParseResult<Type> {
         Ok(match_nodes!(input.children();
+            [named_type(t)] => t,
             [type_var(t)] => t,
             [type_con(t)] => t,
-            [type_expr(t)] => t,
+            [record_type(t)] => t,
+            [composite_type(t)] => t,
         ))
     }
 
@@ -665,9 +761,30 @@ impl MorelParser {
         ))
     }
 
-    fn type_field(input: ParseInput) -> ParseResult<(String, Type)> {
+    fn record_type(input: ParseInput) -> ParseResult<Type> {
         Ok(match_nodes!(input.children();
-            [identifier(i), type_expr(t)] => (i, t),
+            [type_field(tf)..] => {
+                TypeKind::Record(tf.collect()).wrap(input)
+            },
+        ))
+    }
+
+    fn composite_type(input: ParseInput) -> ParseResult<Type> {
+        Ok(match_nodes!(input.children();
+            [type_(t)..] => {
+                let types: Vec<Type> = t.collect();
+                match types.len() {
+                    0 => TypeKind::Unit.wrap(input),
+                    1 => types[0].with_span(&input_to_span(input)),
+                    _ => TypeKind::Tuple(types).wrap(input),
+                }
+            },
+        ))
+    }
+
+    fn type_field(input: ParseInput) -> ParseResult<TypeField> {
+        Ok(match_nodes!(input.children();
+            [label(l), type_(t)] => TypeField {label: l, type_: t},
         ))
     }
 
@@ -688,7 +805,6 @@ impl MorelParser {
             [string_literal(s)] => s,
             [char_literal(c)] => c,
             [bool_literal(b)] => b,
-            [unit_literal(u)] => u,
         ))
     }
 
@@ -699,6 +815,11 @@ impl MorelParser {
             [negative_integer_literal(n)] => n,
             [non_negative_integer_literal(n)] => n,
         ))
+    }
+
+    fn non_negative_integer(input: ParseInput) -> ParseResult<String> {
+        let value = String::from(input.as_str());
+        Ok(value)
     }
 
     fn non_negative_integer_literal(input: ParseInput) -> ParseResult<Literal> {
@@ -738,8 +859,10 @@ impl MorelParser {
         Ok(LiteralKind::Bool(value).spanned(&input_to_span(input)))
     }
 
-    fn unit_literal(input: ParseInput) -> ParseResult<Literal> {
-        Ok(LiteralKind::Unit.spanned(&input_to_span(input)))
+    fn identifier_expr(input: ParseInput) -> ParseResult<Expr> {
+        Ok(match_nodes!(input.children();
+            [identifier(i)] => ExprKind::Identifier(i).wrap(input),
+        ))
     }
 
     fn identifier(input: ParseInput) -> ParseResult<String> {
@@ -761,13 +884,24 @@ impl MorelParser {
     fn record_selector(input: ParseInput) -> ParseResult<String> {
         Ok(input.as_str().to_string())
     }
+
+    fn EOI(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn current(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn ordinal(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod test {
     use crate::syntax::ast::MorelNode;
-    use crate::syntax::parser::{Rule, parse_program_single, parse_statement};
-    use pest::Parser;
+    use crate::syntax::parser::{parse_unadorned_statement, Rule};
     use pest::iterators::Pair;
 
     /// Test fixture.
@@ -778,17 +912,9 @@ mod test {
     impl Fixture {
         fn assert_statement(&self, matcher: impl Fn(&str)) {
             let expr =
-                parse_statement(self.s.as_str()).expect("parse should succeed");
+                parse_unadorned_statement(self.s.as_str()).expect("parse should succeed");
             let mut s = String::new();
-            expr.kind.unparse(&mut s);
-            matcher(&s);
-        }
-
-        fn assert_statement2(&self, matcher: impl Fn(&str)) {
-            let expr = parse_program_single(self.s.as_str())
-                .expect("parse should succeed");
-            let mut s = String::new();
-            expr.kind.unparse(&mut s);
+            expr.unparse(&mut s);
             matcher(&s);
         }
     }

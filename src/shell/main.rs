@@ -211,7 +211,9 @@ impl Shell {
         // Try to parse the statement
         let statement = parse_statement(code);
         if statement.is_err() {
-            Err(Error::Parse(format!("Failed to parse: {}", code)))
+            let string = statement.unwrap_err().to_string();
+            println!("Failed to parse: {}, err {}", code, string);
+            Err(Error::Parse(format!("Failed to parse: {}, err {}", code, string)))
         } else if expected_output.is_some() {
             // We are running in idempotent mode,
             // and we cannot yet evaluate expressions.
