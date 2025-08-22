@@ -16,6 +16,7 @@
 // License.
 
 use phf::{Map, Set, phf_map, phf_set};
+use similar::DiffableStr;
 use std::fs;
 
 #[test]
@@ -45,32 +46,35 @@ fn lint() {
     );
 }
 
-static RAW_HEADER: &str = r#"^Licensed to Julian Hyde under one or more contributor license
-^agreements.  See the NOTICE file distributed with this work
-^for additional information regarding copyright ownership.
-^Julian Hyde licenses this file to you under the Apache
-^License, Version 2.0 (the "License"); you may not use this
-^file except in compliance with the License.  You may obtain a
-^copy of the License at
-^
-^http://www.apache.org/licenses/LICENSE-2.0
-^
-^Unless required by applicable law or agreed to in writing,
-^software distributed under the License is distributed on an
-^"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
-^either express or implied.  See the License for the specific
-^language governing permissions and limitations under the
-^License.
-"#;
+static HEADER_LINES: &[&str] = &[
+    "Licensed to Julian Hyde under one or more contributor license",
+    "agreements.  See the NOTICE file distributed with this work",
+    "for additional information regarding copyright ownership.",
+    "Julian Hyde licenses this file to you under the Apache",
+    "License, Version 2.0 (the \"License\"); you may not use this",
+    "file except in compliance with the License.  You may obtain a",
+    "copy of the License at",
+    "",
+    "http://www.apache.org/licenses/LICENSE-2.0",
+    "",
+    "Unless required by applicable law or agreed to in writing,",
+    "software distributed under the License is distributed on an",
+    "\"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,",
+    "either express or implied.  See the License for the specific",
+    "language governing permissions and limitations under the",
+    "License.",
+];
 
 fn header_for_suffix(line_prefix: &str) -> String {
-    let mut h = String::from(RAW_HEADER);
-    h = h.replace("^\n", format!("{}\n", line_prefix.trim_end()).as_str());
-    h = h.replace("^", format!("{}", line_prefix).as_str());
-    if line_prefix == " * " {
-        h = format!("(*\n{}", h);
-    }
-    h
+    let prefix = if line_prefix == " * " { "(*\n" } else { "" };
+    let lines = HEADER_LINES.iter().map(|line| {
+        if line.is_empty() {
+            line_prefix.trim_end().to_string()
+        } else {
+            format!("{}{}", line_prefix, line)
+        }
+    });
+    format!("{}{}", prefix, lines.collect::<Vec<_>>().join("\n"))
 }
 
 /// Checks that a file starts with a header comment.
@@ -96,6 +100,17 @@ fn lint_file(file_name: &str, warnings: &mut Vec<String>) {
                 warnings
                     .push(format!("{}:{}: Trailing spaces", file_name, line));
             }
+            if l.len() > file_type.max_line_length && !l.contains("://") {
+                // ignore URLs
+                warnings.push(format!(
+                    "{}:{}: Line too long ({} > {}): {}",
+                    file_name,
+                    line,
+                    l.len(),
+                    file_type.max_line_length,
+                    l
+                ));
+            }
         });
     }
 }
@@ -104,6 +119,7 @@ fn lint_file(file_name: &str, warnings: &mut Vec<String>) {
 struct FileType {
     header: Option<String>,
     text: bool,
+    max_line_length: usize,
 }
 
 impl FileType {
@@ -121,7 +137,12 @@ impl FileType {
             }
         }
         text = text || TYPE_MAP.contains(suffix.unwrap());
-        FileType { header, text }
+        let max_line_length = if suffix == Some("rs") || suffix == Some("md") {
+            80
+        } else {
+            usize::MAX
+        };
+        FileType { header, text, max_line_length }
     }
 }
 
