@@ -477,6 +477,7 @@ pub enum TypeKind {
     Tuple(Vec<Type>),
     Record(Vec<TypeField>),
     App(Vec<Type>, Box<Type>),
+    Expression(Box<Expr>),
 }
 
 impl TypeKind {

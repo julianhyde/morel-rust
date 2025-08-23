@@ -916,7 +916,7 @@ impl MorelParser {
                 let span = input_to_span(input);
                 ConBind {span, name: i.to_string(), type_: None}
             },
-            [identifier(i), type_(t)] => {
+            [identifier(i), _of(_), type_(t)] => {
                 let span = input_to_span(input);
                 ConBind {span, name: i.to_string(), type_: Some(t)}
             },
@@ -937,11 +937,14 @@ impl MorelParser {
 
     fn fn_type(input: ParseInput) -> ParseResult<Type> {
         Ok(match_nodes!(input.children();
-            [type_tuple(t)] => t,
+            [tuple_type(t)] => t,
+            [tuple_type(t), fn_type(r)] => {
+                TypeKind::Fn(Box::new(t), Box::new(r)).wrap(input)
+            },
         ))
     }
 
-    fn type_tuple(input: ParseInput) -> ParseResult<Type> {
+    fn tuple_type(input: ParseInput) -> ParseResult<Type> {
         Ok(match_nodes!(input.children();
             [apply_type(t)..] => {
                 TypeKind::Tuple(t.collect()).wrap(input)
@@ -977,7 +980,9 @@ impl MorelParser {
             [named_type(t)] => t,
             [type_var(t)] => t,
             [type_con(t)] => t,
+            [type_(t)] => t, // e.g. `(int)`, `(int * string list)`
             [record_type(t)] => t,
+            [expression_type(t)] => t, // e.g. `typeof 1 + 2`
             [composite_type(t)] => t,
         ))
     }
@@ -998,6 +1003,14 @@ impl MorelParser {
         Ok(match_nodes!(input.children();
             [type_field(tf)..] => {
                 TypeKind::Record(tf.collect()).wrap(input)
+            },
+        ))
+    }
+
+    fn expression_type(input: ParseInput) -> ParseResult<Type> {
+        Ok(match_nodes!(input.children();
+            [_typeof(_), expr(e)] => {
+                TypeKind::Expression(Box::new(e)).wrap(input)
             },
         ))
     }

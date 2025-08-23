@@ -167,9 +167,10 @@ expr_andalso = { expr_o ~ (_andalso ~ expr_o)* }
 // Precedence 3: o (':=' is not implemented)
 expr_o = { expr_comp ~ (_o ~ expr_comp)* }
 
-expr_comp = { expr_cons ~ expr_comp_arg* } // 4
+// Precedence 4: =, <>, <, >, <=, >=, elem, notelem
+expr_comp = { expr_cons ~ expr_comp_arg* }
 expr_comp_arg = { expr_comp_op ~ expr_cons }
-expr_comp_op = { "=" | "<>" | "<" | ">" | "<=" | ">=" | _elem | _notelem }
+expr_comp_op = { "=" | "<>" | "<=" | ">=" | "<" | ">" | _elem | _notelem }
 
 // The precedence 5 operators are right-associative. Therefore, this rule has
 // a different form than the rules for other operators, which are
@@ -347,8 +348,8 @@ con_bind = { identifier ~ (_of ~ type_)? }
 // -- Types -----------------------------------------------
 
 type_ = { fn_type }
-fn_type = { type_tuple ~ ("->" ~ type_tuple)* }
-type_tuple = { apply_type ~ ("*" ~ apply_type)* }
+fn_type = { tuple_type ~ ("->" ~ fn_type)? }
+tuple_type = { apply_type ~ ("*" ~ apply_type)* }
 apply_type = { atomic_type ~ named_type* }
 atomic_type = {
     named_type
@@ -356,6 +357,7 @@ atomic_type = {
   | type_con
   | "(" ~ type_ ~ ")"
   | record_type
+  | expression_type
   | composite_type
 }
 
@@ -363,6 +365,7 @@ named_type = { identifier }
 type_var = { "'" ~ identifier }
 type_con = { identifier }
 record_type = { "{" ~ (type_field ~ ("," ~ type_field)*)? ~ "}" }
+expression_type = { _typeof ~ expr }
 
 // A composite type isn't really a type, but we pretend that it is for a short
 // time during parsing. It's a way to represent multiple arguments to a
