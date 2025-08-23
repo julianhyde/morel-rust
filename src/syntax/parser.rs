@@ -375,8 +375,23 @@ impl MorelParser {
 
     fn record_expr(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
+            [] => {
+                ExprKind::Record(None, vec! []).wrap(input)
+            },
+            [record_body(b)] => {
+                ExprKind::Record(b.0, b.1).wrap(input)
+            },
+        ))
+    }
+
+    fn record_body(input: ParseInput) -> ParseResult<(Option<Box<Expr>>,
+                                                      Vec<LabeledExpr>)> {
+        Ok(match_nodes!(input.children();
+            [expr(e), _with(_), labeled_expr(exprs)..] => {
+                (Some(Box::new(e)), exprs.collect())
+            },
             [labeled_expr(exprs)..] => {
-                ExprKind::Record(exprs.collect()).wrap(input)
+                (None, exprs.collect())
             },
         ))
     }

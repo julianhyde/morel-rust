@@ -170,7 +170,7 @@ pub enum ExprKind<SubExpr> {
     // Constructors for data structures
     Tuple(Vec<Expr>),         // e.g. `(x, y, z)`
     List(Vec<Expr>),          // e.g. `[x, y, z]`
-    Record(Vec<LabeledExpr>), // e.g. `{ r with x = 1, y = 2 }`, `{x = 1, y}`
+    Record(Option<Box<Expr>>, Vec<LabeledExpr>), // e.g. `{r with x = 1, y}`
 
     // Relational expressions
     From(Vec<Step>),

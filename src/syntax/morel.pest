@@ -222,7 +222,8 @@ current = { _current }
 ordinal = { _ordinal }
 tuple_expr = { "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
 list_expr = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
-record_expr = { "{" ~ (labeled_expr ~ ("," ~ labeled_expr)*)? ~ "}" }
+record_expr = { "{" ~ record_body? ~ "}" }
+record_body = { (expr ~ _with)? ~ labeled_expr ~ ("," ~ labeled_expr)* }
 
 // Named expressions for records and relational clauses
 labeled_expr = {
