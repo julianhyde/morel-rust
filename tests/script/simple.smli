@@ -194,12 +194,32 @@ String.implode [#"\t", #"a", #"\128", #"b"];
 > val it = [1,2,3,4] : int list
 ["a" ^ "b", "c" ^ "d" ^ "e"];
 > val it = ["ab","cde"] : string list
+
+(* `andalso` has higher precedence (2) than `orelse` (1). *)
 false andalso true orelse true;
 > val it = true : bool
 false andalso (true orelse true);
 > val it = false : bool
 (false andalso true) orelse true;
 > val it = true : bool
+
+(* unary minus `~` has higher precedence (8.5) than application (8),
+   lower precedence than '.' (9). *)
+fun succ n = n + 1;
+> val succ = fn : int -> int
+(* TODO add '~succ 3;', which should be parse error *)
+~(succ 3);
+> val it = ~4 : int
+succ (~ 3);
+> val it = ~2 : int
+succ ~ 3;
+> error
+{a=3, b=4}.a;
+> val it = 3 : int
+~{a=3, b=4}.a;
+> val it = ~3 : int
+
+(*) Functions
 fun f (a,b,c) = if a then b else c;
 > val f = fn : bool * 'a * 'a -> 'a
 fun f (a,b,c,d,e) = if a then b else (if c then d else e);
