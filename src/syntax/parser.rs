@@ -317,19 +317,28 @@ impl MorelParser {
         ))
     }
 
-    fn expr_unary(input: ParseInput) -> ParseResult<Expr> {
-        Ok(match_nodes!(input.children();
-            [expr_application(e)] => e,
-            [expr_unary(e)] => ExprKind::Negate(Box::new(e)).wrap(input),
-        ))
-    }
-
     fn expr_application(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [expr_postfix(exprs)..] => {
+            [expr_unary(exprs)..] => {
                 fold(&exprs.collect(), |x, y| { ExprKind::Apply(x, y) })
             },
         ))
+    }
+
+    fn expr_unary(input: ParseInput) -> ParseResult<Expr> {
+        Ok(match_nodes!(input.children();
+            [expr_unary_op(o).., expr_postfix(e)] => {
+                let ops = o.collect::<Vec<Span>>();
+                ops.iter().fold(e.clone(), |acc, op| {
+                    let span = op.union(&acc.span);
+                    ExprKind::Negate(Box::new(acc)).spanned(&span)
+                })
+            },
+        ))
+    }
+
+    fn expr_unary_op(input: ParseInput) -> ParseResult<Span> {
+        Ok(input_to_span(input))
     }
 
     fn expr_postfix(input: ParseInput) -> ParseResult<Expr> {
@@ -989,8 +998,12 @@ impl MorelParser {
 
     fn type_var(input: ParseInput) -> ParseResult<Type> {
         Ok(match_nodes!(input.children();
-            [identifier(i)] => TypeKind::Var(i.to_string()).wrap(input),
+            [ty_var(i)] => TypeKind::Var(i.to_string()).wrap(input),
         ))
+    }
+
+    fn ty_var(input: ParseInput) -> ParseResult<&str> {
+        Ok(input.as_str())
     }
 
     fn type_con(input: ParseInput) -> ParseResult<Type> {

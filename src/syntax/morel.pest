@@ -196,10 +196,15 @@ expr_multiplicative_op = { "*" | "/" | _div | _mod }
 
 expr_over = { expr_application ~ (_over ~ expr)* } // 7.5
 
-expr_application = { expr_postfix+ } // 8
-expr_postfix = { atom ~ ("." ~ label)* } // 9
+// Precedence 8: function application
+expr_application = { expr_unary+ }
 
-expr_unary = { "~"* ~ expr_application }
+// Precedence 8.5: unary ~
+expr_unary = { expr_unary_op* ~ expr_postfix }
+expr_unary_op = { "~" }
+
+// Precedence 9: postfix .field
+expr_postfix = { atom ~ ("." ~ label)* }
 
 atom = {
     literal
@@ -362,7 +367,6 @@ atomic_type = {
 }
 
 named_type = { identifier }
-type_var = { "'" ~ identifier }
 type_con = { identifier }
 record_type = { "{" ~ (type_field ~ ("," ~ type_field)*)? ~ "}" }
 expression_type = { _typeof ~ expr }
@@ -377,7 +381,8 @@ expression_type = { _typeof ~ expr }
 composite_type = { "(" ~ type_ ~ ("," ~ type_)+ ~ ")" }
 
 type_field = { label ~ ":" ~ type_ }
-type_vars = { type_var | "(" ~ type_var ~ ("," ~ type_var)+ ~ ")" }
+type_vars = { type_var | "(" ~ type_var ~ ("," ~ type_var)* ~ ")" }
+type_var = { ty_var }
 
 // -- Literals --------------------------------------------
 // Literals are used in expressions, patterns.
