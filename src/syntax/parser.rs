@@ -150,7 +150,7 @@ impl MorelParser {
     fn expr_implies(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr_orelse(e)] => e,
-            [expr_orelse(e1), expr_orelse(e2)] => {
+            [expr_orelse(e1), _implies(_), expr_orelse(e2)] => {
                 ExprKind::Implies(Box::new(e1), Box::new(e2)).wrap(input)
             },
         ))
@@ -159,7 +159,7 @@ impl MorelParser {
     fn expr_orelse(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr_andalso(e)] => e,
-            [expr_andalso(e1), expr_andalso(e2)] => {
+            [expr_andalso(e1), _orelse(_), expr_andalso(e2)] => {
                 ExprKind::OrElse(Box::new(e1), Box::new(e2)).wrap(input)
             },
         ))
@@ -168,7 +168,7 @@ impl MorelParser {
     fn expr_andalso(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr_o(e)] => e,
-            [expr_o(e1), expr_o(e2)] => {
+            [expr_o(e1), _andalso(_), expr_o(e2)] => {
                 ExprKind::AndAlso(Box::new(e1), Box::new(e2)).wrap(input)
             },
         ))
@@ -177,7 +177,7 @@ impl MorelParser {
     fn expr_o(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr_comp(e)] => e,
-            [expr_comp(e1), expr_comp(e2)] => {
+            [expr_comp(e1), _o(_), expr_comp(e2)] => {
                 ExprKind::Compose(Box::new(e1), Box::new(e2)).wrap(input)
             },
         ))
@@ -405,8 +405,8 @@ impl MorelParser {
             [record_selector(r)] => {
                 ExprKind::RecordSelector(r.to_string()).wrap(input)
             },
-            [current(_)] => ExprKind::Current.wrap(input),
-            [ordinal(_)] => ExprKind::Current.wrap(input),
+            [_current(_)] => ExprKind::Current.wrap(input),
+            [_ordinal(_)] => ExprKind::Ordinal.wrap(input),
             [tuple_expr(e)] => e,
             [list_expr(e)] => e,
             [record_expr(e)] => e,
@@ -421,7 +421,8 @@ impl MorelParser {
 
     fn if_expr(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [expr(cond), expr(then_expr), expr(else_expr)] => {
+            [_if(_), expr(cond), _then(_), expr(then_expr), _else(_),
+             expr(else_expr)] => {
                 ExprKind::If(
                     Box::new(cond),
                     Box::new(then_expr),
@@ -433,7 +434,7 @@ impl MorelParser {
 
     fn case_expr(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [expr(e), k_of(_), match_list(arms)] => {
+            [_case(_), expr(e), _of(_), match_list(arms)] => {
                 ExprKind::Case(Box::new(e), arms).wrap(input)
             },
         ))
@@ -441,7 +442,7 @@ impl MorelParser {
 
     fn let_expr(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [decl_list(decls), k_in(_), expr(e)] => {
+            [_let(_), decl_list(decls), _in(_), expr(e), _end(_)] => {
                 ExprKind::Let(decls, Box::new(e)).wrap(input)
             },
         ))
@@ -455,7 +456,7 @@ impl MorelParser {
 
     fn fn_expr(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [match_list(matches)] => ExprKind::Fn(matches).wrap(input),
+            [_fn(_), match_list(matches)] => ExprKind::Fn(matches).wrap(input),
         ))
     }
 
@@ -473,11 +474,20 @@ impl MorelParser {
 
     fn from_expr(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [scan_list(scans), step_list(steps)] => {
+            [_from(_), scan_list(scans), step_list(steps)] => {
                 let mut scans2: Vec<Step> = Vec::new();
                 scans2.extend(scans);
                 scans2.extend(steps);
                 ExprKind::From(scans2).wrap(input)
+            },
+            [_from(_), step_list(steps)] => {
+                ExprKind::From(steps).wrap(input)
+            },
+            [_from(_), scan_list(scans)] => {
+                ExprKind::From(scans).wrap(input)
+            },
+            [_from(_)] => {
+                ExprKind::From(vec![]).wrap(input)
             }
         ))
     }
@@ -494,13 +504,13 @@ impl MorelParser {
 
     fn on(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [expr(e)] => e,
+            [_on(_), expr(e)] => e,
         ))
     }
 
     fn first_scan(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
-            [pat(p), expr(e)] => {
+            [pat(p), _in(_), expr(e)] => {
                 StepKind::Join(p, Box::new(e), None).wrap(input)
             }
         ))
@@ -508,10 +518,10 @@ impl MorelParser {
 
     fn scan(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
-            [pat(p), expr(e), on(c)] => {
+            [pat(p), _in(_), expr(e), on(c)] => {
                 StepKind::Join(p, Box::new(e), Some(Box::new(c))).wrap(input)
             },
-            [pat(p), expr(e)] => {
+            [pat(p), _in(_), expr(e)] => {
                 StepKind::Join(p, Box::new(e), None).wrap(input)
             },
         ))
@@ -531,7 +541,7 @@ impl MorelParser {
 
     fn join(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
-            [pat(p), expr(e), on(c)] => {
+            [_join(_), pat(p), _in(_), expr(e), on(c)] => {
                 StepKind::Join(p, Box::new(e), Some(Box::new(c))).wrap(input)
             },
         ))
@@ -539,13 +549,85 @@ impl MorelParser {
 
     fn compute(input: ParseInput) -> ParseResult<Vec<LabeledExpr>> {
         Ok(match_nodes!(input.children();
-            [labeled_expr(exprs)..] => exprs.collect(),
+            [_compute(_), labeled_expr(exprs)..] => exprs.collect(),
         ))
     }
 
     fn order(input: ParseInput) -> ParseResult<Vec<Expr>> {
         Ok(match_nodes!(input.children();
-            [expr(exprs)..] => exprs.collect(),
+            [_order(_), expr(exprs)..] => exprs.collect(),
+        ))
+    }
+
+    fn into_(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [_into(_), pat(p), _in(_), expr(e)] => {
+                StepKind::Join(p, Box::new(e), None).wrap(input)
+            },
+        ))
+    }
+
+    fn distinct(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [_distinct(_)] => {
+                StepKind::Group.wrap(input)
+            },
+        ))
+    }
+
+    fn unorder(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [_unorder(_), expr(e)] => {
+                StepKind::Order.wrap(input)
+            },
+        ))
+    }
+
+    fn require(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [_require(_), expr(e)] => {
+                StepKind::Where.wrap(input)
+            },
+        ))
+    }
+
+    fn except(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [_except(_), expr(e), expr(exprs)..] => {
+                StepKind::Group.wrap(input)
+            },
+        ))
+    }
+
+    fn union(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [_union(_), expr(e), expr(exprs)..] => {
+                StepKind::Group.wrap(input)
+            },
+        ))
+    }
+
+    fn intersect(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [_intersect(_), expr(e), expr(exprs)..] => {
+                StepKind::Group.wrap(input)
+            },
+        ))
+    }
+
+    fn skip(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [_skip(_), expr(e)] => {
+                StepKind::Order.wrap(input)
+            },
+        ))
+    }
+
+    fn take(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [_take(_), expr(e)] => {
+                StepKind::Order.wrap(input)
+            },
         ))
     }
 
@@ -600,7 +682,7 @@ impl MorelParser {
 
     fn as_pat(input: ParseInput) -> ParseResult<Pat> {
         Ok(match_nodes!(input.children();
-            [identifier(i), pat(p)] => {
+            [identifier(i), _as(_), pat(p)] => {
                 PatKind::As(i.to_string(), Box::new(p)).wrap(input)
             },
         ))
@@ -684,13 +766,17 @@ impl MorelParser {
 
     fn val_decl(input: ParseInput) -> ParseResult<DeclKind> {
         Ok(match_nodes!(input.children();
-            [rec(rec), val_bind(b)..] => DeclKind::Val(rec, b.collect()),
-            [val_bind(b)..] => DeclKind::Val(false, b.collect()),
+            [_val(_), _rec(_), val_bind(b), and_val_bind(rest)..] => {
+                let mut binds = vec![b];
+                binds.extend(rest.collect::<Vec<_>>());
+                DeclKind::Val(true, binds)
+            },
+            [_val(_), val_bind(b), and_val_bind(rest)..] => {
+                let mut binds = vec![b];
+                binds.extend(rest.collect::<Vec<_>>());
+                DeclKind::Val(false, binds)
+            },
         ))
-    }
-
-    fn rec(input: ParseInput) -> ParseResult<bool> {
-        Ok(true)
     }
 
     fn val_bind(input: ParseInput) -> ParseResult<ValBind> {
@@ -700,9 +786,26 @@ impl MorelParser {
         ))
     }
 
+    fn and_val_bind(input: ParseInput) -> ParseResult<ValBind> {
+        Ok(match_nodes!(input.children();
+            [_and(_), val_bind(b)] => b,
+        ))
+    }
+
     fn fun_decl(input: ParseInput) -> ParseResult<DeclKind> {
         Ok(match_nodes!(input.children();
-            [fun_bind(binds)..] => DeclKind::Fun(binds.collect()),
+            [_fun(_), fun_bind(bind), and_fun_bind(rest)..] => {
+                let mut binds = vec![bind];
+                binds.extend(rest.collect::<Vec<_>>());
+                DeclKind::Fun(binds)
+            },
+            [_fun(_), fun_bind(bind)] => DeclKind::Fun(vec![bind]),
+        ))
+    }
+
+    fn and_fun_bind(input: ParseInput) -> ParseResult<FunBind> {
+        Ok(match_nodes!(input.children();
+            [_and(_), fun_bind(b)] => b,
         ))
     }
 
@@ -737,8 +840,12 @@ impl MorelParser {
 
     fn type_decl(input: ParseInput) -> ParseResult<DeclKind> {
         Ok(match_nodes!(input.children();
-            [type_bind(bind)] => DeclKind::Type(vec![bind]),
-            [type_bind(binds)..] => DeclKind::Type(binds.collect()),
+            [_type(_), type_bind(bind), _and(_), type_bind(rest)..] => {
+                let mut binds = vec![bind];
+                binds.extend(rest.collect::<Vec<_>>());
+                DeclKind::Type(binds)
+            },
+            [_type(_), type_bind(bind)] => DeclKind::Type(vec![bind]),
         ))
     }
 
@@ -759,8 +866,15 @@ impl MorelParser {
 
     fn datatype_decl(input: ParseInput) -> ParseResult<DeclKind> {
         Ok(match_nodes!(input.children();
-            [datatype_bind(bind)] => DeclKind::Datatype(vec![bind]),
-            [datatype_bind(binds)..] => DeclKind::Datatype(binds.collect()),
+            [_datatype(_), datatype_bind(bind), _and(_),
+             datatype_bind(rest)..] => {
+                let mut binds = vec![bind];
+                binds.extend(rest.collect::<Vec<_>>());
+                DeclKind::Datatype(binds)
+            },
+            [_datatype(_), datatype_bind(bind)] => {
+                DeclKind::Datatype(vec![bind])
+            },
         ))
     }
 
@@ -992,19 +1106,203 @@ impl MorelParser {
         Ok(())
     }
 
-    fn current(_input: ParseInput) -> ParseResult<()> {
+    fn _and(_input: ParseInput) -> ParseResult<()> {
         Ok(())
     }
 
-    fn ordinal(_input: ParseInput) -> ParseResult<()> {
+    fn _andalso(_input: ParseInput) -> ParseResult<()> {
         Ok(())
     }
 
-    fn k_in(_input: ParseInput) -> ParseResult<()> {
+    fn _as(_input: ParseInput) -> ParseResult<()> {
         Ok(())
     }
 
-    fn k_of(_input: ParseInput) -> ParseResult<()> {
+    fn _case(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _compute(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _current(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _datatype(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _distinct(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _div(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _elem(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _else(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _end(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _except(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _exists(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _fn(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _forall(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _from(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _fun(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _group(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _if(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _implies(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _in(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _inst(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _intersect(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _into(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _join(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _let(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _mod(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _notelem(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _o(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _of(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _on(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _order(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _ordinal(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _orelse(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _over(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _rec(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _require(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _skip(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _take(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _then(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _through(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _type(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _typeof(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _union(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _unorder(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _val(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _where(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _with(_input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _yield(_input: ParseInput) -> ParseResult<()> {
         Ok(())
     }
 }

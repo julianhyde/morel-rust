@@ -22,62 +22,108 @@ line_comment = _{ "(*)" ~ (!NEWLINE ~ ANY)* ~ (NEWLINE | EOI) }
 block_comment = _{ "(*" ~ (block_comment | (!"*)" ~ ANY))* ~ "*)" }
 
 // Keywords
-keywords = @{
-    ("and"
-  | "andalso"
-  | "as"
-  | "case"
-  | "compute"
-  | "current"
-  | "datatype"
-  | "distinct"
-  | "div"
-  | "elem"
-  | "else"
-  | "end"
-  | "except"
-  | "exists"
-  | "fn"
-  | "forall"
-  | "from"
-  | "fun"
-  | "group"
-  | "if"
-  | "implies"
-  | "inst"
-  | "intersect"
-  | "into"
-  | k_in
-  | "join"
-  | "let"
-  | "mod"
-  | "notelem"
-  | k_of
-  | "on"
-  | "order"
-  | "ordinal"
-  | "orelse"
-  | "over"
-  | k_o
-  | "rec"
-  | "require"
-  | "skip"
-  | "take"
-  | "then"
-  | "through"
-  | "type"
-  | "typeof"
-  | "union"
-  | "unorder"
-  | "val"
-  | "where"
-  | "with"
-  | "yield")
-    ~ !(ASCII_ALPHANUMERIC | "_" | "'")
+keywords = {
+    _and
+  | _andalso
+  | _as
+  | _case
+  | _compute
+  | _current
+  | _datatype
+  | _distinct
+  | _div
+  | _elem
+  | _else
+  | _end
+  | _except
+  | _exists
+  | _fn
+  | _forall
+  | _from
+  | _fun
+  | _group
+  | _if
+  | _implies
+  | _in
+  | _inst
+  | _intersect
+  | _into
+  | _join
+  | _let
+  | _mod
+  | _notelem
+  | _o
+  | _of
+  | _on
+  | _order
+  | _ordinal
+  | _orelse
+  | _over
+  | _rec
+  | _require
+  | _skip
+  | _take
+  | _then
+  | _through
+  | _type
+  | _typeof
+  | _union
+  | _unorder
+  | _val
+  | _where
+  | _with
+  | _yield
 }
-k_in = @{ "in" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
-k_o = @{ "o" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
-k_of = @{ "of" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_and = @{ "and" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_andalso = @{ "andalso" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_as = @{ "as" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_case = @{ "case" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_compute = @{ "compute" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_current = @{ "current" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_datatype = @{ "datatype" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_distinct = @{ "distinct" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_div = @{ "div" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_elem = @{ "elem" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_else = @{ "else" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_end = @{ "end" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_except = @{ "except" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_exists = @{ "exists" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_fn = @{ "fn" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_forall = @{ "forall" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_from = @{ "from" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_fun = @{ "fun" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_group = @{ "group" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_if = @{ "if" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_implies = @{ "implies" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_in = @{ "in" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_inst = @{ "inst" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_intersect = @{ "intersect" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_into = @{ "into" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_join = @{ "join" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_let = @{ "let" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_mod = @{ "mod" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_notelem = @{ "notelem" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_o = @{ "o" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_of = @{ "of" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_on = @{ "on" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_order = @{ "order" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_ordinal = @{ "ordinal" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_orelse = @{ "orelse" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_over = @{ "over" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_rec = @{ "rec" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_require = @{ "require" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_skip = @{ "skip" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_take = @{ "take" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_then = @{ "then" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_through = @{ "through" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_type = @{ "type" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_typeof = @{ "typeof" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_union = @{ "union" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_unorder = @{ "unorder" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_val = @{ "val" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_where = @{ "where" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_with = @{ "with" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_yield = @{ "yield" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 
 // Top-level program
 program = { SOI ~ (WHITE_SPACE | COMMENT)* ~ statement_semicolon+ ~ EOI }
@@ -108,14 +154,22 @@ statement = { decl | expr }
 expr = { expr_annotated }
 
 expr_annotated = { expr_implies ~ (":" ~ type_)? }
-expr_implies = { expr_orelse ~ ("implies" ~ expr_orelse)* } // 0
-expr_orelse = { expr_andalso ~ ("orelse" ~ expr_andalso)* } // 1
-expr_andalso = { expr_o ~ ("andalso" ~ expr_o)* } // 2
-expr_o = { expr_comp ~ (k_o ~ expr_comp)* } // 3
+
+// Precedence 0: implies
+expr_implies = { expr_orelse ~ (_implies ~ expr_orelse)* }
+
+// Precedence 1: orelse
+expr_orelse = { expr_andalso ~ (_orelse ~ expr_andalso)* }
+
+// Precedence 2: andalso
+expr_andalso = { expr_o ~ (_andalso ~ expr_o)* }
+
+// Precedence 3: o (':=' is not implemented)
+expr_o = { expr_comp ~ (_o ~ expr_comp)* }
 
 expr_comp = { expr_cons ~ expr_comp_arg* } // 4
 expr_comp_arg = { expr_comp_op ~ expr_cons }
-expr_comp_op = { "=" | "<>" | "<" | ">" | "<=" | ">=" | "elem" | "notelem" }
+expr_comp_op = { "=" | "<>" | "<" | ">" | "<=" | ">=" | _elem | _notelem }
 
 // The precedence 5 operators are right-associative. Therefore, this rule has
 // a different form than the rules for other operators, which are
@@ -137,9 +191,9 @@ expr_additive_op = { "+" | "-" | "^" }
 // Precedence 7
 expr_multiplicative = { expr_over ~ expr_multiplicative_arg* }
 expr_multiplicative_arg = { expr_multiplicative_op ~ expr_over }
-expr_multiplicative_op = { "*" | "/" | "div" | "mod" }
+expr_multiplicative_op = { "*" | "/" | _div | _mod }
 
-expr_over = { expr_application ~ ("over" ~ expr)* } // 7.5
+expr_over = { expr_application ~ (_over ~ expr)* } // 7.5
 
 expr_application = { expr_postfix+ } // 8
 expr_postfix = { atom ~ ("." ~ label)* } // 9
@@ -164,8 +218,8 @@ atom = {
 }
 
 identifier_expr = { identifier }
-current = { "current" }
-ordinal = { "ordinal" }
+current = { _current }
+ordinal = { _ordinal }
 tuple_expr = { "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
 list_expr = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
 record_expr = { "{" ~ (labeled_expr ~ ("," ~ labeled_expr)*)? ~ "}" }
@@ -176,24 +230,24 @@ labeled_expr = {
   | expr
 }
 
-if_expr = { "if" ~ expr ~ "then" ~ expr ~ "else" ~ expr }
+if_expr = { _if ~ expr ~ _then ~ expr ~ _else ~ expr }
 
-case_expr = { "case" ~ expr ~ k_of ~ match_list }
-fn_expr = { "fn" ~ match_list }
+case_expr = { _case ~ expr ~ _of ~ match_list }
+fn_expr = { _fn ~ match_list }
 match_list = { match_ ~ ("|" ~ match_)* }
 match_ = { pat ~ "=>" ~ expr }
 
-let_expr = { "let" ~ decl_list ~ k_in ~ expr ~ "end" }
+let_expr = { _let ~ decl_list ~ _in ~ expr ~ _end }
 decl_list = { (decl ~ ";"?)+ }
 
 // -- Relational expressions ------------------------------
 from_expr = {
-    "from" ~ scan_list? ~ step_list?
+    _from ~ scan_list? ~ step_list?
 }
 
 scan_list = { scan ~ ("," ~ scan)* }
-first_scan = { pat ~ k_in ~ expr }
-scan = { pat ~ k_in ~ expr ~ on? }
+first_scan = { pat ~ _in ~ expr }
+scan = { pat ~ _in ~ expr ~ on? }
 
 step_list = { step* }
 step = {
@@ -211,19 +265,19 @@ step = {
 }
 
 group_list = { labeled_expr ~ ("," ~ labeled_expr)* }
-join = { "join" ~ pat ~ k_in ~ expr ~ on? }
-on = { "on" ~ expr }
-into_ = { "into" ~ pat ~ k_in ~ expr }
-distinct = { "distinct" }
-compute = { "compute" ~ expr }
-unorder = { "unorder" ~ expr }
-require = { "require" ~ expr }
-except = { "except" ~ "all"? ~ expr ~ ("," ~ expr)* }
-union = { "union" ~ "all"? ~ expr ~ ("," ~ expr)* }
-intersect = { "intersect" ~ "all"? ~ expr ~ ("," ~ expr)* }
-order = { "order" ~ expr }
-skip = { "skip" ~ expr }
-take = { "take" ~ expr }
+join = { _join ~ pat ~ _in ~ expr ~ on? }
+on = { _on ~ expr }
+into_ = { _into ~ pat ~ _in ~ expr }
+distinct = { _distinct }
+compute = { _compute ~ expr }
+unorder = { _unorder ~ expr }
+require = { _require ~ expr }
+except = { _except ~ "all"? ~ expr ~ ("," ~ expr)* }
+union = { _union ~ "all"? ~ expr ~ ("," ~ expr)* }
+intersect = { _intersect ~ "all"? ~ expr ~ ("," ~ expr)* }
+order = { _order ~ expr }
+skip = { _skip ~ expr }
+take = { _take ~ expr }
 
 // -- Patterns --------------------------------------------
 
@@ -243,7 +297,7 @@ atomic_pat = {
 }
 
 wildcard_pat = { "_" }
-as_pat = { identifier ~ "as" ~ pat }
+as_pat = { identifier ~ _as ~ pat }
 constructor_pat = { identifier ~ atomic_pat }
 id_pat = { identifier }
 literal_pat = { literal }
@@ -269,24 +323,25 @@ decl = {
   | datatype_decl
 }
 
-val_decl = { "val" ~ rec? ~ val_bind ~ ("and" ~ val_bind)* }
+val_decl = { _val ~ _rec? ~ val_bind ~ and_val_bind* }
+and_val_bind = { _and ~ val_bind }
 val_bind = { pat ~ "=" ~ expr }
-rec = { "rec" }
 
 // Terminology still matches Morel-Java's classes.
 // We should rename to match the Standard ML terminology
 // (fun_decl (sans "fun") -> fun_bind, fun_bind -> fun_match,
 // fun_match -> fun_match_item).
-fun_decl = { "fun" ~ fun_bind ~ ("and" ~ fun_bind)* }
+fun_decl = { _fun ~ fun_bind ~ and_fun_bind* }
+and_fun_bind = { _and ~ fun_bind }
 fun_bind = { fun_match ~ ("|" ~ fun_match)* }
 fun_match = { identifier ~ pat+ ~ (":" ~ type_)? ~ "=" ~ expr }
 
-type_decl = { "type" ~ type_bind ~ ("and" ~ type_bind)* }
+type_decl = { _type ~ type_bind ~ (_and ~ type_bind)* }
 type_bind = { type_vars? ~ identifier ~ "=" ~ type_ }
 
-datatype_decl = { "datatype" ~ datatype_bind ~ ("and" ~ datatype_bind)* }
+datatype_decl = { _datatype ~ datatype_bind ~ (_and ~ datatype_bind)* }
 datatype_bind = { type_vars? ~ identifier ~ "=" ~ con_bind ~ ("|" ~ con_bind)* }
-con_bind = { identifier ~ (k_of ~ type_)? }
+con_bind = { identifier ~ (_of ~ type_)? }
 
 // -- Types -----------------------------------------------
 
