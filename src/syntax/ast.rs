@@ -258,10 +258,10 @@ pub struct Label {
 }
 
 impl Label {
-    pub(crate) fn new(name: &String, span: &Span) -> Label {
+    pub(crate) fn new(name: &str, span: &Span) -> Label {
         Label {
             span: span.clone(),
-            name: name.clone(),
+            name: name.to_string(),
         }
     }
 }
@@ -326,13 +326,13 @@ pub struct Pat {
 pub enum PatKind {
     Wildcard,
     Identifier(String),
+    As(String, Box<Pat>),
+    Constructor(String, Option<Box<Pat>>), // e.g. `Empty` or `Leaf x`
     Literal(Literal),
     Tuple(Vec<Pat>),
     List(Vec<Pat>),
     Record(Vec<PatField>, bool),
     Cons(Box<Pat>, Box<Pat>), // e.g. `x :: xs`
-    Constructor(String, Option<Box<Pat>>), // e.g. `Empty` or `Leaf x`
-    As(Box<Pat>, String),
     Annotated(Box<Pat>, Box<Type>),
 }
 
@@ -410,9 +410,23 @@ impl ValBind {
     }
 }
 
-/// Function binding
+/// Function binding.
+///
+/// E.g. `fun f 0 = 1 | f n = n * f (n - 1)`
+/// is a function binding with name `f` and two matches.
 #[derive(Debug, Clone)]
 pub struct FunBind {
+    pub span: Span,
+    pub name: String,
+    pub matches: Vec<FunMatch>,
+}
+
+/// Function match.
+///
+/// E.g. `f 0: int = 1` are `f n = n * f (n - 1)`
+/// are each matches with one pattern. The first has a type.
+#[derive(Debug, Clone)]
+pub struct FunMatch {
     pub span: Span,
     pub name: String,
     pub pats: Vec<Pat>,

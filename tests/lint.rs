@@ -142,7 +142,11 @@ impl FileType {
         } else {
             usize::MAX
         };
-        FileType { header, text, max_line_length }
+        FileType {
+            header,
+            text,
+            max_line_length,
+        }
     }
 }
 
