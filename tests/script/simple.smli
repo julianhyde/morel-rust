@@ -86,6 +86,26 @@ true;
 > val it = {1=1,2=2,3=3,5=5,6=6,7=7,8=8,9=9,10=10,11=11}
 >   : {1:int, 2:int, 3:int, 5:int, 6:int, 7:int, 8:int, 9:int, 10:int, 11:int}
 
+(*) Comments
+1;
+> val it = 1 : int
+(* That was a line comment. This is a block comment. *)
+2;
+> val it = 2 : int
+(* This is a (* nested *) comment
+   that spans
+   multiple lines. *)
+3;
+> val it = 3 : int
+(* This is a (* nested (* nested *) comment. *) *)
+4;
+> val it = 4 : int
+(* If a block comment
+   contains a (*) comment close *) in a line comment
+   then it is ignored. *)
+5;
+> val it = 5 : int
+
 (*) All the characters
 Sys.set ("printLength", 300);
 > val it = () : unit
