@@ -182,9 +182,15 @@ impl MorelParser {
     fn expr_o(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr_comp(e)] => e,
-            [expr_comp(e1), _o(_), expr_comp(e2)] => {
-                ExprKind::Compose(Box::new(e1), Box::new(e2)).wrap(input)
+            [expr_comp(e1), expr_o_arg(e2)..] => {
+                fold2(&e1, &e2.collect(), |x, y| { ExprKind::Compose(x, y) })
             },
+        ))
+    }
+
+    fn expr_o_arg(input: ParseInput) -> ParseResult<Expr> {
+        Ok(match_nodes!(input.children();
+            [_o(_), expr_comp(e)] => e
         ))
     }
 

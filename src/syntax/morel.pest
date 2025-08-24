@@ -167,7 +167,8 @@ expr_andalso = { expr_o ~ expr_andalso_arg* }
 expr_andalso_arg = { _andalso ~ expr_o }
 
 // Precedence 3: o (':=' is not implemented)
-expr_o = { expr_comp ~ (_o ~ expr_comp)* }
+expr_o = { expr_comp ~ expr_o_arg* }
+expr_o_arg = { _o ~ expr_comp }
 
 // Precedence 4: =, <>, <, >, <=, >=, elem, notelem
 expr_comp = { expr_cons ~ expr_comp_arg* }
