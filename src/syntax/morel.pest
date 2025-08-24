@@ -339,10 +339,11 @@ decl = {
     val_decl
   | fun_decl
   | type_decl
+  | over_decl
   | datatype_decl
 }
 
-val_decl = { _val ~ _rec? ~ val_bind ~ and_val_bind* }
+val_decl = { _val ~ _inst? ~ _rec? ~ val_bind ~ and_val_bind* }
 and_val_bind = { _and ~ val_bind }
 val_bind = { pat ~ "=" ~ expr }
 
@@ -354,6 +355,8 @@ fun_decl = { _fun ~ fun_bind ~ and_fun_bind* }
 and_fun_bind = { _and ~ fun_bind }
 fun_bind = { fun_match ~ ("|" ~ fun_match)* }
 fun_match = { identifier ~ pat+ ~ (":" ~ type_)? ~ "=" ~ expr }
+
+over_decl = { _over ~ identifier }
 
 type_decl = { _type ~ type_bind ~ (_and ~ type_bind)* }
 type_bind = { type_vars? ~ identifier ~ "=" ~ type_ }

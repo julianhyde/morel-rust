@@ -904,6 +904,7 @@ impl MorelParser {
         Ok(match_nodes!(input.children();
             [val_decl(d)] => d.wrap(input),
             [fun_decl(d)] => d.wrap(input),
+            [over_decl(d)] => d.wrap(input),
             [type_decl(d)] => d.wrap(input),
             [datatype_decl(d)] => d.wrap(input),
         ))
@@ -914,12 +915,22 @@ impl MorelParser {
             [_val(_), _rec(_), val_bind(b), and_val_bind(rest)..] => {
                 let mut binds = vec![b];
                 binds.extend(rest.collect::<Vec<_>>());
-                DeclKind::Val(true, binds)
+                DeclKind::Val(true, false, binds)
             },
             [_val(_), val_bind(b), and_val_bind(rest)..] => {
                 let mut binds = vec![b];
                 binds.extend(rest.collect::<Vec<_>>());
-                DeclKind::Val(false, binds)
+                DeclKind::Val(false, false, binds)
+            },
+            [_val(_), _inst(_), _rec(_), val_bind(b), and_val_bind(rest)..] => {
+                let mut binds = vec![b];
+                binds.extend(rest.collect::<Vec<_>>());
+                DeclKind::Val(true, true, binds)
+            },
+            [_val(_), _inst(_), val_bind(b), and_val_bind(rest)..] => {
+                let mut binds = vec![b];
+                binds.extend(rest.collect::<Vec<_>>());
+                DeclKind::Val(false, true, binds)
             },
         ))
     }
@@ -980,6 +991,12 @@ impl MorelParser {
                 let span = input_to_span(input);
                 FunMatch {span, name, pats, type_: None, expr: Box::new(e)}
             },
+        ))
+    }
+
+    fn over_decl(input: ParseInput) -> ParseResult<DeclKind> {
+        Ok(match_nodes!(input.children();
+            [_over(_), identifier(i)] => DeclKind::Over(i),
         ))
     }
 

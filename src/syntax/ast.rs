@@ -388,8 +388,9 @@ impl Decl {}
 /// Kind of declaration.
 #[derive(Debug, Clone)]
 pub enum DeclKind {
-    Val(bool, Vec<ValBind>),
+    Val(bool, bool, Vec<ValBind>),
     Fun(Vec<FunBind>),
+    Over(String),
     Type(Vec<TypeBind>),
     Datatype(Vec<DatatypeBind>),
 }
@@ -559,7 +560,7 @@ impl MorelNode for Literal {
 impl MorelNode for Decl {
     fn unparse(&self, s: &mut String) {
         match &self.kind {
-            DeclKind::Val(rec, binds) => {
+            DeclKind::Val(rec, inst, binds) => {
                 s.push_str("val ");
                 if let Some(first_bind) = binds.first() {
                     if *rec {
