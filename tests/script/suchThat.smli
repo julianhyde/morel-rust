@@ -50,7 +50,7 @@ where b = (i mod 2 = 0);
 >   [{b=false,i=1},{b=true,i=2},{b=false,i=3},{b=true,i=4},{b=false,i=5},
 >    {b=true,i=6},{b=false,i=7},{b=true,i=8},{b=false,i=9}] : {b:bool, i:int} bag
 
-(*) Unbound variables in declared 'join'; (* *)
+(*) Unbound variables in declared 'join';
 (*) condition on 'j' occurs after 'join'
 from i, j
 where i > 0 andalso i < 3
@@ -254,7 +254,7 @@ fun isEmp e =
 (*
 from e
   where isEmp e andalso e.deptno = 20
-  yield e.ename; (* *)
+  yield e.ename;
 *)
 
 (*) Similar to 'isEmp' but with a conjunctive condition.
@@ -278,13 +278,13 @@ in
   from e
     where isEmp50 e
     yield e.ename
-end; (* *)
+end;
 *)
 
 (*) A function with external extent.
 (* TODO enable when we have types
 fun hasJob (e, job) =
-  e.job = job; (* *)
+  e.job = job;
  *)
 
 (*) Valid, because the argument has an extent.
@@ -297,7 +297,7 @@ in
       j
     where hasJob (e, j)
     yield j
-end; (* *)
+end;
 val it =
   ["CLERK","SALESMAN","SALESMAN","MANAGER","SALESMAN","MANAGER","MANAGER",
    "ANALYST","PRESIDENT","SALESMAN","CLERK","CLERK",...] : string list
@@ -311,7 +311,7 @@ let
     e.job = job
 in
   from e where hasJob (e, "CLERK")
-end; (* *)
+end;
 *)
 
 (*) A string function with external extent.
@@ -321,7 +321,7 @@ fun isPrefix (s1, s2) =
 > val isPrefix = fn : string * string -> bool
 (*) This is invalid, but it could be valid
 (*
-from s where isPrefix (s, "abcd"); (* *)
+from s where isPrefix (s, "abcd");
 > val it = ["", "a", "ab", "abc", "abcd"] : string list
 *)
 
@@ -331,7 +331,7 @@ fun isBetween (i, j, k) =
   i <= j andalso j <= k;
 > val isBetween = fn : 'a * 'a * 'a -> bool
 (*
-from i where isBetween (i, 5, 8); (* *)
+from i where isBetween (i, 5, 8);
 > val it = [5, 6, 7, 8] : int list
 *)
 
@@ -340,14 +340,14 @@ from i where isBetween (i, 5, 8); (* *)
  * relation. *)
 (*
 fun enumerate predicate =
-  from r where predicate r; (* *)
+  from r where predicate r;
 *)
 (* TODO should print
 val enumerate = fn : ('a -> bool) -> 'a list
 *)
 (*) TODO should return non-empty list
 (*
-enumerate isEmp; (* *)
+enumerate isEmp;
 *)
 
 (* ------------------------------------------------------ *)
@@ -398,11 +398,11 @@ fun edge (x, y) = {x, y} elem edges;
 fun path (x, y) =
   edge (x, y)
   orelse exists (
-    from z where path (x, z) andalso edge (z, y)); (* *)
+    from z where path (x, z) andalso edge (z, y));
 > val path = fn : int * int -> bool
 *)
 (* TODO
-from p where path p; (* *)
+from p where path p;
 > val it = [(1,2),(2,3),(1,3)] : (int * int) list
 *)
 
@@ -421,7 +421,7 @@ fun edge (x, y) = (x, y) elem edges;
 (*) Return points that are 2 hops apart.
 (*
 from x, y, z where edge (x, y) andalso edge (y, z) andalso x <> z
-  group x, z; (* *)
+  group x, z;
 *)
 
 (* Previous is equivalent to following. (Which implies a theorem connecting
@@ -429,13 +429,13 @@ from x, y, z where edge (x, y) andalso edge (y, z) andalso x <> z
 (*
 from x, z
   where exists (from y where edge (x, y) andalso edge (y, z))
-  andalso x <> z; (* *)
+  andalso x <> z;
 *)
 
 (*) Also equivalent.
 (*
 from x, z where exists (
-   from y where edge (x, y) andalso edge (y, z) andalso x <> z); (* *)
+   from y where edge (x, y) andalso edge (y, z) andalso x <> z);
 *)
 
 (*) Also equivalent.
@@ -444,7 +444,7 @@ from x, y
   where edge (x, y)
   join y2, z
   where y2 = y andalso edge (y, z) andalso x <> z
-  group x, y; (* *)
+  group x, y;
 *)
 
 (* ------------------------------------------------------ *)
@@ -504,7 +504,7 @@ fun happy patron =
     from bar, beer, price
       where frequents (patron, bar)
       andalso likes (patron, beer)
-      andalso sells (bar, beer, price)); (* *)
+      andalso sells (bar, beer, price));
 > val happy = fn : string -> bool
 *)
 
@@ -512,7 +512,7 @@ fun happy patron =
    Amber; Velma is happy because Cask sells Stout. Fred and Scooby are not
    happy. *)
 (* TODO
-from p where happy p; (* *)
+from p where happy p;
 > val it = ["shaggy", "velma"] : string list
 *)
 
@@ -531,13 +531,13 @@ fun cheap beer =
         andalso sells (bar2, beer, price2)
         andalso price1 < 3
         andalso price2 < 3
-        andalso bar1 <> bar2); (* *)
+        andalso bar1 <> bar2);
 > val cheap = fn : string -> bool
 *)
 
 (*) Pale is cheap
 (* TODO
-from b where cheap b; (* *)
+from b where cheap b;
 > val it = ["pale"] : string list
 *)
 
@@ -566,33 +566,33 @@ from b where cheap b; (* *)
 fun isR y = true;
 > val isR = fn : 'a -> bool
 (* TODO
-fun isS1 x = exists (from y where isR y); (* *)
+fun isS1 x = exists (from y where isR y);
 > val isS1 = fn : 'a -> bool
 *)
 
 (*) isS1 is unsafe
 (* TODO should throw unsafe
-from x where isS1 x; (* *)
+from x where isS1 x;
 > Unsafe
 *)
 
 (*
-fun isS2 x = exists (from y where isR y andalso not (isR x)); (* *)
+fun isS2 x = exists (from y where isR y andalso not (isR x));
 *)
 
 (*) isS2 is unsafe
 (* TODO should throw unsafe
-from x where isS2 x; (* *)
+from x where isS2 x;
 > Unsafe
 *)
 
 (*
-fun isS3 x = exists (from y where isR y andalso x < y); (* *)
+fun isS3 x = exists (from y where isR y andalso x < y);
 *)
 
 (*) isS3 is unsafe
 (* TODO should throw unsafe
-from x where isS3 x; (* *)
+from x where isS3 x;
 > Unsafe
 *)
 
@@ -606,13 +606,13 @@ from x where isS3 x; (* *)
  *)
 (* TODO
 fun caskSells b =
-  exists (from beer, price where sells ("cask", beer, price)); (* *)
+  exists (from beer, price where sells ("cask", beer, price));
 > val caskSells = fn : 'a -> bool
 *)
 
 (* TODO
 from p where exists (
-  from b where likes (p, b) andalso not (caskSells b)); (* *)
+  from b where likes (p, b) andalso not (caskSells b));
 > val it = ["foo"] : string list
 *)
 
@@ -639,7 +639,7 @@ fun par (x, p) =
 > val par = fn : string * string -> bool
 (* TODO
 fun sib (x, y) = exists (
-  from p where par (x, p) andalso par (y, p) andalso x <> y); (* *)
+  from p where par (x, p) andalso par (y, p) andalso x <> y);
 > val sib = fn : string * string -> bool
 *)
 
@@ -649,7 +649,7 @@ fun cousin (x, y) = sib (x, y)
     from xp, yp
       where par (x, xp)
       andalso par (y, yp)
-      andalso cousin (xp, yp)); (* *)
+      andalso cousin (xp, yp));
 > val cousin = fn : string * string -> bool
 *)
 
@@ -660,12 +660,12 @@ fun cousin (x, y) = sib (x, y)
  Round 4: add (i, j), (k, k)
  *)
 (* TODO
-enumerate sib; (* *)
+enumerate sib;
 > val it = [("b","c")] : (string * string) list
 *)
 
 (*
-enumerate cousin; (* *)
+enumerate cousin;
 > val it = [("b","c"), ("c","e"),("g","h"),("j","k"),("f","g"),("f","h"),("g","i"),("i","k"),("i","j"),("k","k")] : (string * string) list
 *)
 
@@ -680,12 +680,12 @@ fun cousin2 (x, y) = sib (x, y)
     from (xp, yp)
       where par (x, xp)
       andalso par (y, yp)
-      andalso cousin2 (xp, yp)); (* *)
+      andalso cousin2 (xp, yp));
 > val cousin2 = fn : string * string -> bool
 *)
 
 (* TODO
-enumerate cousin2; (* *)
+enumerate cousin2;
 > Error: non-stratified
 *)
 
@@ -704,7 +704,7 @@ enumerate cousin2; (* *)
  *             /  |        |-._/     \_
  *            /   |   NT   |   '       \
  *          .'    |        |      Q    *: Brisbane
- *       .-'      |________|___.         ;           (* *)
+ *       .-'      |________|___.         ;
  *       |    WA  |            |         |
  *       \        |     SA     |-------./
  *        |       |            |  NSW  /

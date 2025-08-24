@@ -211,7 +211,7 @@ let
         (oldEmps union newEmps)
     end
   in
-end; (* *)
+end;
 *)
 
 (*) Recursive query, 2
@@ -225,10 +225,10 @@ let
     (from d in descendants (),
         e in scott.emps
       where e.mgr = d.e.empno
-      yield {e, level = d.level + 1}); (* *)
+      yield {e, level = d.level + 1});
 in
   descendants ()
-end; (* *)
+end;
 *)
 
 (*) Recursive query, 3

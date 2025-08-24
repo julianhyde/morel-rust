@@ -34,7 +34,7 @@ fn blog() {
     run_script("tests/script/blog.smli");
 }
 
-// #[test]
+#[test]
 fn built_in() {
     run_script("tests/script/builtIn.smli");
 }
@@ -74,12 +74,12 @@ fn hybrid() {
     run_script("tests/script/hybrid.smli");
 }
 
-// #[test]
+#[test]
 fn idempotent() {
     run_script("tests/script/idempotent.smli");
 }
 
-// #[test]
+#[test]
 fn logic() {
     run_script("tests/script/logic.smli");
 }
@@ -94,7 +94,7 @@ fn misc() {
     run_script("tests/script/misc.smli");
 }
 
-// #[test]
+#[test]
 fn overload() {
     run_script("tests/script/overload.smli");
 }
@@ -134,7 +134,6 @@ fn type_alias() {
     run_script("tests/script/type-alias.smli");
 }
 
-/// Disable due to stack overflow.
 #[test]
 fn type_() {
     run_script("tests/script/type.smli");

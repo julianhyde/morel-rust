@@ -344,17 +344,17 @@ fun in_ e [] = false
 (*
 let
   fun foldl f start [] = start
-    | foldl f start (hd :: tl) = foldl f (f (start, hd)) tl; (* *)
+    | foldl f start (hd :: tl) = foldl f (f (start, hd)) tl;
   fun map f [] = []
-    | map f (hd :: tl) = (f hd) :: (map f tl); (* *)
+    | map f (hd :: tl) = (f hd) :: (map f tl);
   fun computeAgg (extractor, folder) list =
-      foldl folder (map extractor list); (* *)
+      foldl folder (map extractor list);
   fun aggregate aggFns list =
-      map (computeAgg list) aggFns; (* *)
-  fun sum (x, y) = x + y; (* *)
+      map (computeAgg list) aggFns;
+  fun sum (x, y) = x + y;
 in
   aggregate [(#id, sum)] emps
-end; (* *)
+end;
 *)
 
 (*) Lambda applied to datatype
@@ -510,7 +510,7 @@ fun g2 y =
     val b = f1 (fn z => (z, z))
   in
     (a, b)
-  end; (* *)
+  end;
 > val g2 = fn : 'a -> ('b -> 'b) * ('c -> 'c * 'c)
 *)
 
@@ -555,11 +555,11 @@ fun chain16 f = fn x => f (id (id (id (id (id (id (id (id (id (id (id (id (id (i
 fun chain17 f = fn x => f (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id x)))))))))))))))));
 > val chain17 = fn : ('a -> 'b) -> 'a -> 'b
 (* TODO: enable, when stack overflow is fixed
-fun chain18 f = fn x => f (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id x)))))))))))))))))); (* *)
+fun chain18 f = fn x => f (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id x))))))))))))))))));
 > val chain18 = fn : ('a -> 'b) -> 'a -> 'b
-fun chain19 f = fn x => f (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id x))))))))))))))))))); (* *)
+fun chain19 f = fn x => f (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id x)))))))))))))))))));
 > val chain19 = fn : ('a -> 'b) -> 'a -> 'b
-fun chain20 f = fn x => f (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id x)))))))))))))))))))); (* *)
+fun chain20 f = fn x => f (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id (id x))))))))))))))))))));
 > val chain20 = fn : ('a -> 'b) -> 'a -> 'b
 *)
 
@@ -874,7 +874,7 @@ fun factorize n =
 
     fun smallestFactor n =
       if n <= 1 then n
-      else findSmallestDivisor (n, 2); (* *)
+      else findSmallestDivisor (n, 2);
   in
     if n <= 1 then [n]
     else
