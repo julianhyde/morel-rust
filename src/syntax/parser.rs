@@ -149,19 +149,29 @@ impl MorelParser {
 
     fn expr_implies(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [expr_orelse(e)] => e,
-            [expr_orelse(e1), _implies(_), expr_orelse(e2)] => {
-                ExprKind::Implies(Box::new(e1), Box::new(e2)).wrap(input)
+            [expr_orelse(e1), expr_implies_arg(e2)..] => {
+                fold2(&e1, &e2.collect(), |x, y| { ExprKind::Implies(x, y) })
             },
+        ))
+    }
+
+    fn expr_implies_arg(input: ParseInput) -> ParseResult<Expr> {
+        Ok(match_nodes!(input.children();
+            [_implies(_), expr_orelse(e)] => e
         ))
     }
 
     fn expr_orelse(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [expr_andalso(e)] => e,
-            [expr_andalso(e1), _orelse(_), expr_andalso(e2)] => {
-                ExprKind::OrElse(Box::new(e1), Box::new(e2)).wrap(input)
+            [expr_andalso(e1), expr_orelse_arg(e2)..] => {
+                fold2(&e1, &e2.collect(), |x, y| { ExprKind::OrElse(x, y) })
             },
+        ))
+    }
+
+    fn expr_orelse_arg(input: ParseInput) -> ParseResult<Expr> {
+        Ok(match_nodes!(input.children();
+            [_orelse(_), expr_andalso(e)] => e
         ))
     }
 

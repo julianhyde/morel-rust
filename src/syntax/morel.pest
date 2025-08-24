@@ -157,10 +157,12 @@ expr = { expr_annotated }
 expr_annotated = { expr_implies ~ (":" ~ type_)? }
 
 // Precedence 0: implies
-expr_implies = { expr_orelse ~ (_implies ~ expr_orelse)* }
+expr_implies = { expr_orelse ~ expr_implies_arg* }
+expr_implies_arg = { _implies ~ expr_orelse }
 
 // Precedence 1: orelse
-expr_orelse = { expr_andalso ~ (_orelse ~ expr_andalso)* }
+expr_orelse = { expr_andalso ~ expr_orelse_arg* }
+expr_orelse_arg = { _orelse ~ expr_andalso }
 
 // Precedence 2: andalso
 expr_andalso = { expr_o ~ expr_andalso_arg* }
