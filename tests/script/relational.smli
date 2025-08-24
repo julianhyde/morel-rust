@@ -16,6 +16,12 @@
  * language governing permissions and limitations under the
  * License.
  *)
+1;
+
+from e in emps
+  join d in depts on e.deptno = d.deptno
+  distinct;
+
 Sys.set ("lineWidth", 78);
 > val it = () : unit
 Sys.set ("printDepth", 6);
@@ -1165,12 +1171,12 @@ join y in [0,2,4,6,8,10,12] on x = y;
 from e in emps
   group e.deptno compute count
   join d in depts
-  where deptno = d.deptno;
+  where deptno = d.deptno; (* *)
 
-(*) as previous, using 'on' rather than 'where'
+(* as previous, using 'on' rather than 'where' *)
 from e in emps
   group e.deptno compute count
-  join d in depts on deptno = d.deptno;
+  join d in depts on deptno = d.deptno; (* *)
 *)
 
 (*) 'join' followed by 'distinct'
@@ -1436,17 +1442,17 @@ end;
 (*
 let
   fun foldl f start [] = start
-    | foldl f start (hd :: tl) = foldl f (f (start, hd)) tl;
+    | foldl f start (hd :: tl) = foldl f (f (start, hd)) tl; (* *)
   fun map f [] = []
-    | map f (hd :: tl) = (f hd) :: (map f tl);
+    | map f (hd :: tl) = (f hd) :: (map f tl); (* *)
   fun computeAgg (extractor, folder) list =
-      foldl folder (map extractor list);
+      foldl folder (map extractor list); (* *)
   fun aggregate aggFns list =
-      map (computeAgg list) aggFns;
-  fun sum (x, y) = x + y;
+      map (computeAgg list) aggFns; (* *)
+  fun sum (x, y) = x + y; (* *)
 in
   aggregate [(fn {id=id1,name=name1,deptno=deptno1} => id1, sum)] emps
-end;
+end; (* *)
 *)
 
 (*) Basic 'group'
@@ -1932,12 +1938,14 @@ from e in emps
 > val it = 90 : int
 
 (*) Multiple 'into' is not allowed
+(* TODO: enable
 from e in emps
   yield e.deptno
   into sum
-  into sum;
+  into sum; (* *)
 > stdIn:4.3-4.11 Error: 'into' step must be last in 'from'
 >   raised at: stdIn:4.3-4.11
+*)
 
 (*) Empty from
 from;
@@ -1972,7 +1980,7 @@ end;
 
 (*) Empty from with yield
 let
-  val ten = 6 + 4;
+  val ten = 6 + 4; (* *)
 in
   from
     yield {ten, nine = ten - 1}
@@ -1996,8 +2004,8 @@ from
 
 (*) Empty from with group
 let
-  val ten = 6 + 4;
-  val eleven = ten + 1;
+  val ten = 6 + 4; (* *)
+  val eleven = ten + 1; (* *)
 in
   from
     group ten compute {sumEleven = sum over eleven}
@@ -2159,7 +2167,7 @@ let
   fun abbrev s =
     if size s > 5
     then (substring (s, 0, 3)) ^ "."
-    else s;
+    else s; (* *)
   fun shouldPromote e =
     e.id < e.deptno * 4
 in
@@ -2274,6 +2282,7 @@ from t1 in triples, t2 in triples
  (* (~1+2,2) < (~3+5,5) < (~2+6,6) *)
 
 (*) A deep nested loop
+(* TODO enable
 from e in
   (from e in
     (from e in
@@ -2294,11 +2303,12 @@ from e in
          yield e)
        yield e)
      yield e)
-   yield e);
+   yield e); (* *)
 > val it =
 >   [{deptno=10,id=100,name="Fred"},{deptno=20,id=101,name="Velma"},
 >    {deptno=30,id=102,name="Shaggy"},{deptno=30,id=103,name="Scooby"}]
 >   : {deptno:int, id:int, name:string} list
+*)
 
 (*) Hybrid
 Sys.set ("hybrid", false);

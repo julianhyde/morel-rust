@@ -167,10 +167,15 @@ impl MorelParser {
 
     fn expr_andalso(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [expr_o(e)] => e,
-            [expr_o(e1), _andalso(_), expr_o(e2)] => {
-                ExprKind::AndAlso(Box::new(e1), Box::new(e2)).wrap(input)
+            [expr_o(e1), expr_andalso_arg(e2)..] => {
+                fold2(&e1, &e2.collect(), |x, y| { ExprKind::AndAlso(x, y) })
             },
+        ))
+    }
+
+    fn expr_andalso_arg(input: ParseInput) -> ParseResult<Expr> {
+        Ok(match_nodes!(input.children();
+            [_andalso(_), expr_o(e)] => e
         ))
     }
 
@@ -186,7 +191,7 @@ impl MorelParser {
     fn expr_comp(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr_cons(e), expr_comp_arg(args)..] => {
-                fold3(&e, &args.collect(), |op, x, y| {
+                fold_heterogeneous(&e, &args.collect(), |op, x, y| {
                     match op {
                         "=" => ExprKind::Equal(x, y),
                         "<>" => ExprKind::NotEqual(x, y),
@@ -235,7 +240,7 @@ impl MorelParser {
 
                 // Now fold, as we did for the left-associative operators, but
                 // reversing x and y.
-                fold3(&e2, &args2, |op, x, y| {
+                fold_heterogeneous(&e2, &args2, |op, x, y| {
                     match op {
                         "::" => ExprKind::Cons(y, x),
                         "@" => ExprKind::Append(y, x),
@@ -258,7 +263,7 @@ impl MorelParser {
     fn expr_additive(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr_multiplicative(e), expr_additive_arg(args)..] => {
-                fold3(&e, &args.collect(), |op, x, y| {
+                fold_heterogeneous(&e, &args.collect(), |op, x, y| {
                     match op {
                         "+" => ExprKind::Plus(x, y),
                         "-" => ExprKind::Minus(x, y),
@@ -284,7 +289,7 @@ impl MorelParser {
     fn expr_multiplicative(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr_over(e), expr_multiplicative_arg(args)..] => {
-                fold3(&e, &args.collect(), |op, x, y| {
+                fold_heterogeneous(&e, &args.collect(), |op, x, y| {
                     match op {
                         "*" => ExprKind::Times(x, y),
                         "/" => ExprKind::Divide(x, y),
@@ -311,7 +316,7 @@ impl MorelParser {
     fn expr_over(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr_application(e)] => e,
-            [expr_application(e1), expr(e2)] => {
+            [expr_application(e1), _over(_), expr(e2)] => {
                 ExprKind::Aggregate(Box::new(e1), Box::new(e2)).wrap(input)
             }
         ))
@@ -344,8 +349,7 @@ impl MorelParser {
     fn expr_postfix(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [atom(e), label(l)..] => {
-                let mut labels = l.collect::<Vec<_>>();
-                labels.iter().fold(e.clone(), |acc, label| {
+                l.collect::<Vec<_>>().iter().fold(e.clone(), |acc, label| {
                     let selector =
                         ExprKind::RecordSelector(label.name.to_string())
                             .spanned(&label.span);
@@ -393,8 +397,9 @@ impl MorelParser {
         ))
     }
 
-    fn record_body(input: ParseInput) -> ParseResult<(Option<Box<Expr>>,
-                                                      Vec<LabeledExpr>)> {
+    fn record_body(
+        input: ParseInput,
+    ) -> ParseResult<(Option<Box<Expr>>, Vec<LabeledExpr>)> {
         Ok(match_nodes!(input.children();
             [expr(e), _with(_), labeled_expr(exprs)..] => {
                 (Some(Box::new(e)), exprs.collect())
@@ -438,8 +443,10 @@ impl MorelParser {
             [case_expr(e)] => e,
             [let_expr(e)] => e,
             [fn_expr(e)] => e,
+            [exists_expr(e)] => e,
             [from_expr(e)] => e,
-            [expr(e)] => e,
+            [forall_expr(e)] => e,
+            [expr(e)] => e, // parenthesized expression; should re-wrap?
         ))
     }
 
@@ -498,111 +505,214 @@ impl MorelParser {
 
     fn from_expr(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [_from(_), scan_list(scans), step_list(steps)] => {
-                let mut scans2: Vec<Step> = Vec::new();
-                scans2.extend(scans);
-                scans2.extend(steps);
-                ExprKind::From(scans2).wrap(input)
-            },
-            [_from(_), step_list(steps)] => {
+            [_from(_), scan_list(scans), step(s).., terminal_step(ts)] => {
+                let steps =
+                    scans.into_iter()
+                        .chain(s.into_iter().flatten().collect::<Vec<_>>())
+                        .chain([ts])
+                        .collect();
                 ExprKind::From(steps).wrap(input)
             },
-            [_from(_), scan_list(scans)] => {
-                ExprKind::From(scans).wrap(input)
+            [_from(_), step(s).., terminal_step(ts)] => {
+                let steps: Vec<Step> =
+                    s.into_iter().flatten().chain([ts]).collect();
+                ExprKind::From(steps).wrap(input)
             },
-            [_from(_)] => {
-                ExprKind::From(vec![]).wrap(input)
-            }
+            [_from(_), scan_list(scans), step(s)..] => {
+                let steps =
+                    scans.into_iter().chain(s.into_iter().flatten()).collect();
+                ExprKind::From(steps).wrap(input)
+            },
+            [_from(_), step(s)..] => {
+                let steps = s.into_iter().flatten().collect();
+                ExprKind::From(steps).wrap(input)
+            },
+        ))
+    }
+
+    fn exists_expr(input: ParseInput) -> ParseResult<Expr> {
+        Ok(match_nodes!(input.children();
+            [_exists(_), scan_list(scans), step(s)..] => {
+                let steps =
+                    scans.into_iter()
+                        .chain(s.into_iter().flatten().collect::<Vec<_>>())
+                        .collect();
+                ExprKind::Exists(steps).wrap(input)
+            },
+            [_exists(_), step(s)..] => {
+                let steps = s.into_iter().flatten().collect();
+                ExprKind::Exists(steps).wrap(input)
+            },
+        ))
+    }
+
+    fn forall_expr(input: ParseInput) -> ParseResult<Expr> {
+        Ok(match_nodes!(input.children();
+            [_forall(_), scan_list(scans), step(s).., require(r)] => {
+                let steps =
+                    scans.into_iter()
+                        .chain(s.into_iter().flatten().collect::<Vec<_>>())
+                        .chain([r])
+                        .collect();
+                ExprKind::Forall(steps).wrap(input)
+            },
+            [_forall(_), step(s).., require(r)] => {
+                let steps = s.into_iter().flatten().chain([r]).collect();
+                ExprKind::Forall(steps).wrap(input)
+            },
+        ))
+    }
+
+    fn terminal_step(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [compute(s)] => s,
+            [into_(s)] => s,
+        ))
+    }
+
+    fn step(input: ParseInput) -> ParseResult<Vec<Step>> {
+        Ok(match_nodes!(input.children();
+            [_distinct(_)] => vec! [StepKind::Distinct.wrap(input)],
+            [except(s)] => vec! [s],
+            [group(s)] => vec! [s],
+            [intersect(s)] => vec! [s],
+            [join(steps)] => steps,
+            [order(s)] => vec! [s],
+            [skip(s)] => vec! [s],
+            [take(s)] => vec! [s],
+            [through(s)] => vec! [s],
+            [union(s)] => vec! [s],
+            [_unorder(_)] => vec! [StepKind::Unorder.wrap(input)],
+            [where_(s)] => vec! [s],
+            [yield_(s)] => vec! [s],
         ))
     }
 
     fn scan_list(input: ParseInput) -> ParseResult<Vec<Step>> {
         Ok(match_nodes!(input.children();
-            [first_scan(scan1), scan(scans)..] => {
-                let mut zz = vec! [scan1];
-                zz.extend(scans.collect::<Vec<_>>());
-                zz
+            [scan1(first), scan(rest)..] => {
+                [first].into_iter().chain(rest).collect()
             },
         ))
     }
 
-    fn on(input: ParseInput) -> ParseResult<Expr> {
+    fn scan1(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
-            [_on(_), expr(e)] => e,
+            [scan1_eq(s)] => s,
+            [scan1_in(s)] => s,
+            [pat(p)] => StepKind::Join(Box::new(p)).wrap(input),
         ))
     }
 
-    fn first_scan(input: ParseInput) -> ParseResult<Step> {
+    fn scan1_eq(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [pat(p), expr(e)] => {
+                StepKind::JoinEq(Box::new(p), Box::new(e), None).wrap(input)
+            },
+        ))
+    }
+
+    fn scan1_in(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
             [pat(p), _in(_), expr(e)] => {
-                StepKind::Join(p, Box::new(e), None).wrap(input)
-            }
+                StepKind::JoinIn(Box::new(p), Box::new(e), None).wrap(input)
+            },
         ))
     }
 
     fn scan(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
-            [pat(p), _in(_), expr(e), on(c)] => {
-                StepKind::Join(p, Box::new(e), Some(Box::new(c))).wrap(input)
+            [scan_eq(s)] => s,
+            [scan_in(s)] => s,
+            [pat(p)] => StepKind::Join(Box::new(p)).wrap(input),
+        ))
+    }
+
+    fn scan_eq(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [pat(p), expr(e), _on(_), expr(c)] => {
+                StepKind::JoinEq(Box::new(p), Box::new(e), Some(Box::new(c)))
+                    .wrap(input)
+            },
+            [pat(p), expr(e)] => {
+                StepKind::JoinEq(Box::new(p), Box::new(e), None)
+                    .wrap(input)
+            },
+        ))
+    }
+
+    fn scan_in(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [pat(p), _in(_), expr(e), _on(_), expr(c)] => {
+                StepKind::JoinIn(Box::new(p), Box::new(e), Some(Box::new(c)))
+                    .wrap(input)
             },
             [pat(p), _in(_), expr(e)] => {
-                StepKind::Join(p, Box::new(e), None).wrap(input)
+                StepKind::JoinIn(Box::new(p), Box::new(e), None)
+                    .wrap(input)
             },
         ))
     }
 
-    fn step_list(input: ParseInput) -> ParseResult<Vec<Step>> {
+    fn join(input: ParseInput) -> ParseResult<Vec<Step>> {
         Ok(match_nodes!(input.children();
-            [step(steps)..] => steps.collect(),
+            [_join(_), scan(s)..] => s.collect(),
         ))
     }
 
-    fn step(input: ParseInput) -> ParseResult<Step> {
+    fn compute(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
-            [join(j)] => j,
-        ))
-    }
-
-    fn join(input: ParseInput) -> ParseResult<Step> {
-        Ok(match_nodes!(input.children();
-            [_join(_), pat(p), _in(_), expr(e), on(c)] => {
-                StepKind::Join(p, Box::new(e), Some(Box::new(c))).wrap(input)
+            [_compute(_), expr(e)] => {
+                StepKind::Compute(Box::new(e)).wrap(input)
             },
         ))
     }
 
-    fn compute(input: ParseInput) -> ParseResult<Vec<LabeledExpr>> {
+    fn except(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
-            [_compute(_), labeled_expr(exprs)..] => exprs.collect(),
+            [_except(_), _distinct(_), expr(exprs)..] => {
+                StepKind::Except(true, exprs.collect()).wrap(input)
+            },
+            [_except(_), expr(exprs)..] => {
+                StepKind::Except(false, exprs.collect()).wrap(input)
+            },
         ))
     }
 
-    fn order(input: ParseInput) -> ParseResult<Vec<Expr>> {
+    fn group(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
-            [_order(_), expr(exprs)..] => exprs.collect(),
+            [_group(_), expr(e)] => {
+                StepKind::Group(Box::new(e), None).wrap(input)
+            },
+            [_group(_), expr(e), _compute(_), expr(c)] => {
+                StepKind::Group(Box::new(e), Some(Box::new(c))).wrap(input)
+            },
+        ))
+    }
+
+    fn order(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [_order(_), expr(e)] => {
+                StepKind::Order(Box::new(e)).wrap(input)
+            },
         ))
     }
 
     fn into_(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
-            [_into(_), pat(p), _in(_), expr(e)] => {
-                StepKind::Join(p, Box::new(e), None).wrap(input)
+            [_into(_), expr(e)] => {
+                StepKind::Into(Box::new(e)).wrap(input)
             },
         ))
     }
 
-    fn distinct(input: ParseInput) -> ParseResult<Step> {
+    fn intersect(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
-            [_distinct(_)] => {
-                StepKind::Group.wrap(input)
+            [_intersect(_), _distinct(_), expr(exprs)..] => {
+                StepKind::Intersect(true, exprs.collect()).wrap(input)
             },
-        ))
-    }
-
-    fn unorder(input: ParseInput) -> ParseResult<Step> {
-        Ok(match_nodes!(input.children();
-            [_unorder(_), expr(e)] => {
-                StepKind::Order.wrap(input)
+            [_intersect(_), expr(exprs)..] => {
+                StepKind::Intersect(false, exprs.collect()).wrap(input)
             },
         ))
     }
@@ -610,31 +720,7 @@ impl MorelParser {
     fn require(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
             [_require(_), expr(e)] => {
-                StepKind::Where.wrap(input)
-            },
-        ))
-    }
-
-    fn except(input: ParseInput) -> ParseResult<Step> {
-        Ok(match_nodes!(input.children();
-            [_except(_), expr(e), expr(exprs)..] => {
-                StepKind::Group.wrap(input)
-            },
-        ))
-    }
-
-    fn union(input: ParseInput) -> ParseResult<Step> {
-        Ok(match_nodes!(input.children();
-            [_union(_), expr(e), expr(exprs)..] => {
-                StepKind::Group.wrap(input)
-            },
-        ))
-    }
-
-    fn intersect(input: ParseInput) -> ParseResult<Step> {
-        Ok(match_nodes!(input.children();
-            [_intersect(_), expr(e), expr(exprs)..] => {
-                StepKind::Group.wrap(input)
+                StepKind::Require(Box::new(e)).wrap(input)
             },
         ))
     }
@@ -642,7 +728,7 @@ impl MorelParser {
     fn skip(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
             [_skip(_), expr(e)] => {
-                StepKind::Order.wrap(input)
+                StepKind::Skip(Box::new(e)).wrap(input)
             },
         ))
     }
@@ -650,7 +736,42 @@ impl MorelParser {
     fn take(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
             [_take(_), expr(e)] => {
-                StepKind::Order.wrap(input)
+                StepKind::Take(Box::new(e)).wrap(input)
+            },
+        ))
+    }
+
+    fn through(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [_through(_), pat(p), _in(_), expr(e)] => {
+                StepKind::Through(Box::new(p), Box::new(e)).wrap(input)
+            },
+        ))
+    }
+
+    fn union(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [_union(_), _distinct(_), expr(exprs)..] => {
+                StepKind::Union(true, exprs.collect()).wrap(input)
+            },
+            [_union(_), expr(exprs)..] => {
+                StepKind::Union(false, exprs.collect()).wrap(input)
+            },
+        ))
+    }
+
+    fn where_(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [_where(_), expr(e)] => {
+                StepKind::Where(Box::new(e)).wrap(input)
+            },
+        ))
+    }
+
+    fn yield_(input: ParseInput) -> ParseResult<Step> {
+        Ok(match_nodes!(input.children();
+            [_yield(_), expr(e)] => {
+                StepKind::Yield(Box::new(e)).wrap(input)
             },
         ))
     }
@@ -1348,22 +1469,9 @@ impl MorelParser {
     }
 }
 
-fn foo(exprs: &Vec<Expr>) -> Expr {
-    let mut rest = exprs.iter();
-    let first = rest.next();
-    rest.fold(first.unwrap().clone(), |acc, e| {
-        let span = &acc.span.union(&e.span);
-        ExprKind::Apply(Box::new(acc), Box::new(e.clone())).spanned(span)
-    })
-}
-
-fn foo2(exprs: &Vec<Expr>) -> Expr {
-    fold(exprs, |b1, b2| ExprKind::Apply(b1, b2))
-}
-
 /// Combines a list of expressions using a binary function `f`.
 ///
-/// For example, `bar([a, b, c], f)` produces `f(f(a, b), c)`.
+/// For example, `bar(a, [b, c], f)` produces `f(f(a, b), c)`.
 fn fold(
     exprs: &Vec<Expr>,
     f: impl Fn(Box<Expr>, Box<Expr>) -> ExprKind<Expr>,
@@ -1382,21 +1490,19 @@ fn fold2(
     exprs: &Vec<Expr>,
     f: impl Fn(Box<Expr>, Box<Expr>) -> ExprKind<Expr>,
 ) -> Expr {
-    let mut rest = exprs.iter();
-    rest.fold(first.clone(), |acc, e| {
+    exprs.iter().fold(first.clone(), |acc, e| {
         let span = &acc.span.union(&e.span);
         f(Box::new(acc), Box::new(e.clone())).spanned(span)
     })
 }
 
 /// As `fold`, but the arguments are (operator, expression) pairs.
-fn fold3(
+fn fold_heterogeneous(
     first: &Expr,
     args: &Vec<(&str, Expr)>,
     f: impl Fn(&str, Box<Expr>, Box<Expr>) -> ExprKind<Expr>,
 ) -> Expr {
-    let mut rest = args.iter();
-    rest.fold(first.clone(), |acc, op_arg| {
+    args.iter().fold(first.clone(), |acc, op_arg| {
         let (op, e) = op_arg;
         let span = &acc.span.union(&e.span);
         f(op, Box::new(acc), Box::new(e.clone())).spanned(span)

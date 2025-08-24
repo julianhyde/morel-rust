@@ -99,7 +99,7 @@ in
                 where d.name = "Engineering"
                 yield d.deptno)
   yield e.name
-end;
+end; (* *)
 *)
 (* FIXME
 let
@@ -111,7 +111,7 @@ in
                 where d.deptno = e.deptno
                 andalso d.name = "Engineering")
   yield e.name
-end;
+end; (* *)
 *)
 
 (*) === Screen cast =================================================
@@ -291,10 +291,10 @@ end;
 (*) That's all, folks!
 (*) To recap, Morel has:
 (*)  * expressions of int, string, boolean, float, char, list,
-(*)    tuple and record types;
-(*)  * lambda expressions and recursive functions;
-(*)  * algebraic datatypes and pattern-matching;
-(*)  * polymorphism and powerful type-inference;
+(*)    tuple and record types; (* *)
+(*)  * lambda expressions and recursive functions; (* *)
+(*)  * algebraic datatypes and pattern-matching; (* *)
+(*)  * polymorphism and powerful type-inference; (* *)
 (*)  * relational expressions (an extension to Standard ML).
 (*)
 (*) Follow our progress at https://github.com/hydromatic/morel.
@@ -817,7 +817,7 @@ end;
 datatype 'a tree =
     EMPTY
   | LEAF of 'a
-  | NODE of ('a * 'a tree * 'a tree);
+  | NODE of ('a * 'a tree * 'a tree); (* *)
 *)
 datatype intTree =
     EMPTY
@@ -1394,7 +1394,7 @@ datatype personnel_id =
   | CONTRACTOR of {ssid: string, agency: string};
 > datatype personnel_id = EMPLOYEE of int | CONTRACTOR of {agency:string, ssid:string}
 (* Disabled until "[MOREL-285] Type declaration" is fixed.
-type member = {name: string, deptno: int, id: personnel_id};
+type member = {name: string, deptno: int, id: personnel_id}; (* *)
 *)
 val members = [
   {name = "Smith", deptno = 10, id = EMPLOYEE 100},
@@ -1485,7 +1485,7 @@ val emps4 =
 >     {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
 >      job:string, mgr:int, sal:real} bag
 (* Commit. *)
-(*) TODO commit {scott with emps = emps4};
+(*) TODO commit {scott with emps = emps4}; (* *)
 
 (* New and removed employees. *)
 val empsAdded = from e in emps4 except scott.emps;
@@ -1550,7 +1550,7 @@ val summary2 =
 >    {c=~5,deptno=30,sum_sal=~8450.0}] : {c:int, deptno:int, sum_sal:real} list
 
 (* Commit. *)
-(*) TODO commit {scott with summary = summary2};
+(*) TODO commit {scott with summary = summary2}; (* *)
 
 val parents = [
   ("earendil", "elrond"),
@@ -1598,15 +1598,15 @@ from e in clerks (),
 (* Relation defined using a predicate. *)
 (* TODO enable when we have record types.
 fun isClerk e =
-  e.job = "CLERK";
-(*) Query uses a mixture of constrained and regular iteration.
+  e.job = "CLERK"; (* *)
+(* Query uses a mixture of constrained and regular iteration. *)
 from e,
     d in depts
   where isClerk(e)
     andalso d.deptno = e.deptno
     andalso d.loc = "DALLAS"
-  yield e.name;
-["SMITH", "ADAMS"] : string list;
+  yield e.name; (* *)
+> val it = ["SMITH","ADAMS"] : string list
 *)
 
 (*) Recursively-defined predicate relation

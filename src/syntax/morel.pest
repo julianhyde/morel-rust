@@ -74,6 +74,7 @@ keywords = {
   | _with
   | _yield
 }
+
 _and = @{ "and" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 _andalso = @{ "andalso" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 _as = @{ "as" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
@@ -162,7 +163,8 @@ expr_implies = { expr_orelse ~ (_implies ~ expr_orelse)* }
 expr_orelse = { expr_andalso ~ (_orelse ~ expr_andalso)* }
 
 // Precedence 2: andalso
-expr_andalso = { expr_o ~ (_andalso ~ expr_o)* }
+expr_andalso = { expr_o ~ expr_andalso_arg* }
+expr_andalso_arg = { _andalso ~ expr_o }
 
 // Precedence 3: o (':=' is not implemented)
 expr_o = { expr_comp ~ (_o ~ expr_comp)* }
@@ -210,8 +212,8 @@ atom = {
     literal
   | identifier_expr
   | record_selector
-  | current
-  | ordinal
+  | _current
+  | _ordinal
   | tuple_expr
   | list_expr
   | record_expr
@@ -219,13 +221,12 @@ atom = {
   | case_expr
   | let_expr
   | fn_expr
-    // TODO: forall, exists
+  | exists_expr
+  | forall_expr
   | from_expr
 }
 
 identifier_expr = { identifier }
-current = { _current }
-ordinal = { _ordinal }
 tuple_expr = { "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
 list_expr = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
 record_expr = { "{" ~ record_body? ~ "}" }
@@ -248,43 +249,54 @@ let_expr = { _let ~ decl_list ~ _in ~ expr ~ _end }
 decl_list = { (decl ~ ";"?)+ }
 
 // -- Relational expressions ------------------------------
-from_expr = {
-    _from ~ scan_list? ~ step_list?
-}
+from_expr = { _from ~ scan_list? ~ step* ~ terminal_step? }
+exists_expr = { _exists ~ scan_list? ~ step* }
+forall_expr = { _forall ~ scan_list? ~ step* ~ require }
 
-scan_list = { scan ~ ("," ~ scan)* }
-first_scan = { pat ~ _in ~ expr }
-scan = { pat ~ _in ~ expr ~ on? }
+scan_list = { scan1 ~ ("," ~ scan)* }
+scan1 = { scan1_eq | scan1_in | pat }
+scan1_eq = { pat ~ "=" ~ expr }
+scan1_in = { pat ~ _in ~ expr }
+scan = { scan_eq | scan_in | pat }
+scan_eq = { pat ~ "=" ~ expr ~ (_on ~ expr)? }
+scan_in = { pat ~ _in ~ expr ~ (_on ~ expr)? }
+join = { _join ~ scan ~ ("," ~ scan)* }
 
-step_list = { step* }
 step = {
-    join
-  | into_
-  | compute
-  | distinct
+    _distinct
   | except
+  | group
   | intersect
-  | union
-  | unorder
-  | require
+  | join
+  | order
   | skip
   | take
+  | through
+  | union
+  | _unorder
+  | where_
+  | yield_
+}
+
+terminal_step = {
+    compute
+  | into_
 }
 
 group_list = { labeled_expr ~ ("," ~ labeled_expr)* }
-join = { _join ~ pat ~ _in ~ expr ~ on? }
-on = { _on ~ expr }
-into_ = { _into ~ pat ~ _in ~ expr }
-distinct = { _distinct }
+into_ = { _into ~ expr }
+through = { _through ~ pat ~ _in ~ expr }
 compute = { _compute ~ expr }
-unorder = { _unorder ~ expr }
-require = { _require ~ expr }
-except = { _except ~ "all"? ~ expr ~ ("," ~ expr)* }
-union = { _union ~ "all"? ~ expr ~ ("," ~ expr)* }
-intersect = { _intersect ~ "all"? ~ expr ~ ("," ~ expr)* }
+except = { _except ~ _distinct? ~ expr ~ ("," ~ expr)* }
+group = { _group ~ expr ~ (_compute ~ expr)? }
+intersect = { _intersect ~ _distinct? ~ expr ~ ("," ~ expr)* }
 order = { _order ~ expr }
+require = { _require ~ expr }
 skip = { _skip ~ expr }
 take = { _take ~ expr }
+union = { _union ~ _distinct? ~ expr ~ ("," ~ expr)* }
+where_ = { _where ~ expr }
+yield_ = { _yield ~ expr }
 
 // -- Patterns --------------------------------------------
 

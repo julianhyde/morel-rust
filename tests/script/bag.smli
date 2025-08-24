@@ -51,9 +51,9 @@ List.length List.nil;
 Bag.length Bag.nil;
 > val it = 0 : int
 (* TODO
-List.length Bag.nil;
+List.length Bag.nil; (* *)
 > val it = 0 : int
-Bag.length List.nil;
+Bag.length List.nil; (* *)
 > val it = 0 : int
 *)
 

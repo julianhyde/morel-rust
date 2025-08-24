@@ -163,17 +163,19 @@ pub enum ExprKind<SubExpr> {
 
     // Control structures
     If(Box<SubExpr>, Box<SubExpr>, Box<SubExpr>),
-    Case(Box<SubExpr>, Vec<(ast::Pat, SubExpr)>),
+    Case(Box<SubExpr>, Vec<(Pat, SubExpr)>),
     Let(Vec<Decl>, Box<SubExpr>),
     Fn(Vec<(Pat, Expr)>),
 
     // Constructors for data structures
-    Tuple(Vec<Expr>),         // e.g. `(x, y, z)`
-    List(Vec<Expr>),          // e.g. `[x, y, z]`
+    Tuple(Vec<Expr>), // e.g. `(x, y, z)`
+    List(Vec<Expr>),  // e.g. `[x, y, z]`
     Record(Option<Box<Expr>>, Vec<LabeledExpr>), // e.g. `{r with x = 1, y}`
 
     // Relational expressions
     From(Vec<Step>),
+    Exists(Vec<Step>),
+    Forall(Vec<Step>),
 
     // Type annotation
     Annotated(Box<SubExpr>, Box<Type>),
@@ -291,14 +293,25 @@ impl Step {}
 /// Kind of step in a query.
 #[derive(Debug, Clone)]
 pub enum StepKind {
-    /// Scan or join step, e.g.
-    /// `from p in e`, `p in e on c`, or `join p in e on c`.
-    Join(Pat, Box<Expr>, Option<Box<Expr>>),
+    Compute(Box<Expr>),
+    Distinct,
+    Into(Box<Expr>),
+    Join(Box<Pat>),
+    JoinEq(Box<Pat>, Box<Expr>, Option<Box<Expr>>),
+    JoinIn(Box<Pat>, Box<Expr>, Option<Box<Expr>>),
+    Except(bool, Vec<Expr>),
     From,
-    Where,
-    Group,
-    Order,
-    Yield,
+    Group(Box<Expr>, Option<Box<Expr>>),
+    Intersect(bool, Vec<Expr>),
+    Order(Box<Expr>),
+    Require(Box<Expr>),
+    Skip(Box<Expr>),
+    Take(Box<Expr>),
+    Through(Box<Pat>, Box<Expr>),
+    Union(bool, Vec<Expr>),
+    Unorder,
+    Where(Box<Expr>),
+    Yield(Box<Expr>),
 }
 
 impl StepKind {
