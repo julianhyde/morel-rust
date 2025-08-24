@@ -72,7 +72,7 @@ impl Span {
     }
 }
 
-/// Trait possessed by all abstract syntax tree (AST) nodes
+/// Trait possessed by all abstract syntax tree (AST) nodes.
 pub trait MorelNode {
     /// Returns the string representation of the AST node.
     fn unparse(&self, s: &mut String);
@@ -225,7 +225,7 @@ impl ExprKind<Expr> {
 
 /// Abstract syntax tree (AST) of a literal.
 ///
-/// Is used in expressions and patterns, via [`ExprKind::Literal`] and
+/// Used in expressions and patterns, via [`ExprKind::Literal`] and
 /// [`PatKind::Literal`].
 #[derive(Debug, Clone)]
 pub struct Literal {
@@ -268,7 +268,7 @@ impl Label {
     }
 }
 
-/// Labeled expression in a record
+/// Labeled expression in a record.
 #[derive(Debug, Clone)]
 pub struct LabeledExpr {
     pub label: Option<Label>,
@@ -403,7 +403,7 @@ impl DeclKind {
     }
 }
 
-/// Value binding
+/// Value binding.
 #[derive(Debug, Clone)]
 pub struct ValBind {
     pub pat: Pat,
@@ -447,7 +447,7 @@ pub struct FunMatch {
     pub expr: Box<Expr>,
 }
 
-/// Type binding
+/// Type binding.
 #[derive(Debug, Clone)]
 pub struct TypeBind {
     pub span: Span,
@@ -456,7 +456,7 @@ pub struct TypeBind {
     pub type_: Type,
 }
 
-/// Datatype binding
+/// Datatype binding.
 #[derive(Debug, Clone)]
 pub struct DatatypeBind {
     pub span: Span,
@@ -465,7 +465,7 @@ pub struct DatatypeBind {
     pub constructors: Vec<ConBind>,
 }
 
-/// Constructor binding
+/// Constructor binding.
 #[derive(Debug, Clone)]
 pub struct ConBind {
     pub span: Span,
@@ -502,7 +502,7 @@ impl TypeKind {
     }
 }
 
-/// Type field in record types
+/// Type field in record types.
 #[derive(Debug, Clone)]
 pub struct TypeField {
     pub label: Label,

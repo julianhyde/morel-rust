@@ -16,7 +16,6 @@
 // License.
 
 use phf::{Map, Set, phf_map, phf_set};
-use similar::DiffableStr;
 use std::fs;
 
 #[test]
@@ -65,16 +64,47 @@ static HEADER_LINES: &[&str] = &[
     "License.",
 ];
 
-fn header_for_suffix(line_prefix: &str) -> String {
-    let prefix = if line_prefix == " * " { "(*\n" } else { "" };
-    let lines = HEADER_LINES.iter().map(|line| {
-        if line.is_empty() {
-            line_prefix.trim_end().to_string()
-        } else {
-            format!("{}{}", line_prefix, line)
+/// Comment format information for different file types.
+struct CommentFormat {
+    line_prefix: &'static str,
+    block_start: &'static str,
+    block_end: &'static str,
+    max_line_length: usize,
+}
+
+impl CommentFormat {
+    const fn new(
+        block_start: &'static str,
+        line_prefix: &'static str,
+        block_end: &'static str,
+        max_line_length: usize,
+    ) -> Self {
+        Self {
+            line_prefix,
+            block_start,
+            block_end,
+            max_line_length,
         }
-    });
-    format!("{}{}", prefix, lines.collect::<Vec<_>>().join("\n"))
+    }
+
+    /// Generates a header string for this format.
+    fn header(&self) -> String {
+        let lines = HEADER_LINES.iter().map(|line| {
+            if line.is_empty() {
+                self.line_prefix.trim_end().to_string()
+            } else {
+                format!("{}{}", self.line_prefix, line)
+            }
+        });
+        // For .smli files (ML comments), don't include the closing '*)'
+        // since files may have additional content
+        let content = lines.collect::<Vec<_>>().join("\n");
+        if self.line_prefix == " * " {
+            format!("{}{}", self.block_start, content)
+        } else {
+            format!("{}{}{}", self.block_start, content, self.block_end)
+        }
+    }
 }
 
 /// Checks that a file starts with a header comment.
@@ -127,36 +157,38 @@ impl FileType {
     /// or `None` if no header is needed.
     fn for_file(file_name: &str) -> Self {
         let suffix = file_name.split('.').last();
-        let mut header: Option<String> = None;
-        let mut text = false;
         if suffix.is_some() {
             let option = SUFFIX_MAP.get(suffix.unwrap());
             if option.is_some() {
-                header = Some(header_for_suffix(option.unwrap()));
-                text = true;
+                let format = option.unwrap();
+                return FileType {
+                    header: Some(format.header()),
+                    text: true,
+                    max_line_length: format.max_line_length,
+                };
             }
         }
-        text = text || TYPE_MAP.contains(suffix.unwrap());
-        let max_line_length = if suffix == Some("rs") || suffix == Some("md") {
-            80
-        } else {
-            usize::MAX
-        };
         FileType {
-            header,
-            text,
-            max_line_length,
+            header: None,
+            text: TYPE_MAP.contains(suffix.unwrap()),
+            max_line_length: usize::MAX,
         }
     }
 }
 
-static SUFFIX_MAP: Map<&'static str, &'static str> = phf_map! {
-    "gitignore" => "# ",
-    "rs" => "// ",
-    "pest" => "// ",
-    "smli" => " * ",
-    "toml" => "# ",
-    "yml" => "# ",
+static SUFFIX_MAP: Map<&'static str, CommentFormat> = phf_map! {
+    "gitignore" => CommentFormat::new("", "# ", "", usize::MAX),
+    "md" => CommentFormat::new(
+        "<!--\n{% comment %}\n",
+        "",
+        "\n{% endcomment %}\n-->",
+        80,
+    ),
+    "pest" => CommentFormat::new("", "// ", "", usize::MAX),
+    "rs" => CommentFormat::new("", "// ", "", 80),
+    "smli" => CommentFormat::new("(*\n", " * ", "\n *)", usize::MAX),
+    "toml" => CommentFormat::new("", "# ", "", usize::MAX),
+    "yml" => CommentFormat::new("", "# ", "", usize::MAX),
 };
 
 /// File suffixes of files that are considered text files.

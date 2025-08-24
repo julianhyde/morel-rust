@@ -28,13 +28,13 @@ use std::fs::read_to_string;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
-/// Main shell for Morel - Standard ML REPL
+/// Main shell for Morel - Standard ML REPL.
 pub struct Shell {
     config: Config,
     environment: Environment,
 }
 
-/// Simple environment for storing bindings
+/// Simple environment for storing bindings.
 #[derive(Debug, Clone)]
 pub struct Environment {
     bindings: HashMap<String, String>,
