@@ -281,13 +281,11 @@ impl Substitution {
     }
 
     fn resolve_term(&self, term: &Term) -> Term {
-        println!("Resolving {}", term);
         let mut previous;
         let mut current = term.clone();
         loop {
             previous = current.clone();
             current = current.apply(&self.substitutions);
-            println!("Resolving {}", current);
             if current == previous {
                 break;
             }
@@ -299,7 +297,6 @@ impl Substitution {
         let mut result = term.clone();
         for (var, replacement) in &self.substitutions {
             result = result.apply1(var, replacement);
-            println!("Resolving {}", result);
         }
         result
     }
