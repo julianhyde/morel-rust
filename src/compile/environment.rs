@@ -15,8 +15,7 @@
 // language governing permissions and limitations under the
 // License.
 
-use std::collections::{HashMap, HashSet};
-use std::fmt;
+use std::collections::HashMap;
 
 /// Environment for validation/compilation.
 ///
@@ -25,14 +24,6 @@ use std::fmt;
 /// environment may obscure bindings in the old environment, but neither the new
 /// nor the old will ever change.
 pub trait Environment {
-    /// Visits every variable binding in this environment.
-    ///
-    /// Bindings that are obscured by more recent bindings of the same name are
-    /// visited, but after the more obscuring bindings.
-    fn visit<F>(&self, consumer: F)
-    where
-        F: FnMut(&Binding);
-
     /// Returns the top binding of `name`.
     ///
     /// If the top binding is overloaded, there may be other bindings. But at
@@ -48,15 +39,11 @@ pub trait Environment {
     /// Alternative version of `get_opt_by_id`.
     fn get_opt2(&self, id: &NamedPat) -> Option<&Binding>;
 
-    /// Calls a consumer for all bindings of `id`.
-    fn collect<F>(&self, id: &NamedPat, consumer: F)
-    where
-        F: FnMut(&Binding);
-
     /// Creates an environment that is the same as this, plus one more variable.
     fn bind(&self, id: IdPat, value: Value) -> Box<dyn Environment>;
 
-    /// Creates an environment that is the same as this, plus the given bindings.
+    /// Creates an environment that is the same as this, plus the given
+    /// bindings.
     fn bind_all(&self, bindings: &[Binding]) -> Box<dyn Environment>;
 
     /// Returns whether a given name is overloaded in this environment.
@@ -88,7 +75,12 @@ impl Binding {
         }
     }
 
-    pub fn with_overload(id: NamedPat, kind: BindingKind, value: Value, overload_id: NamedPat) -> Self {
+    pub fn with_overload(
+        id: NamedPat,
+        kind: BindingKind,
+        value: Value,
+        overload_id: NamedPat,
+    ) -> Self {
         Self {
             id,
             kind,
@@ -162,13 +154,6 @@ pub struct TypedValue {
 pub struct EmptyEnvironment;
 
 impl Environment for EmptyEnvironment {
-    fn visit<F>(&self, _consumer: F)
-    where
-        F: FnMut(&Binding),
-    {
-        // Empty environment has no bindings to visit
-    }
-
     fn get_top(&self, _name: &str) -> Option<&Binding> {
         None
     }
@@ -183,13 +168,6 @@ impl Environment for EmptyEnvironment {
 
     fn get_opt2(&self, _id: &NamedPat) -> Option<&Binding> {
         None
-    }
-
-    fn collect<F>(&self, _id: &NamedPat, _consumer: F)
-    where
-        F: FnMut(&Binding),
-    {
-        // Empty environment has no bindings to collect
     }
 
     fn bind(&self, id: IdPat, value: Value) -> Box<dyn Environment> {
@@ -219,7 +197,8 @@ impl Environment for EmptyEnvironment {
     }
 }
 
-/// Sub-environment that extends a parent environment with one additional binding.
+/// Sub-environment that extends a parent environment with one additional
+/// binding.
 pub struct SubEnvironment {
     parent: Box<dyn Environment>,
     binding: Binding,
@@ -232,14 +211,6 @@ impl SubEnvironment {
 }
 
 impl Environment for SubEnvironment {
-    fn visit<F>(&self, mut consumer: F)
-    where
-        F: FnMut(&Binding),
-    {
-        consumer(&self.binding);
-        self.parent.visit(consumer);
-    }
-
     fn get_top(&self, name: &str) -> Option<&Binding> {
         if self.binding.id.name == name {
             Some(&self.binding)
@@ -248,8 +219,9 @@ impl Environment for SubEnvironment {
         }
     }
 
-    fn get_opt(&self, name: &str) -> Option<&Binding> {
-        let mut found_bindings = Vec::new();
+    fn get_opt(&self, _name: &str) -> Option<&Binding> {
+        let found_bindings = Vec::new();
+        /* TODO
         self.visit(|binding| {
             if binding.id.name == name {
                 found_bindings.push(binding);
@@ -260,6 +232,7 @@ impl Environment for SubEnvironment {
                 }
             }
         });
+         */
         found_bindings.first().copied()
     }
 
@@ -273,16 +246,6 @@ impl Environment for SubEnvironment {
 
     fn get_opt2(&self, id: &NamedPat) -> Option<&Binding> {
         self.get_opt_by_id(id)
-    }
-
-    fn collect<F>(&self, id: &NamedPat, mut consumer: F)
-    where
-        F: FnMut(&Binding),
-    {
-        if &self.binding.id == id {
-            consumer(&self.binding);
-        }
-        self.parent.collect(id, consumer);
     }
 
     fn bind(&self, id: IdPat, value: Value) -> Box<dyn Environment> {
@@ -302,8 +265,9 @@ impl Environment for SubEnvironment {
         env
     }
 
-    fn has_overloaded(&self, name: &str) -> bool {
-        let mut bindings = Vec::new();
+    fn has_overloaded(&self, _name: &str) -> bool {
+        let bindings: Vec<Binding> = Vec::new();
+        /*
         self.visit(|binding| {
             if let Some(ref overload_id) = binding.overload_id {
                 if overload_id.name == name {
@@ -311,30 +275,38 @@ impl Environment for SubEnvironment {
                 }
             }
         });
-        !bindings.is_empty() && bindings.first().map_or(false, |b| b.is_inst())
+         */
+        !bindings.is_empty() && bindings.first().is_some_and(|b| b.is_inst())
     }
 
-    fn get_overloads(&self, id: &IdPat) -> Vec<IdPat> {
-        let mut overloads = Vec::new();
+    fn get_overloads(&self, _id: &IdPat) -> Vec<IdPat> {
+        /* TODO
         self.visit(|binding| {
             if let Some(ref overload_id) = binding.overload_id {
-                if overload_id.name == id.name && overload_id.ordinal == id.ordinal {
-                    overloads.push(IdPat::new(binding.id.name.clone(), 0)); // Assuming ordinal 0 for IdPat
+                if overload_id.name == id.name
+                    && overload_id.ordinal == id.ordinal
+                {
+                    // Assuming ordinal 0 for IdPat
+                    overloads.push(IdPat::new(binding.id.name.clone(), 0));
                 }
             }
         });
-        overloads
+         */
+        Vec::new()
     }
 
-    fn get_value_map(&self, skip_overloads: bool) -> HashMap<String, Binding> {
-        let mut value_map = HashMap::new();
+    fn get_value_map(&self, _skip_overloads: bool) -> HashMap<String, Binding> {
+        /* TODO
         self.visit(|binding| {
             if skip_overloads && binding.kind == BindingKind::Inst {
                 return;
             }
-            value_map.entry(binding.id.name.clone()).or_insert_with(|| binding.clone());
+            value_map
+                .entry(binding.id.name.clone())
+                .or_insert_with(|| binding.clone());
         });
-        value_map
+         */
+        HashMap::new()
     }
 }
 
