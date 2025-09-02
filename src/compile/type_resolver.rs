@@ -315,7 +315,6 @@ impl TypeResolver {
         for (v, term) in substitution.substitutions {
             type_map.var_term_map.insert(v, term);
         }
-        println!("New type map: {}", &type_map);
 
         Resolved {
             decl: decl2,
@@ -741,9 +740,7 @@ impl TypeResolver {
 
     /// Creates a type variable.
     fn variable(&mut self) -> Rc<Var> {
-        let v = self.unifier.variable();
-        println!("New variable: {}", v.id);
-        v
+        self.unifier.variable()
     }
 
     /// Creates an association between a term and a variable,
