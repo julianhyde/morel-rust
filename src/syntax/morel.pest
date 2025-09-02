@@ -206,7 +206,7 @@ expr_application = { expr_unary+ }
 
 // Precedence 8.5: unary ~
 expr_unary = { expr_unary_op* ~ expr_postfix }
-expr_unary_op = { "~" }
+expr_unary_op = { !literal ~ "~" }
 
 // Precedence 9: postfix .field
 expr_postfix = { atom ~ ("." ~ label)* }

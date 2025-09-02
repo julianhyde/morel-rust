@@ -227,12 +227,12 @@ impl MorelParser {
         ))
     }
 
-    fn expr_comp_arg(input: ParseInput) -> ParseResult<(&str, Expr)> {
+    fn expr_comp_arg(input: ParseInput<'_>) -> ParseResult<(&str, Expr)> {
         Ok(match_nodes!(input.children();
             [expr_comp_op(op), expr_cons(e)] => (op, e)))
     }
 
-    fn expr_comp_op(input: ParseInput) -> ParseResult<&str> {
+    fn expr_comp_op(input: ParseInput<'_>) -> ParseResult<&str> {
         Ok(input.as_str())
     }
 
@@ -269,12 +269,12 @@ impl MorelParser {
         ))
     }
 
-    fn expr_cons_arg(input: ParseInput) -> ParseResult<(&str, Expr)> {
+    fn expr_cons_arg(input: ParseInput<'_>) -> ParseResult<(&str, Expr)> {
         Ok(match_nodes!(input.children();
             [expr_cons_op(op), expr_cons(e)] => (op, e)))
     }
 
-    fn expr_cons_op(input: ParseInput) -> ParseResult<&str> {
+    fn expr_cons_op(input: ParseInput<'_>) -> ParseResult<&str> {
         Ok(input.as_str())
     }
 
@@ -295,12 +295,12 @@ impl MorelParser {
         ))
     }
 
-    fn expr_additive_arg(input: ParseInput) -> ParseResult<(&str, Expr)> {
+    fn expr_additive_arg(input: ParseInput<'_>) -> ParseResult<(&str, Expr)> {
         Ok(match_nodes!(input.children();
             [expr_additive_op(op), expr_multiplicative(e)] => (op, e)))
     }
 
-    fn expr_additive_op(input: ParseInput) -> ParseResult<&str> {
+    fn expr_additive_op(input: ParseInput<'_>) -> ParseResult<&str> {
         Ok(input.as_str())
     }
 
@@ -322,12 +322,14 @@ impl MorelParser {
         ))
     }
 
-    fn expr_multiplicative_arg(input: ParseInput) -> ParseResult<(&str, Expr)> {
+    fn expr_multiplicative_arg(
+        input: ParseInput<'_>,
+    ) -> ParseResult<(&str, Expr)> {
         Ok(match_nodes!(input.children();
             [expr_multiplicative_op(op), expr_over(e)] => (op, e)))
     }
 
-    fn expr_multiplicative_op(input: ParseInput) -> ParseResult<&str> {
+    fn expr_multiplicative_op(input: ParseInput<'_>) -> ParseResult<&str> {
         Ok(input.as_str())
     }
 
@@ -1158,7 +1160,7 @@ impl MorelParser {
         ))
     }
 
-    fn ty_var(input: ParseInput) -> ParseResult<&str> {
+    fn ty_var(input: ParseInput<'_>) -> ParseResult<&str> {
         Ok(input.as_str())
     }
 
@@ -1232,7 +1234,7 @@ impl MorelParser {
         ))
     }
 
-    fn non_negative_integer(input: ParseInput) -> ParseResult<&str> {
+    fn non_negative_integer(input: ParseInput<'_>) -> ParseResult<&str> {
         Ok(input.as_str())
     }
 
@@ -1286,7 +1288,7 @@ impl MorelParser {
         ))
     }
 
-    fn unquoted_identifier(input: ParseInput) -> ParseResult<&str> {
+    fn unquoted_identifier(input: ParseInput<'_>) -> ParseResult<&str> {
         Ok(input.as_str())
     }
 
@@ -1295,7 +1297,7 @@ impl MorelParser {
         Ok(s[1..s.len() - 1].replace("``", "`"))
     }
 
-    fn record_selector(input: ParseInput) -> ParseResult<&str> {
+    fn record_selector(input: ParseInput<'_>) -> ParseResult<&str> {
         Ok(input.as_str())
     }
 
@@ -1550,7 +1552,6 @@ fn fold_heterogeneous(
 mod test {
     use crate::syntax::ast::MorelNode;
     use crate::syntax::parser::{Rule, parse_unadorned_statement};
-    use pest::iterators::Pair;
 
     /// Test fixture for parser tests.
     struct Fixture {
@@ -1607,6 +1608,15 @@ mod test {
                 actuals
             );
         }
+
+        pub(crate) fn assert_parse_tree(&self, rule: Rule, expected: &str) {
+            use super::MorelParser;
+            use pest::Parser;
+
+            let result = MorelParser::parse(rule, self.s.as_str());
+            let actual = pest_ascii_tree::into_ascii_tree(result.unwrap());
+            assert_eq!(expected.to_string(), actual.unwrap());
+        }
     }
 
     /// Creates a test fixture with the given code.
@@ -1625,58 +1635,56 @@ mod test {
         }
     }
 
-    /// Creates a matcher that asserts a line has the given syntactic type and
-    /// matches the given string.
-    fn has_rule_str(
-        rule_matcher: impl Fn(Rule),
-        matcher: impl Fn(&str),
-    ) -> impl Fn(&Pair<Rule>) {
-        move |line: &Pair<Rule>| {
-            rule_matcher(line.as_rule());
-            matcher(line.as_str());
-        }
-    }
-
-    fn has_str(matcher: impl Fn(&str)) -> impl Fn(&Pair<Rule>) {
-        move |line: &Pair<Rule>| {
-            matcher(line.as_str());
-        }
-    }
-
-    /// Creates a matcher that asserts a line has the given syntactic type and
-    /// matches the given string.
-    fn is_a(rule: Rule, matcher: impl Fn(&str)) -> impl Fn(&Pair<Rule>) {
-        move |line: &Pair<Rule>| {
-            assert_eq!(
-                rule,
-                line.as_rule(),
-                "Expected rule {:?}, got {:?} for line [{}]",
-                rule,
-                line.as_rule(),
-                line.as_str()
-            );
-            matcher(line.as_str());
-        }
-    }
-
-    /// Creates a matcher that asserts a line has the given rule.
-    fn is_rule(rule: Rule) -> impl Fn(&Pair<Rule>) {
-        move |line: &Pair<Rule>| {
-            assert_eq!(
-                rule,
-                line.as_rule(),
-                "Expected rule {:?}, got {:?} for line [{}]",
-                rule,
-                line.as_rule(),
-                line.as_str()
-            );
-        }
-    }
-
     #[test]
     fn test_parse() {
         ml("1").assert_parse(Rule::literal);
+        ml("1").assert_parse_tree(
+            Rule::numeric_literal,
+            r#" numeric_literal
+ └─ non_negative_integer_literal "1"
+"#,
+        );
+        // We want "~1" to be parsed as an int literal, not unary "~" applied
+        // to a literal.
+        ml("~1").assert_parse_tree(
+            Rule::expr_over,
+            r#" expr_over
+ └─ expr_application
+    └─ expr_unary
+       └─ expr_postfix
+          └─ atom
+             └─ literal
+                └─ numeric_literal
+                   └─ negative_integer_literal "~1"
+"#,
+        );
         ml("~3.5").assert_parse(Rule::literal);
+        ml("~3.5").assert_parse_tree(
+            Rule::numeric_literal,
+            r#" numeric_literal
+ └─ real_literal "~3.5"
+"#,
+        );
+        // We want "~3.5" to be parsed as a real literal, not unary "~" applied
+        // to a literal.
+        ml("~3.5").assert_parse_tree(
+            Rule::expr_over,
+            r#" expr_over
+ └─ expr_application
+    └─ expr_unary
+       └─ expr_postfix
+          └─ atom
+             └─ literal
+                └─ numeric_literal
+                   └─ real_literal "~3.5"
+"#,
+        );
+        ml("~6.02e~23").assert_parse_tree(
+            Rule::numeric_literal,
+            r#" numeric_literal
+ └─ scientific_literal "~6.02e~23"
+"#,
+        );
         ml("\"a string\"").assert_parse(Rule::literal);
         ml("\"\"").assert_parse(Rule::literal);
         ml("\"a\\\\b\\\"c\"").assert_parse(Rule::literal);
