@@ -16,4 +16,6 @@
 // License.
 
 pub mod environment;
+pub mod type_resolver;
+mod types;
 pub mod unifier;

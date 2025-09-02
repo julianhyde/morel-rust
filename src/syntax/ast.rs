@@ -82,6 +82,10 @@ pub trait MorelNode {
 
     /// Returns a copy of the AST node with a new span.
     fn with_span(&self, span: &Span) -> Self;
+
+    /// Returns the unique id of this node.
+    /// This id is used to retrieve the node's type after unification.
+    fn id(&self) -> Option<i32>;
 }
 
 /// Abstract syntax tree (AST) of a statement (expression or declaration).
@@ -89,6 +93,7 @@ pub trait MorelNode {
 pub struct Statement {
     pub kind: StatementKind,
     pub span: Span,
+    pub id: Option<i32>,
 }
 
 impl MorelNode for Statement {
@@ -105,9 +110,13 @@ impl MorelNode for Statement {
 
     fn with_span(&self, span: &Span) -> Self {
         Statement {
-            kind: self.kind.clone(),
             span: span.clone(),
+            ..self.clone()
         }
+    }
+
+    fn id(&self) -> Option<i32> {
+        self.id
     }
 }
 
@@ -123,6 +132,20 @@ pub enum StatementKind {
 pub struct Expr {
     pub kind: ExprKind<Expr>,
     pub span: Span,
+    pub id: Option<i32>,
+}
+
+impl Expr {
+    fn from_statement(statement: &Statement) -> Self {
+        match &statement.kind {
+            StatementKind::Expr(e) => Expr {
+                kind: e.clone(),
+                span: statement.span.clone(),
+                id: statement.id,
+            },
+            _ => panic!("expected expression"),
+        }
+    }
 }
 
 /// Kind of expression.
@@ -186,6 +209,7 @@ impl ExprKind<Expr> {
         Expr {
             kind: self.clone(),
             span: span.clone(),
+            id: None,
         }
     }
 
@@ -231,6 +255,7 @@ impl ExprKind<Expr> {
 pub struct Literal {
     pub kind: LiteralKind,
     pub span: Span,
+    pub id: Option<i32>,
 }
 
 /// Kind of literal.
@@ -248,7 +273,8 @@ impl LiteralKind {
     pub fn spanned(&self, span_: &Span) -> Literal {
         let kind = self.clone();
         let span = span_.clone();
-        Literal { kind, span }
+        let id = None;
+        Literal { kind, span, id }
     }
 }
 
@@ -328,6 +354,17 @@ impl StepKind {
 pub struct Pat {
     pub kind: PatKind,
     pub span: Span,
+    pub id: Option<i32>,
+}
+
+impl Pat {
+    /// Calls a given function for each atomic identifier in this pattern.
+    pub(crate) fn for_each_id_pat(&self, mut p0: impl FnMut(i32, &str)) {
+        match &self.kind {
+            PatKind::Identifier(name) => p0(self.id.unwrap(), name.as_str()),
+            _ => todo!(),
+        }
+    }
 }
 
 /// Kind of pattern.
@@ -350,11 +387,11 @@ pub enum PatKind {
 }
 
 impl PatKind {
-    pub fn spanned(&self, span: &Span) -> Pat {
-        Pat {
-            kind: self.clone(),
-            span: span.clone(),
-        }
+    pub fn spanned(&self, span_: &Span) -> Pat {
+        let kind = self.clone();
+        let span = span_.clone();
+        let id = None;
+        Pat { kind, span, id }
     }
 
     pub fn wrap2(self, e1: &Expr, e2: &Expr) -> Pat {
@@ -381,9 +418,32 @@ pub enum PatField {
 pub struct Decl {
     pub kind: DeclKind,
     pub span: Span,
+    pub id: Option<i32>,
 }
 
-impl Decl {}
+impl Decl {
+    pub(crate) fn for_each_id_pat(&self, mut p0: impl FnMut(i32, &str)) {
+        match &self.kind {
+            DeclKind::Val(_inst, _rec, val_binds) => {
+                for val_bind in val_binds {
+                    val_bind.pat.for_each_id_pat(&mut p0)
+                }
+            }
+            _ => todo!(),
+        }
+    }
+
+    pub fn from_statement(statement: &Statement) -> Self {
+        match &statement.kind {
+            StatementKind::Decl(d) => Decl {
+                span: statement.span.clone(),
+                kind: d.clone(),
+                id: statement.id,
+            },
+            _ => panic!("expected declaration"),
+        }
+    }
+}
 
 /// Kind of declaration.
 #[derive(Debug, Clone)]
@@ -400,6 +460,7 @@ impl DeclKind {
         Decl {
             kind: self.clone(),
             span: span.clone(),
+            id: None,
         }
     }
 }
@@ -479,6 +540,7 @@ pub struct ConBind {
 pub struct Type {
     pub kind: TypeKind,
     pub span: Span,
+    pub id: Option<i32>,
 }
 
 #[derive(Debug, Clone)]
@@ -499,6 +561,7 @@ impl TypeKind {
         Type {
             kind: self.clone(),
             span: span.clone(),
+            id: None,
         }
     }
 }
@@ -525,9 +588,13 @@ impl MorelNode for Expr {
 
     fn with_span(&self, span: &Span) -> Self {
         Expr {
-            kind: self.kind.clone(),
             span: span.clone(),
+            ..self.clone()
         }
+    }
+
+    fn id(&self) -> Option<i32> {
+        self.id
     }
 }
 
@@ -551,16 +618,20 @@ impl MorelNode for Literal {
 
     fn with_span(&self, span: &Span) -> Self {
         Literal {
-            kind: self.kind.clone(),
             span: span.clone(),
+            ..self.clone()
         }
+    }
+
+    fn id(&self) -> Option<i32> {
+        self.id
     }
 }
 
 impl MorelNode for Decl {
     fn unparse(&self, s: &mut String) {
         match &self.kind {
-            DeclKind::Val(rec, inst, binds) => {
+            DeclKind::Val(rec, _inst, binds) => {
                 s.push_str("val ");
                 if let Some(first_bind) = binds.first() {
                     if *rec {
@@ -590,9 +661,13 @@ impl MorelNode for Decl {
 
     fn with_span(&self, span: &Span) -> Self {
         Decl {
-            kind: self.kind.clone(),
             span: span.clone(),
+            ..self.clone()
         }
+    }
+
+    fn id(&self) -> Option<i32> {
+        self.id
     }
 }
 
@@ -611,9 +686,13 @@ impl MorelNode for Pat {
 
     fn with_span(&self, span: &Span) -> Self {
         Pat {
-            kind: self.kind.clone(),
             span: span.clone(),
+            ..self.clone()
         }
+    }
+
+    fn id(&self) -> Option<i32> {
+        self.id
     }
 }
 
@@ -623,14 +702,14 @@ impl Type {
             return self.clone();
         }
         Type {
-            kind: self.kind.clone(),
             span: span.clone(),
+            ..self.clone()
         }
     }
 }
 
 impl MorelNode for Type {
-    fn unparse(&self, s: &mut String) {
+    fn unparse(&self, _s: &mut String) {
         todo!()
     }
 
@@ -640,5 +719,9 @@ impl MorelNode for Type {
 
     fn with_span(&self, span: &Span) -> Self {
         self.with_span(span)
+    }
+
+    fn id(&self) -> Option<i32> {
+        self.id
     }
 }

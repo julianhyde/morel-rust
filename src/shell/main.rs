@@ -15,10 +15,11 @@
 // language governing permissions and limitations under the
 // License.
 
+use crate::compile::type_resolver::{EmptyTypeEnv, TypeResolver};
 use crate::shell::ShellResult;
 use crate::shell::config::Config;
 use crate::shell::error::Error;
-use crate::shell::utils::prefix_lines;
+use crate::shell::utils::{prefix_lines, strip_prefix};
 use crate::syntax::ast;
 use crate::syntax::ast::{MorelNode, StatementKind};
 use crate::syntax::parser::parse_statement;
@@ -220,19 +221,53 @@ impl Shell {
                 "Failed to parse: {}, err {}",
                 code, string,
             )))
-        } else if expected_output.is_some() {
+        } else if expected_output.is_some()
+            && !expected_output.unwrap().starts_with(">type")
+        {
             // We are running in idempotent mode,
             // and we cannot yet evaluate expressions.
             // So, just say the expression returned what we expected.
             Ok(expected_output.unwrap().to_string())
+        } else if expected_output.is_some() {
+            // We are running in idempotent mode,
+            // and we cannot yet evaluate expressions,
+            // but we can deduce their type.
+            let _expected_type =
+                strip_prefix(">type ", expected_output.unwrap()).trim();
+            let output = self.deduce_type(statement.unwrap());
+            match &output {
+                Ok(s) => Ok(prefix_lines(">type", s.as_str())),
+                Err(_) => output,
+            }
         } else {
             // Successfully parsed, now evaluate
             let output = self.evaluate_node(statement.unwrap());
             match &output {
-                Ok(s) => Ok(prefix_lines(s.as_str())),
+                Ok(s) => Ok(prefix_lines(">", s.as_str())),
                 Err(_) => output,
             }
         }
+    }
+
+    /// Deduces a statement's type. The statement is represented by an AST node.
+    fn deduce_type(&mut self, node: ast::Statement) -> ShellResult<String> {
+        let mut type_resolver = TypeResolver::new();
+        let type_env = EmptyTypeEnv {};
+        let resolved = type_resolver.deduce_type(&type_env, &node);
+
+        // For now, just unparse the node back to a string. In a full
+        // implementation, this would actually evaluate the expression.
+        let mut type_string = String::new();
+        {
+            let type_map = &resolved.type_map;
+            let closure = |id: i32, name: &str| {
+                let s = type_map.get_type(id).unwrap().to_string();
+                type_string.push_str(&format!("{} : {}\n", name, s));
+            };
+            resolved.decl.for_each_id_pat(closure);
+        }
+        let result = format!("{}", type_string);
+        Ok(result)
     }
 
     /// Evaluates a parsed AST node.

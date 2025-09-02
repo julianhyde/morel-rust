@@ -77,6 +77,7 @@ impl ExprKind<Expr> {
         Statement {
             kind: StatementKind::Expr(self.clone()),
             span: input_to_span(input),
+            id: None,
         }
     }
 
@@ -90,6 +91,7 @@ impl DeclKind {
         Statement {
             kind: StatementKind::Decl(self.clone()),
             span: input_to_span(input),
+            id: None,
         }
     }
 
@@ -397,7 +399,7 @@ impl MorelParser {
     fn list_expr(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr(exprs)..] => {
-                ExprKind::Tuple(exprs.collect()).wrap(input)
+                ExprKind::List(exprs.collect()).wrap(input)
             },
         ))
     }

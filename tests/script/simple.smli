@@ -19,6 +19,46 @@
 Sys.set ("lineWidth", 78);
 > val it = () : unit
 
+(*) Type tests
+#"h";
+>type it : char
+"hello";
+>type it : string
+1;
+>type it : int
+(* TODO
+~1.0;
+>type it : real
+*)
+6.02e~23;
+>type it : real
+();
+>type it : unit
+true;
+>type it : bool
+false;
+>type it : bool
+(1);
+>type it : int
+(1, true);
+>type it : int * bool
+(false, 1, (true, false));
+>type it : bool * int * (bool * bool)
+(false, 1, (true, "a"), 2);
+>type it : bool * int * (bool * string) * int
+[1,2];
+>type it : int list
+[(1,2)];
+>type it : (int * int) list
+(1, [2]);
+>type it : int * int list
+(1, [2], 3);
+>type it : int * int list * int
+(* TODO
+{a=1, b="two"};
+>type it : {a:int, b:string}
+*)
+
 (*) Literals
 1;
 > val it = 1 : int
