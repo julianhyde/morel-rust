@@ -16,6 +16,13 @@
  * language governing permissions and limitations under the
  * License.
  *)
+fn (x: int, y: string) => (true, [1]);
+>type it : int * string -> bool * int list
+(* TODO
+fn x => fn f => f x;
+>type it : fn : 'a -> ('a -> 'b) -> 'b
+*)
+
 Sys.set ("lineWidth", 78);
 > val it = () : unit
 
@@ -26,11 +33,19 @@ Sys.set ("lineWidth", 78);
 >type it : string
 1;
 >type it : int
-(* TODO
 ~1.0;
 >type it : real
-*)
 6.02e~23;
+>type it : real
+~6.02e~23;
+>type it : real
+~6e~23;
+>type it : real
+6e~23;
+>type it : real
+6E~23;
+>type it : real
+6E23;
 >type it : real
 ();
 >type it : unit
@@ -48,16 +63,32 @@ false;
 >type it : bool * int * (bool * string) * int
 [1,2];
 >type it : int list
+[[1,2]];
+>type it : int list list
 [(1,2)];
 >type it : (int * int) list
 (1, [2]);
 >type it : int * int list
 (1, [2], 3);
 >type it : int * int list * int
-(* TODO
 {a=1, b="two"};
 >type it : {a:int, b:string}
-*)
+fn () => 3;
+>type it : unit -> int
+fn () => fn () => 4;
+>type it : unit -> unit -> int
+(fn () => 5, fn () => 6);
+>type it : (unit -> int) * (unit -> int)
+fn () => (5, fn () => 6);
+>type it : unit -> int * (unit -> int)
+fn x: int => true;
+>type it : int -> bool
+fn (x: int, y: string) => (true, [1]);
+>type it : int * string -> bool * int list
+{f = fn () => 0, g = 1};
+>type it : {f:unit -> int, g:int}
+fn {f: unit -> int, g: int} => true;
+>type it : {f:unit -> int, g:int} -> bool
 
 (*) Literals
 1;

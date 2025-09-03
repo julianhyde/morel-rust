@@ -25,12 +25,13 @@ use crate::compile::types;
 use crate::compile::types::{PrimitiveType, Subst, Type, TypeVariable};
 use crate::compile::unifier::{NullTracer, Op, Term, Unifier, Var};
 use crate::syntax::ast::{
-    Decl, DeclKind, Expr, ExprKind, LiteralKind, Pat, PatKind, Span, Statement,
-    StatementKind, Type as AstType, TypeField, TypeKind, ValBind,
+    Decl, DeclKind, Expr, ExprKind, LiteralKind, Pat, PatField, PatKind, Span,
+    Statement, StatementKind, Type as AstType, TypeField, TypeKind, ValBind,
 };
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug, Display, Formatter};
+use std::iter::zip;
 use std::rc::Rc;
 use types::{are_contiguous_integers, ordinal_names};
 
@@ -76,12 +77,17 @@ impl TypeMap {
     fn term_type(&self, term: &Term) -> Box<Type> {
         match term {
             Term::Sequence(sequence) => match sequence.op.name.as_str() {
-                "bool" => Box::new(Type::Primitive(PrimitiveType::Bool)),
-                "char" => Box::new(Type::Primitive(PrimitiveType::Char)),
-                "int" => Box::new(Type::Primitive(PrimitiveType::Int)),
-                "string" => Box::new(Type::Primitive(PrimitiveType::String)),
-                "real" => Box::new(Type::Primitive(PrimitiveType::Real)),
-                "unit" => Box::new(Type::Primitive(PrimitiveType::Unit)),
+                "bool" | "char" | "int" | "real" | "string" | "unit" => {
+                    let primitive_type =
+                        PrimitiveType::from_str(&sequence.op.name).unwrap();
+                    Box::new(Type::Primitive(primitive_type))
+                }
+                "fn" => {
+                    assert_eq!(sequence.terms.len(), 2);
+                    let param_type = self.term_type(&sequence.terms[0]);
+                    let result_type = self.term_type(&sequence.terms[1]);
+                    Box::new(Type::Fn(param_type, result_type))
+                }
                 "list" => {
                     assert_eq!(sequence.terms.len(), 1);
                     let type_ = self.term_type(&sequence.terms[0]);
@@ -95,12 +101,22 @@ impl TypeMap {
                         .collect();
                     Box::new(Type::Tuple(types))
                 }
-                _ => todo!(),
+                s if s.starts_with("record") => {
+                    let labels = TypeResolver::field_list(sequence).unwrap();
+                    let mut fields = BTreeMap::<String, Type>::new();
+                    for (label, term) in zip(labels, sequence.terms.iter()) {
+                        fields.insert(label, *self.term_type(term));
+                    }
+                    Box::new(Type::Record(false, fields))
+                }
+                _ => todo!("{:?}", term),
             },
-            Term::Variable(v) => {
-                let term = self.var_term_map.get(v).unwrap();
-                self.term_type(term)
-            }
+            Term::Variable(v) => match self.var_term_map.get(v) {
+                Some(term) => self.term_type(term),
+                _ => {
+                    Box::new(Type::Variable(TypeVariable { id: v.id as usize }))
+                }
+            },
         }
     }
 }
@@ -228,6 +244,8 @@ impl TypeEnvBuilder {
 /// Main type resolver that deduces types for ML expressions.
 #[allow(dead_code)]
 pub struct TypeResolver {
+    warnings: Vec<Warning>,
+
     /// Mapping from node ids (patterns and expressions) to the unifier variable
     /// that holds the node's type.
     node_var_map: HashMap<i32, Rc<Var>>,
@@ -261,6 +279,7 @@ impl TypeResolver {
         let record_op = unifier.op("record", None);
         let fn_op = unifier.op("fn", Some(2));
         Self {
+            warnings: Vec::new(),
             node_var_map: HashMap::new(),
             terms: Vec::new(),
             next_id: 0,
@@ -409,25 +428,15 @@ impl TypeResolver {
     ) -> Box<Expr> {
         match &expr.kind {
             ExprKind::Literal(lit) => {
-                let resolved_type = match &lit.kind {
-                    LiteralKind::Unit => PrimitiveType::Unit,
-                    LiteralKind::Bool(_) => PrimitiveType::Bool,
-                    LiteralKind::Int(_) => PrimitiveType::Int,
-                    LiteralKind::Real(_) => PrimitiveType::Real,
-                    LiteralKind::String(_) => PrimitiveType::String,
-                    LiteralKind::Char(_) => PrimitiveType::Char,
-                };
-                self.primitive_term(&resolved_type, &v);
-                self.reg_expr(expr, v)
+                let resolved_type = Self::literal_type(&lit.kind);
+                self.primitive_term(&resolved_type, v);
+                self.reg_expr(&expr.kind, &expr.span, expr.id, v)
             }
             ExprKind::Identifier(name) => {
                 if let Some(term) = env.get(name) {
                     self.equiv(&term, v);
-                    self.reg_expr(expr, v)
-                } else {
-                    // Unbound variable - associate with v
-                    self.reg_expr(expr, v)
                 }
+                self.reg_expr(&expr.kind, &expr.span, expr.id, v)
             }
             ExprKind::List(expr_list) => {
                 let v_element = self.variable();
@@ -446,32 +455,59 @@ impl TypeResolver {
                     }
                 }
                 self.list_term(Term::Variable(v_element), v);
-                self.reg_expr(expr, v)
+                self.reg_expr(&expr.kind, &expr.span, expr.id, v)
             }
             ExprKind::Record(_with_expr_opt, labeled_expr_list) => {
-                let mut terms: Vec<Term> = Vec::new();
+                let mut terms: BTreeMap<String, Term> = BTreeMap::new();
                 for labeled_expr in labeled_expr_list {
                     let v2 = self.variable();
-                    self.deduce_exp_type(env, &*labeled_expr.expr, &v2);
-                    terms.push(Term::Variable(v2));
+                    self.deduce_exp_type(env, &labeled_expr.expr, &v2);
+                    if let Some(label) = &labeled_expr.label {
+                        terms.insert(label.name.clone(), Term::Variable(v2));
+                    } else {
+                        // Anonymous field - generate ordinal name
+                        let ordinal = (terms.len() + 1).to_string();
+                        terms.insert(ordinal, Term::Variable(v2));
+                    }
                 }
-                self.tuple_term(&terms, v);
-                self.reg_expr(expr, v)
+                self.record_term(&terms, v);
+                self.reg_expr(&expr.kind, &expr.span, expr.id, v)
             }
             ExprKind::Tuple(expr_list) => {
-                let mut terms: Vec<Term> = Vec::new();
-                for expr in expr_list {
+                let mut terms = vec![];
+                let mut expr_list2 = vec![];
+                for e in expr_list {
                     let v2 = self.variable();
-                    self.deduce_exp_type(env, expr, &v2);
+                    let e2 = self.deduce_exp_type(env, e, &v2);
+                    expr_list2.push(*e2);
                     terms.push(Term::Variable(v2));
                 }
                 self.tuple_term(&terms, v);
-                self.reg_expr(expr, v)
+                self.reg_expr(
+                    &ExprKind::Tuple(expr_list2),
+                    &expr.span,
+                    expr.id,
+                    v,
+                )
             }
-            _ => {
-                // Handle other expression types
-                todo!()
+            ExprKind::Fn(pat_expr_list) => {
+                let mut pat_expr_list2 = vec![];
+                for (pat, sub_expr) in pat_expr_list {
+                    let v_pat = self.variable();
+                    let pat2 = self.deduce_pat_type(env, &pat, &v_pat);
+                    let v_expr = self.variable();
+                    let expr2 = self.deduce_exp_type(env, &sub_expr, &v_expr);
+                    pat_expr_list2.push((*pat2, *expr2));
+                    self.fn_term(&v_pat, &v_expr, v);
+                }
+                self.reg_expr(
+                    &ExprKind::Fn(pat_expr_list2),
+                    &expr.span,
+                    expr.id,
+                    v,
+                )
             }
+            _ => todo!("{:?}", expr.kind),
         }
     }
 
@@ -483,14 +519,7 @@ impl TypeResolver {
     ) -> &'a Rc<Var> {
         match type_ {
             Type::Primitive(prim) => {
-                let _type_name = match prim {
-                    PrimitiveType::Unit => "unit",
-                    PrimitiveType::Bool => "bool",
-                    PrimitiveType::Int => "int",
-                    PrimitiveType::Real => "real",
-                    PrimitiveType::String => "string",
-                    PrimitiveType::Char => "char",
-                };
+                let _type_name = prim.to_str();
                 let op = self.unifier.op(_type_name, Some(0));
                 self.equiv(&Term::Sequence(self.unifier.atom(op)), v)
             }
@@ -750,15 +779,36 @@ impl TypeResolver {
     }
 
     /// Registers a term for an AST node for an expression.
-    fn reg_expr(&mut self, node: &Expr, _v: &Rc<Var>) -> Box<Expr> {
-        // self.expr_node_map.insert(node.kind.clone(), v.clone());
-        Box::new(if node.id.is_some() {
-            node.clone()
-        } else {
-            Expr {
-                id: Some(self.next_id()),
-                ..node.clone()
-            }
+    fn reg_expr(
+        &mut self,
+        kind: &ExprKind<Expr>,
+        span: &Span,
+        id: Option<i32>,
+        v: &Rc<Var>,
+    ) -> Box<Expr> {
+        let id2 = id.unwrap_or_else(|| self.next_id());
+        self.node_var_map.insert(id2, v.clone());
+        Box::new(Expr {
+            kind: kind.clone(),
+            span: span.clone(),
+            id: Some(id2),
+        })
+    }
+
+    /// Registers a term for an AST node for an expression.
+    fn reg_pat(
+        &mut self,
+        kind: &PatKind,
+        span: &Span,
+        id: Option<i32>,
+        v: &Rc<Var>,
+    ) -> Box<Pat> {
+        let id2 = id.unwrap_or_else(|| self.next_id());
+        self.node_var_map.insert(id2, v.clone());
+        Box::new(Pat {
+            kind: kind.clone(),
+            span: span.clone(),
+            id: Some(id2),
         })
     }
 
@@ -782,8 +832,9 @@ impl TypeResolver {
         val_bind: ValBind,
         _term_map: &mut [(IdPat, Term)],
     ) -> ValBind {
-        let (pat, expr) =
-            self.deduce_pat_expr_type(env, &val_bind.pat, &val_bind.expr);
+        let v = self.variable();
+        let expr = *self.deduce_exp_type(env, &val_bind.expr, &v);
+        let pat = *self.deduce_pat_type(env, &val_bind.pat, &v);
         ValBind {
             pat,
             expr,
@@ -791,32 +842,128 @@ impl TypeResolver {
         }
     }
 
-    fn deduce_pat_expr_type(
+    fn literal_type(literal_kind: &LiteralKind) -> PrimitiveType {
+        match literal_kind {
+            LiteralKind::Int(_) => PrimitiveType::Int,
+            LiteralKind::Real(_) => PrimitiveType::Real,
+            LiteralKind::String(_) => PrimitiveType::String,
+            LiteralKind::Char(_) => PrimitiveType::Char,
+            LiteralKind::Bool(_) => PrimitiveType::Bool,
+            LiteralKind::Unit => PrimitiveType::Unit,
+        }
+    }
+
+    fn deduce_pat_type(
         &mut self,
         env: &dyn TypeEnv,
         pat: &Pat,
-        expr: &Expr,
-    ) -> (Pat, Expr) {
+        v: &Rc<Var>,
+    ) -> Box<Pat> {
         match &pat.kind {
             PatKind::Identifier(_name) => {
-                let v = self.variable();
-                let expr2 = *self.deduce_exp_type(env, expr, &v);
-                let id = self.next_id();
-                self.node_var_map.insert(id.clone(), v);
-                let pat2 = Pat {
-                    id: Some(id),
-                    ..pat.clone()
-                };
-                (pat2.clone(), expr2.clone())
+                self.reg_pat(&pat.kind, &pat.span, pat.id, &v)
             }
-            _ => todo!(),
+            PatKind::Literal(literal) => {
+                self.primitive_term(&Self::literal_type(&literal.kind), v);
+                self.reg_pat(&pat.kind, &pat.span, pat.id, &v)
+            }
+            PatKind::Annotated(pat, type_) => {
+                let pat2 = self.deduce_pat_type(env, pat, &v);
+                let type2 = self.deduce_type_type(env, type_, &v);
+                self.reg_pat(
+                    &PatKind::Annotated(pat2.clone(), type2),
+                    &pat2.span,
+                    pat2.id,
+                    &v,
+                )
+            }
+            PatKind::Tuple(pat_list) if pat_list.is_empty() => {
+                // They wrote an empty tuple. Treat it as a unit literal.
+                let unit_literal = LiteralKind::Unit.spanned(&pat.span);
+                let pat2 = PatKind::Literal(unit_literal).spanned(&pat.span);
+                self.deduce_pat_type(env, &pat2, &v)
+            }
+            PatKind::Tuple(pat_list) => {
+                let mut pat_list2 = vec![];
+                let mut terms = vec![];
+                for pat in pat_list {
+                    let v2 = self.variable();
+                    let pat2 = self.deduce_pat_type(env, pat, &v2);
+                    pat_list2.push(*pat2);
+                    terms.push(Term::Variable(v2));
+                }
+                self.tuple_term(&terms, &v);
+                self.reg_pat(&PatKind::Tuple(pat_list2), &pat.span, pat.id, &v)
+            }
+            PatKind::Record(fields, ellipsis) => {
+                // The algorithm in Morel-Java is more complicated than we have
+                // implemented here.
+                //
+                // First, determine the set of field names.
+                //
+                // If the pattern is in a 'case', we know the field names from
+                // the argument. But if we are in a function, we require at
+                // least one of the patterns to not be a wildcard and not have
+                // an ellipsis. For example, in
+                //
+                //  fun f {a=1,...} = 1 | f {b=2,...} = 2
+                //
+                // we cannot deduce whether a 'c' field is allowed.
+                let mut fields2 = vec![];
+                let mut map: BTreeMap<String, Term> = BTreeMap::new();
+                for field in fields {
+                    match field {
+                        PatField::Labeled(span, name, pat) => {
+                            let v2 = self.variable();
+                            let pat2 = self.deduce_pat_type(env, pat, &v2);
+                            fields2.push(PatField::Labeled(
+                                span.clone(),
+                                name.clone(),
+                                pat2,
+                            ));
+                            map.insert(name.clone(), Term::Variable(v2));
+                        }
+                        PatField::Anonymous(span, pat) => {
+                            let v2 = self.variable();
+                            let pat2 = self.deduce_pat_type(env, pat, &v2);
+                            let name = self.implicit_pat_label(pat);
+                            fields2.push(PatField::Labeled(
+                                span.clone(),
+                                name.clone(),
+                                pat2,
+                            ));
+                            map.insert(name.clone(), Term::Variable(v2));
+                        }
+                        PatField::Ellipsis(_span) => {
+                            // ignore
+                        }
+                    };
+                }
+                self.record_term(&map, &v);
+                self.reg_pat(
+                    &PatKind::Record(fields2, *ellipsis),
+                    &pat.span,
+                    pat.id,
+                    &v,
+                )
+            }
+            _ => todo!("{:?}", pat.kind),
         }
     }
-}
 
-impl Default for TypeResolver {
-    fn default() -> Self {
-        Self::new()
+    /// Derives an implicit label from a pattern; logs a warning and returns a
+    /// dummy label if that is not possible.
+    fn implicit_pat_label(&mut self, pat: &Pat) -> String {
+        match implicit_pat_label_opt(pat) {
+            Some(label) => label,
+            None => {
+                let message =
+                    format!("cannot derive label for pattern {}", pat);
+                let span = pat.span.clone();
+                self.warnings.push(Warning { span, message });
+                "implicit".to_string()
+            }
+        }
     }
 }
 
@@ -862,6 +1009,15 @@ impl<'a> TypeToTermConverter<'a> {
     /// Registers the type term and returns the modified AST node.
     fn type_term(&mut self, type_node: &AstType, v: Rc<Var>) -> Box<AstType> {
         match &type_node.kind {
+            TypeKind::Id(name) => {
+                let p = PrimitiveType::from_str(name).unwrap();
+                self.type_resolver.primitive_term(&p, &v);
+                self.type_resolver.reg_type(
+                    &type_node.kind,
+                    &type_node.span,
+                    &v,
+                )
+            }
             TypeKind::Fn(param, result) => {
                 let v4 = self.type_resolver.variable();
                 let param2 = self.type_term(param, v4.clone());
@@ -957,6 +1113,7 @@ fn implicit_expr_label_opt(expr: &Expr) -> Option<String> {
 fn implicit_pat_label_opt(pat: &Pat) -> Option<String> {
     match &pat.kind {
         PatKind::Identifier(name) => Some(name.clone()),
+        PatKind::Annotated(pat, _type) => implicit_pat_label_opt(pat),
         _ => None,
     }
 }

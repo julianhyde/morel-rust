@@ -60,15 +60,27 @@ impl Type {
         left: u8,
         right: u8,
     ) -> std::fmt::Result {
+        /// Type constructor precedence, from low to high, is the function
+        /// arrow (`->`), product types (`*`), and type application (e.g.
+        /// `int list`).
         const TUPLE_LEFT: u8 = 14;
         const TUPLE_RIGHT: u8 = 15;
         const APPLY_LEFT: u8 = 16;
         const APPLY_RIGHT: u8 = 17;
+        const FN_LEFT: u8 = 13;
+        const FN_RIGHT: u8 = 12;
 
         match self {
             Type::Primitive(p) => f.write_str(p.to_str()),
             Type::Fn(param, result) => {
-                write!(f, "({} -> {})", param, result)
+                if left > FN_LEFT || right > FN_RIGHT {
+                    write!(f, "(")?;
+                    self.describe(f, 0, 0)?;
+                    return write!(f, ")");
+                }
+                param.describe(f, left, FN_LEFT)?;
+                write!(f, " -> ")?;
+                result.describe(f, FN_RIGHT, right)
             }
             Type::Record(progressive, fields) => {
                 f.write_str("{")?;
@@ -76,7 +88,7 @@ impl Type {
                     if i > 0 {
                         f.write_str(", ")?;
                     }
-                    write!(f, "{}: {}", name, field_type)?;
+                    write!(f, "{}:{}", name, field_type)?;
                 }
                 if *progressive {
                     if fields.is_empty() {
@@ -97,7 +109,7 @@ impl Type {
                 write!(f, " list")
             }
             Type::Tuple(types) => {
-                if left > 0 || right > 0 {
+                if left > TUPLE_LEFT || right > TUPLE_RIGHT {
                     write!(f, "(")?;
                     self.describe(f, 0, 0)?;
                     return write!(f, ")");
@@ -107,10 +119,10 @@ impl Type {
                         type_.describe(f, left, TUPLE_RIGHT)?;
                     } else if i == types.len() - 1 {
                         f.write_str(" * ")?;
-                        type_.describe(f, TUPLE_LEFT, right)?;
+                        type_.describe(f, TUPLE_RIGHT, right)?;
                     } else {
                         f.write_str(" * ")?;
-                        type_.describe(f, TUPLE_LEFT, TUPLE_LEFT)?;
+                        type_.describe(f, TUPLE_RIGHT, TUPLE_LEFT)?;
                     }
                 }
                 Ok(())
@@ -149,6 +161,18 @@ impl PrimitiveType {
             PrimitiveType::Real => "real",
             PrimitiveType::String => "string",
             PrimitiveType::Char => "char",
+        }
+    }
+
+    pub fn from_str(name: &str) -> Option<PrimitiveType> {
+        match name {
+            "bool" => Some(PrimitiveType::Bool),
+            "char" => Some(PrimitiveType::Char),
+            "int" => Some(PrimitiveType::Int),
+            "real" => Some(PrimitiveType::Real),
+            "string" => Some(PrimitiveType::String),
+            "unit" => Some(PrimitiveType::Unit),
+            _ => None,
         }
     }
 }
@@ -290,7 +314,7 @@ impl Subst {
 }
 
 impl Display for Subst {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut map = HashMap::new(); // TODO: deterministic order
         let mut current = self;
 

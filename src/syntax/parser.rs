@@ -1115,6 +1115,7 @@ impl MorelParser {
 
     fn tuple_type(input: ParseInput) -> ParseResult<Type> {
         Ok(match_nodes!(input.children();
+            [apply_type(t)] => t,
             [apply_type(t)..] => {
                 TypeKind::Tuple(t.collect()).wrap(input)
             },
@@ -1640,7 +1641,7 @@ mod test {
     }
 
     #[test]
-    fn test_parse() {
+    fn test_parse_literal() {
         ml("1").assert_parse(Rule::literal);
         ml("1").assert_parse_tree(
             Rule::numeric_literal,
@@ -1699,7 +1700,100 @@ mod test {
         ml("\"a string\"").assert_parse(Rule::literal);
         ml("#\"a\"").assert_parse(Rule::literal);
         ml("not a number").fail();
+    }
 
+    #[test]
+    fn test_parse_expr() {
+        ml("fn {f: unit -> int, g: int} => true").assert_parse_tree(
+            Rule::expr,
+            r#" expr
+ └─ expr_annotated
+    └─ expr_implies
+       └─ expr_orelse
+          └─ expr_andalso
+             └─ expr_o
+                └─ expr_comp
+                   └─ expr_cons
+                      └─ expr_additive
+                         └─ expr_multiplicative
+                            └─ expr_over
+                               └─ expr_application
+                                  └─ expr_unary
+                                     └─ expr_postfix
+                                        └─ atom
+                                           └─ fn_expr
+                                              ├─ _fn "fn"
+                                              └─ match_list
+                                                 └─ match_
+                                                    ├─ pat
+                                                    │  └─ annotated_pat
+                                                    │     └─ cons_pat
+                                                    │        └─ atomic_pat
+                                                    │           └─ record_pat
+                                                    │              ├─ pat_field
+                                                    │              │  └─ anon_pat_field
+                                                    │              │     └─ pat
+                                                    │              │        └─ annotated_pat
+                                                    │              │           ├─ cons_pat
+                                                    │              │           │  └─ atomic_pat
+                                                    │              │           │     └─ id_pat
+                                                    │              │           │        └─ identifier
+                                                    │              │           │           └─ unquoted_identifier "f"
+                                                    │              │           └─ type_
+                                                    │              │              └─ fn_type
+                                                    │              │                 ├─ tuple_type
+                                                    │              │                 │  └─ apply_type
+                                                    │              │                 │     └─ atomic_type
+                                                    │              │                 │        └─ named_type
+                                                    │              │                 │           └─ identifier
+                                                    │              │                 │              └─ unquoted_identifier "unit"
+                                                    │              │                 └─ fn_type
+                                                    │              │                    └─ tuple_type
+                                                    │              │                       └─ apply_type
+                                                    │              │                          └─ atomic_type
+                                                    │              │                             └─ named_type
+                                                    │              │                                └─ identifier
+                                                    │              │                                   └─ unquoted_identifier "int"
+                                                    │              └─ pat_field
+                                                    │                 └─ anon_pat_field
+                                                    │                    └─ pat
+                                                    │                       └─ annotated_pat
+                                                    │                          ├─ cons_pat
+                                                    │                          │  └─ atomic_pat
+                                                    │                          │     └─ id_pat
+                                                    │                          │        └─ identifier
+                                                    │                          │           └─ unquoted_identifier "g"
+                                                    │                          └─ type_
+                                                    │                             └─ fn_type
+                                                    │                                └─ tuple_type
+                                                    │                                   └─ apply_type
+                                                    │                                      └─ atomic_type
+                                                    │                                         └─ named_type
+                                                    │                                            └─ identifier
+                                                    │                                               └─ unquoted_identifier "int"
+                                                    └─ expr
+                                                       └─ expr_annotated
+                                                          └─ expr_implies
+                                                             └─ expr_orelse
+                                                                └─ expr_andalso
+                                                                   └─ expr_o
+                                                                      └─ expr_comp
+                                                                         └─ expr_cons
+                                                                            └─ expr_additive
+                                                                               └─ expr_multiplicative
+                                                                                  └─ expr_over
+                                                                                     └─ expr_application
+                                                                                        └─ expr_unary
+                                                                                           └─ expr_postfix
+                                                                                              └─ atom
+                                                                                                 └─ literal
+                                                                                                    └─ bool_literal "true"
+"#,
+        );
+    }
+
+    #[test]
+    fn test_parse_comment() {
         let vec1 = vec!["1;".to_string(), "".to_string()];
         ml("(* block comment *)  1;").assert_parse_as(Rule::program, &vec1);
         ml("(*\n * block comment\n *)\n1;")
