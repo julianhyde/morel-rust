@@ -15,6 +15,14 @@
 // language governing permissions and limitations under the
 // License.
 
+#![allow(dead_code)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::inherent_to_string)]
+#![allow(clippy::extra_unused_lifetimes)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::nonminimal_bool)]
+#![allow(clippy::collapsible_if)]
+
 use indexmap::IndexMap;
 use std::cell::RefCell;
 use std::cmp::{PartialEq, max};
@@ -28,6 +36,7 @@ use std::time::Instant;
 /// Trait for things that behave like terms.
 trait TermLike {
     fn apply1(&self, variable: &Rc<Var>, term: &Term) -> Term;
+    #[allow(dead_code)]
     fn apply(&self, map: &IndexMap<Rc<Var>, Term>) -> Term;
     fn as_term(&self) -> Term;
 }

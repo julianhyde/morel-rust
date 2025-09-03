@@ -134,8 +134,8 @@ pub mod utils {
             (format!("{} ", prefix), prefix)
         };
         for line in s.lines() {
-            if line.starts_with(prefix_max) {
-                result.push_str(&line[prefix_max.len()..]);
+            if let Some(stripped) = line.strip_prefix(prefix_max) {
+                result.push_str(stripped);
             } else if line == prefix_min {
                 // nothing
             } else {

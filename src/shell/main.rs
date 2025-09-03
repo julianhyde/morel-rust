@@ -15,6 +15,12 @@
 // language governing permissions and limitations under the
 // License.
 
+#![allow(clippy::derivable_impls)]
+#![allow(clippy::to_string_in_format_args)]
+#![allow(clippy::unnecessary_unwrap)]
+#![allow(clippy::useless_format)]
+#![allow(clippy::redundant_closure)]
+
 use crate::compile::type_resolver::{EmptyTypeEnv, TypeResolver};
 use crate::shell::ShellResult;
 use crate::shell::config::Config;
@@ -347,7 +353,7 @@ fn comment_depth(code: &str) -> i32 {
             depth -= 1;
             in_line_comment = false;
         }
-        i = i + 1;
+        i += 1;
         buf[i % n] = c;
     }
     depth

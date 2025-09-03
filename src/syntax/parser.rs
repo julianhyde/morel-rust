@@ -39,6 +39,7 @@ pub struct MorelParser;
 ///
 /// The statement may be preceded by whitespace and/or comments;
 /// the statement must end with a semicolon.
+#[allow(clippy::result_large_err)]
 pub fn parse_statement(input: &str) -> ParseResult<Statement> {
     let rc_input_str: Rc<str> = input.to_string().into();
     let nodes = MorelParser::parse_with_userdata(
@@ -53,6 +54,7 @@ pub fn parse_statement(input: &str) -> ParseResult<Statement> {
 
 /// Parses a statement (with no whitespace, comments or semicolon)
 /// and returns its AST.
+#[allow(clippy::result_large_err)]
 pub fn parse_unadorned_statement(input: &str) -> ParseResult<Statement> {
     let rc_input_str = input.to_string().into();
     let nodes =
@@ -1509,6 +1511,7 @@ impl MorelParser {
 /// Combines a list of expressions using a binary function `f`.
 ///
 /// For example, `bar(a, [b, c], f)` produces `f(f(a, b), c)`.
+#[allow(clippy::ptr_arg)]
 fn fold(
     exprs: &Vec<Expr>,
     f: impl Fn(Box<Expr>, Box<Expr>) -> ExprKind<Expr>,
@@ -1523,6 +1526,7 @@ fn fold(
 
 /// Combines expressions using a binary function, taking the first element
 /// separately.
+#[allow(clippy::ptr_arg)]
 fn fold2(
     first: &Expr,
     exprs: &Vec<Expr>,

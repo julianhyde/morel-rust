@@ -61,11 +61,11 @@ impl ScriptTest {
         };
 
         // Adjust directory for specific tests
-        if path.to_string_lossy().contains("/file.") {
-            if let Some(mut dir) = config.directory.clone() {
-                dir.push("data");
-                config.directory = Some(dir);
-            }
+        if path.to_string_lossy().contains("/file.")
+            && let Some(mut dir) = config.directory.clone()
+        {
+            dir.push("data");
+            config.directory = Some(dir);
         }
 
         // Create and run the shell
@@ -159,10 +159,10 @@ impl ScriptTest {
             let entry = entry?;
             let path = entry.path();
 
-            if let Some(ext) = path.extension() {
-                if ext == "sml" || ext == "smli" {
-                    files.push(path);
-                }
+            if let Some(ext) = path.extension()
+                && (ext == "sml" || ext == "smli")
+            {
+                files.push(path);
             }
         }
 

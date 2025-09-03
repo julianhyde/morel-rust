@@ -15,6 +15,11 @@
 // language governing permissions and limitations under the
 // License.
 
+#![allow(clippy::ptr_arg)]
+#![allow(clippy::needless_lifetimes)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::collapsible_if)]
+
 use crate::compile::environment::IdPat;
 use crate::compile::types;
 use crate::compile::types::{PrimitiveType, Subst, Type, TypeVariable};
@@ -59,10 +64,10 @@ impl TypeMap {
 
     /// Gets the type for an AST node.
     pub fn get_type(&self, id: i32) -> Option<Box<Type>> {
-        if let Some(var) = self.node_var_map.get(&id) {
-            if let Some(term) = self.var_term_map.get(var) {
-                return Some(self.term_type(term).clone());
-            }
+        if let Some(var) = self.node_var_map.get(&id)
+            && let Some(term) = self.var_term_map.get(var)
+        {
+            return Some(self.term_type(term).clone());
         }
         None
     }
@@ -109,10 +114,6 @@ impl Display for TypeMap {
         )
     }
 }
-
-/// Unique identifier for AST nodes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AstNodeId(pub usize);
 
 /// Binding of a name to a type.
 #[derive(Debug, Clone)]
@@ -341,7 +342,7 @@ impl TypeResolver {
                     id: Some(self.next_id()),
                 }
             }
-            _ => todo!(),
+            _ => todo!("{:?}", decl.kind),
         }
     }
 
@@ -350,7 +351,7 @@ impl TypeResolver {
         env: &dyn TypeEnv,
         inst: bool,
         rec: bool,
-        val_binds: &Vec<ValBind>,
+        val_binds: &[ValBind],
         term_map: &mut Vec<(IdPat, Term)>,
     ) -> DeclKind {
         let mut env_holder = env.builder();
@@ -358,7 +359,7 @@ impl TypeResolver {
         val_binds.iter().for_each(|b| {
             map0.push((b.clone(), OnceCell::new()));
         });
-        for (val_bind, vPatSupplier) in &map0 {
+        for (val_bind, v_pat_supplier) in &map0 {
             // If recursive, bind each value (presumably a function) to its type
             // in the environment before we try to deduce the type of the
             // expression.
@@ -366,7 +367,7 @@ impl TypeResolver {
                 env_holder.push(
                     name.clone(),
                     Term::Variable(
-                        vPatSupplier.get_or_init(|| self.variable()).clone(),
+                        v_pat_supplier.get_or_init(|| self.variable()).clone(),
                     ),
                 );
             }
@@ -388,13 +389,13 @@ impl TypeResolver {
         &mut self,
         env: &dyn TypeEnv,
         type_expr: &AstType,
-        v: Rc<Var>,
+        v: &Rc<Var>,
     ) -> Box<AstType> {
         let mut converter = TypeToTermConverter {
             type_resolver: self,
             env,
         };
-        converter.type_term(type_expr, v)
+        converter.type_term(type_expr, v.clone())
     }
 
     /// Deduces an expression's type.
@@ -435,7 +436,7 @@ impl TypeResolver {
                 } else {
                     self.deduce_exp_type(
                         env,
-                        expr_list.get(0).unwrap(),
+                        expr_list.first().unwrap(),
                         &v_element,
                     );
                     for expr in expr_list.iter().skip(1) {
@@ -447,7 +448,7 @@ impl TypeResolver {
                 self.list_term(Term::Variable(v_element), v);
                 self.reg_expr(expr, v)
             }
-            ExprKind::Record(with_expr_opt, labeled_expr_list) => {
+            ExprKind::Record(_with_expr_opt, labeled_expr_list) => {
                 let mut terms: Vec<Term> = Vec::new();
                 for labeled_expr in labeled_expr_list {
                     let v2 = self.variable();
@@ -493,17 +494,14 @@ impl TypeResolver {
                 let op = self.unifier.op(_type_name, Some(0));
                 self.equiv(&Term::Sequence(self.unifier.atom(op)), v)
             }
-            Type::Function(param, result) => {
+            Type::Fn(param, result) => {
                 let v_param = self.variable();
                 self.type_to_term(param, &v_param);
                 let v_result = self.variable();
                 self.type_to_term(result, &v_result);
                 self.fn_term(&v_param, &v_result, v)
             }
-            _ => {
-                // Handle other types
-                todo!()
-            }
+            _ => todo!("{:?}", type_),
         }
     }
 
@@ -621,7 +619,7 @@ impl TypeResolver {
                 let sequence = self.unifier.apply(op.clone(), terms);
                 self.equiv(&Term::Sequence(sequence), v)
             }
-            Type::Function(param_type, result_type) => {
+            Type::Fn(param_type, result_type) => {
                 let v2 = self.variable();
                 self.type_term(&param_type, subst, &v2);
                 let v3 = self.variable();
@@ -695,27 +693,28 @@ impl TypeResolver {
         }
     }
 
-    /// Inverse of `record_label`. Extracts field names from a sequence.
+    /// Inverse of `record_label_from_set`. Extracts field names from a
+    /// sequence.
     fn field_list(
-        &self,
         sequence: &crate::compile::unifier::Sequence,
     ) -> Option<Vec<String>> {
-        if sequence.op == self.record_op {
-            Some(vec![])
-        } else if sequence.op.name.starts_with("record:") {
-            let fields: Vec<String> = sequence
-                .op
-                .name
-                .split(':')
-                .skip(1) // Skip "record" prefix
-                .map(|s| s.to_string())
-                .collect();
-            Some(fields)
-        } else if sequence.op.name == "tuple" {
-            let size = sequence.terms.len();
-            Some(ordinal_names(size))
-        } else {
-            None
+        match sequence.op.name.as_str() {
+            "record" => Some(vec![]),
+            "tuple" => {
+                let size = sequence.terms.len();
+                Some(ordinal_names(size))
+            }
+            s if s.starts_with("record:") => {
+                let fields: Vec<String> = sequence
+                    .op
+                    .name
+                    .split(':')
+                    .skip(1) // Skip "record" prefix
+                    .map(|s| s.to_string())
+                    .collect();
+                Some(fields)
+            }
+            _ => None,
         }
     }
 
@@ -781,7 +780,7 @@ impl TypeResolver {
         &mut self,
         env: &dyn TypeEnv,
         val_bind: ValBind,
-        _term_map: &mut Vec<(IdPat, Term)>,
+        _term_map: &mut [(IdPat, Term)],
     ) -> ValBind {
         let (pat, expr) =
             self.deduce_pat_expr_type(env, &val_bind.pat, &val_bind.expr);
@@ -861,8 +860,8 @@ struct TypeToTermConverter<'a> {
 impl<'a> TypeToTermConverter<'a> {
     /// Converts an AST node representing a type into a type term.
     /// Registers the type term and returns the modified AST node.
-    fn type_term(&mut self, type_expr: &AstType, v: Rc<Var>) -> Box<AstType> {
-        match &type_expr.kind {
+    fn type_term(&mut self, type_node: &AstType, v: Rc<Var>) -> Box<AstType> {
+        match &type_node.kind {
             TypeKind::Fn(param, result) => {
                 let v4 = self.type_resolver.variable();
                 let param2 = self.type_term(param, v4.clone());
@@ -871,7 +870,7 @@ impl<'a> TypeToTermConverter<'a> {
                 self.type_resolver.fn_term(&v4, &v5, &v);
                 self.type_resolver.reg_type(
                     &TypeKind::Fn(param2, result2),
-                    &type_expr.span,
+                    &type_node.span,
                     &v,
                 )
             }
@@ -890,7 +889,7 @@ impl<'a> TypeToTermConverter<'a> {
                 self.type_resolver.record_term(&label_types, &v);
                 self.type_resolver.reg_type(
                     &TypeKind::Record(fields2),
-                    &type_expr.span,
+                    &type_node.span,
                     &v,
                 )
             }
@@ -904,7 +903,7 @@ impl<'a> TypeToTermConverter<'a> {
                 }
                 self.type_resolver.reg_type(
                     &TypeKind::Tuple(types2),
-                    &type_expr.span,
+                    &type_node.span,
                     &v,
                 )
             }
@@ -912,11 +911,60 @@ impl<'a> TypeToTermConverter<'a> {
                 self.type_resolver.primitive_term(&PrimitiveType::Unit, &v);
                 self.type_resolver.reg_type(
                     &TypeKind::Unit,
-                    &type_expr.span,
+                    &type_node.span,
                     &v,
                 )
             }
-            _ => todo!(),
+            _ => todo!("{:?}", type_node.kind),
         }
     }
+}
+
+/// Returns the implicit label for when an expression occurs within a record,
+/// or null if no label can be deduced.
+///
+/// For example,
+///
+/// ```sml
+/// {x.a, y, z = x.b + 2}
+/// ```
+///
+/// is equivalent to
+///
+/// ```sml
+/// {a = x.a, y = y, z = x.b + 2}
+/// ```
+///
+/// because a field reference `x.a` has implicit label `a`, and
+/// a variable reference `y` has implicit label `y`. The expression
+/// `x.b + 2` has no implicit label.
+///
+#[allow(dead_code)]
+fn implicit_expr_label_opt(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Current => Some("current".to_string()),
+        ExprKind::Ordinal => Some("ordinal".to_string()),
+        ExprKind::Identifier(name) => Some(name.clone()),
+        ExprKind::Aggregate(left, _) => implicit_expr_label_opt(left),
+        ExprKind::Apply(left, _) => match &left.kind {
+            ExprKind::RecordSelector(name) => Some(name.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn implicit_pat_label_opt(pat: &Pat) -> Option<String> {
+    match &pat.kind {
+        PatKind::Identifier(name) => Some(name.clone()),
+        _ => None,
+    }
+}
+
+#[allow(dead_code)]
+struct Warning {
+    #[allow(dead_code)]
+    span: Span,
+    #[allow(dead_code)]
+    message: String,
 }

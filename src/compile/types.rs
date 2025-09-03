@@ -23,7 +23,7 @@ use std::fmt::{Display, Formatter};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Primitive(PrimitiveType),
-    Function(Box<Type>, Box<Type>),
+    Fn(Box<Type>, Box<Type>),
 
     /// `Record(progressive, arg_name_types)` represents the type
     /// `{name0: arg0, ... nameN: argN}`. If `progressive`, the
@@ -67,8 +67,8 @@ impl Type {
 
         match self {
             Type::Primitive(p) => f.write_str(p.to_str()),
-            Type::Function(arg, ret) => {
-                write!(f, "({} -> {})", arg, ret)
+            Type::Fn(param, result) => {
+                write!(f, "({} -> {})", param, result)
             }
             Type::Record(progressive, fields) => {
                 f.write_str("{")?;
@@ -88,7 +88,7 @@ impl Type {
                 f.write_str("}")
             }
             Type::List(elem_type) => {
-                if left > APPLY_RIGHT || right > APPLY_RIGHT {
+                if left > APPLY_LEFT || right > APPLY_RIGHT {
                     write!(f, "(")?;
                     self.describe(f, 0, 0)?;
                     return write!(f, ")");
@@ -289,7 +289,7 @@ impl Subst {
     }
 }
 
-impl std::fmt::Display for Subst {
+impl Display for Subst {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut map = HashMap::new(); // TODO: deterministic order
         let mut current = self;
