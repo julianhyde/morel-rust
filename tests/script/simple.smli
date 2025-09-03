@@ -16,13 +16,6 @@
  * language governing permissions and limitations under the
  * License.
  *)
-fn (x: int, y: string) => (true, [1]);
->type it : int * string -> bool * int list
-(* TODO
-fn x => fn f => f x;
->type it : fn : 'a -> ('a -> 'b) -> 'b
-*)
-
 Sys.set ("lineWidth", 78);
 > val it = () : unit
 
@@ -89,6 +82,22 @@ fn (x: int, y: string) => (true, [1]);
 >type it : {f:unit -> int, g:int}
 fn {f: unit -> int, g: int} => true;
 >type it : {f:unit -> int, g:int} -> bool
+fn x => fn f => f x;
+>type it : 'a -> ('a -> 'b) -> 'b
+fn (x, y) => x andalso y;
+>type it : bool * bool -> bool
+fn (x, y) => x orelse y;
+>type it : bool * bool -> bool
+fn (x, y) => x implies y;
+>type it : bool * bool -> bool
+val x = 1;
+>type x : int
+val (x, y) = (1, true);
+>type x : int
+>type y : bool
+val {x, y} = {y = 1, x = true};
+>type x : bool
+>type y : int
 
 (*) Literals
 1;

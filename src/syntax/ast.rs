@@ -488,48 +488,35 @@ pub struct Pat {
 
 impl Pat {
     /// Calls a given function for each atomic identifier in this pattern.
-    pub(crate) fn for_each_id_pat(&self, mut p0: impl FnMut(i32, &str)) {
+    pub(crate) fn for_each_id_pat(&self, consumer: &mut impl FnMut(i32, &str)) {
         match &self.kind {
-            PatKind::Identifier(name) => p0(self.id.unwrap(), name.as_str()),
-            _ => todo!(),
+            PatKind::Identifier(name) => {
+                (*consumer)(self.id.unwrap(), name.as_str())
+            }
+            PatKind::Tuple(pats) => {
+                pats.iter().for_each(|p| p.for_each_id_pat(consumer))
+            }
+            PatKind::Record(pat_fields, _) => {
+                for field in pat_fields {
+                    match field {
+                        PatField::Labeled(_, _, p) => {
+                            p.for_each_id_pat(consumer)
+                        }
+                        PatField::Anonymous(_, p) => {
+                            p.for_each_id_pat(consumer)
+                        }
+                        PatField::Ellipsis(_) => {}
+                    }
+                }
+            }
+            _ => todo!("{}", self.kind),
         }
     }
 }
 
 impl Display for Pat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.kind {
-            PatKind::Identifier(name) => write!(f, "{}", name),
-            PatKind::Literal(lit) => write!(f, "{:?}", lit),
-            PatKind::Annotated(pat, typ) => write!(f, "{}: {}", pat, typ),
-            PatKind::Tuple(pats) => {
-                let pats_str = pats
-                    .iter()
-                    .map(|p| format!("{}", p))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "({})", pats_str)
-            }
-            PatKind::Record(fields, ellipsis) => {
-                let fields_str = fields
-                    .iter()
-                    .map(|field| match field {
-                        PatField::Labeled(_, name, pat) => {
-                            format!("{} = {}", name, pat)
-                        }
-                        PatField::Anonymous(_, pat) => format!("{}", pat),
-                        PatField::Ellipsis(_) => "...".to_string(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                if *ellipsis {
-                    write!(f, "{{{}, ...}}", fields_str)
-                } else {
-                    write!(f, "{{{}}}", fields_str)
-                }
-            }
-            _ => write!(f, "<unknown pat>"),
-        }
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.kind, f)
     }
 }
 
@@ -566,6 +553,43 @@ impl PatKind {
 
     pub fn wrap3(self, e1: &Expr, e2: &Expr, e3: &Expr) -> Pat {
         self.spanned(&e1.span.union(&e2.span).union(&e3.span))
+    }
+}
+
+impl Display for PatKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            PatKind::Identifier(name) => write!(f, "{}", name),
+            PatKind::Literal(lit) => write!(f, "{:?}", lit),
+            PatKind::Annotated(pat, typ) => write!(f, "{}: {}", pat, typ),
+            PatKind::Tuple(pats) => {
+                let pats_str = pats
+                    .iter()
+                    .map(|p| format!("{}", p))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "({})", pats_str)
+            }
+            PatKind::Record(fields, ellipsis) => {
+                let fields_str = fields
+                    .iter()
+                    .map(|field| match field {
+                        PatField::Labeled(_, name, pat) => {
+                            format!("{} = {}", name, pat)
+                        }
+                        PatField::Anonymous(_, pat) => format!("{}", pat),
+                        PatField::Ellipsis(_) => "...".to_string(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if *ellipsis {
+                    write!(f, "{{{}, ...}}", fields_str)
+                } else {
+                    write!(f, "{{{}}}", fields_str)
+                }
+            }
+            _ => write!(f, "<unknown pat>"),
+        }
     }
 }
 
@@ -648,44 +672,20 @@ impl Display for DeclKind {
                 if *inst {
                     write!(f, " inst")?;
                 }
-                for (i, bind) in binds.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, "; ")?;
-                    }
-                    write!(f, "{}", bind)?;
-                }
-                Ok(())
+                fmt_list(f, binds, "; ")
             }
             DeclKind::Fun(funs) => {
                 write!(f, "fun ")?;
-                for (i, fun) in funs.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " | ")?;
-                    }
-                    write!(f, "{}", fun)?;
-                }
-                Ok(())
+                fmt_list(f, funs, " | ")
             }
             DeclKind::Over(name) => write!(f, "over {}", name),
             DeclKind::Type(types) => {
                 write!(f, "type ")?;
-                for (i, ty) in types.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, "; ")?;
-                    }
-                    write!(f, "{}", ty)?;
-                }
-                Ok(())
+                fmt_list(f, types, "; ")
             }
             DeclKind::Datatype(datatypes) => {
                 write!(f, "datatype ")?;
-                for (i, dt) in datatypes.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, "; ")?;
-                    }
-                    write!(f, "{}", dt)?;
-                }
-                Ok(())
+                fmt_list(f, datatypes, "; ")
             }
         }
     }
@@ -1054,4 +1054,19 @@ impl MorelNode for Type {
     fn id(&self) -> Option<i32> {
         self.id
     }
+}
+
+/// Formats a collection with a separator, handling the enumeration pattern.
+fn fmt_list<T: Display>(
+    f: &mut Formatter<'_>,
+    items: &[T],
+    separator: &str,
+) -> std::fmt::Result {
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            write!(f, "{}", separator)?;
+        }
+        write!(f, "{}", item)?;
+    }
+    Ok(())
 }
