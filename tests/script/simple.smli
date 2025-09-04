@@ -92,6 +92,20 @@ fn (x, y) => x implies y;
 >type it : bool * bool -> bool
 fn (x, y) => x < y;
 >type it : 'a * 'a -> bool
+fn (x, y) => x <= y;
+>type it : 'a * 'a -> bool
+fn (x, y) => x > y;
+>type it : 'a * 'a -> bool
+fn (x, y) => x >= y;
+>type it : 'a * 'a -> bool
+fn (x, y) => x = y;
+>type it : 'a * 'a -> bool
+fn (x, y) => x <> y;
+>type it : 'a * 'a -> bool
+fn (x, y) => x + y;
+>type it : int * int -> int
+fn (x, y) => x - y;
+>type it : int * int -> int
 val x = 1;
 >type x : int
 val (x, y) = (1, true);
@@ -100,6 +114,16 @@ val (x, y) = (1, true);
 val {x, y} = {y = 1, x = true};
 >type x : bool
 >type y : int
+val x = 1
+and y = ("hello", "world");
+>type x : int
+>type y : string * string
+let
+  val x = 1
+in
+  [x]
+end;
+>type it : int list
 
 (*) Literals
 1;

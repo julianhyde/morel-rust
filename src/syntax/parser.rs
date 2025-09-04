@@ -1596,7 +1596,6 @@ fn fold_heterogeneous(
 
 #[cfg(test)]
 mod test {
-    use crate::syntax::ast::MorelNode;
     use crate::syntax::parser::{Rule, parse_unadorned_statement};
 
     /// Test fixture for parser tests.

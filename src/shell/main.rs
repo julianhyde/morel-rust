@@ -471,7 +471,13 @@ static BUILT_IN_TYPES: phf::Map<&'static str, &'static str> = phf_map! {
     /* lint: sort until '}' */
     "false" => "bool",
     "op +" => "int * int -> int",
+    "op -" => "int * int -> int",
     "op <" => "forall 1 'a * 'a -> bool",
+    "op <=" => "forall 1 'a * 'a -> bool",
+    "op <>" => "forall 1 'a * 'a -> bool",
+    "op =" => "forall 1 'a * 'a -> bool",
+    "op >" => "forall 1 'a * 'a -> bool",
+    "op >=" => "forall 1 'a * 'a -> bool",
     "op andalso" => "bool * bool -> bool",
     "op implies" => "bool * bool -> bool",
     "op orelse" => "bool * bool -> bool",

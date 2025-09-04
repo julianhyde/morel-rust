@@ -20,7 +20,6 @@
 #![allow(clippy::needless_borrow)]
 #![allow(clippy::collapsible_if)]
 
-use crate::compile::environment::IdPat;
 use crate::compile::type_env::{EmptyTypeEnv, TypeEnv, TypeSchemeResolver};
 use crate::compile::types;
 use crate::compile::types::{PrimitiveType, Subst, Type, TypeVariable};
@@ -279,7 +278,7 @@ impl TypeResolver {
         &mut self,
         env: &dyn TypeEnv,
         decl: &Decl,
-        term_map: &mut Vec<(IdPat, Term)>,
+        term_map: &mut Vec<(String, Term)>,
     ) -> Decl {
         match &decl.kind {
             DeclKind::Val(rec, inst, val_binds) => {
@@ -302,12 +301,12 @@ impl TypeResolver {
         rec: bool,
         inst: bool,
         val_binds: &[ValBind],
-        term_map: &mut Vec<(IdPat, Term)>,
+        term_map: &mut Vec<(String, Term)>,
     ) -> DeclKind {
         let mut env_holder = env.builder();
         let mut map0 = Vec::new();
         val_binds.iter().for_each(|b| {
-            map0.push((b.clone(), OnceCell::new()));
+            map0.push((b, OnceCell::new()));
         });
         for (val_bind, v_pat_supplier) in &map0 {
             // If recursive, bind each value (presumably a function) to its type
@@ -326,9 +325,9 @@ impl TypeResolver {
         let env2 = env_holder.build();
 
         for (val_bind, _v_supplier) in map0 {
-            let bind =
-                self.deduce_val_bind_type(&*env2, val_bind.clone(), term_map);
-            val_binds2.push(bind);
+            let val_bind2 =
+                self.deduce_val_bind_type(&*env2, &val_bind, term_map);
+            val_binds2.push(val_bind2);
         }
 
         DeclKind::Val(rec, inst, val_binds2)
@@ -465,6 +464,18 @@ impl TypeResolver {
                 let apply2 = ExprKind::Apply(left2, right2);
                 self.reg_expr(&apply2, &expr.span, expr.id, v)
             }
+            ExprKind::Let(decl_list, expr) => {
+                let mut term_map = Vec::new();
+                let mut decl_list2 = Vec::new();
+                for decl in decl_list {
+                    let decl2 = self.deduce_decl_type(env, decl, &mut term_map);
+                    decl_list2.push(decl2);
+                }
+                let env2 = env.bind_all(term_map.as_ref());
+                let expr2 = self.deduce_expr_type(&*env2, expr.clone(), v);
+                let x = ExprKind::Let(decl_list2, expr2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
             ExprKind::AndAlso(left, right) => {
                 let (left2, right2) =
                     self.deduce_infix_type(env, "op andalso", left, right, v);
@@ -487,6 +498,48 @@ impl TypeResolver {
                 let (left2, right2) =
                     self.deduce_infix_type(env, "op <", left, right, v);
                 let x = ExprKind::LessThan(left2, right2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::GreaterThan(left, right) => {
+                let (left2, right2) =
+                    self.deduce_infix_type(env, "op >", left, right, v);
+                let x = ExprKind::GreaterThan(left2, right2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::LessThanOrEqual(left, right) => {
+                let (left2, right2) =
+                    self.deduce_infix_type(env, "op <=", left, right, v);
+                let x = ExprKind::LessThanOrEqual(left2, right2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::GreaterThanOrEqual(left, right) => {
+                let (left2, right2) =
+                    self.deduce_infix_type(env, "op >=", left, right, v);
+                let x = ExprKind::GreaterThanOrEqual(left2, right2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::Equal(left, right) => {
+                let (left2, right2) =
+                    self.deduce_infix_type(env, "op =", left, right, v);
+                let x = ExprKind::Equal(left2, right2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::NotEqual(left, right) => {
+                let (left2, right2) =
+                    self.deduce_infix_type(env, "op <>", left, right, v);
+                let x = ExprKind::NotEqual(left2, right2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::Plus(left, right) => {
+                let (left2, right2) =
+                    self.deduce_infix_type(env, "op +", left, right, v);
+                let x = ExprKind::Plus(left2, right2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::Minus(left, right) => {
+                let (left2, right2) =
+                    self.deduce_infix_type(env, "op -", left, right, v);
+                let x = ExprKind::Minus(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             _ => todo!("{:?}", expr.kind),
@@ -946,13 +999,11 @@ impl TypeResolver {
     fn deduce_val_bind_type(
         &mut self,
         env: &dyn TypeEnv,
-        val_bind: ValBind,
-        _term_map: &mut Vec<(IdPat, Term)>,
+        val_bind: &ValBind,
+        term_map: &mut Vec<(String, Term)>,
     ) -> ValBind {
         let v = self.variable();
-        let mut term_map = Vec::new();
-        let pat =
-            self.deduce_pat_type(env, val_bind.pat.clone(), &mut term_map, &v);
+        let pat = self.deduce_pat_type(env, val_bind.pat.clone(), term_map, &v);
         let expr = self.deduce_expr_type(env, val_bind.expr.clone(), &v);
         ValBind {
             pat,
