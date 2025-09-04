@@ -15,7 +15,7 @@
 // language governing permissions and limitations under the
 // License.
 
-use phf::{phf_map, phf_set, Map, Set};
+use phf::{Map, Set, phf_map, phf_set};
 use std::fs;
 
 #[test]
@@ -177,7 +177,9 @@ fn lint_file(file_name: &str, warnings: &mut Vec<String>) {
                     file_name, line, vec_space, vec_paren
                 ));
             }
-            if l.contains("lint: sort until") {
+            if l.contains("lint: sort until")
+                && !l.contains("\"lint: sort until")
+            {
                 if let Some(start) = l.find('\'')
                     && let Some(end) = l.rfind('\'')
                     && start < end
