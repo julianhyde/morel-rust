@@ -16,7 +16,7 @@
 // License.
 
 use phf::{Map, Set, phf_map, phf_set};
-use std::fs;
+use std::{fs, vec};
 
 #[test]
 fn lint() {
@@ -32,7 +32,7 @@ fn lint() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let mut warnings: Vec<String> = Vec::new();
+    let mut warnings = Vec::new();
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .for_each(|l| {

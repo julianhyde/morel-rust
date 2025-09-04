@@ -195,11 +195,11 @@ pub enum ExprKind<SubExpr> {
     If(Box<SubExpr>, Box<SubExpr>, Box<SubExpr>),
     Case(Box<SubExpr>, Vec<(Pat, SubExpr)>),
     Let(Vec<Decl>, Box<SubExpr>),
-    Fn(Vec<(Pat, Expr)>),
+    Fn(Vec<(Box<Pat>, Box<Expr>)>),
 
     // Constructors for data structures
-    Tuple(Vec<Expr>), // e.g. `(x, y, z)`
-    List(Vec<Expr>),  // e.g. `[x, y, z]`
+    Tuple(Vec<Box<Expr>>), // e.g. `(x, y, z)`
+    List(Vec<Box<Expr>>),  // e.g. `[x, y, z]`
     Record(Option<Box<Expr>>, Vec<LabeledExpr>), // e.g. `{r with x = 1, y}`
 
     // Relational expressions
@@ -532,7 +532,7 @@ pub enum PatKind {
     As(String, Box<Pat>),
     Constructor(String, Option<Box<Pat>>), // e.g. `Empty` or `Leaf x`
     Literal(Literal),
-    Tuple(Vec<Pat>),
+    Tuple(Vec<Box<Pat>>),
     List(Vec<Pat>),
     Record(Vec<PatField>, bool),
     Cons(Box<Pat>, Box<Pat>), // e.g. `x :: xs`
@@ -694,15 +694,19 @@ impl Display for DeclKind {
 /// Value binding.
 #[derive(Debug, Clone)]
 pub struct ValBind {
-    pub pat: Pat,
+    pub pat: Box<Pat>,
     pub type_annotation: Option<Type>,
-    pub expr: Expr,
+    pub expr: Box<Expr>,
 }
 
 impl ValBind {
     /// Creates a value binding with the given pattern, type annotation, and
     /// expression.
-    pub fn of(pat: Pat, type_annotation: Option<Type>, expr: Expr) -> Self {
+    pub fn of(
+        pat: Box<Pat>,
+        type_annotation: Option<Type>,
+        expr: Box<Expr>,
+    ) -> Self {
         ValBind {
             pat,
             type_annotation,

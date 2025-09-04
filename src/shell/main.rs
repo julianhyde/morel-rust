@@ -21,19 +21,24 @@
 #![allow(clippy::useless_format)]
 #![allow(clippy::redundant_closure)]
 
-use crate::compile::type_resolver::{EmptyTypeEnv, TypeResolver};
-use crate::shell::ShellResult;
+use crate::compile::type_env::{EmptyTypeEnv, FunTypeEnv, TypeEnv};
+use crate::compile::type_resolver::TypeResolver;
+use crate::compile::unifier::{Term, Unifier};
 use crate::shell::config::Config;
 use crate::shell::error::Error;
 use crate::shell::utils::{prefix_lines, strip_prefix};
+use crate::shell::ShellResult;
 use crate::syntax::ast;
 use crate::syntax::ast::{MorelNode, StatementKind};
-use crate::syntax::parser::parse_statement;
+use crate::syntax::parser::{parse_statement, parse_type};
+use phf::phf_map;
 use rustc_version::version;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::read_to_string;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 /// Main shell for Morel - Standard ML REPL.
 pub struct Shell {
@@ -258,7 +263,22 @@ impl Shell {
     /// Deduces a statement's type. The statement is represented by an AST node.
     fn deduce_type(&mut self, node: ast::Statement) -> ShellResult<String> {
         let mut type_resolver = TypeResolver::new();
-        let type_env = EmptyTypeEnv {};
+        let empty = EmptyTypeEnv {};
+        let value = |id: &str, unifier: Rc<RefCell<Unifier>>| -> Option<Term> {
+            if let Some(x) = BUILT_IN_TYPES.get(id) {
+                let t = parse_type(x).ok().unwrap();
+                let mut type_resolver = TypeResolver::new_with_unifier(unifier);
+                Some(Term::Variable(type_resolver.deduce_type_type_pub(&t)))
+            } else {
+                None
+            }
+        };
+        let type_env = FunTypeEnv {
+            parent: Rc::new(empty) as Rc<dyn TypeEnv>,
+            mapper: Rc::new(value),
+        };
+
+        // type_env = type_env.bind("<", type_resolver.unifier.)
         let resolved = type_resolver.deduce_type(&type_env, &node);
 
         // For now, just unparse the node back to a string. In a full
@@ -442,3 +462,15 @@ mod tests {
         assert_eq!(comment_depth("(*) line comment\n"), 0);
     }
 }
+
+/// Built-in values (mainly operators) and their types.
+///
+/// The types are held as strings and are parsed (and converted to terms)
+/// on demand. This is a win when there are a lot of built-in operators.
+static BUILT_IN_TYPES: phf::Map<&'static str, &'static str> = phf_map! {
+    "true" => "bool",
+    "false" => "bool",
+    "op +" => "int * int -> int",
+    "op <" => "int * int -> bool",
+    "op andalso" => "bool * bool -> bool",
+};

@@ -21,6 +21,7 @@
 #![allow(clippy::collapsible_if)]
 
 use crate::compile::environment::IdPat;
+use crate::compile::type_env::{EmptyTypeEnv, TypeEnv};
 use crate::compile::types;
 use crate::compile::types::{PrimitiveType, Subst, Type, TypeVariable};
 use crate::compile::unifier::{NullTracer, Op, Term, Unifier, Var};
@@ -28,7 +29,7 @@ use crate::syntax::ast::{
     Decl, DeclKind, Expr, ExprKind, LiteralKind, Pat, PatField, PatKind, Span,
     Statement, StatementKind, Type as AstType, TypeField, TypeKind, ValBind,
 };
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::zip;
@@ -164,100 +165,6 @@ pub enum BindingKind {
     Constructor,
 }
 
-/// Environment for type resolution, mapping names to terms.
-pub trait TypeEnv {
-    /// Gets the term associated with a name.
-    fn get(&self, name: &str) -> Option<Term>;
-
-    /// Binds a name to a term, returning a new environment.
-    fn bind(&self, name: String, term: Term) -> Box<dyn TypeEnv>;
-
-    /// Binds multiple names to terms.
-    fn bind_all(&self, bindings: &[(String, Term)]) -> Box<dyn TypeEnv>;
-
-    /// Creates a builder.
-    fn builder(&self) -> TypeEnvBuilder;
-}
-
-/// Empty type environment.
-#[derive(Debug, Clone)]
-pub struct EmptyTypeEnv;
-
-impl TypeEnv for EmptyTypeEnv {
-    fn get(&self, _name: &str) -> Option<Term> {
-        None
-    }
-
-    fn bind(&self, name: String, term: Term) -> Box<dyn TypeEnv> {
-        let mut bindings = HashMap::new();
-        bindings.insert(name, term);
-        Box::new(SimpleTypeEnv { bindings })
-    }
-
-    fn bind_all(&self, bindings: &[(String, Term)]) -> Box<dyn TypeEnv> {
-        let binding_map = bindings.iter().cloned().collect();
-        Box::new(SimpleTypeEnv {
-            bindings: binding_map,
-        })
-    }
-
-    fn builder(&self) -> TypeEnvBuilder {
-        TypeEnvBuilder {
-            env: Box::new(self.clone()) as Box<dyn TypeEnv>,
-        }
-    }
-}
-
-/// Simple type environment backed by a HashMap.
-#[derive(Debug, Clone)]
-pub struct SimpleTypeEnv {
-    pub bindings: HashMap<String, Term>,
-}
-
-impl TypeEnv for SimpleTypeEnv {
-    fn get(&self, name: &str) -> Option<Term> {
-        self.bindings.get(name).cloned()
-    }
-
-    fn bind(&self, name: String, term: Term) -> Box<dyn TypeEnv> {
-        let mut new_bindings = self.bindings.clone();
-        new_bindings.insert(name, term);
-        Box::new(SimpleTypeEnv {
-            bindings: new_bindings,
-        })
-    }
-
-    fn bind_all(&self, bindings: &[(String, Term)]) -> Box<dyn TypeEnv> {
-        let mut new_bindings = self.bindings.clone();
-        for (name, term) in bindings {
-            new_bindings.insert(name.clone(), term.clone());
-        }
-        Box::new(SimpleTypeEnv {
-            bindings: new_bindings,
-        })
-    }
-
-    fn builder(&self) -> TypeEnvBuilder {
-        TypeEnvBuilder {
-            env: Box::new(self.clone()),
-        }
-    }
-}
-
-pub struct TypeEnvBuilder {
-    env: Box<dyn TypeEnv>,
-}
-
-impl TypeEnvBuilder {
-    pub fn push(&mut self, name: String, term: Term) {
-        self.env = self.env.bind(name, term);
-    }
-
-    pub fn build(self) -> Box<dyn TypeEnv> {
-        self.env
-    }
-}
-
 /// Main type resolver that deduces types for ML expressions.
 #[allow(dead_code)]
 pub struct TypeResolver {
@@ -267,10 +174,7 @@ pub struct TypeResolver {
     /// that holds the node's type.
     node_var_map: HashMap<i32, Rc<Var>>,
 
-    /// List of (variable, term) pairs where the term is equivalent to the
-    /// variable. Will be the input to the unifier.
-    terms: Vec<(Rc<Var>, Term)>,
-    unifier: Unifier,
+    unifier: Rc<RefCell<Unifier>>,
     next_id: i32,
 
     /// Cached operators for common type-constructors.
@@ -293,18 +197,24 @@ impl Default for TypeResolver {
 impl TypeResolver {
     /// Creates a new type resolver.
     pub fn new() -> Self {
-        let mut unifier = Unifier::new(true);
-        let list_op = unifier.op("list", Some(1));
-        let bag_op = unifier.op("bag", Some(1));
-        let tuple_op = unifier.op("tuple", None);
-        let arg_op = unifier.op("$arg", None);
-        let overload_op = unifier.op("overload", None);
-        let record_op = unifier.op("record", None);
-        let fn_op = unifier.op("fn", Some(2));
+        TypeResolver::new_with_unifier(Rc::new(RefCell::new(Unifier::new(
+            true,
+        ))))
+    }
+
+    pub fn new_with_unifier(unifier_ref: Rc<RefCell<Unifier>>) -> Self {
+        let unifier = unifier_ref.clone();
+        let mut u = unifier_ref.borrow_mut();
+        let list_op = u.op("list", Some(1));
+        let bag_op = u.op("bag", Some(1));
+        let tuple_op = u.op("tuple", None);
+        let arg_op = u.op("$arg", None);
+        let overload_op = u.op("overload", None);
+        let record_op = u.op("record", None);
+        let fn_op = u.op("fn", Some(2));
         Self {
             warnings: Vec::new(),
             node_var_map: HashMap::new(),
-            terms: Vec::new(),
             next_id: 0,
             unifier,
             list_op,
@@ -332,7 +242,7 @@ impl TypeResolver {
         env: &dyn TypeEnv,
         statement: &Statement,
     ) -> Resolved {
-        self.terms.clear();
+        self.unifier.borrow_mut().terms.clear();
 
         let decl = ensure_decl(statement);
         let mut term_map: Vec<(IdPat, Term)> = vec![];
@@ -340,18 +250,23 @@ impl TypeResolver {
 
         // Create term pairs for unification
         let term_pairs: Vec<(Term, Term)> = self
+            .unifier
+            .borrow_mut()
             .terms
             .iter()
             .map(|(var, term)| (term.clone(), Term::Variable(var.clone())))
             .collect();
 
-        let substitution =
-            match self.unifier.unify(term_pairs.as_ref(), &NullTracer) {
-                Ok(x) => x,
-                Err(_) => {
-                    panic!("Unification failed")
-                }
-            };
+        let substitution = match self
+            .unifier
+            .borrow_mut()
+            .unify(term_pairs.as_ref(), &NullTracer)
+        {
+            Ok(x) => x,
+            Err(_) => {
+                panic!("Unification failed")
+            }
+        };
 
         // Create a map with the results of unification.
         let mut type_map = TypeMap::new(&self.node_var_map);
@@ -426,6 +341,16 @@ impl TypeResolver {
         DeclKind::Val(inst, rec, val_binds2)
     }
 
+    /// Converts a type AST to a term.
+    pub fn deduce_type_type_pub(&mut self, type_expr: &AstType) -> Rc<Var> {
+        let env = EmptyTypeEnv;
+        let v = self.variable();
+        println!("deduce_type_type_pub {} {}", type_expr, v.name);
+        self.deduce_type_type(&env, type_expr, &v);
+        println!("deduce_type_type_pub end");
+        v
+    }
+
     /// Deduces an expression's type.
     fn deduce_type_type(
         &mut self,
@@ -443,10 +368,10 @@ impl TypeResolver {
     /// Deduces an expression's type.
     /// Associates the type with variable `v` and returns the modified
     /// expression.
-    fn deduce_exp_type<'a>(
+    fn deduce_expr_type<'a>(
         &mut self,
         env: &dyn TypeEnv,
-        expr: &Expr,
+        expr: Box<Expr>,
         v: &'a Rc<Var>,
     ) -> Box<Expr> {
         match &expr.kind {
@@ -456,7 +381,7 @@ impl TypeResolver {
                 self.reg_expr(&expr.kind, &expr.span, expr.id, v)
             }
             ExprKind::Identifier(name) => {
-                if let Some(term) = env.get(name) {
+                if let Some(term) = env.get(name, self.unifier.clone()) {
                     self.equiv(&term, v);
                 } // else throw
                 self.reg_expr(&expr.kind, &expr.span, expr.id, v)
@@ -466,14 +391,14 @@ impl TypeResolver {
                 if expr_list.is_empty() {
                     // Don't link v0 to anything. It becomes a type variable.
                 } else {
-                    self.deduce_exp_type(
+                    self.deduce_expr_type(
                         env,
-                        expr_list.first().unwrap(),
+                        expr_list.first().unwrap().clone(),
                         &v_element,
                     );
                     for expr in expr_list.iter().skip(1) {
                         let v2 = self.variable();
-                        self.deduce_exp_type(env, expr, &v2);
+                        self.deduce_expr_type(env, expr.clone(), &v2);
                         self.equiv(&Term::Variable(v2), &v_element.clone());
                     }
                 }
@@ -484,7 +409,7 @@ impl TypeResolver {
                 let mut terms: BTreeMap<String, Term> = BTreeMap::new();
                 for labeled_expr in labeled_expr_list {
                     let v2 = self.variable();
-                    self.deduce_exp_type(env, &labeled_expr.expr, &v2);
+                    self.deduce_expr_type(env, labeled_expr.expr.clone(), &v2);
                     if let Some(label) = &labeled_expr.label {
                         terms.insert(label.name.clone(), Term::Variable(v2));
                     } else {
@@ -501,8 +426,8 @@ impl TypeResolver {
                 let mut expr_list2 = vec![];
                 for e in expr_list {
                     let v2 = self.variable();
-                    let e2 = self.deduce_exp_type(env, e, &v2);
-                    expr_list2.push(*e2);
+                    let e2 = self.deduce_expr_type(env, e.clone(), &v2);
+                    expr_list2.push(e2);
                     terms.push(Term::Variable(v2));
                 }
                 self.tuple_term(&terms, v);
@@ -518,8 +443,13 @@ impl TypeResolver {
                 let v_param = self.variable();
                 let v_result = self.variable();
                 for (pat, e) in matches {
-                    let (p2, e2) = self
-                        .deduce_match_type(env, &pat, &e, &v_param, &v_result);
+                    let (p2, e2) = self.deduce_match_type(
+                        env,
+                        pat.clone(),
+                        e.clone(),
+                        &v_param,
+                        &v_result,
+                    );
                     matches2.push((p2, e2));
                 }
                 self.fn_term(&v_param, &v_result, v);
@@ -528,44 +458,66 @@ impl TypeResolver {
             }
             ExprKind::Apply(left, right) => {
                 let (left2, right2) =
-                    self.deduce_apply_type2(env, left, right, v);
+                    self.deduce_apply_type(env, left.clone(), right.clone(), v);
                 let apply2 = ExprKind::Apply(left2, right2);
                 self.reg_expr(&apply2, &expr.span, expr.id, v)
             }
             ExprKind::AndAlso(left, right) => {
                 let (left2, right2) =
-                    self.deduce_infix_bool_type(env, left, right, v);
+                    self.deduce_infix_type(env, "op andalso", left, right, v);
+                /*
+                let (left2, right2) = self.deduce_infix_bool_type(
+                    env,
+                    left.clone(),
+                    right.clone(),
+                    v,
+                );
+
+                 */
                 let x = ExprKind::AndAlso(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::OrElse(left, right) => {
-                let (left2, right2) =
-                    self.deduce_infix_bool_type(env, left, right, v);
+                let (left2, right2) = self.deduce_infix_bool_type(
+                    env,
+                    left.clone(),
+                    right.clone(),
+                    v,
+                );
                 let x = ExprKind::OrElse(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Implies(left, right) => {
-                let (left2, right2) =
-                    self.deduce_infix_bool_type(env, left, right, v);
+                let (left2, right2) = self.deduce_infix_bool_type(
+                    env,
+                    left.clone(),
+                    right.clone(),
+                    v,
+                );
                 let x = ExprKind::Implies(left2, right2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::LessThan(left, right) => {
+                let (left2, right2) =
+                    self.deduce_infix_type(env, "op <", left, right, v);
+                let x = ExprKind::LessThan(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             _ => todo!("{:?}", expr.kind),
         }
     }
 
-    fn deduce_apply_type2(
+    fn deduce_apply_type(
         &mut self,
         env: &dyn TypeEnv,
-        fun: &Expr,
-        arg: &Expr,
-        v: &Rc<Var>,
+        fun: Box<Expr>,
+        arg: Box<Expr>,
+        v_result: &Rc<Var>,
     ) -> (Box<Expr>, Box<Expr>) {
         let v_fn = self.variable();
         let v_arg = self.variable();
-        self.fn_term(&v_arg, v, &v_fn);
-        let arg2: Box<Expr>;
-        if let ExprKind::RecordSelector(name) = &arg.kind {
+        self.fn_term(&v_arg, v_result, &v_fn);
+        let arg2 = if let ExprKind::RecordSelector(name) = &arg.kind {
             // "apply" is "f #field" and has type "v";
             // "f" has type "v_arg -> v" and also "v_fn";
             // "#field" has type "v_arg" and also "v_rec -> v_field".
@@ -574,19 +526,19 @@ impl TypeResolver {
             let v_field = self.variable();
             self.deduce_record_selector_type(env, name, &v_rec, &v_field);
             self.fn_term(&v_rec, &v_field, &v_arg);
-            arg2 = self.reg_expr(&arg.kind, &arg.span, arg.id, &v_arg);
+            self.reg_expr(&arg.kind, &arg.span, arg.id, &v_arg)
         } else {
-            arg2 = self.deduce_exp_type(env, arg, &v_arg);
-        }
+            self.deduce_expr_type(env, arg, &v_arg)
+        };
 
         let fun2 = if let ExprKind::RecordSelector(name) = &fun.kind {
             // "apply" is "#field arg" and has type "v";
             // "#field" has type "v_arg -> v";
             // "arg" has type "v_arg".
             // When we resolve "v_arg" we can then deduce "v".
-            self.deduce_record_selector_type(env, name, &v_arg, v)
+            self.deduce_record_selector_type(env, name, &v_arg, v_result)
         } else {
-            self.deduce_apply_fn_type(env, fun, &v_fn, &v_arg, v)
+            self.deduce_apply_fn_type(env, fun, &v_fn, &v_arg, v_result)
         };
 
         /*
@@ -616,12 +568,12 @@ impl TypeResolver {
     fn deduce_apply_fn_type(
         &mut self,
         env: &dyn TypeEnv,
-        fun: &Expr,
+        fun: Box<Expr>,
         v_fun: &Rc<Var>,
         _v_arg: &Rc<Var>,
         _v: &Rc<Var>,
     ) -> Box<Expr> {
-        self.deduce_exp_type(env, fun, v_fun)
+        self.deduce_expr_type(env, fun, v_fun)
     }
 
     fn deduce_record_selector_type(
@@ -638,21 +590,45 @@ impl TypeResolver {
         // Create a record selector expression
         let selector_kind = ExprKind::RecordSelector(name.clone());
         // Minimal span since we don't have the original
-        let span = crate::syntax::ast::Span::zero("".into());
+        let span = Span::zero("".into());
         self.reg_expr(&selector_kind, &span, None, v_field)
     }
 
     fn deduce_infix_bool_type(
         &mut self,
         env: &dyn TypeEnv,
-        left: &Expr,
-        right: &Expr,
+        left: Box<Expr>,
+        right: Box<Expr>,
         v: &Rc<Var>,
     ) -> (Box<Expr>, Box<Expr>) {
         self.primitive_term(&PrimitiveType::Bool, v);
-        let left2 = self.deduce_exp_type(env, left, v);
-        let right2 = self.deduce_exp_type(env, right, v);
+        let left2 = self.deduce_expr_type(env, left, v);
+        let right2 = self.deduce_expr_type(env, right, v);
         (left2, right2)
+    }
+
+    fn deduce_infix_type(
+        &mut self,
+        env: &dyn TypeEnv,
+        op: &str,
+        left: &Box<Expr>,
+        right: &Box<Expr>,
+        v: &Rc<Var>,
+    ) -> (Box<Expr>, Box<Expr>) {
+        let fun =
+            Box::new(ExprKind::Identifier(op.to_string()).spanned(&left.span));
+        let arg = Box::new(
+            ExprKind::Tuple(vec![left.clone(), right.clone()])
+                .spanned(&left.span),
+        );
+        let (_fun, arg) = self.deduce_apply_type(env, fun, arg, &v);
+        if let ExprKind::Tuple(args) = arg.kind
+            && args.len() == 2
+        {
+            (args.first().unwrap().clone(), args.get(1).unwrap().clone())
+        } else {
+            panic!("{:?}", left.kind)
+        }
     }
 
     /// Given a branch of a `fn`, deduces its type.
@@ -666,16 +642,16 @@ impl TypeResolver {
     fn deduce_match_type(
         &mut self,
         env: &dyn TypeEnv,
-        pat: &Pat,
-        sub_expr: &Expr,
+        pat: Box<Pat>,
+        sub_expr: Box<Expr>,
         v_param: &Rc<Var>,
         v_result: &Rc<Var>,
-    ) -> (Pat, Expr) {
+    ) -> (Box<Pat>, Box<Expr>) {
         let mut term_map: Vec<(String, Term)> = vec![];
-        let pat2 = self.deduce_pat_type(env, &pat, &mut term_map, &v_param);
+        let pat2 = self.deduce_pat_type(env, pat, &mut term_map, &v_param);
         let env2 = env.bind_all(&term_map);
-        let expr2 = self.deduce_exp_type(&*env2, &sub_expr, &v_result);
-        (*pat2, *expr2)
+        let expr2 = self.deduce_expr_type(&*env2, sub_expr, &v_result);
+        (pat2, expr2)
     }
 
     /// Converts a type to a unification term.
@@ -687,8 +663,12 @@ impl TypeResolver {
         match type_ {
             Type::Primitive(prim) => {
                 let _type_name = prim.to_str();
-                let op = self.unifier.op(_type_name, Some(0));
-                self.equiv(&Term::Sequence(self.unifier.atom(op)), v)
+                let sequence = {
+                    let mut u = self.unifier.borrow_mut();
+                    let op = u.op(_type_name, Some(0));
+                    &Term::Sequence(u.atom(op))
+                };
+                self.equiv(sequence, v)
             }
             Type::Fn(param, result) => {
                 let v_param = self.variable();
@@ -708,8 +688,11 @@ impl TypeResolver {
         v: &'a Rc<Var>,
     ) -> &'a Rc<Var> {
         let moniker = prim_type.to_str();
-        let op = self.unifier.op(moniker, Some(0));
-        let sequence = self.unifier.atom(op);
+        let sequence = {
+            let mut u = self.unifier.borrow_mut();
+            let op = u.op(moniker, Some(0));
+            u.atom(op)
+        };
         self.equiv(&Term::Sequence(sequence), v)
     }
 
@@ -720,7 +703,7 @@ impl TypeResolver {
         result_type: &Rc<Var>,
         v: &'a Rc<Var>,
     ) -> &'a Rc<Var> {
-        let sequence = self.unifier.apply2(
+        let sequence = self.unifier.borrow_mut().apply2(
             self.fn_op.clone(),
             Term::Variable(param_type.clone()),
             Term::Variable(result_type.clone()),
@@ -730,13 +713,15 @@ impl TypeResolver {
 
     /// Creates a term for a list type and associates it with a variable.
     fn list_term<'a>(&mut self, term: Term, v: &'a Rc<Var>) -> &'a Rc<Var> {
-        let sequence = self.unifier.apply1(self.list_op.clone(), term);
+        let sequence =
+            self.unifier.borrow_mut().apply1(self.list_op.clone(), term);
         self.equiv(&Term::Sequence(sequence), v)
     }
 
     /// Creates a term for a bag type and associates it with a variable.
     fn bag_term<'a>(&mut self, term: Term, v: &'a Rc<Var>) -> &'a Rc<Var> {
-        let sequence = self.unifier.apply1(self.bag_op.clone(), term);
+        let sequence =
+            self.unifier.borrow_mut().apply1(self.bag_op.clone(), term);
         self.equiv(&Term::Sequence(sequence), v)
     }
 
@@ -755,8 +740,11 @@ impl TypeResolver {
         }
 
         let label = Self::record_label_from_set(&labels);
-        let op = self.unifier.op(&label, Some(label_types.len()));
-        let sequence = self.unifier.apply(op, label_terms);
+        let sequence = {
+            let mut u = self.unifier.borrow_mut();
+            let op = u.op(&label, Some(label_types.len()));
+            u.apply(op, label_terms)
+        };
         self.equiv(&Term::Sequence(sequence), v)
     }
 
@@ -768,8 +756,10 @@ impl TypeResolver {
         if types.is_empty() {
             self.primitive_term(&PrimitiveType::Unit, v)
         } else {
-            let sequence =
-                self.unifier.apply(self.tuple_op.clone(), types.to_vec());
+            let sequence = self
+                .unifier
+                .borrow_mut()
+                .apply(self.tuple_op.clone(), types.to_vec());
             self.equiv(&Term::Sequence(sequence), v)
         }
     }
@@ -805,14 +795,17 @@ impl TypeResolver {
                     self.type_term(&arguments[0], subst, &v2);
                     return self.bag_term(Term::Variable(v2), v);
                 }
-                let mut terms: Vec<Term> = Vec::new();
+                let mut terms = vec![];
                 for argument in arguments {
                     let v2 = self.variable();
                     self.type_to_term(argument, &v2);
                     terms.push(Term::Variable(v2));
                 }
-                let op = self.unifier.op(&name, Some(terms.len()));
-                let sequence = self.unifier.apply(op.clone(), terms);
+                let sequence = {
+                    let mut u = self.unifier.borrow_mut();
+                    let op = u.op(&name, Some(terms.len()));
+                    u.apply(op.clone(), terms)
+                };
                 self.equiv(&Term::Sequence(sequence), v)
             }
             Type::Fn(param_type, result_type) => {
@@ -855,9 +848,12 @@ impl TypeResolver {
                     )
                 } else {
                     let label = Self::record_label_from_set(map.keys());
-                    let op = self.unifier.op(label.as_str(), Some(map.len()));
-                    let terms = map.values().cloned().collect::<Vec<_>>();
-                    let sequence = self.unifier.apply(op, terms);
+                    let sequence = {
+                        let mut u = self.unifier.borrow_mut();
+                        let op = u.op(label.as_str(), Some(map.len()));
+                        let terms = map.values().cloned().collect::<Vec<_>>();
+                        u.apply(op, terms)
+                    };
                     self.equiv(&Term::Sequence(sequence), v)
                 }
             }
@@ -935,13 +931,13 @@ impl TypeResolver {
 
     /// Creates a type variable.
     fn variable(&mut self) -> Rc<Var> {
-        self.unifier.variable()
+        self.unifier.borrow_mut().variable()
     }
 
     /// Creates an association between a term and a variable,
     /// declaring that they are equivalent.
     fn equiv<'a>(&mut self, term: &Term, v: &'a Rc<Var>) -> &'a Rc<Var> {
-        self.terms.push((v.clone(), term.clone()));
+        self.unifier.borrow_mut().terms.push((v.clone(), term.clone()));
         &v
     }
 
@@ -1001,8 +997,9 @@ impl TypeResolver {
     ) -> ValBind {
         let v = self.variable();
         let mut term_map = vec![];
-        let pat = *self.deduce_pat_type(env, &val_bind.pat, &mut term_map, &v);
-        let expr = *self.deduce_exp_type(env, &val_bind.expr, &v);
+        let pat =
+            self.deduce_pat_type(env, val_bind.pat.clone(), &mut term_map, &v);
+        let expr = self.deduce_expr_type(env, val_bind.expr.clone(), &v);
         ValBind {
             pat,
             expr,
@@ -1024,7 +1021,7 @@ impl TypeResolver {
     fn deduce_pat_type(
         &mut self,
         env: &dyn TypeEnv,
-        pat: &Pat,
+        pat: Box<Pat>,
         term_map: &mut Vec<(String, Term)>,
         v: &Rc<Var>,
     ) -> Box<Pat> {
@@ -1038,7 +1035,7 @@ impl TypeResolver {
                 self.reg_pat(&pat.kind, &pat.span, pat.id, &v)
             }
             PatKind::Annotated(pat, type_) => {
-                let pat2 = self.deduce_pat_type(env, pat, term_map, &v);
+                let pat2 = self.deduce_pat_type(env, pat.clone(), term_map, &v);
                 let type2 = self.deduce_type_type(env, type_, &v);
                 self.reg_pat(
                     &PatKind::Annotated(pat2.clone(), type2),
@@ -1050,16 +1047,18 @@ impl TypeResolver {
             PatKind::Tuple(pat_list) if pat_list.is_empty() => {
                 // They wrote an empty tuple. Treat it as a unit literal.
                 let unit_literal = LiteralKind::Unit.spanned(&pat.span);
-                let pat2 = PatKind::Literal(unit_literal).spanned(&pat.span);
-                self.deduce_pat_type(env, &pat2, term_map, &v)
+                let pat2 =
+                    Box::new(PatKind::Literal(unit_literal).spanned(&pat.span));
+                self.deduce_pat_type(env, pat2, term_map, &v)
             }
             PatKind::Tuple(pat_list) => {
                 let mut pat_list2 = vec![];
                 let mut terms = vec![];
                 for pat in pat_list {
                     let v2 = self.variable();
-                    let pat2 = self.deduce_pat_type(env, pat, term_map, &v2);
-                    pat_list2.push(*pat2);
+                    let pat2 =
+                        self.deduce_pat_type(env, pat.clone(), term_map, &v2);
+                    pat_list2.push(pat2);
                     terms.push(Term::Variable(v2));
                 }
                 self.tuple_term(&terms, &v);
@@ -1085,8 +1084,12 @@ impl TypeResolver {
                     match field {
                         PatField::Labeled(span, name, pat) => {
                             let v2 = self.variable();
-                            let pat2 =
-                                self.deduce_pat_type(env, pat, term_map, &v2);
+                            let pat2 = self.deduce_pat_type(
+                                env,
+                                pat.clone(),
+                                term_map,
+                                &v2,
+                            );
                             fields2.push(PatField::Labeled(
                                 span.clone(),
                                 name.clone(),
@@ -1096,8 +1099,12 @@ impl TypeResolver {
                         }
                         PatField::Anonymous(span, pat) => {
                             let v2 = self.variable();
-                            let pat2 =
-                                self.deduce_pat_type(env, pat, term_map, &v2);
+                            let pat2 = self.deduce_pat_type(
+                                env,
+                                pat.clone(),
+                                term_map,
+                                &v2,
+                            );
                             let name = self.implicit_pat_label(pat);
                             fields2.push(PatField::Labeled(
                                 span.clone(),
@@ -1149,17 +1156,17 @@ fn ensure_decl(statement: &Statement) -> Decl {
                 false,
                 false,
                 vec![ValBind::of(
-                    Pat {
+                    Box::new(Pat {
                         kind: PatKind::Identifier("it".to_string()),
                         span: statement.span.clone(),
                         id: statement.id,
-                    },
+                    }),
                     None,
-                    Expr {
+                    Box::new(Expr {
                         kind: e.clone(),
                         span: statement.span.clone(),
                         id: statement.id,
-                    },
+                    }),
                 )],
             ),
             span: statement.span.clone(),
@@ -1203,7 +1210,7 @@ impl<'a> TypeToTermConverter<'a> {
                 )
             }
             TypeKind::Record(fields) => {
-                let mut fields2: Vec<TypeField> = Vec::new();
+                let mut fields2 = vec![];
                 let mut label_types: BTreeMap<String, Term> = BTreeMap::new();
                 for field in fields {
                     let v2 = self.type_resolver.variable();
@@ -1222,13 +1229,14 @@ impl<'a> TypeToTermConverter<'a> {
                 )
             }
             TypeKind::Tuple(types) => {
-                let mut types2: Vec<AstType> = Vec::new();
-                let mut terms: Vec<Term> = Vec::new();
+                let mut types2 = vec![];
+                let mut terms = vec![];
                 for t in types {
                     let v2 = self.type_resolver.variable();
                     terms.push(Term::Variable(v2.clone()));
                     types2.push(*self.type_term(&t, v2));
                 }
+                self.type_resolver.tuple_term(&terms, &v);
                 self.type_resolver.reg_type(
                     &TypeKind::Tuple(types2),
                     &type_node.span,
@@ -1290,6 +1298,7 @@ fn implicit_pat_label_opt(pat: &Pat) -> Option<String> {
     }
 }
 
+/// Compile-time error or warning.
 #[allow(dead_code)]
 struct Warning {
     #[allow(dead_code)]

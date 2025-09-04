@@ -263,7 +263,7 @@ where
 
 /// Returns a list of strings ["1", ..., n].
 pub(crate) fn ordinal_names(n: usize) -> Vec<String> {
-    let mut v: Vec<String> = Vec::new();
+    let mut v = vec![];
     for i in 0..n {
         v.push((i + 1).to_string());
     }

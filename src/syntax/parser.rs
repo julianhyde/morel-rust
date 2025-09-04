@@ -64,6 +64,17 @@ pub fn parse_unadorned_statement(input: &str) -> ParseResult<Statement> {
     ))
 }
 
+/// Parses a Morel type and returns its AST.
+#[allow(clippy::result_large_err)]
+pub fn parse_type(input: &str) -> ParseResult<Type> {
+    let rc_input_str: Rc<str> = input.to_string().into();
+    let nodes =
+        MorelParser::parse_with_userdata(Rule::type_, input, rc_input_str)?;
+    Ok(match_nodes!(<MorelParser>; nodes;
+        [type_(e)] => e,
+    ))
+}
+
 fn input_to_span(input: ParseInput) -> Span {
     Span::make(input.user_data().clone(), input.as_pair().as_span())
 }
@@ -252,7 +263,7 @@ impl MorelParser {
                 // But we need
                 //   e2 = 5, args2 = [(::, 4), (::, 3), (@, 2), (::, 1)].
                 let mut e2 = e;
-                let mut args2: Vec<(&str, Expr)> = Vec::new();
+                let mut args2 = Vec::new();
                 for (op, arg) in args {
                     args2.insert(0, (op, e2));
                     e2 = arg;
@@ -386,14 +397,15 @@ impl MorelParser {
     fn tuple_expr(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr(exprs)..] => {
-                let expr_vec: Vec<_> = exprs.collect();
+                let expr_vec: Vec<_> =
+                    exprs.into_iter().map(Box::new).collect();
                 match expr_vec.len() {
                     0 => {
                         let literal = LiteralKind::Unit.wrap(input);
                         let span = &literal.span.clone();
                         ExprKind::Literal(literal).spanned(span)
                         },
-                    1 => expr_vec[0].clone(),
+                    1 => expr_vec[0].as_ref().clone(),
                     _ => ExprKind::Tuple(expr_vec).wrap(input),
                 }
             },
@@ -403,7 +415,7 @@ impl MorelParser {
     fn list_expr(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr(exprs)..] => {
-                ExprKind::List(exprs.collect()).wrap(input)
+                ExprKind::List(exprs.map(Box::new).collect()).wrap(input)
             },
         ))
     }
@@ -509,7 +521,13 @@ impl MorelParser {
 
     fn fn_expr(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [_fn(_), match_list(matches)] => ExprKind::Fn(matches).wrap(input),
+            [_fn(_), match_list(matches)] => {
+                let boxed_matches = matches
+                    .into_iter()
+                    .map(|(p, e)| (Box::new(p), Box::new(e)))
+                    .collect();
+                ExprKind::Fn(boxed_matches).wrap(input)
+            },
         ))
     }
 
@@ -872,7 +890,10 @@ impl MorelParser {
 
     fn tuple_pat(input: ParseInput) -> ParseResult<Pat> {
         Ok(match_nodes!(input.children();
-            [pat(pats)..] => PatKind::Tuple(pats.collect()).wrap(input),
+            [pat(pats)..] => {
+                let boxed_pats = pats.map(Box::new).collect();
+                PatKind::Tuple(boxed_pats).wrap(input)
+            },
         ))
     }
 
@@ -959,8 +980,10 @@ impl MorelParser {
 
     fn val_bind(input: ParseInput) -> ParseResult<ValBind> {
         Ok(match_nodes!(input.children();
-            [pat(p), expr(e)] => ValBind::of(p, None, e),
-            [pat(p), type_(t), expr(e)] => ValBind::of(p, Some(t), e),
+            [pat(p), expr(e)] => ValBind::of(Box::new(p), None, Box::new(e)),
+            [pat(p), type_(t), expr(e)] => {
+                ValBind::of(Box::new(p), Some(t), Box::new(e))
+            },
         ))
     }
 
@@ -1809,6 +1832,17 @@ mod test {
         ml("xyz").assert_parse(Rule::statement);
         ml("val x = 5").assert_parse(Rule::statement);
         ml("val `x` = 5").assert_parse(Rule::statement);
+    }
+
+    #[test]
+    fn test_parse_type() {
+        ml("int").assert_parse(Rule::type_);
+        ml("int * int").assert_parse(Rule::type_);
+        ml("int * int list").assert_parse(Rule::type_);
+        ml("(int * int) list").assert_parse(Rule::type_);
+        ml("int * (int list)").assert_parse(Rule::type_);
+        ml("{a: int, b: bool list}").assert_parse(Rule::type_);
+        ml("int * int -> bool").assert_parse(Rule::type_);
     }
 
     #[test]

@@ -16,6 +16,9 @@
  * language governing permissions and limitations under the
  * License.
  *)
+fn (x, y) => x andalso y;
+>type it : bool * bool -> bool
+
 Sys.set ("lineWidth", 78);
 > val it = () : unit
 
@@ -89,6 +92,8 @@ fn (x, y) => x andalso y;
 fn (x, y) => x orelse y;
 >type it : bool * bool -> bool
 fn (x, y) => x implies y;
+>type it : bool * bool -> bool
+fn (x, y) => x < y;
 >type it : bool * bool -> bool
 val x = 1;
 >type x : int

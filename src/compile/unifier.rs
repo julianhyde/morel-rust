@@ -142,7 +142,7 @@ impl Display for Term {
 /// and disjoint from Op id values.
 #[derive(Debug, Clone, Ord, PartialOrd, PartialEq, Eq, Hash)]
 pub struct Var {
-    name: String,
+    pub(crate) name: String,
     pub(crate) id: i32,
 }
 
@@ -501,6 +501,11 @@ pub struct Unifier {
     var_list: Vec<Rc<Var>>,
     op_list: Vec<Rc<Op>>,
     occurs: bool,
+
+    /// List of (variable, term) pairs where the term is equivalent to the
+    /// variable. These will be the input next time that [Unifier.unify] is
+    /// called.
+    pub(crate) terms: Vec<(Rc<Var>, Term)>,
 }
 
 /// Workspace for Unification.
@@ -700,6 +705,7 @@ impl<'a> Work<'a> {
     }
 
     fn add(&mut self, left: Term, right: Term) {
+        println!("add {} {}", left, right);
         match Kind::of(&left, &right) {
             Kind::SeqSeq => {
                 self.seq_seq_queue.borrow_mut().push_back((
@@ -751,6 +757,7 @@ impl Kind {
 
 impl Unifier {
     pub fn new(occurs: bool) -> Self {
+        println!("Unifier::new");
         Self {
             occurs,
             name_map: HashMap::new(),
@@ -758,6 +765,7 @@ impl Unifier {
             op_by_name: HashMap::new(),
             var_list: Vec::new(),
             op_list: Vec::new(),
+            terms: Vec::new(),
         }
     }
 
@@ -974,6 +982,7 @@ impl Unifier {
                 }
 
                 tracer.on_variable(&variable, &term);
+                println!("v {} term {}", variable.name, term);
                 if let Some(prior_term) =
                     work.result.insert(variable.clone(), term.clone())
                 {
@@ -1014,6 +1023,12 @@ impl Unifier {
                 substitutions.insert(var.clone(), term.clone());
             });
             substitutions.sort_keys();
+            println!(
+                "Unification succeeded after {} iterations in {} nanos: {}",
+                iteration,
+                duration.as_nanos(),
+                Substitution { substitutions: substitutions.clone() }
+            );
             return Ok(Substitution { substitutions });
         }
     }
