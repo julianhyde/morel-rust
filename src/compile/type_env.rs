@@ -15,8 +15,8 @@
 // language governing permissions and limitations under the
 // License.
 
-use crate::compile::unifier::{Term, Unifier, Var};
-use crate::syntax::ast::{TypeKind, TypeScheme};
+use crate::compile::unifier::{Term, Var};
+use crate::syntax::ast::TypeScheme;
 use std::collections::HashMap;
 use std::rc::Rc;
 
