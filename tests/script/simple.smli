@@ -91,7 +91,7 @@ fn (x, y) => x orelse y;
 fn (x, y) => x implies y;
 >type it : bool * bool -> bool
 fn (x, y) => x < y;
->type it : int * int -> bool
+>type it : 'a * 'a -> bool
 val x = 1;
 >type x : int
 val (x, y) = (1, true);

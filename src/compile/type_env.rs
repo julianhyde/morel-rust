@@ -15,21 +15,16 @@
 // language governing permissions and limitations under the
 // License.
 
-use crate::compile::type_resolver::{PROGRESSIVE_LABEL, TypeResolver};
-use crate::compile::types::{
-    PrimitiveType, Type, TypeVariable, are_contiguous_integers,
-};
 use crate::compile::unifier::{Term, Unifier, Var};
-use crate::syntax::ast::TypeKind;
-use std::cell::{RefCell, RefMut};
-use std::collections::{BTreeMap, HashMap};
+use crate::syntax::ast::{TypeKind, TypeScheme};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// Environment for type resolution, mapping names to terms.
 pub trait TypeEnv {
     /// Gets the term associated with a name.
     /// May consult or modify the `unifier` to construct the [Term].
-    fn get(&self, name: &str, unifier: Rc<RefCell<Unifier>>) -> Option<Term>;
+    fn get(&self, name: &str, t: &mut dyn TypeSchemeResolver) -> Option<Term>;
 
     /// Binds a name to a term, returning a new environment.
     fn bind(&self, name: String, term: Term) -> Rc<dyn TypeEnv>;
@@ -42,7 +37,11 @@ pub trait TypeEnv {
 }
 
 impl TypeEnv for EmptyTypeEnv {
-    fn get(&self, name: &str, unifier: Rc<RefCell<Unifier>>) -> Option<Term> {
+    fn get(
+        &self,
+        _name: &str,
+        _t: &mut dyn TypeSchemeResolver,
+    ) -> Option<Term> {
         None
     }
 
@@ -71,11 +70,11 @@ impl TypeEnv for EmptyTypeEnv {
 }
 
 impl TypeEnv for SimpleTypeEnv {
-    fn get(&self, name: &str, unifier: Rc<RefCell<Unifier>>) -> Option<Term> {
+    fn get(&self, name: &str, t: &mut dyn TypeSchemeResolver) -> Option<Term> {
         if let Some(b) = self.bindings.get(name) {
             Some(b.clone())
         } else {
-            self.parent.get(name, unifier)
+            self.parent.get(name, t)
         }
     }
 
@@ -107,11 +106,11 @@ impl TypeEnv for SimpleTypeEnv {
 }
 
 impl TypeEnv for FunTypeEnv {
-    fn get(&self, name: &str, unifier: Rc<RefCell<Unifier>>) -> Option<Term> {
-        if let Some(b) = (self.mapper)(name, unifier.clone()) {
+    fn get(&self, name: &str, t: &mut dyn TypeSchemeResolver) -> Option<Term> {
+        if let Some(b) = (self.resolve)(name, t) {
             Some(b)
         } else {
-            self.parent.get(name, unifier)
+            self.parent.get(name, t)
         }
     }
 
@@ -160,7 +159,12 @@ pub struct SimpleTypeEnv {
 #[derive(Clone)]
 pub struct FunTypeEnv {
     pub parent: Rc<dyn TypeEnv>,
-    pub mapper: Rc<dyn Fn(&str, Rc<RefCell<Unifier>>) -> Option<Term>>,
+    pub resolve: Rc<dyn Fn(&str, &mut dyn TypeSchemeResolver) -> Option<Term>>,
+}
+
+pub trait TypeSchemeResolver {
+    /// Converts a type scheme AST to a term.
+    fn deduce_type_scheme(&mut self, type_scheme: &TypeScheme) -> Rc<Var>;
 }
 
 /// Holds a type environment while it is mutated.
@@ -178,15 +182,4 @@ impl TypeEnvBuilder {
     pub fn build(self) -> Rc<dyn TypeEnv> {
         self.env
     }
-}
-
-/// Converts a type AST to a unifier term.
-///
-/// The implementation is similar to [TypeResolver::type_term], but simpler.
-pub fn type_to_term(
-    env: &dyn TypeEnv,
-    unifier: &mut Unifier,
-    type_: &TypeKind,
-) -> Rc<Var> {
-    todo!()
 }

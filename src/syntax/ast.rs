@@ -16,7 +16,7 @@
 // License.
 
 use crate::syntax::ast;
-use std::fmt::{Debug, Display, Formatter, Write};
+use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 
 /// A location in the source text.
@@ -74,9 +74,6 @@ impl Span {
 
 /// Trait possessed by all abstract syntax tree (AST) nodes.
 pub trait MorelNode {
-    /// Returns the string representation of the AST node.
-    fn unparse(&self, s: &mut String);
-
     /// Returns the span.
     fn span(&self) -> &Span;
 
@@ -97,13 +94,6 @@ pub struct Statement {
 }
 
 impl MorelNode for Statement {
-    fn unparse(&self, s: &mut String) {
-        match &self.kind {
-            StatementKind::Expr(x) => x.spanned(&self.span).unparse(s),
-            StatementKind::Decl(x) => x.spanned(&self.span).unparse(s),
-        }
-    }
-
     fn span(&self) -> &Span {
         &self.span
     }
@@ -125,6 +115,15 @@ impl MorelNode for Statement {
 pub enum StatementKind {
     Expr(ExprKind<Expr>),
     Decl(DeclKind),
+}
+
+impl Display for StatementKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            StatementKind::Expr(e) => write!(f, "{}", e),
+            StatementKind::Decl(d) => write!(f, "{}", d),
+        }
+    }
 }
 
 /// Abstract syntax tree (AST) of an expression.
@@ -403,7 +402,15 @@ impl LiteralKind {
 
 impl Display for LiteralKind {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        Debug::fmt(self, f)
+        match &self {
+            LiteralKind::Int(s) => write!(f, "{}", s)?,
+            LiteralKind::Real(s) => write!(f, "{}", s)?,
+            LiteralKind::String(s) => write!(f, "\"{}\"", s)?,
+            LiteralKind::Char(s) => write!(f, "'{}'", s)?,
+            LiteralKind::Bool(b) => write!(f, "{}", b)?,
+            LiteralKind::Unit => write!(f, "()")?,
+        };
+        Ok(())
     }
 }
 
@@ -614,7 +621,7 @@ pub struct Decl {
 impl Decl {
     pub(crate) fn for_each_id_pat(&self, mut p0: impl FnMut(i32, &str)) {
         match &self.kind {
-            DeclKind::Val(_inst, _rec, val_binds) => {
+            DeclKind::Val(_rec, _inst, val_binds) => {
                 for val_bind in val_binds {
                     val_bind.pat.for_each_id_pat(&mut p0)
                 }
@@ -665,14 +672,14 @@ impl Display for DeclKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             DeclKind::Val(rec, inst, binds) => {
-                write!(f, "val")?;
+                write!(f, "val ")?;
                 if *rec {
-                    write!(f, " rec")?;
+                    write!(f, "rec ")?;
                 }
                 if *inst {
-                    write!(f, " inst")?;
+                    write!(f, "inst ")?;
                 }
-                fmt_list(f, binds, "; ")
+                fmt_list(f, binds, " and ")
             }
             DeclKind::Fun(funs) => {
                 write!(f, "fun ")?;
@@ -717,7 +724,7 @@ impl ValBind {
 
 impl Display for ValBind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.pat, self.expr)
+        write!(f, "{} = {}", self.pat, self.expr)
     }
 }
 
@@ -900,6 +907,12 @@ impl TypeKind {
     }
 }
 
+/// Type scheme.
+pub struct TypeScheme {
+    pub var_count: usize,
+    pub type_: Type,
+}
+
 /// Type field in record types.
 #[derive(Debug, Clone)]
 pub struct TypeField {
@@ -908,14 +921,6 @@ pub struct TypeField {
 }
 
 impl MorelNode for Expr {
-    fn unparse(&self, s: &mut String) {
-        match &self.kind {
-            ExprKind::Identifier(name) => s.push_str(name),
-            ExprKind::Literal(value) => value.unparse(s),
-            _ => s.push_str("<expr>"), // TODO: implement for all variants
-        }
-    }
-
     fn span(&self) -> &Span {
         &self.span
     }
@@ -933,19 +938,6 @@ impl MorelNode for Expr {
 }
 
 impl MorelNode for Literal {
-    fn unparse(&self, s: &mut String) {
-        match &self.kind {
-            LiteralKind::Int(value) => s.push_str(value),
-            LiteralKind::Real(value) => s.push_str(value),
-            LiteralKind::String(value) => write!(s, "\"{}\"", value).unwrap(),
-            LiteralKind::Char(value) => write!(s, "#\"{}\"", value).unwrap(),
-            LiteralKind::Bool(value) => {
-                s.push_str(if *value { "true" } else { "false" })
-            }
-            LiteralKind::Unit => s.push_str("()"),
-        }
-    }
-
     fn span(&self) -> &Span {
         &self.span
     }
@@ -963,32 +955,6 @@ impl MorelNode for Literal {
 }
 
 impl MorelNode for Decl {
-    fn unparse(&self, s: &mut String) {
-        match &self.kind {
-            DeclKind::Val(rec, _inst, binds) => {
-                s.push_str("val ");
-                if let Some(first_bind) = binds.first() {
-                    if *rec {
-                        s.push_str("rec ");
-                    }
-                    first_bind.pat.unparse(s);
-                    if let Some(ref type_annotation) =
-                        first_bind.type_annotation
-                    {
-                        s.push_str(": ");
-                        match &type_annotation.kind {
-                            TypeKind::Con(name) => s.push_str(name),
-                            _ => s.push_str("<type>"),
-                        }
-                    }
-                    s.push_str(" = ");
-                    first_bind.expr.unparse(s);
-                }
-            }
-            _ => s.push_str("<decl>"),
-        }
-    }
-
     fn span(&self) -> &Span {
         &self.span
     }
@@ -1006,14 +972,6 @@ impl MorelNode for Decl {
 }
 
 impl MorelNode for Pat {
-    fn unparse(&self, s: &mut String) {
-        match &self.kind {
-            PatKind::Identifier(name) => s.push_str(name),
-            PatKind::Wildcard => s.push('_'),
-            _ => s.push_str("<pat>"),
-        }
-    }
-
     fn span(&self) -> &Span {
         &self.span
     }
@@ -1043,10 +1001,6 @@ impl Type {
 }
 
 impl MorelNode for Type {
-    fn unparse(&self, _s: &mut String) {
-        todo!()
-    }
-
     fn span(&self) -> &Span {
         &self.span
     }

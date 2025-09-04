@@ -21,15 +21,16 @@
 #![allow(clippy::collapsible_if)]
 
 use crate::compile::environment::IdPat;
-use crate::compile::type_env::{EmptyTypeEnv, TypeEnv};
+use crate::compile::type_env::{EmptyTypeEnv, TypeEnv, TypeSchemeResolver};
 use crate::compile::types;
 use crate::compile::types::{PrimitiveType, Subst, Type, TypeVariable};
 use crate::compile::unifier::{NullTracer, Op, Term, Unifier, Var};
 use crate::syntax::ast::{
     Decl, DeclKind, Expr, ExprKind, LiteralKind, Pat, PatField, PatKind, Span,
-    Statement, StatementKind, Type as AstType, TypeField, TypeKind, ValBind,
+    Statement, StatementKind, Type as AstType, TypeField, TypeKind, TypeScheme,
+    ValBind,
 };
-use std::cell::{OnceCell, RefCell};
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::zip;
@@ -174,7 +175,10 @@ pub struct TypeResolver {
     /// that holds the node's type.
     node_var_map: HashMap<i32, Rc<Var>>,
 
-    unifier: Rc<RefCell<Unifier>>,
+    /// List of (variable, term) pairs where the term is equivalent to the
+    /// variable. Will be the input to the unifier.
+    terms: Vec<(Rc<Var>, Term)>,
+    unifier: Unifier,
     next_id: i32,
 
     /// Cached operators for common type-constructors.
@@ -197,24 +201,18 @@ impl Default for TypeResolver {
 impl TypeResolver {
     /// Creates a new type resolver.
     pub fn new() -> Self {
-        TypeResolver::new_with_unifier(Rc::new(RefCell::new(Unifier::new(
-            true,
-        ))))
-    }
-
-    pub fn new_with_unifier(unifier_ref: Rc<RefCell<Unifier>>) -> Self {
-        let unifier = unifier_ref.clone();
-        let mut u = unifier_ref.borrow_mut();
-        let list_op = u.op("list", Some(1));
-        let bag_op = u.op("bag", Some(1));
-        let tuple_op = u.op("tuple", None);
-        let arg_op = u.op("$arg", None);
-        let overload_op = u.op("overload", None);
-        let record_op = u.op("record", None);
-        let fn_op = u.op("fn", Some(2));
+        let mut unifier = Unifier::new(true);
+        let list_op = unifier.op("list", Some(1));
+        let bag_op = unifier.op("bag", Some(1));
+        let tuple_op = unifier.op("tuple", None);
+        let arg_op = unifier.op("$arg", None);
+        let overload_op = unifier.op("overload", None);
+        let record_op = unifier.op("record", None);
+        let fn_op = unifier.op("fn", Some(2));
         Self {
             warnings: Vec::new(),
             node_var_map: HashMap::new(),
+            terms: Vec::new(),
             next_id: 0,
             unifier,
             list_op,
@@ -242,31 +240,26 @@ impl TypeResolver {
         env: &dyn TypeEnv,
         statement: &Statement,
     ) -> Resolved {
-        self.unifier.borrow_mut().terms.clear();
+        self.terms.clear();
 
         let decl = ensure_decl(statement);
-        let mut term_map: Vec<(IdPat, Term)> = vec![];
+        let mut term_map = Vec::new();
         let decl2 = self.deduce_decl_type(env, &decl, &mut term_map);
 
         // Create term pairs for unification
         let term_pairs: Vec<(Term, Term)> = self
-            .unifier
-            .borrow_mut()
             .terms
             .iter()
             .map(|(var, term)| (term.clone(), Term::Variable(var.clone())))
             .collect();
 
-        let substitution = match self
-            .unifier
-            .borrow_mut()
-            .unify(term_pairs.as_ref(), &NullTracer)
-        {
-            Ok(x) => x,
-            Err(_) => {
-                panic!("Unification failed")
-            }
-        };
+        let substitution =
+            match self.unifier.unify(term_pairs.as_ref(), &NullTracer) {
+                Ok(x) => x,
+                Err(_) => {
+                    panic!("Unification failed")
+                }
+            };
 
         // Create a map with the results of unification.
         let mut type_map = TypeMap::new(&self.node_var_map);
@@ -289,9 +282,9 @@ impl TypeResolver {
         term_map: &mut Vec<(IdPat, Term)>,
     ) -> Decl {
         match &decl.kind {
-            DeclKind::Val(inst, rec, val_binds) => {
+            DeclKind::Val(rec, inst, val_binds) => {
                 let kind = &self
-                    .deduce_val_decl_type(env, *inst, *rec, val_binds, term_map)
+                    .deduce_val_decl_type(env, *rec, *inst, val_binds, term_map)
                     .clone();
                 Decl {
                     kind: kind.clone(),
@@ -306,13 +299,13 @@ impl TypeResolver {
     fn deduce_val_decl_type(
         &mut self,
         env: &dyn TypeEnv,
-        inst: bool,
         rec: bool,
+        inst: bool,
         val_binds: &[ValBind],
         term_map: &mut Vec<(IdPat, Term)>,
     ) -> DeclKind {
         let mut env_holder = env.builder();
-        let mut map0: Vec<(ValBind, OnceCell<Rc<Var>>)> = vec![];
+        let mut map0 = Vec::new();
         val_binds.iter().for_each(|b| {
             map0.push((b.clone(), OnceCell::new()));
         });
@@ -329,7 +322,7 @@ impl TypeResolver {
                 );
             }
         }
-        let mut val_binds2 = vec![];
+        let mut val_binds2 = Vec::new();
         let env2 = env_holder.build();
 
         for (val_bind, _v_supplier) in map0 {
@@ -338,29 +331,41 @@ impl TypeResolver {
             val_binds2.push(bind);
         }
 
-        DeclKind::Val(inst, rec, val_binds2)
+        DeclKind::Val(rec, inst, val_binds2)
     }
 
-    /// Converts a type AST to a term.
-    pub fn deduce_type_type_pub(&mut self, type_expr: &AstType) -> Rc<Var> {
-        let env = EmptyTypeEnv;
-        let v = self.variable();
-        self.deduce_type_type(&env, type_expr, &v);
-        v
-    }
-
-    /// Deduces an expression's type.
+    /// Converts a type AST node to a type term.
     fn deduce_type_type(
         &mut self,
         env: &dyn TypeEnv,
-        type_expr: &AstType,
+        type_: &AstType,
         v: &Rc<Var>,
     ) -> Box<AstType> {
         let mut converter = TypeToTermConverter {
             type_resolver: self,
             env,
+            type_variables: BTreeMap::new(),
         };
-        converter.type_term(type_expr, v.clone())
+        converter.type_term(type_, &Subst::Empty, v)
+    }
+
+    fn deduce_type_scheme(
+        &mut self,
+        env: &dyn TypeEnv,
+        type_scheme: &TypeScheme,
+        v: &Rc<Var>,
+    ) -> Box<AstType> {
+        let mut type_variables = BTreeMap::new();
+        for i in 0..type_scheme.var_count {
+            let type_variable = Box::new(TypeVariable::new(i));
+            type_variables.insert(type_variable.name(), type_variable);
+        }
+        let mut converter = TypeToTermConverter {
+            type_resolver: self,
+            env,
+            type_variables,
+        };
+        converter.type_scheme_term(type_scheme, v)
     }
 
     /// Deduces an expression's type.
@@ -379,7 +384,7 @@ impl TypeResolver {
                 self.reg_expr(&expr.kind, &expr.span, expr.id, v)
             }
             ExprKind::Identifier(name) => {
-                if let Some(term) = env.get(name, self.unifier.clone()) {
+                if let Some(term) = env.get(name, self) {
                     self.equiv(&term, v);
                 } // else throw
                 self.reg_expr(&expr.kind, &expr.span, expr.id, v)
@@ -420,8 +425,8 @@ impl TypeResolver {
                 self.reg_expr(&expr.kind, &expr.span, expr.id, v)
             }
             ExprKind::Tuple(expr_list) => {
-                let mut terms = vec![];
-                let mut expr_list2 = vec![];
+                let mut terms = Vec::new();
+                let mut expr_list2 = Vec::new();
                 for e in expr_list {
                     let v2 = self.variable();
                     let e2 = self.deduce_expr_type(env, e.clone(), &v2);
@@ -437,7 +442,7 @@ impl TypeResolver {
                 )
             }
             ExprKind::Fn(matches) => {
-                let mut matches2 = vec![];
+                let mut matches2 = Vec::new();
                 let v_param = self.variable();
                 let v_result = self.variable();
                 for (pat, e) in matches {
@@ -615,7 +620,7 @@ impl TypeResolver {
         v_param: &Rc<Var>,
         v_result: &Rc<Var>,
     ) -> (Box<Pat>, Box<Expr>) {
-        let mut term_map: Vec<(String, Term)> = vec![];
+        let mut term_map = Vec::new();
         let pat2 = self.deduce_pat_type(env, pat, &mut term_map, &v_param);
         let env2 = env.bind_all(&term_map);
         let expr2 = self.deduce_expr_type(&*env2, sub_expr, &v_result);
@@ -631,11 +636,8 @@ impl TypeResolver {
         match type_ {
             Type::Primitive(prim) => {
                 let _type_name = prim.to_str();
-                let sequence = {
-                    let mut u = self.unifier.borrow_mut();
-                    let op = u.op(_type_name, Some(0));
-                    &Term::Sequence(u.atom(op))
-                };
+                let op = self.unifier.op(_type_name, Some(0));
+                let sequence = &Term::Sequence(self.unifier.atom(op));
                 self.equiv(sequence, v)
             }
             Type::Fn(param, result) => {
@@ -656,11 +658,8 @@ impl TypeResolver {
         v: &'a Rc<Var>,
     ) -> &'a Rc<Var> {
         let moniker = prim_type.to_str();
-        let sequence = {
-            let mut u = self.unifier.borrow_mut();
-            let op = u.op(moniker, Some(0));
-            u.atom(op)
-        };
+        let op = self.unifier.op(moniker, Some(0));
+        let sequence = self.unifier.atom(op);
         self.equiv(&Term::Sequence(sequence), v)
     }
 
@@ -671,7 +670,7 @@ impl TypeResolver {
         result_type: &Rc<Var>,
         v: &'a Rc<Var>,
     ) -> &'a Rc<Var> {
-        let sequence = self.unifier.borrow_mut().apply2(
+        let sequence = self.unifier.apply2(
             self.fn_op.clone(),
             Term::Variable(param_type.clone()),
             Term::Variable(result_type.clone()),
@@ -681,15 +680,13 @@ impl TypeResolver {
 
     /// Creates a term for a list type and associates it with a variable.
     fn list_term<'a>(&mut self, term: Term, v: &'a Rc<Var>) -> &'a Rc<Var> {
-        let sequence =
-            self.unifier.borrow_mut().apply1(self.list_op.clone(), term);
+        let sequence = self.unifier.apply1(self.list_op.clone(), term);
         self.equiv(&Term::Sequence(sequence), v)
     }
 
     /// Creates a term for a bag type and associates it with a variable.
     fn bag_term<'a>(&mut self, term: Term, v: &'a Rc<Var>) -> &'a Rc<Var> {
-        let sequence =
-            self.unifier.borrow_mut().apply1(self.bag_op.clone(), term);
+        let sequence = self.unifier.apply1(self.bag_op.clone(), term);
         self.equiv(&Term::Sequence(sequence), v)
     }
 
@@ -708,11 +705,8 @@ impl TypeResolver {
         }
 
         let label = Self::record_label_from_set(&labels);
-        let sequence = {
-            let mut u = self.unifier.borrow_mut();
-            let op = u.op(&label, Some(label_types.len()));
-            u.apply(op, label_terms)
-        };
+        let op = self.unifier.op(&label, Some(label_types.len()));
+        let sequence = self.unifier.apply(op, label_terms);
         self.equiv(&Term::Sequence(sequence), v)
     }
 
@@ -724,10 +718,8 @@ impl TypeResolver {
         if types.is_empty() {
             self.primitive_term(&PrimitiveType::Unit, v)
         } else {
-            let sequence = self
-                .unifier
-                .borrow_mut()
-                .apply(self.tuple_op.clone(), types.to_vec());
+            let sequence =
+                self.unifier.apply(self.tuple_op.clone(), types.to_vec());
             self.equiv(&Term::Sequence(sequence), v)
         }
     }
@@ -763,17 +755,14 @@ impl TypeResolver {
                     self.type_term(&arguments[0], subst, &v2);
                     return self.bag_term(Term::Variable(v2), v);
                 }
-                let mut terms = vec![];
+                let mut terms = Vec::new();
                 for argument in arguments {
                     let v2 = self.variable();
                     self.type_to_term(argument, &v2);
                     terms.push(Term::Variable(v2));
                 }
-                let sequence = {
-                    let mut u = self.unifier.borrow_mut();
-                    let op = u.op(&name, Some(terms.len()));
-                    u.apply(op.clone(), terms)
-                };
+                let op = self.unifier.op(&name, Some(terms.len()));
+                let sequence = self.unifier.apply(op.clone(), terms);
                 self.equiv(&Term::Sequence(sequence), v)
             }
             Type::Fn(param_type, result_type) => {
@@ -816,12 +805,9 @@ impl TypeResolver {
                     )
                 } else {
                     let label = Self::record_label_from_set(map.keys());
-                    let sequence = {
-                        let mut u = self.unifier.borrow_mut();
-                        let op = u.op(label.as_str(), Some(map.len()));
-                        let terms = map.values().cloned().collect::<Vec<_>>();
-                        u.apply(op, terms)
-                    };
+                    let op = self.unifier.op(label.as_str(), Some(map.len()));
+                    let terms = map.values().cloned().collect::<Vec<_>>();
+                    let sequence = self.unifier.apply(op, terms);
                     self.equiv(&Term::Sequence(sequence), v)
                 }
             }
@@ -859,7 +845,7 @@ impl TypeResolver {
         sequence: &crate::compile::unifier::Sequence,
     ) -> Option<Vec<String>> {
         match sequence.op.name.as_str() {
-            "record" => Some(vec![]),
+            "record" => Some(Vec::new()),
             "tuple" => {
                 let size = sequence.terms.len();
                 Some(ordinal_names(size))
@@ -899,16 +885,13 @@ impl TypeResolver {
 
     /// Creates a type variable.
     fn variable(&mut self) -> Rc<Var> {
-        self.unifier.borrow_mut().variable()
+        self.unifier.variable()
     }
 
     /// Creates an association between a term and a variable,
     /// declaring that they are equivalent.
     fn equiv<'a>(&mut self, term: &Term, v: &'a Rc<Var>) -> &'a Rc<Var> {
-        self.unifier
-            .borrow_mut()
-            .terms
-            .push((v.clone(), term.clone()));
+        self.terms.push((v.clone(), term.clone()));
         &v
     }
 
@@ -967,7 +950,7 @@ impl TypeResolver {
         _term_map: &mut Vec<(IdPat, Term)>,
     ) -> ValBind {
         let v = self.variable();
-        let mut term_map = vec![];
+        let mut term_map = Vec::new();
         let pat =
             self.deduce_pat_type(env, val_bind.pat.clone(), &mut term_map, &v);
         let expr = self.deduce_expr_type(env, val_bind.expr.clone(), &v);
@@ -1023,8 +1006,8 @@ impl TypeResolver {
                 self.deduce_pat_type(env, pat2, term_map, &v)
             }
             PatKind::Tuple(pat_list) => {
-                let mut pat_list2 = vec![];
-                let mut terms = vec![];
+                let mut pat_list2 = Vec::new();
+                let mut terms = Vec::new();
                 for pat in pat_list {
                     let v2 = self.variable();
                     let pat2 =
@@ -1049,8 +1032,8 @@ impl TypeResolver {
                 //  fun f {a=1,...} = 1 | f {b=2,...} = 2
                 //
                 // we cannot deduce whether a 'c' field is allowed.
-                let mut fields2 = vec![];
-                let mut map: BTreeMap<String, Term> = BTreeMap::new();
+                let mut fields2 = Vec::new();
+                let mut map = BTreeMap::new();
                 for field in fields {
                     match field {
                         PatField::Labeled(span, name, pat) => {
@@ -1117,6 +1100,15 @@ impl TypeResolver {
     }
 }
 
+impl TypeSchemeResolver for TypeResolver {
+    fn deduce_type_scheme(&mut self, type_scheme: &TypeScheme) -> Rc<Var> {
+        let env = EmptyTypeEnv;
+        let v = self.variable();
+        self.deduce_type_scheme(&env, &type_scheme, &v);
+        v
+    }
+}
+
 /// Ensures that a statement is a declaration.
 /// An expression 'e' is wrapped as a value declaration 'val it = e'.
 fn ensure_decl(statement: &Statement) -> Decl {
@@ -1151,13 +1143,38 @@ fn ensure_decl(statement: &Statement) -> Decl {
 struct TypeToTermConverter<'a> {
     env: &'a dyn TypeEnv,
     type_resolver: &'a mut TypeResolver,
+    type_variables: BTreeMap<String, Box<TypeVariable>>,
 }
 
 #[allow(dead_code)]
 impl<'a> TypeToTermConverter<'a> {
+    /// Converts a type scheme into a type term.
+    ///
+    /// Requires [TypeToTermConverter.type_variables] has been populated with
+    /// all type variables that can possibly occur. (Generally the first N
+    /// variables, `'a`, `'b`, ...)
+    fn type_scheme_term(
+        &mut self,
+        type_scheme: &TypeScheme,
+        v: &Rc<Var>,
+    ) -> Box<AstType> {
+        let mut subst = Subst::Empty;
+        for i in 0..type_scheme.var_count {
+            let type_variable = self.type_variables.values().nth(i).unwrap();
+            let v = self.type_resolver.variable();
+            subst = subst.plus(type_variable, Term::Variable(v));
+        }
+        self.type_term(&type_scheme.type_, &subst, v)
+    }
+
     /// Converts an AST node representing a type into a type term.
     /// Registers the type term and returns the modified AST node.
-    fn type_term(&mut self, type_node: &AstType, v: Rc<Var>) -> Box<AstType> {
+    fn type_term(
+        &mut self,
+        type_node: &AstType,
+        subst: &Subst,
+        v: &Rc<Var>,
+    ) -> Box<AstType> {
         match &type_node.kind {
             TypeKind::Id(name) => {
                 let p = PrimitiveType::from_str(name).unwrap();
@@ -1170,9 +1187,9 @@ impl<'a> TypeToTermConverter<'a> {
             }
             TypeKind::Fn(param, result) => {
                 let v4 = self.type_resolver.variable();
-                let param2 = self.type_term(param, v4.clone());
+                let param2 = self.type_term(param, subst, &v4);
                 let v5 = self.type_resolver.variable();
-                let result2 = self.type_term(result, v5.clone());
+                let result2 = self.type_term(result, subst, &v5);
                 self.type_resolver.fn_term(&v4, &v5, &v);
                 self.type_resolver.reg_type(
                     &TypeKind::Fn(param2, result2),
@@ -1181,13 +1198,13 @@ impl<'a> TypeToTermConverter<'a> {
                 )
             }
             TypeKind::Record(fields) => {
-                let mut fields2 = vec![];
-                let mut label_types: BTreeMap<String, Term> = BTreeMap::new();
+                let mut fields2 = Vec::new();
+                let mut label_types = BTreeMap::new();
                 for field in fields {
                     let v2 = self.type_resolver.variable();
                     fields2.push(TypeField {
                         label: field.label.clone(),
-                        type_: *self.type_term(&field.type_, v2.clone()),
+                        type_: *self.type_term(&field.type_, subst, &v2),
                     });
                     label_types
                         .insert(field.label.name.clone(), Term::Variable(v2));
@@ -1200,12 +1217,12 @@ impl<'a> TypeToTermConverter<'a> {
                 )
             }
             TypeKind::Tuple(types) => {
-                let mut types2 = vec![];
-                let mut terms = vec![];
+                let mut types2 = Vec::new();
+                let mut terms = Vec::new();
                 for t in types {
                     let v2 = self.type_resolver.variable();
                     terms.push(Term::Variable(v2.clone()));
-                    types2.push(*self.type_term(&t, v2));
+                    types2.push(*self.type_term(&t, subst, &v2));
                 }
                 self.type_resolver.tuple_term(&terms, &v);
                 self.type_resolver.reg_type(
@@ -1213,6 +1230,12 @@ impl<'a> TypeToTermConverter<'a> {
                     &type_node.span,
                     &v,
                 )
+            }
+            TypeKind::Var(name) => {
+                let type_variable = self.type_variables.get(name).unwrap();
+                let term = subst.get(type_variable).unwrap();
+                self.type_resolver.equiv(&term, &v);
+                Box::new(TypeKind::Var(name.clone()).spanned(&type_node.span))
             }
             TypeKind::Unit => {
                 self.type_resolver.primitive_term(&PrimitiveType::Unit, &v);

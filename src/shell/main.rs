@@ -21,20 +21,22 @@
 #![allow(clippy::useless_format)]
 #![allow(clippy::redundant_closure)]
 
-use crate::compile::type_env::{EmptyTypeEnv, FunTypeEnv, TypeEnv};
+use crate::compile::type_env::{
+    EmptyTypeEnv, FunTypeEnv, TypeEnv, TypeSchemeResolver,
+};
 use crate::compile::type_resolver::TypeResolver;
-use crate::compile::unifier::{Term, Unifier};
+use crate::compile::unifier::Term;
+use crate::shell::ShellResult;
 use crate::shell::config::Config;
 use crate::shell::error::Error;
 use crate::shell::utils::{prefix_lines, strip_prefix};
-use crate::shell::ShellResult;
 use crate::syntax::ast;
-use crate::syntax::ast::{MorelNode, StatementKind};
-use crate::syntax::parser::{parse_statement, parse_type};
+use crate::syntax::ast::StatementKind;
+use crate::syntax::parser::{parse_statement, parse_type_scheme};
 use phf::phf_map;
 use rustc_version::version;
-use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::fs::read_to_string;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -263,22 +265,21 @@ impl Shell {
     /// Deduces a statement's type. The statement is represented by an AST node.
     fn deduce_type(&mut self, node: ast::Statement) -> ShellResult<String> {
         let mut type_resolver = TypeResolver::new();
-        let empty = EmptyTypeEnv {};
-        let value = |id: &str, unifier: Rc<RefCell<Unifier>>| -> Option<Term> {
-            if let Some(x) = BUILT_IN_TYPES.get(id) {
-                let t = parse_type(x).ok().unwrap();
-                let mut type_resolver = TypeResolver::new_with_unifier(unifier);
-                Some(Term::Variable(type_resolver.deduce_type_type_pub(&t)))
-            } else {
-                None
-            }
-        };
+        let empty_type_env = EmptyTypeEnv {};
+        let resolve =
+            |id: &str, t: &mut dyn TypeSchemeResolver| -> Option<Term> {
+                if let Some(x) = BUILT_IN_TYPES.get(id) {
+                    let type_scheme = parse_type_scheme(x).unwrap();
+                    Some(Term::Variable(t.deduce_type_scheme(&type_scheme)))
+                } else {
+                    None
+                }
+            };
         let type_env = FunTypeEnv {
-            parent: Rc::new(empty) as Rc<dyn TypeEnv>,
-            mapper: Rc::new(value),
+            parent: Rc::new(empty_type_env) as Rc<dyn TypeEnv>,
+            resolve: Rc::new(resolve),
         };
 
-        // type_env = type_env.bind("<", type_resolver.unifier.)
         let resolved = type_resolver.deduce_type(&type_env, &node);
 
         // For now, just unparse the node back to a string. In a full
@@ -300,8 +301,7 @@ impl Shell {
     fn evaluate_node(&mut self, node: ast::Statement) -> ShellResult<String> {
         // For now, just unparse the node back to a string. In a full
         // implementation, this would actually evaluate the expression.
-        let mut result = String::new();
-        node.unparse(&mut result);
+        let result = format!("{}", &node.kind);
 
         match &node.kind {
             StatementKind::Expr(_expr) => {
@@ -471,7 +471,7 @@ static BUILT_IN_TYPES: phf::Map<&'static str, &'static str> = phf_map! {
     /* lint: sort until '}' */
     "false" => "bool",
     "op +" => "int * int -> int",
-    "op <" => "int * int -> bool",
+    "op <" => "forall 1 'a * 'a -> bool",
     "op andalso" => "bool * bool -> bool",
     "op implies" => "bool * bool -> bool",
     "op orelse" => "bool * bool -> bool",

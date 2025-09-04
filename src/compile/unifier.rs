@@ -501,11 +501,6 @@ pub struct Unifier {
     var_list: Vec<Rc<Var>>,
     op_list: Vec<Rc<Op>>,
     occurs: bool,
-
-    /// List of (variable, term) pairs where the term is equivalent to the
-    /// variable. These will be the input next time that [Unifier.unify] is
-    /// called.
-    pub(crate) terms: Vec<(Rc<Var>, Term)>,
 }
 
 /// Workspace for Unification.
@@ -763,7 +758,6 @@ impl Unifier {
             op_by_name: HashMap::new(),
             var_list: Vec::new(),
             op_list: Vec::new(),
-            terms: Vec::new(),
         }
     }
 
