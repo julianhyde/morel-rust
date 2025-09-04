@@ -468,9 +468,12 @@ mod tests {
 /// The types are held as strings and are parsed (and converted to terms)
 /// on demand. This is a win when there are a lot of built-in operators.
 static BUILT_IN_TYPES: phf::Map<&'static str, &'static str> = phf_map! {
-    "true" => "bool",
+    /* lint: sort until '}' */
     "false" => "bool",
     "op +" => "int * int -> int",
     "op <" => "int * int -> bool",
     "op andalso" => "bool * bool -> bool",
+    "op implies" => "bool * bool -> bool",
+    "op orelse" => "bool * bool -> bool",
+    "true" => "bool",
 };

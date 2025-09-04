@@ -345,9 +345,7 @@ impl TypeResolver {
     pub fn deduce_type_type_pub(&mut self, type_expr: &AstType) -> Rc<Var> {
         let env = EmptyTypeEnv;
         let v = self.variable();
-        println!("deduce_type_type_pub {} {}", type_expr, v.name);
         self.deduce_type_type(&env, type_expr, &v);
-        println!("deduce_type_type_pub end");
         v
     }
 
@@ -465,35 +463,18 @@ impl TypeResolver {
             ExprKind::AndAlso(left, right) => {
                 let (left2, right2) =
                     self.deduce_infix_type(env, "op andalso", left, right, v);
-                /*
-                let (left2, right2) = self.deduce_infix_bool_type(
-                    env,
-                    left.clone(),
-                    right.clone(),
-                    v,
-                );
-
-                 */
                 let x = ExprKind::AndAlso(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::OrElse(left, right) => {
-                let (left2, right2) = self.deduce_infix_bool_type(
-                    env,
-                    left.clone(),
-                    right.clone(),
-                    v,
-                );
+                let (left2, right2) =
+                    self.deduce_infix_type(env, "op orelse", left, right, v);
                 let x = ExprKind::OrElse(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Implies(left, right) => {
-                let (left2, right2) = self.deduce_infix_bool_type(
-                    env,
-                    left.clone(),
-                    right.clone(),
-                    v,
-                );
+                let (left2, right2) =
+                    self.deduce_infix_type(env, "op implies", left, right, v);
                 let x = ExprKind::Implies(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
@@ -592,19 +573,6 @@ impl TypeResolver {
         // Minimal span since we don't have the original
         let span = Span::zero("".into());
         self.reg_expr(&selector_kind, &span, None, v_field)
-    }
-
-    fn deduce_infix_bool_type(
-        &mut self,
-        env: &dyn TypeEnv,
-        left: Box<Expr>,
-        right: Box<Expr>,
-        v: &Rc<Var>,
-    ) -> (Box<Expr>, Box<Expr>) {
-        self.primitive_term(&PrimitiveType::Bool, v);
-        let left2 = self.deduce_expr_type(env, left, v);
-        let right2 = self.deduce_expr_type(env, right, v);
-        (left2, right2)
     }
 
     fn deduce_infix_type(
@@ -937,7 +905,10 @@ impl TypeResolver {
     /// Creates an association between a term and a variable,
     /// declaring that they are equivalent.
     fn equiv<'a>(&mut self, term: &Term, v: &'a Rc<Var>) -> &'a Rc<Var> {
-        self.unifier.borrow_mut().terms.push((v.clone(), term.clone()));
+        self.unifier
+            .borrow_mut()
+            .terms
+            .push((v.clone(), term.clone()));
         &v
     }
 

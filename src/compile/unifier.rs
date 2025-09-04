@@ -705,7 +705,6 @@ impl<'a> Work<'a> {
     }
 
     fn add(&mut self, left: Term, right: Term) {
-        println!("add {} {}", left, right);
         match Kind::of(&left, &right) {
             Kind::SeqSeq => {
                 self.seq_seq_queue.borrow_mut().push_back((
@@ -757,7 +756,6 @@ impl Kind {
 
 impl Unifier {
     pub fn new(occurs: bool) -> Self {
-        println!("Unifier::new");
         Self {
             occurs,
             name_map: HashMap::new(),
@@ -982,7 +980,6 @@ impl Unifier {
                 }
 
                 tracer.on_variable(&variable, &term);
-                println!("v {} term {}", variable.name, term);
                 if let Some(prior_term) =
                     work.result.insert(variable.clone(), term.clone())
                 {
@@ -1023,12 +1020,6 @@ impl Unifier {
                 substitutions.insert(var.clone(), term.clone());
             });
             substitutions.sort_keys();
-            println!(
-                "Unification succeeded after {} iterations in {} nanos: {}",
-                iteration,
-                duration.as_nanos(),
-                Substitution { substitutions: substitutions.clone() }
-            );
             return Ok(Substitution { substitutions });
         }
     }

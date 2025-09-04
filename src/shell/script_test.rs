@@ -210,7 +210,7 @@ impl ScriptTest {
 
     /// Main entry point for command-line usage
     pub fn main(args: Vec<String>) -> ShellResult<()> {
-        let mut directory: Option<PathBuf> = None;
+        let mut directory = None;
         let mut test_files = Vec::new();
 
         // Parse arguments
