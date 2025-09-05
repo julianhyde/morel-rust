@@ -128,23 +128,30 @@ fn lint_file(file_name: &str, warnings: &mut Vec<String>) {
         let mut line = 0;
         let mut in_raw_string = false;
         let mut sort_until = None;
-        let mut previous_line = None;
+        let mut previous_lines: Vec<(&str, usize)> = Vec::new();
         contents.lines().for_each(|l| {
             line += 1;
             if let Some(u) = sort_until {
                 if l.contains(u) {
                     sort_until = None;
-                    previous_line = None;
+                    previous_lines.clear();
                 } else {
-                    if let Some(p) = previous_line
-                        && l < p
+                    if !previous_lines.is_empty()
+                        && l < previous_lines.last().unwrap().0
                     {
+                        let mut target_line = 0;
+                        for i in (0..previous_lines.len()).rev() {
+                            if l > previous_lines[i].0 {
+                                target_line = previous_lines[i].1;
+                                break;
+                            }
+                        }
                         warnings.push(format!(
-                            "{}:{}: Line out of order",
-                            file_name, line
+                            "{}:{}: Line out of order; move to line {}",
+                            file_name, line, target_line
                         ));
                     }
-                    previous_line = Some(l);
+                    previous_lines.push((l, line));
                 }
             }
             if l.ends_with(' ') {
@@ -185,7 +192,7 @@ fn lint_file(file_name: &str, warnings: &mut Vec<String>) {
                     && start < end
                 {
                     sort_until = Some(&l[start + 1..end]);
-                    previous_line = None;
+                    previous_lines.clear();
                 } else {
                     warnings.push(format!(
                         "{}:{}: Malformed 'sort until' directive",
