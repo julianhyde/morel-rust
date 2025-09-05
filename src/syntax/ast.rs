@@ -893,6 +893,9 @@ pub enum TypeKind {
     Fn(Box<Type>, Box<Type>),
     Tuple(Vec<Type>),
     Record(Vec<TypeField>),
+    /// `App(args, t)` applies a parameterized type.
+    /// For example, `int list` applies the `list` parameterized
+    /// type to `int`.
     App(Vec<Type>, Box<Type>),
     Expression(Box<Expr>),
 }

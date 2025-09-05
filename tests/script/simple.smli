@@ -106,6 +106,14 @@ fn (x, y) => x + y;
 >type it : int * int -> int
 fn (x, y) => x - y;
 >type it : int * int -> int
+fn (x, y) => x mod y;
+>type it : int * int -> int
+fn (x, y) => x div y;
+>type it : int * int -> int
+fn (x, y) => x / y;
+>type it : real * real -> real
+fn (x, y) => x * y;
+>type it : int * int -> int
 val x = 1;
 >type x : int
 val (x, y) = (1, true);
@@ -114,16 +122,57 @@ val (x, y) = (1, true);
 val {x, y} = {y = 1, x = true};
 >type x : bool
 >type y : int
+
 val x = 1
 and y = ("hello", "world");
 >type x : int
 >type y : string * string
+
 let
   val x = 1
 in
   [x]
 end;
 >type it : int list
+
+let
+  val ((x, y), z) = ((1, 2), 3)
+in
+  [x + y + z]
+end;
+>type it : int list
+
+if 1 < 2 then [3] else [4];
+>type it : int list
+
+let
+  val rec fact =
+    fn n => if n = 0 then 1 else n * (fact (n - 1))
+in
+  fact 5
+end;
+>type it : int
+
+let
+  val SOME x = (SOME "hello")
+in
+  x
+end;
+>type it : string
+
+let
+  val foo =
+    fn SOME s => s
+     | NONE => "none"
+in
+  foo (SOME "hello")
+end;
+>type it : string
+
+val rec len =
+  fn nil => 0
+   | (h :: t) => 1 + (len t);
+>type len : 'a list -> int
 
 (*) Literals
 1;

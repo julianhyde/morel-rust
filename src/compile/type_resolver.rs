@@ -255,8 +255,8 @@ impl TypeResolver {
         let substitution =
             match self.unifier.unify(term_pairs.as_ref(), &NullTracer) {
                 Ok(x) => x,
-                Err(_) => {
-                    panic!("Unification failed")
+                Err(x) => {
+                    panic!("Unification failed: {}", x)
                 }
             };
 
@@ -383,9 +383,10 @@ impl TypeResolver {
                 self.reg_expr(&expr.kind, &expr.span, expr.id, v)
             }
             ExprKind::Identifier(name) => {
-                if let Some(term) = env.get(name, self) {
-                    self.equiv(&term, v);
-                } // else throw
+                let term = env.get(name, self).unwrap_or_else(|| {
+                    todo!("identifier '{}' not found", name)
+                });
+                self.equiv(&term, v);
                 self.reg_expr(&expr.kind, &expr.span, expr.id, v)
             }
             ExprKind::List(expr_list) => {
@@ -476,70 +477,100 @@ impl TypeResolver {
                 let x = ExprKind::Let(decl_list2, expr2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
+            ExprKind::If(a0, a1, a2) => {
+                let (a02, a12, a22) =
+                    self.deduce_call3_type(env, "op if", a0, a1, a2, v);
+                let x = ExprKind::If(a02, a12, a22);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
             ExprKind::AndAlso(left, right) => {
                 let (left2, right2) =
-                    self.deduce_infix_type(env, "op andalso", left, right, v);
+                    self.deduce_call2_type(env, "op andalso", left, right, v);
                 let x = ExprKind::AndAlso(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::OrElse(left, right) => {
                 let (left2, right2) =
-                    self.deduce_infix_type(env, "op orelse", left, right, v);
+                    self.deduce_call2_type(env, "op orelse", left, right, v);
                 let x = ExprKind::OrElse(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Implies(left, right) => {
                 let (left2, right2) =
-                    self.deduce_infix_type(env, "op implies", left, right, v);
+                    self.deduce_call2_type(env, "op implies", left, right, v);
                 let x = ExprKind::Implies(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::LessThan(left, right) => {
                 let (left2, right2) =
-                    self.deduce_infix_type(env, "op <", left, right, v);
+                    self.deduce_call2_type(env, "op <", left, right, v);
                 let x = ExprKind::LessThan(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::GreaterThan(left, right) => {
                 let (left2, right2) =
-                    self.deduce_infix_type(env, "op >", left, right, v);
+                    self.deduce_call2_type(env, "op >", left, right, v);
                 let x = ExprKind::GreaterThan(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::LessThanOrEqual(left, right) => {
                 let (left2, right2) =
-                    self.deduce_infix_type(env, "op <=", left, right, v);
+                    self.deduce_call2_type(env, "op <=", left, right, v);
                 let x = ExprKind::LessThanOrEqual(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::GreaterThanOrEqual(left, right) => {
                 let (left2, right2) =
-                    self.deduce_infix_type(env, "op >=", left, right, v);
+                    self.deduce_call2_type(env, "op >=", left, right, v);
                 let x = ExprKind::GreaterThanOrEqual(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Equal(left, right) => {
                 let (left2, right2) =
-                    self.deduce_infix_type(env, "op =", left, right, v);
+                    self.deduce_call2_type(env, "op =", left, right, v);
                 let x = ExprKind::Equal(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::NotEqual(left, right) => {
                 let (left2, right2) =
-                    self.deduce_infix_type(env, "op <>", left, right, v);
+                    self.deduce_call2_type(env, "op <>", left, right, v);
                 let x = ExprKind::NotEqual(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Plus(left, right) => {
                 let (left2, right2) =
-                    self.deduce_infix_type(env, "op +", left, right, v);
+                    self.deduce_call2_type(env, "op +", left, right, v);
                 let x = ExprKind::Plus(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Minus(left, right) => {
                 let (left2, right2) =
-                    self.deduce_infix_type(env, "op -", left, right, v);
+                    self.deduce_call2_type(env, "op -", left, right, v);
                 let x = ExprKind::Minus(left2, right2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::Times(left, right) => {
+                let (left2, right2) =
+                    self.deduce_call2_type(env, "op *", left, right, v);
+                let x = ExprKind::Times(left2, right2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::Divide(left, right) => {
+                let (left2, right2) =
+                    self.deduce_call2_type(env, "op /", left, right, v);
+                let x = ExprKind::Divide(left2, right2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::Div(left, right) => {
+                let (left2, right2) =
+                    self.deduce_call2_type(env, "op div", left, right, v);
+                let x = ExprKind::Divide(left2, right2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::Mod(left, right) => {
+                let (left2, right2) =
+                    self.deduce_call2_type(env, "op mod", left, right, v);
+                let x = ExprKind::Divide(left2, right2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             _ => todo!("{:?}", expr.kind),
@@ -633,7 +664,7 @@ impl TypeResolver {
         self.reg_expr(&selector_kind, &span, None, v_field)
     }
 
-    fn deduce_infix_type(
+    fn deduce_call2_type(
         &mut self,
         env: &dyn TypeEnv,
         op: &str,
@@ -655,6 +686,60 @@ impl TypeResolver {
         } else {
             panic!("{:?}", left.kind)
         }
+    }
+
+    fn deduce_call3_type(
+        &mut self,
+        env: &dyn TypeEnv,
+        op: &str,
+        a0: &Box<Expr>,
+        a1: &Box<Expr>,
+        a2: &Box<Expr>,
+        v: &Rc<Var>,
+    ) -> (Box<Expr>, Box<Expr>, Box<Expr>) {
+        let fun =
+            Box::new(ExprKind::Identifier(op.to_string()).spanned(&a0.span));
+        let arg = Box::new(
+            ExprKind::Tuple(vec![a0.clone(), a1.clone(), a2.clone()])
+                .spanned(&a0.span),
+        );
+        let (_fun, arg) = self.deduce_apply_type(env, fun, arg, &v);
+        if let ExprKind::Tuple(args) = arg.kind
+            && args.len() == 3
+        {
+            (
+                args.first().unwrap().clone(),
+                args.get(1).unwrap().clone(),
+                args.get(2).unwrap().clone(),
+            )
+        } else {
+            panic!("{:?}", op)
+        }
+    }
+
+    fn deduce_pat_call2_type(
+        &mut self,
+        env: &dyn TypeEnv,
+        op: &str,
+        left: Box<Pat>,
+        right: Box<Pat>,
+        term_map: &mut Vec<(String, Term)>,
+        v: &Rc<Var>,
+    ) -> (Box<Pat>, Box<Pat>) {
+        let v_arg0 = self.variable();
+        let v_arg1 = self.variable();
+        let left2 = self.deduce_pat_type(env, left, term_map, &v);
+        let right2 = self.deduce_pat_type(env, right, term_map, &v);
+
+        let term_fn = env
+            .get(op, self)
+            .unwrap_or_else(|| todo!("function '{}' not found", op));
+        let v_fn = self.term_to_variable(&term_fn);
+        let v_arg = self.variable();
+        let arg = vec![Term::Variable(v_arg0), Term::Variable(v_arg1)];
+        self.tuple_term(arg.as_ref(), &v_arg);
+        self.fn_term(&v_arg, v, &v_fn);
+        (left2, right2)
     }
 
     /// Given a branch of a `fn`, deduces its type.
@@ -941,6 +1026,19 @@ impl TypeResolver {
         self.unifier.variable()
     }
 
+    /// Converts a term to a variable.
+    fn term_to_variable(&mut self, term: &Term) -> Rc<Var> {
+        match term {
+            Term::Variable(v) => v.clone(),
+            Term::Sequence(_) => {
+                let v = self.variable();
+                self.equiv(&term, &v).clone()
+            }
+        }
+    }
+
+    /** Declares that a term is equivalent to a variable. */
+
     /// Creates an association between a term and a variable,
     /// declaring that they are equivalent.
     fn equiv<'a>(&mut self, term: &Term, v: &'a Rc<Var>) -> &'a Rc<Var> {
@@ -1038,6 +1136,37 @@ impl TypeResolver {
             PatKind::Literal(literal) => {
                 self.primitive_term(&Self::literal_type(&literal.kind), v);
                 self.reg_pat(&pat.kind, &pat.span, pat.id, &v)
+            }
+            PatKind::Constructor(name, arg) => {
+                // Consider the constructor "SOME". For type deduction, we
+                // treat "SOME" as a function with a type scheme "forall 'a,
+                // 'a -> option 'a". And then "SOME x" has the type "int option"
+                // if and only if "x" has type "int".
+                let term = env.get(name, self).unwrap_or_else(|| {
+                    todo!("constructor '{}' not found", name)
+                });
+                let arg2 = if let Some(a) = arg {
+                    let v_arg = self.unifier.variable();
+                    let v_fun = self.term_to_variable(&term);
+                    self.fn_term(&v_arg, v, &v_fun);
+                    Some(self.deduce_pat_type(env, a.clone(), term_map, &v_arg))
+                } else {
+                    None
+                };
+                let x = PatKind::Constructor(name.clone(), arg2);
+                self.reg_pat(&x, &pat.span, pat.id, &v)
+            }
+            PatKind::Cons(left, right) => {
+                let (left2, right2) = self.deduce_pat_call2_type(
+                    env,
+                    "op ::",
+                    left.clone(),
+                    right.clone(),
+                    term_map,
+                    v,
+                );
+                let x = PatKind::Cons(left2, right2);
+                self.reg_pat(&x, &pat.span, pat.id, &v)
             }
             PatKind::Annotated(pat, type_) => {
                 let pat2 = self.deduce_pat_type(env, pat.clone(), term_map, &v);
@@ -1227,6 +1356,28 @@ impl<'a> TypeToTermConverter<'a> {
         v: &Rc<Var>,
     ) -> Box<AstType> {
         match &type_node.kind {
+            TypeKind::App(args, t) => {
+                if let TypeKind::Id(name) = t.kind.clone() {
+                    let mut terms = Vec::new();
+                    let mut args2 = Vec::new();
+                    for arg in args {
+                        let v2 = self.type_resolver.variable();
+                        terms.push(Term::Variable(v2.clone()));
+                        let arg2 = self.type_term(arg, subst, &v2);
+                        args2.push(*arg2);
+                    }
+                    let op = self
+                        .type_resolver
+                        .unifier
+                        .op(name.as_str(), Some(terms.len()));
+                    let apply = self.type_resolver.unifier.apply(op, terms);
+                    self.type_resolver.equiv(&Term::Sequence(apply), &v);
+                    let x = TypeKind::App(args2, t.clone());
+                    self.type_resolver.reg_type(&x, &type_node.span, &v)
+                } else {
+                    panic!("{:?}", type_node.kind)
+                }
+            }
             TypeKind::Id(name) => {
                 let p = PrimitiveType::from_str(name).unwrap();
                 self.type_resolver.primitive_term(&p, &v);

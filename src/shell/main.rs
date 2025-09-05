@@ -469,9 +469,14 @@ mod tests {
 /// on demand. This is a win when there are a lot of built-in operators.
 static BUILT_IN_TYPES: phf::Map<&'static str, &'static str> = phf_map! {
     /* lint: sort until '}' */
+    "NONE" => "forall 1 'a option",
+    "SOME" => "forall 1 'a -> 'a option",
     "false" => "bool",
+    "op *" => "int * int -> int",
     "op +" => "int * int -> int",
     "op -" => "int * int -> int",
+    "op /" => "real * real -> real",
+    "op ::" => "forall 1 'a * 'a list -> 'a list",
     "op <" => "forall 1 'a * 'a -> bool",
     "op <=" => "forall 1 'a * 'a -> bool",
     "op <>" => "forall 1 'a * 'a -> bool",
@@ -479,7 +484,10 @@ static BUILT_IN_TYPES: phf::Map<&'static str, &'static str> = phf_map! {
     "op >" => "forall 1 'a * 'a -> bool",
     "op >=" => "forall 1 'a * 'a -> bool",
     "op andalso" => "bool * bool -> bool",
+    "op div" => "int * int -> int",
+    "op if" => "forall 1 bool * 'a * 'a -> 'a",
     "op implies" => "bool * bool -> bool",
+    "op mod" => "int * int -> int",
     "op orelse" => "bool * bool -> bool",
     "true" => "bool",
 };
