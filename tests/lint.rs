@@ -16,7 +16,7 @@
 // License.
 
 use phf::{Map, Set, phf_map, phf_set};
-use std::{fs, vec};
+use std::fs;
 
 #[test]
 fn lint() {
@@ -127,8 +127,26 @@ fn lint_file(file_name: &str, warnings: &mut Vec<String>) {
         let contents = fs::read_to_string(file_name).unwrap();
         let mut line = 0;
         let mut in_raw_string = false;
+        let mut sort_until = None;
+        let mut previous_line = None;
         contents.lines().for_each(|l| {
             line += 1;
+            if let Some(u) = sort_until {
+                if l.contains(u) {
+                    sort_until = None;
+                    previous_line = None;
+                } else {
+                    if let Some(p) = previous_line
+                        && l < p
+                    {
+                        warnings.push(format!(
+                            "{}:{}: Line out of order",
+                            file_name, line
+                        ));
+                    }
+                    previous_line = Some(l);
+                }
+            }
             if l.ends_with(' ') {
                 warnings
                     .push(format!("{}:{}: Trailing spaces", file_name, line));
@@ -158,6 +176,22 @@ fn lint_file(file_name: &str, warnings: &mut Vec<String>) {
                     "{}:{}: Use `vec![]` rather than {} or {}",
                     file_name, line, vec_space, vec_paren
                 ));
+            }
+            if l.contains("lint: sort until")
+                && !l.contains("\"lint: sort until")
+            {
+                if let Some(start) = l.find('\'')
+                    && let Some(end) = l.rfind('\'')
+                    && start < end
+                {
+                    sort_until = Some(&l[start + 1..end]);
+                    previous_line = None;
+                } else {
+                    warnings.push(format!(
+                        "{}:{}: Malformed 'sort until' directive",
+                        file_name, line,
+                    ));
+                }
             }
         });
     }
