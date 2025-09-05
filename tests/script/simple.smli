@@ -145,6 +145,12 @@ end;
 if 1 < 2 then [3] else [4];
 >type it : int list
 
+case (1, true) of
+  (1, false) => 0
+| (n, true) => n + 1
+| _ => ~1;
+>type it : int
+
 let
   val rec fact =
     fn n => if n = 0 then 1 else n * (fact (n - 1))
@@ -172,6 +178,10 @@ end;
 val rec len =
   fn nil => 0
    | (h :: t) => 1 + (len t);
+>type len : 'a list -> int
+
+fun len nil = 0
+  | len (h :: t) = 1 + (len t);
 >type len : 'a list -> int
 
 (*) Literals

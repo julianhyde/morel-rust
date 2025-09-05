@@ -23,14 +23,14 @@
 use crate::compile::type_env::{EmptyTypeEnv, TypeEnv, TypeSchemeResolver};
 use crate::compile::types;
 use crate::compile::types::{PrimitiveType, Subst, Type, TypeVariable};
-use crate::compile::unifier::{NullTracer, Op, Term, Unifier, Var};
+use crate::compile::unifier::{NullTracer, Op, Sequence, Term, Unifier, Var};
 use crate::syntax::ast::{
-    Decl, DeclKind, Expr, ExprKind, LiteralKind, Pat, PatField, PatKind, Span,
-    Statement, StatementKind, Type as AstType, TypeField, TypeKind, TypeScheme,
-    ValBind,
+    Decl, DeclKind, Expr, ExprKind, FunBind, LiteralKind, Match, Pat, PatField,
+    PatKind, Span, Statement, StatementKind, Type as AstType, TypeField,
+    TypeKind, TypeScheme, ValBind,
 };
 use std::cell::OnceCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::zip;
 use std::rc::Rc;
@@ -291,7 +291,156 @@ impl TypeResolver {
                     id: Some(self.next_id()),
                 }
             }
+            DeclKind::Fun(fun_binds) => {
+                let val_decl = self.convert_fun_to_val(env, fun_binds);
+                self.deduce_decl_type(env, &val_decl, term_map)
+            }
             _ => todo!("{:?}", decl.kind),
+        }
+    }
+
+    /// Converts a function declaration to a value declaration. In other words,
+    /// `fun` is syntactic sugar, and this is the de-sugaring machine.
+    ///
+    /// For example, `fun inc x = x + 1` becomes `val rec inc = fn x => x + 1`.
+    ///
+    /// If there are multiple arguments, there is one `fn` for each
+    /// argument: `fun sum x y = x + y` becomes `val rec sum = fn x =>
+    /// fn y => x + y`.
+    ///
+    /// If there are multiple clauses, we generate `case`:
+    ///
+    /// ```sml
+    /// fun gcd a 0 = a | gcd a b = gcd b (a mod b)
+    /// ```
+    ///
+    /// becomes
+    ///
+    /// ```sml
+    /// val rec gcd = fn x => fn y =>
+    /// case (x, y) of
+    ///     (a, 0) => a
+    ///   | (a, b) = gcd b (a mod b)
+    /// ```
+    fn convert_fun_to_val(
+        &mut self,
+        env: &dyn TypeEnv,
+        fun_binds: &[FunBind],
+    ) -> Box<Decl> {
+        let val_bind_list: Vec<ValBind> = fun_binds
+            .iter()
+            .map(|fun_bind| self.convert_fun_bind_to_val_bind(env, fun_bind))
+            .collect();
+
+        let x = DeclKind::Val(true, false, val_bind_list);
+        let span = Span::sum(fun_binds, |b| b.span.clone());
+        Box::new(x.spanned(&span.unwrap()))
+    }
+
+    fn convert_fun_bind_to_val_bind(
+        &mut self,
+        _env: &dyn TypeEnv,
+        fun_bind: &FunBind,
+    ) -> ValBind {
+        let vars: Vec<Pat>;
+        let mut expr: Box<Expr>;
+        let mut type_annotation: Option<Box<AstType>> = None;
+        let span = fun_bind.span.clone();
+
+        if fun_bind.matches.len() == 1 {
+            let fun_match = &fun_bind.matches[0];
+            expr = fun_match.expr.clone();
+            vars = fun_match.pats.clone();
+            type_annotation = fun_match.type_.clone();
+        } else {
+            let var_names: Vec<String> = (0..fun_bind.matches[0].pats.len())
+                .map(|index| format!("v{}", index))
+                .collect();
+
+            vars = var_names
+                .iter()
+                .map(|v| PatKind::Identifier(v.clone()).spanned(&span))
+                .collect();
+
+            let mut match_list = Vec::new();
+            let mut prev_return_type: Option<Box<AstType>> = None;
+
+            for fun_match in &fun_bind.matches {
+                match_list.push(Match {
+                    pat: Box::new(self.pat_tuple(&span, &fun_match.pats)),
+                    expr: fun_match.expr.clone(),
+                });
+
+                if fun_match.type_.is_some() {
+                    if let (Some(prev_type), Some(curr_type)) =
+                        (&prev_return_type, &fun_match.type_)
+                        && prev_type.kind != curr_type.kind
+                    {
+                        let combined_span =
+                            prev_type.span.union(&fun_match.span);
+                        self.warnings.push(Warning {
+                            span: combined_span.clone(),
+                            message: W_INCONSISTENT_PARAMETERS.to_string(),
+                        });
+                    }
+                    prev_return_type = Some(fun_match.type_.clone().unwrap());
+                }
+            }
+
+            let x =
+                ExprKind::Case(self.id_tuple(&span, &var_names), match_list);
+            expr = Box::new(x.spanned(&span));
+        }
+
+        for var in vars.iter().rev() {
+            let pat = Box::new(var.clone());
+            let kind = ExprKind::Fn(vec![Match { pat, expr }]);
+            expr = Box::new(kind.spanned(&span));
+        }
+
+        ValBind {
+            pat: Box::new(
+                PatKind::Identifier(fun_bind.name.clone()).spanned(&span),
+            ),
+            type_annotation,
+            expr,
+        }
+    }
+
+    fn all_the_same<T: PartialEq>(list: &[T]) -> bool {
+        list.iter().all(|x| list.iter().all(|y| x == y))
+    }
+
+    /// Converts a list of variable names to a variable or tuple.
+    ///
+    /// For example, `["x"]` becomes `x` (an `Id`), and `["x", "y"]`
+    /// becomes `(x, y)` (a `Tuple` of `Id`s).
+    fn id_tuple(&self, span: &Span, vars: &[String]) -> Box<Expr> {
+        let id_list: Vec<Box<Expr>> = vars
+            .iter()
+            .map(|v| {
+                Box::new(ExprKind::Identifier(v.to_string()).spanned(span))
+            })
+            .collect();
+
+        if id_list.len() == 1 {
+            id_list.into_iter().next().unwrap()
+        } else {
+            Box::new(ExprKind::Tuple(id_list).spanned(span))
+        }
+    }
+
+    /// Converts a list of patterns to a singleton pattern or tuple pattern.
+    fn pat_tuple(&self, span: &Span, pat_list: &[Pat]) -> Pat {
+        if pat_list.is_empty() {
+            PatKind::Literal(LiteralKind::Unit.spanned(span)).spanned(span)
+        } else if pat_list.len() == 1 {
+            pat_list.first().unwrap().clone()
+        } else {
+            PatKind::Tuple(
+                pat_list.iter().map(|p| Box::new(p.clone())).collect(),
+            )
+            .spanned(&Span::sum(pat_list, |p| p.span.clone()).unwrap())
         }
     }
 
@@ -445,15 +594,12 @@ impl TypeResolver {
                 let mut matches2 = Vec::new();
                 let v_param = self.variable();
                 let v_result = self.variable();
-                for (pat, e) in matches {
-                    let (p2, e2) = self.deduce_match_type(
-                        env,
-                        pat.clone(),
-                        e.clone(),
-                        &v_param,
-                        &v_result,
+                for match_ in matches {
+                    matches2.push(
+                        self.deduce_match_type(
+                            env, match_, &v_param, &v_result,
+                        ),
                     );
-                    matches2.push((p2, e2));
                 }
                 self.fn_term(&v_param, &v_result, v);
                 let fn2 = &ExprKind::Fn(matches2);
@@ -481,6 +627,28 @@ impl TypeResolver {
                 let (a02, a12, a22) =
                     self.deduce_call3_type(env, "op if", a0, a1, a2, v);
                 let x = ExprKind::If(a02, a12, a22);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::Case(e, match_list) => {
+                let v_e = self.unifier.variable();
+                let e2 = self.deduce_expr_type(env, e.clone(), &v_e);
+                let mut label_names = BTreeSet::new();
+
+                if let Some(sequence) = self.variable_to_sequence(&v_e)
+                    && let Some(field_list) = Self::field_list(&sequence)
+                {
+                    label_names.extend(field_list);
+                }
+
+                let match_list2 = self.deduce_match_list_type(
+                    env,
+                    &match_list,
+                    &mut label_names,
+                    &v_e,
+                    v,
+                );
+
+                let x = ExprKind::Case(e2, match_list2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::AndAlso(left, right) => {
@@ -577,6 +745,53 @@ impl TypeResolver {
         }
     }
 
+    fn deduce_match_list_type(
+        &mut self,
+        env: &dyn TypeEnv,
+        match_list: &[Match],
+        label_names: &mut BTreeSet<String>,
+        arg_variable: &Rc<Var>,
+        result_variable: &Rc<Var>,
+    ) -> Vec<Match> {
+        // Collect label names from RecordPat patterns
+        for match_ in match_list {
+            if let PatKind::Record(fields, _) = &match_.pat.kind {
+                for f in fields {
+                    if let PatField::Labeled(_, name, _) = f {
+                        label_names.insert(name.clone());
+                    }
+                }
+            }
+        }
+
+        // Process each match
+        match_list
+            .iter()
+            .map(|match_| {
+                let mut term_map = Vec::new();
+
+                let pat2 = self.deduce_pat_type(
+                    env,
+                    match_.pat.clone(),
+                    &mut term_map,
+                    &arg_variable,
+                );
+
+                let env2 = env.bind_all(&term_map);
+                let exp2 = self.deduce_expr_type(
+                    &*env2,
+                    match_.expr.clone(),
+                    result_variable,
+                );
+
+                Match {
+                    pat: pat2,
+                    expr: exp2,
+                }
+            })
+            .collect()
+    }
+
     fn deduce_apply_type(
         &mut self,
         env: &dyn TypeEnv,
@@ -668,15 +883,18 @@ impl TypeResolver {
         &mut self,
         env: &dyn TypeEnv,
         op: &str,
-        left: &Box<Expr>,
-        right: &Box<Expr>,
+        left: &Expr,
+        right: &Expr,
         v: &Rc<Var>,
     ) -> (Box<Expr>, Box<Expr>) {
         let fun =
             Box::new(ExprKind::Identifier(op.to_string()).spanned(&left.span));
         let arg = Box::new(
-            ExprKind::Tuple(vec![left.clone(), right.clone()])
-                .spanned(&left.span),
+            ExprKind::Tuple(vec![
+                Box::new(left.clone()),
+                Box::new(right.clone()),
+            ])
+            .spanned(&left.span),
         );
         let (_fun, arg) = self.deduce_apply_type(env, fun, arg, &v);
         if let ExprKind::Tuple(args) = arg.kind
@@ -692,16 +910,20 @@ impl TypeResolver {
         &mut self,
         env: &dyn TypeEnv,
         op: &str,
-        a0: &Box<Expr>,
-        a1: &Box<Expr>,
-        a2: &Box<Expr>,
+        a0: &Expr,
+        a1: &Expr,
+        a2: &Expr,
         v: &Rc<Var>,
     ) -> (Box<Expr>, Box<Expr>, Box<Expr>) {
         let fun =
             Box::new(ExprKind::Identifier(op.to_string()).spanned(&a0.span));
         let arg = Box::new(
-            ExprKind::Tuple(vec![a0.clone(), a1.clone(), a2.clone()])
-                .spanned(&a0.span),
+            ExprKind::Tuple(vec![
+                Box::new(a0.clone()),
+                Box::new(a1.clone()),
+                Box::new(a2.clone()),
+            ])
+            .spanned(&a0.span),
         );
         let (_fun, arg) = self.deduce_apply_type(env, fun, arg, &v);
         if let ExprKind::Tuple(args) = arg.kind
@@ -753,16 +975,20 @@ impl TypeResolver {
     fn deduce_match_type(
         &mut self,
         env: &dyn TypeEnv,
-        pat: Box<Pat>,
-        sub_expr: Box<Expr>,
+        match_: &Match,
         v_param: &Rc<Var>,
         v_result: &Rc<Var>,
-    ) -> (Box<Pat>, Box<Expr>) {
+    ) -> Match {
         let mut term_map = Vec::new();
+        let pat = match_.pat.clone();
         let pat2 = self.deduce_pat_type(env, pat, &mut term_map, &v_param);
         let env2 = env.bind_all(&term_map);
-        let expr2 = self.deduce_expr_type(&*env2, sub_expr, &v_result);
-        (pat2, expr2)
+        let expr = match_.expr.clone();
+        let expr2 = self.deduce_expr_type(&*env2, expr, &v_result);
+        Match {
+            pat: pat2,
+            expr: expr2,
+        }
     }
 
     /// Converts a type to a unification term.
@@ -979,9 +1205,7 @@ impl TypeResolver {
 
     /// Inverse of `record_label_from_set`. Extracts field names from a
     /// sequence.
-    fn field_list(
-        sequence: &crate::compile::unifier::Sequence,
-    ) -> Option<Vec<String>> {
+    fn field_list(sequence: &Sequence) -> Option<Vec<String>> {
         match sequence.op.name.as_str() {
             "record" => Some(Vec::new()),
             "tuple" => {
@@ -1037,8 +1261,12 @@ impl TypeResolver {
         }
     }
 
-    /** Declares that a term is equivalent to a variable. */
+    /// Converts a variable to a sequence.
+    fn variable_to_sequence(&self, _v: &Rc<Var>) -> Option<Sequence> {
+        None // TODO
+    }
 
+    /// Declares that a term is equivalent to a variable.
     /// Creates an association between a term and a variable,
     /// declaring that they are equivalent.
     fn equiv<'a>(&mut self, term: &Term, v: &'a Rc<Var>) -> &'a Rc<Var> {
@@ -1133,6 +1361,7 @@ impl TypeResolver {
                 term_map.push((name.clone(), Term::Variable(v.clone())));
                 self.reg_pat(&pat.kind, &pat.span, pat.id, &v)
             }
+            PatKind::Wildcard => self.reg_pat(&pat.kind, &pat.span, pat.id, &v),
             PatKind::Literal(literal) => {
                 self.primitive_term(&Self::literal_type(&literal.kind), v);
                 self.reg_pat(&pat.kind, &pat.span, pat.id, &v)
@@ -1502,3 +1731,6 @@ struct Warning {
     #[allow(dead_code)]
     message: String,
 }
+
+const W_INCONSISTENT_PARAMETERS: &'static str = "parameter or result \
+constraints of clauses don't agree [tycon mismatch]";

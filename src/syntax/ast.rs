@@ -70,6 +70,19 @@ impl Span {
         self.start = self.start.min(other.start);
         self.end = self.end.max(other.end);
     }
+
+    /// Sums the spans of elements.
+    pub fn sum<T>(elements: &[T], extract: fn(&T) -> Span) -> Option<Span> {
+        let mut span = None;
+        for p in elements {
+            let span2 = extract(p);
+            span = match span {
+                None => Some(span2),
+                Some(span1) => Some(span1.union(&span2)),
+            }
+        }
+        span
+    }
 }
 
 /// Trait possessed by all abstract syntax tree (AST) nodes.
@@ -192,9 +205,9 @@ pub enum ExprKind<SubExpr> {
 
     // Control structures
     If(Box<SubExpr>, Box<SubExpr>, Box<SubExpr>),
-    Case(Box<SubExpr>, Vec<(Pat, SubExpr)>),
+    Case(Box<SubExpr>, Vec<Match>),
     Let(Vec<Decl>, Box<SubExpr>),
-    Fn(Vec<(Box<Pat>, Box<Expr>)>),
+    Fn(Vec<Match>),
 
     // Constructors for data structures
     Tuple(Vec<Box<Expr>>), // e.g. `(x, y, z)`
@@ -302,11 +315,11 @@ impl Display for ExprKind<Expr> {
             }
             ExprKind::Case(e, arms) => {
                 write!(f, "case {} of ", e)?;
-                for (i, (pat, expr)) in arms.iter().enumerate() {
+                for (i, match_) in arms.iter().enumerate() {
                     if i > 0 {
                         write!(f, " | ")?;
                     }
-                    write!(f, "{} => {}", pat, expr)?;
+                    write!(f, "{} => {}", match_.pat, match_.expr)?;
                 }
                 Ok(())
             }
@@ -319,11 +332,11 @@ impl Display for ExprKind<Expr> {
             }
             ExprKind::Fn(arms) => {
                 write!(f, "fn ")?;
-                for (i, (pat, expr)) in arms.iter().enumerate() {
+                for (i, match_) in arms.iter().enumerate() {
                     if i > 0 {
                         write!(f, " | ")?;
                     }
-                    write!(f, "{} => {}", pat, expr)?;
+                    write!(f, "{} => {}", match_.pat, match_.expr)?;
                 }
                 Ok(())
             }
@@ -441,6 +454,13 @@ impl LabeledExpr {
     pub fn new(label: Option<Label>, expr: Box<Expr>) -> Self {
         LabeledExpr { label, expr }
     }
+}
+
+/// Match in a `case` or `fn` expression.
+#[derive(Debug, Clone)]
+pub struct Match {
+    pub pat: Box<Pat>,
+    pub expr: Box<Expr>,
 }
 
 /// Abstract syntax tree (AST) of a step in a query.
@@ -702,7 +722,7 @@ impl Display for DeclKind {
 #[derive(Debug, Clone)]
 pub struct ValBind {
     pub pat: Box<Pat>,
-    pub type_annotation: Option<Type>,
+    pub type_annotation: Option<Box<Type>>,
     pub expr: Box<Expr>,
 }
 
@@ -716,7 +736,7 @@ impl ValBind {
     ) -> Self {
         ValBind {
             pat,
-            type_annotation,
+            type_annotation: type_annotation.map(Box::new),
             expr,
         }
     }
@@ -906,6 +926,22 @@ impl TypeKind {
             kind: self.clone(),
             span: span.clone(),
             id: None,
+        }
+    }
+}
+
+impl Eq for TypeKind {}
+
+impl PartialEq for TypeKind {
+    fn eq(&self, other: &Self) -> bool {
+        use TypeKind::*;
+        match (self, other) {
+            (Unit, Unit) => true,
+            (Id(a), Id(b)) => a == b,
+            (Var(a), Var(b)) => a == b,
+            (Con(a), Con(b)) => a == b,
+            (Fn(a, c), Fn(b, d)) => a.kind == b.kind && c.kind == d.kind,
+            _ => false, // TODO
         }
     }
 }

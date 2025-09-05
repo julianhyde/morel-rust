@@ -17,8 +17,8 @@
 
 use crate::syntax::ast::{
     ConBind, DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunBind, FunMatch,
-    Label, LabeledExpr, Literal, LiteralKind, Pat, PatField, PatKind, Span,
-    Statement, StatementKind, Step, StepKind, Type, TypeBind, TypeField,
+    Label, LabeledExpr, Literal, LiteralKind, Match, Pat, PatField, PatKind,
+    Span, Statement, StatementKind, Step, StepKind, Type, TypeBind, TypeField,
     TypeKind, TypeScheme, ValBind,
 };
 use pest_consume::Parser;
@@ -525,24 +525,22 @@ impl MorelParser {
     fn fn_expr(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [_fn(_), match_list(matches)] => {
-                let boxed_matches = matches
-                    .into_iter()
-                    .map(|(p, e)| (Box::new(p), Box::new(e)))
-                    .collect();
-                ExprKind::Fn(boxed_matches).wrap(input)
+                ExprKind::Fn(matches).wrap(input)
             },
         ))
     }
 
-    fn match_list(input: ParseInput) -> ParseResult<Vec<(Pat, Expr)>> {
+    fn match_list(input: ParseInput) -> ParseResult<Vec<Match>> {
         Ok(match_nodes!(input.children();
             [match_(matches)..] => matches.collect(),
         ))
     }
 
-    fn match_(input: ParseInput) -> ParseResult<(Pat, Expr)> {
+    fn match_(input: ParseInput) -> ParseResult<Match> {
         Ok(match_nodes!(input.children();
-            [pat(p), expr(e)] => (p, e),
+            [pat(p), expr(e)] => {
+                Match {pat: Box::new(p), expr: Box::new(e)}
+            },
         ))
     }
 
