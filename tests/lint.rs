@@ -16,7 +16,10 @@
 // License.
 
 use phf::{Map, Set, phf_map, phf_set};
+use regex::Regex;
+use std::collections::HashSet;
 use std::fs;
+use std::sync::LazyLock;
 
 #[test]
 fn lint() {
@@ -129,6 +132,9 @@ fn lint_file(file_name: &str, warnings: &mut Vec<String>) {
         let mut in_raw_string = false;
         let mut sort_until = None;
         let mut previous_line = None;
+        let mut match_columns = HashSet::new();
+        static REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^ *}$").unwrap());
         contents.lines().for_each(|l| {
             line += 1;
             if let Some(u) = sort_until {
@@ -193,8 +199,28 @@ fn lint_file(file_name: &str, warnings: &mut Vec<String>) {
                     ));
                 }
             }
+            if l.contains(" match ") {
+                match_columns.insert(preceding_space_count(l));
+            }
+            if REGEX.is_match(l) {
+                match_columns.remove(&preceding_space_count(l));
+            }
+            if l.ends_with("},")
+                && let i = preceding_space_count(l)
+                && i >= 4
+                && match_columns.contains(&(i - 4))
+            {
+                warnings.push(format!(
+                    "{}:{}: Match arms should not have commas",
+                    file_name, line
+                ));
+            }
         });
     }
+}
+
+fn preceding_space_count(line: &str) -> usize {
+    line.chars().take_while(|c| c.is_whitespace()).count()
 }
 
 /// Describes whether a file is text, and its required header, if any.
