@@ -105,6 +105,11 @@ impl<'a> TermToTypeConverter<'a> {
                     let type_ = self.term_type(&sequence.terms[0]);
                     Box::new(Type::List(type_))
                 }
+                "option" => {
+                    assert_eq!(sequence.terms.len(), 1);
+                    let args = vec![*self.term_type(&sequence.terms[0])];
+                    Box::new(Type::Named(args, sequence.op.name.clone()))
+                }
                 "tuple" => {
                     let types = sequence
                         .terms
@@ -454,32 +459,31 @@ impl TypeResolver {
     ) -> DeclKind {
         let mut env_holder = env.builder();
         let mut map0 = Vec::new();
-        val_binds.iter().for_each(|b| {
+
+        // First pass: create variables for each binding
+        for b in val_binds.iter() {
             map0.push((b, OnceCell::new()));
-        });
+        }
+
+        // Second pass: if recursive, bind identifiers to their types
         for (val_bind, v_pat_supplier) in &map0 {
-            // If recursive, bind each value (presumably a function) to its type
-            // in the environment before we try to deduce the type of the
-            // expression.
-            if rec && let PatKind::Identifier(name) = &val_bind.pat.kind {
-                env_holder.push(
-                    name.clone(),
-                    Term::Variable(
-                        v_pat_supplier.get_or_init(|| self.variable()).clone(),
-                    ),
-                );
+            if rec {
+                if let PatKind::Identifier(name) = &val_bind.pat.kind {
+                    let var =
+                        v_pat_supplier.get_or_init(|| self.variable()).clone();
+                    env_holder.push(name.clone(), Term::Variable(var));
+                }
             }
         }
-        let mut val_binds2 = Vec::new();
-        let env2 = env_holder.build();
 
+        let env2 = env_holder.build();
+        let mut val_binds2 = Vec::new();
+
+        // Third pass: deduce types for each binding
         for (val_bind, v_supplier) in map0 {
-            let val_bind2 = self.deduce_val_bind_type(
-                &*env2,
-                &val_bind,
-                term_map,
-                v_supplier.get_or_init(|| self.variable()),
-            );
+            let var = v_supplier.get_or_init(|| self.variable()).clone();
+            let val_bind2 =
+                self.deduce_val_bind_type(&*env2, &val_bind, term_map, &var);
             val_binds2.push(val_bind2);
         }
 
@@ -954,8 +958,8 @@ impl TypeResolver {
     ) -> (Box<Pat>, Box<Pat>) {
         let v_arg0 = self.variable();
         let v_arg1 = self.variable();
-        let left2 = self.deduce_pat_type(env, left, term_map, &v);
-        let right2 = self.deduce_pat_type(env, right, term_map, &v);
+        let left2 = self.deduce_pat_type(env, left, term_map, &v_arg0);
+        let right2 = self.deduce_pat_type(env, right, term_map, &v_arg1);
 
         let term_fn = env
             .get(op, self)
@@ -1362,7 +1366,12 @@ impl TypeResolver {
     ) -> Box<Pat> {
         match &pat.kind {
             PatKind::Identifier(name) => {
-                if let Some(_) = env.get(name, self) {
+                if let Some(_) = env.get(name, self)
+                    && (name == "SOME" // HACK
+                        || name == "NONE"
+                        || name == "nil"
+                        || name == "op ::")
+                {
                     // If the identifier is in the environment, we assume that
                     // it is a constructor (such as `SOME` or `nil`).
                     let kind = PatKind::Constructor(name.clone(), None);
@@ -1425,6 +1434,11 @@ impl TypeResolver {
                 let pat2 =
                     Box::new(PatKind::Literal(unit_literal).spanned(&pat.span));
                 self.deduce_pat_type(env, pat2, term_map, &v)
+            }
+            PatKind::Tuple(pat_list) if pat_list.len() == 1 => {
+                // A pattern in parentheses is not a tuple.
+                let p = pat_list.first().unwrap().clone();
+                self.deduce_pat_type(env, p, term_map, &v)
             }
             PatKind::Tuple(pat_list) => {
                 let mut pat_list2 = Vec::new();
@@ -1744,5 +1758,5 @@ struct Warning {
     message: String,
 }
 
-const W_INCONSISTENT_PARAMETERS: &'static str = "parameter or result \
+const W_INCONSISTENT_PARAMETERS: &str = "parameter or result \
 constraints of clauses don't agree [tycon mismatch]";

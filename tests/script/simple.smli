@@ -114,20 +114,18 @@ fn (x, y) => x / y;
 >type it : real * real -> real
 fn (x, y) => x * y;
 >type it : int * int -> int
-(* TODO
 fn NONE => 0;
->type it : int
+>type it : 'a option -> int
 fn (SOME x) => 0;
->type it : int
-*)
+>type it : 'a option -> int
+fn (SOME x) => x + 1;
+>type it : int option -> int
 fn nil => 0;
->type it : 'a -> int
+>type it : 'a list -> int
 fn (h :: t) => 0;
 >type it : 'a list -> int
-(* TODO
 fn ("hello" :: t) => 0;
 >type it : string list -> int
-*)
 val x = 1;
 >type x : int
 val (x, y) = (1, true);

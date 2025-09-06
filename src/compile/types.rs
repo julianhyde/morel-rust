@@ -17,7 +17,7 @@
 
 use crate::compile::unifier::Term;
 use std::collections::{BTreeMap, HashMap};
-use std::fmt::{Display, Formatter};
+use std::fmt::{Display, Formatter, Write};
 
 /// Represents a resolved type in the system.
 #[derive(Debug, Clone, PartialEq)]
@@ -36,7 +36,7 @@ pub enum Type {
     /// `Tuple(args)` represents the type `arg0 * ... * argN`.
     Tuple(Vec<Type>),
     Variable(TypeVariable),
-    Named(String),
+    Named(Vec<Type>, String),
 
     /// `Alias(name, type_, args)` represents the declaration
     /// `type name = args type_`; for example,
@@ -54,33 +54,61 @@ pub enum Type {
 }
 
 impl Type {
+    /// Describes a list of types, with given left and right precedence
+    /// and given opening, separator, and closing strings.
+    fn describe_list(
+        types: &[Type],
+        f: &mut Formatter,
+        op: &Op,
+        mut left: u8,
+        mut right: u8,
+    ) -> std::fmt::Result {
+        let surround =
+            if op.always_surround || left > op.left || right > op.right {
+                left = 0;
+                right = 0;
+                true
+            } else {
+                false
+            };
+        if surround {
+            f.write_str(op.open)?;
+        }
+        for (i, type_) in types.iter().enumerate() {
+            if i == 0 {
+                type_.describe(f, left, op.right)?;
+            } else if i == types.len() - 1 {
+                f.write_str(op.sep)?;
+                type_.describe(f, op.right, right)?;
+            } else {
+                f.write_str(op.sep)?;
+                type_.describe(f, op.right, op.left)?;
+            }
+        }
+        if surround {
+            f.write_str(op.close)?;
+        }
+        Ok(())
+    }
+
     fn describe(
         &self,
         f: &mut Formatter<'_>,
         left: u8,
         right: u8,
     ) -> std::fmt::Result {
-        /// Type constructor precedence, from low to high, is the function
-        /// arrow (`->`), product types (`*`), and type application (e.g.
-        /// `int list`).
-        const TUPLE_LEFT: u8 = 14;
-        const TUPLE_RIGHT: u8 = 15;
-        const APPLY_LEFT: u8 = 16;
-        const APPLY_RIGHT: u8 = 17;
-        const FN_LEFT: u8 = 13;
-        const FN_RIGHT: u8 = 12;
-
         match self {
             Type::Primitive(p) => f.write_str(p.to_str()),
             Type::Fn(param, result) => {
-                if left > FN_LEFT || right > FN_RIGHT {
+                const OP: Op = Op::FN;
+                if left > OP.left || right > OP.right {
                     write!(f, "(")?;
                     self.describe(f, 0, 0)?;
                     return write!(f, ")");
                 }
-                param.describe(f, left, FN_LEFT)?;
+                param.describe(f, left, OP.left)?;
                 write!(f, " -> ")?;
-                result.describe(f, FN_RIGHT, right)
+                result.describe(f, OP.right, right)
             }
             Type::Record(progressive, fields) => {
                 f.write_str("{")?;
@@ -100,35 +128,30 @@ impl Type {
                 f.write_str("}")
             }
             Type::List(elem_type) => {
-                if left > APPLY_LEFT || right > APPLY_RIGHT {
+                const OP: Op = Op::APPLY;
+                if left > OP.left || right > OP.right {
                     write!(f, "(")?;
                     self.describe(f, 0, 0)?;
                     return write!(f, ")");
                 }
-                elem_type.describe(f, left, APPLY_RIGHT)?;
+                elem_type.describe(f, left, OP.right)?;
                 write!(f, " list")
             }
             Type::Tuple(types) => {
-                if left > TUPLE_LEFT || right > TUPLE_RIGHT {
-                    write!(f, "(")?;
-                    self.describe(f, 0, 0)?;
-                    return write!(f, ")");
-                }
-                for (i, type_) in types.iter().enumerate() {
-                    if i == 0 {
-                        type_.describe(f, left, TUPLE_RIGHT)?;
-                    } else if i == types.len() - 1 {
-                        f.write_str(" * ")?;
-                        type_.describe(f, TUPLE_RIGHT, right)?;
-                    } else {
-                        f.write_str(" * ")?;
-                        type_.describe(f, TUPLE_RIGHT, TUPLE_LEFT)?;
-                    }
-                }
+                const OP: Op = Op::TUPLE;
+                Self::describe_list(types, f, &OP, left, right)?;
                 Ok(())
             }
             Type::Variable(var) => f.write_str(var.name().as_str()),
-            Type::Named(name) => f.write_str(name),
+            Type::Named(args, name) => {
+                const OP: Op = Op::LIST;
+                if args.len() == 1 {
+                    args.first().unwrap().describe(f, left, OP.left)?;
+                } else {
+                    Self::describe_list(args, f, &OP, left, right)?;
+                }
+                write!(f, " {}", name)
+            }
             Type::Alias(name, _, _) => f.write_str(name),
             _ => todo!(),
         }
@@ -206,6 +229,71 @@ impl TypeVariable {
         s.chars().rev().collect()
     }
 }
+
+/// Operator definition. Includes left and right precedence, and the opening,
+/// closing, and separator strings to use when printing a list.
+struct Op {
+    left: u8,
+    right: u8,
+    open: &'static str,
+    close: &'static str,
+    sep: &'static str,
+    always_surround: bool,
+}
+
+impl Op {
+    /// Creates an operator definition.
+    const fn new(
+        left: u8,
+        right: u8,
+        open: &'static str,
+        sep: &'static str,
+        close: &'static str,
+        always_surround: bool,
+    ) -> Self {
+        Op {
+            left,
+            right,
+            open,
+            close,
+            sep,
+            always_surround,
+        }
+    }
+
+    /// The list operator has a low precedence. An example is `(int, string)`
+    /// that appears before the type application `(int, string) tree`.
+    const LIST: Op = Op::new(1, 1, "(", ", ", ")", true);
+
+    /// The function arrow "->" is right-associative and has a lower precedence
+    /// than the tuple constructor "*".
+    const FN: Op = Op::new(13, 12, "(", " -> ", ")", false);
+
+    /// The tuple constructor "*" or product type operator is left-associative
+    /// and has a lower precedence than type-application.
+    const TUPLE: Op = Op::new(14, 15, "(", " * ", ")", false);
+
+    /// The type-application operator is right-associative and has a
+    /// high precedence. An example is `int option list`:
+    ///
+    /// ```sml
+    /// [SOME 0];
+    /// val it = [SOME 0] : int option list
+    /// ```
+    const APPLY: Op = Op::new(16, 17, "", " ", "", false);
+}
+
+/// Type constructor precedence, from low to high, is the function
+/// arrow (`->`), product types (`*`), and type application (e.g.
+/// `int list`).
+///
+/// [FN_LEFT] is less than [FN_RIGHT] because `->` is right-associative
+/// (i.e. `a -> b -> c` means `a -> (b -> c)`, not `(a -> b) -> c`). Most
+/// other operators are left-associative.
+const FN_LEFT: u8 = 13;
+const FN_RIGHT: u8 = 12;
+const TUPLE_LEFT: u8 = 14;
+const TUPLE_RIGHT: u8 = 15;
 
 #[cfg(test)]
 mod tests {
