@@ -17,7 +17,7 @@
 
 use crate::compile::unifier::Term;
 use std::collections::{BTreeMap, HashMap};
-use std::fmt::{Display, Formatter, Write};
+use std::fmt::{Display, Formatter};
 
 /// Represents a resolved type in the system.
 #[derive(Debug, Clone, PartialEq)]
