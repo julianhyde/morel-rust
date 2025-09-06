@@ -16,16 +16,6 @@
  * language governing permissions and limitations under the
  * License.
  *)
-let
-  val rec fact =
-    fn n => if n = 0 then 1 else n * (fact (n - 1))
-in
-  fact 5
-end;
->type it : int
-
-fn nil => 0;
->type
 "this is a simple script; modify it for debugging test cases";
 > val it = "this is a simple script; modify it for debugging test cases" : string
 
