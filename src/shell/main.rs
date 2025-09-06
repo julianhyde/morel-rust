@@ -472,6 +472,7 @@ static BUILT_IN_TYPES: phf::Map<&'static str, &'static str> = phf_map! {
     "NONE" => "forall 1 'a option",
     "SOME" => "forall 1 'a -> 'a option",
     "false" => "bool",
+    "nil" => "forall 1 'a list",
     "op *" => "int * int -> int",
     "op +" => "int * int -> int",
     "op -" => "int * int -> int",

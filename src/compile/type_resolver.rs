@@ -25,9 +25,9 @@ use crate::compile::types;
 use crate::compile::types::{PrimitiveType, Subst, Type, TypeVariable};
 use crate::compile::unifier::{NullTracer, Op, Sequence, Term, Unifier, Var};
 use crate::syntax::ast::{
-    Decl, DeclKind, Expr, ExprKind, FunBind, LiteralKind, Match, Pat, PatField,
-    PatKind, Span, Statement, StatementKind, Type as AstType, TypeField,
-    TypeKind, TypeScheme, ValBind,
+    Decl, DeclKind, Expr, ExprKind, FunBind, LiteralKind, Match, MorelNode,
+    Pat, PatField, PatKind, Span, Statement, StatementKind, Type as AstType,
+    TypeField, TypeKind, TypeScheme, ValBind,
 };
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -473,9 +473,13 @@ impl TypeResolver {
         let mut val_binds2 = Vec::new();
         let env2 = env_holder.build();
 
-        for (val_bind, _v_supplier) in map0 {
-            let val_bind2 =
-                self.deduce_val_bind_type(&*env2, &val_bind, term_map);
+        for (val_bind, v_supplier) in map0 {
+            let val_bind2 = self.deduce_val_bind_type(
+                &*env2,
+                &val_bind,
+                term_map,
+                v_supplier.get_or_init(|| self.variable()),
+            );
             val_binds2.push(val_bind2);
         }
 
@@ -1327,8 +1331,8 @@ impl TypeResolver {
         env: &dyn TypeEnv,
         val_bind: &ValBind,
         term_map: &mut Vec<(String, Term)>,
+        v: &Rc<Var>,
     ) -> ValBind {
-        let v = self.variable();
         let pat = self.deduce_pat_type(env, val_bind.pat.clone(), term_map, &v);
         let expr = self.deduce_expr_type(env, val_bind.expr.clone(), &v);
         ValBind {
@@ -1358,6 +1362,13 @@ impl TypeResolver {
     ) -> Box<Pat> {
         match &pat.kind {
             PatKind::Identifier(name) => {
+                if let Some(_) = env.get(name, self) {
+                    // If the identifier is in the environment, we assume that
+                    // it is a constructor (such as `SOME` or `nil`).
+                    let kind = PatKind::Constructor(name.clone(), None);
+                    let pat2 = Box::new(kind.spanned(pat.span()));
+                    return self.deduce_pat_type(env, pat2, term_map, v);
+                }
                 term_map.push((name.clone(), Term::Variable(v.clone())));
                 self.reg_pat(&pat.kind, &pat.span, pat.id, &v)
             }
@@ -1380,6 +1391,7 @@ impl TypeResolver {
                     self.fn_term(&v_arg, v, &v_fun);
                     Some(self.deduce_pat_type(env, a.clone(), term_map, &v_arg))
                 } else {
+                    self.equiv(&term, v);
                     None
                 };
                 let x = PatKind::Constructor(name.clone(), arg2);
