@@ -17,6 +17,7 @@
 
 use crate::compile::types::Label;
 use crate::compile::types::Type;
+use crate::eval::code::Impl;
 use crate::syntax::parser;
 use std::fmt::{Display, Formatter};
 
@@ -39,7 +40,9 @@ pub enum Val {
     String(String),
     List(Vec<Val>),
     /// Built-in function.
-    Fn(crate::compile::compiler::BuiltInFunction),
+    Fn(crate::compile::library::BuiltInFunction),
+    /// Contents of record (structure).
+    ImplList(Vec<Impl>),
 
     /// Wrapper that indicates that a value should be printed with its name
     /// and type.
@@ -65,6 +68,18 @@ pub enum Val {
     Type(Box<(String, Type)>),
     /// `Raw(value)` is printed to the output as-is, without any quoting.
     Raw(String),
+    Impl(Impl),
+}
+
+impl Val {
+    /// Returns the `slot`th field if this value is a list.
+    /// (Instances of tuple and record types are represented as lists.)
+    pub(crate) fn get_field(&self, slot: usize) -> Option<&Val> {
+        match self {
+            Val::List(l) => Some(&l[slot]),
+            _ => None,
+        }
+    }
 }
 
 // REVIEW Should we use `Into` or `From` traits?
