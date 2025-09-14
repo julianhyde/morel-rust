@@ -209,9 +209,7 @@ impl BuiltIn {
             }
         }
     }
-}
 
-impl BuiltIn {
     pub(crate) fn key(&self) -> u8 {
         match self {
             BuiltIn::Fn(f) => (*f as u8) + (BuiltInRecord::COUNT as u8),

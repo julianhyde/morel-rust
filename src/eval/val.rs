@@ -80,10 +80,9 @@ impl Val {
             _ => None,
         }
     }
-}
 
-// REVIEW Should we use `Into` or `From` traits?
-impl Val {
+    // REVIEW Should we use `Into` or `From` traits?
+
     /// Creates a new Type value with the given prefix and type.
     pub fn new_type(prefix: &str, type_: &Type) -> Self {
         Val::Type(Box::new((prefix.to_string(), type_.clone())))
@@ -135,10 +134,12 @@ impl Val {
 impl Display for Val {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self {
+            // lint: sort until '#}' where '##Val::'
             Val::Bool(b) => write!(f, "{}", b),
             Val::Char(c) => {
                 write!(f, "#\"{}\"", parser::string_to_string(&c.to_string()))
             }
+            Val::Fn(func) => write!(f, "{:?}", func),
             Val::Int(i) => {
                 if *i < 0 {
                     let s = i.to_string();
@@ -147,14 +148,6 @@ impl Display for Val {
                     write!(f, "{}", i)
                 }
             }
-            Val::Real(r) => {
-                if *r < 0.0 {
-                    write!(f, "-{}", -*r)
-                } else {
-                    write!(f, "{}", r)
-                }
-            }
-            Val::String(s) => write!(f, "\"{}\"", parser::string_to_string(s)),
             Val::List(l) => {
                 let mut first = true;
                 write!(f, "[")?;
@@ -168,8 +161,15 @@ impl Display for Val {
                 }
                 write!(f, "]")
             }
-            Val::Fn(func) => write!(f, "{:?}", func),
             Val::Raw(s) => write!(f, "{}", s),
+            Val::Real(r) => {
+                if *r < 0.0 {
+                    write!(f, "-{}", -*r)
+                } else {
+                    write!(f, "{}", r)
+                }
+            }
+            Val::String(s) => write!(f, "\"{}\"", parser::string_to_string(s)),
             Val::Unit => write!(f, "()"),
             _ => todo!("{:?}", self),
         }
