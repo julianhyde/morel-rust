@@ -363,14 +363,22 @@ impl<'a> Compiler<'a> {
             // lint: sort until '#}' where '##Expr::'
             Expr::Apply(_, f, a) => {
                 if let Expr::Literal(_t, literal) = f.as_ref()
-                    // TODO Maybe remove Val::Impl, and switch back to Val::Fn?
-                    // Inliner is too early to be mapping to native functions.
-                    && let Val::Impl(f) = literal
+                    && let Val::Fn(f) = literal
                 {
+                    let impl_ = f.get_impl();
                     let codes = self.compile_args(cx, a.clone());
                     let boxed_codes: Vec<Box<Code>> =
                         codes.into_iter().map(Box::new).collect();
-                    return Codes::native(*f, &boxed_codes);
+                    return Codes::native(impl_, &boxed_codes);
+                }
+                if let Expr::Literal(_t, literal) = f.as_ref()
+                    && let Val::Fn(f) = literal
+                {
+                    let impl_ = f.get_impl();
+                    let codes = self.compile_args(cx, a.clone());
+                    let boxed_codes: Vec<Box<Code>> =
+                        codes.into_iter().map(Box::new).collect();
+                    return Codes::native(impl_, &boxed_codes);
                 }
                 todo!("compile {:}", expr)
             }
