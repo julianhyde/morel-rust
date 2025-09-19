@@ -325,10 +325,7 @@ pub(crate) fn populate_env(map: &mut BTreeMap<&str, (Type, Option<Val>)>) {
     );
 }
 
-pub fn built_in_to_applicable(b: BuiltInFunction) -> Option<Impl> {
-    LIBRARY.fn_map.get(&b).map(|(_, impl_)| *impl_)
-}
-
+/// Looks up a built-in (function or structure) by name.
 pub fn lookup(name: &str) -> Option<BuiltIn> {
     LIBRARY.name_to_built_in.get(name).cloned()
 }

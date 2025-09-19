@@ -17,7 +17,7 @@
 
 use crate::compile::core::Pat;
 use crate::compile::library::{
-    BuiltIn, BuiltInFunction, BuiltInRecord, built_in_to_applicable,
+    BuiltIn, BuiltInFunction, BuiltInRecord,
 };
 use crate::compile::type_env::Binding;
 use crate::compile::type_parser;
@@ -117,20 +117,6 @@ pub struct Codes;
 impl Codes {
     pub(crate) fn constant(v: Val) -> Box<Code> {
         Box::new(Code::Constant(v))
-    }
-
-    pub(crate) fn apply(f: BuiltInFunction, codes: &[Box<Code>]) -> Box<Code> {
-        if let Some(impl_) = built_in_to_applicable(f) {
-            return Self::native(impl_, codes);
-        }
-        match f {
-            BuiltInFunction::GOpEq => {
-                let code0 = codes[0].clone();
-                let code1 = codes[1].clone();
-                Box::new(Code::ApplyE2(Eager2::BoolImplies, code0, code1))
-            }
-            _ => todo!("{:?}", f),
-        }
     }
 
     pub(crate) fn native(impl_: Impl, codes: &[Box<Code>]) -> Box<Code> {
