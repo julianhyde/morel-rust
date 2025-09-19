@@ -16,9 +16,7 @@
 // License.
 
 use crate::compile::core::Pat;
-use crate::compile::library::{
-    BuiltIn, BuiltInFunction, BuiltInRecord,
-};
+use crate::compile::library::{BuiltIn, BuiltInFunction, BuiltInRecord};
 use crate::compile::type_env::Binding;
 use crate::compile::type_parser;
 use crate::compile::type_resolver::TypeMap;

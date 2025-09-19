@@ -249,14 +249,9 @@ impl<'a> Compiler<'a> {
         Context::new(env.clone())
     }
 
-    pub fn compile(&self, env: &Environment, expr: &Expr) -> Box<Code> {
-        let cx = self.create_context(env);
-        self.compile_with_context(&cx, expr)
-    }
-
     /// Compiles the argument to "apply".
     pub fn compile_arg(&self, cx: &Context, expr: &Expr) -> Box<Code> {
-        self.compile_with_context(cx, expr)
+        self.compile_expr(cx, expr)
     }
 
     /// Compiles the argument to a call, producing a list with N elements if the
@@ -275,9 +270,7 @@ impl<'a> Compiler<'a> {
         cx: &Context,
         expr: &[Box<Expr>],
     ) -> Vec<Code> {
-        expr.iter()
-            .map(|e| *self.compile_with_context(cx, e))
-            .collect()
+        expr.iter().map(|e| *self.compile_expr(cx, e)).collect()
     }
 
     /// Compiles the tuple arguments to "apply".
@@ -309,7 +302,7 @@ impl<'a> Compiler<'a> {
 
         Self::ORDINAL_CODE.with(|oc| {
             let old_slots = oc.replace(ordinal_slots.clone());
-            let code = self.compile_with_context(cx, expression);
+            let code = self.compile_expr(cx, expression);
             ordinal_slots = oc.replace(old_slots);
 
             if ordinal_slots[0] == 0 {
@@ -341,7 +334,7 @@ impl<'a> Compiler<'a> {
             let mut map_codes = BTreeMap::new();
 
             for (name, exp) in name_exps {
-                let code = self.compile_with_context(cx, exp);
+                let code = self.compile_expr(cx, exp);
                 map_codes.insert(name.clone(), code);
             }
 
@@ -358,19 +351,11 @@ impl<'a> Compiler<'a> {
         })
     }
 
-    pub fn compile_with_context(&self, cx: &Context, expr: &Expr) -> Box<Code> {
+    /// Compiles an expression.
+    pub fn compile_expr(&self, cx: &Context, expr: &Expr) -> Box<Code> {
         match expr {
             // lint: sort until '#}' where '##Expr::'
             Expr::Apply(_, f, a) => {
-                if let Expr::Literal(_t, literal) = f.as_ref()
-                    && let Val::Fn(f) = literal
-                {
-                    let impl_ = f.get_impl();
-                    let codes = self.compile_args(cx, a.clone());
-                    let boxed_codes: Vec<Box<Code>> =
-                        codes.into_iter().map(Box::new).collect();
-                    return Codes::native(impl_, &boxed_codes);
-                }
                 if let Expr::Literal(_t, literal) = f.as_ref()
                     && let Val::Fn(f) = literal
                 {
