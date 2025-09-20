@@ -55,69 +55,23 @@ pub enum Effect {
 #[derive(Clone)]
 pub enum Code {
     // lint: sort until '^}$'
-    ApplyE0(Eager0),
-    ApplyE1(Eager1, Box<Code>),
-    ApplyE2(Eager2, Box<Code>, Box<Code>),
-    ApplyE3(Eager3, Box<Code>, Box<Code>, Box<Code>),
-    ApplyEV2(EagerV2, Box<Code>, Box<Code>),
     Constant(Val),
     Link(Rc<Option<Code>>),
     Match(Vec<(Pat, Code)>, Rc<Code>),
+    Native0(Eager0),
+    Native1(Eager1, Box<Code>),
+    Native2(Eager2, Box<Code>, Box<Code>),
+    Native3(Eager3, Box<Code>, Box<Code>, Box<Code>),
+    NativeF2(EagerV2, Box<Code>, Box<Code>),
     Tuple(Vec<Code>),
 }
 
 impl Code {
-    pub fn eval(&self, v: &mut EvalEnv) -> Result<Val, MorelError> {
-        match &self {
-            // lint: sort until '#}' where '##Code::'
-            Code::ApplyE0(eager) => Ok(eager.apply()),
-            Code::ApplyE1(eager, code0) => {
-                let v0 = code0.eval(v)?;
-                Ok(eager.apply(v0))
-            }
-            Code::ApplyE2(eager, code0, code1) => {
-                let v0 = code0.eval(v)?;
-                let v1 = code1.eval(v)?;
-                Ok(eager.apply(v0, v1))
-            }
-            Code::ApplyE3(eager, code0, code1, code2) => {
-                let v0 = code0.eval(v)?;
-                let v1 = code1.eval(v)?;
-                let v2 = code2.eval(v)?;
-                Ok(eager.apply(v0, v1, v2))
-            }
-            Code::ApplyEV2(eager, code0, code1) => {
-                let v0 = code0.eval(v)?;
-                let v1 = code1.eval(v)?;
-                eager.apply(v, v0, v1)
-            }
-            Code::Constant(c) => Ok(c.clone()),
-            Code::Link(_) => {
-                todo!()
-            }
-            Code::Match(_, _) => {
-                todo!()
-            }
-            Code::Tuple(codes) => {
-                let mut values = Vec::with_capacity(codes.capacity());
-                for code in codes {
-                    values.push(code.eval(v)?);
-                }
-                Ok(Val::List(values))
-            }
-        }
-    }
-}
-
-/// Utilities for [Code].
-pub struct Codes;
-
-impl Codes {
-    pub(crate) fn constant(v: Val) -> Box<Code> {
-        Box::new(Code::Constant(v))
+    pub(crate) fn new_constant(v: Val) -> Code {
+        Code::Constant(v)
     }
 
-    pub(crate) fn native(impl_: Impl, codes: &[Box<Code>]) -> Box<Code> {
+    pub(crate) fn new_native(impl_: Impl, codes: &[Code]) -> Code {
         match impl_ {
             // lint: sort until '#}' where '##Impl::'
             Impl::Custom => {
@@ -128,44 +82,89 @@ impl Codes {
             }
             Impl::E0(e0) => {
                 assert_eq!(codes.len(), 0);
-                Box::new(Code::ApplyE0(e0))
+                Code::Native0(e0)
             }
             Impl::E1(e1) => {
                 assert_eq!(codes.len(), 1);
-                Box::new(Code::ApplyE1(e1, codes[0].clone()))
+                Code::Native1(e1, Box::new(codes[0].clone()))
             }
             Impl::E2(e2) => {
                 assert_eq!(codes.len(), 2);
-                Box::new(Code::ApplyE2(e2, codes[0].clone(), codes[1].clone()))
+                Code::Native2(
+                    e2,
+                    Box::new(codes[0].clone()),
+                    Box::new(codes[1].clone()),
+                )
             }
             Impl::E3(e3) => {
                 assert_eq!(codes.len(), 3);
-                Box::new(Code::ApplyE3(
+                Code::Native3(
                     e3,
-                    codes[0].clone(),
-                    codes[1].clone(),
-                    codes[2].clone(),
-                ))
+                    Box::new(codes[0].clone()),
+                    Box::new(codes[1].clone()),
+                    Box::new(codes[2].clone()),
+                )
             }
             Impl::EV2(ev2) => {
                 // TODO: handle cases like 'let args = (1, 2) in f args
                 // end'; see Gather in Morel-Java
                 assert_eq!(codes.len(), 2);
-                Box::new(Code::ApplyEV2(
+                Code::NativeF2(
                     ev2,
-                    codes[0].clone(),
-                    codes[1].clone(),
-                ))
+                    Box::new(codes[0].clone()),
+                    Box::new(codes[1].clone()),
+                )
             }
         }
     }
 
-    pub fn list(codes: &[Code]) -> Box<Code> {
-        Self::tuple(codes)
+    pub fn new_list(codes: &[Code]) -> Code {
+        Self::new_tuple(codes)
     }
 
-    pub fn tuple(codes: &[Code]) -> Box<Code> {
-        Box::new(Code::Tuple(codes.to_vec()))
+    pub fn new_tuple(codes: &[Code]) -> Code {
+        Code::Tuple(codes.to_vec())
+    }
+
+    pub fn eval(&self, v: &mut EvalEnv) -> Result<Val, MorelError> {
+        match &self {
+            // lint: sort until '#}' where '##Code::'
+            Code::Constant(c) => Ok(c.clone()),
+            Code::Link(_) => {
+                todo!()
+            }
+            Code::Match(_, _) => {
+                todo!()
+            }
+            Code::Native0(eager) => Ok(eager.apply()),
+            Code::Native1(eager, code0) => {
+                let v0 = code0.eval(v)?;
+                Ok(eager.apply(v0))
+            }
+            Code::Native2(eager, code0, code1) => {
+                let v0 = code0.eval(v)?;
+                let v1 = code1.eval(v)?;
+                Ok(eager.apply(v0, v1))
+            }
+            Code::Native3(eager, code0, code1, code2) => {
+                let v0 = code0.eval(v)?;
+                let v1 = code1.eval(v)?;
+                let v2 = code2.eval(v)?;
+                Ok(eager.apply(v0, v1, v2))
+            }
+            Code::NativeF2(eager, code0, code1) => {
+                let v0 = code0.eval(v)?;
+                let v1 = code1.eval(v)?;
+                eager.apply(v, v0, v1)
+            }
+            Code::Tuple(codes) => {
+                let mut values = Vec::with_capacity(codes.capacity());
+                for code in codes {
+                    values.push(code.eval(v)?);
+                }
+                Ok(Val::List(values))
+            }
+        }
     }
 }
 
