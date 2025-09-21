@@ -17,7 +17,8 @@
 
 use crate::compile::core::{
     DatatypeBind as CoreDatatypeBind, Decl as CoreDecl, Expr as CoreExpr,
-    Match, Pat as CorePat, TypeBind as CoreTypeBind, ValBind as CoreValBind,
+    Match as CoreMatch, Pat as CorePat, PatField as CorePatField,
+    TypeBind as CoreTypeBind, ValBind as CoreValBind,
 };
 use crate::compile::inliner::Env;
 use crate::compile::library::BuiltInFunction;
@@ -25,8 +26,8 @@ use crate::compile::type_resolver::{Resolved, TypeMap, Typed};
 use crate::compile::types::{PrimitiveType, Type};
 use crate::eval::val::Val;
 use crate::syntax::ast::{
-    DatatypeBind, Decl, DeclKind, Expr, ExprKind, Literal, LiteralKind, Pat,
-    PatKind, Type as AstType, TypeBind, ValBind,
+    DatatypeBind, Decl, DeclKind, Expr, ExprKind, Literal, LiteralKind, Match,
+    Pat, PatField, PatKind, Type as AstType, TypeBind, ValBind,
 };
 use crate::syntax::parser;
 use std::collections::{HashSet, VecDeque};
@@ -155,7 +156,7 @@ impl ResolvedValDecl {
         let temp_id = Box::new(CoreExpr::Identifier(expr_type, temp_name));
 
         // Create the case expression to match the complex pattern.
-        let match_ = Match {
+        let match_ = CoreMatch {
             pat: self.pat.clone(),
             expr: result_expr.clone(),
         };
@@ -455,13 +456,11 @@ impl<'a> Resolver<'a> {
                     _ => todo!("resolve {:?}", a0),
                 }
             }
-            ExprKind::Record(_, fields) => CoreExpr::Tuple(
-                t,
-                fields
-                    .iter()
-                    .map(|f| self.resolve_expr(f.expr.as_ref()))
-                    .collect(),
-            ),
+            ExprKind::Record(_, fields) => {
+                let resolved_fields =
+                    fields.iter().map(|f| self.resolve_expr(&f.expr)).collect();
+                CoreExpr::Tuple(t, resolved_fields)
+            }
             ExprKind::RecordSelector(name) => {
                 let slot = t.lookup_field(name).unwrap();
                 CoreExpr::RecordSelector(t, slot)
@@ -580,10 +579,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// Resolves an AST pattern field to a core pattern field.
-    fn resolve_pat_field(
-        &self,
-        _field: &crate::syntax::ast::PatField,
-    ) -> crate::compile::core::PatField {
+    fn resolve_pat_field(&self, _field: &PatField) -> CorePatField {
         todo!("Implement pat field resolution")
     }
 
@@ -639,8 +635,8 @@ impl<'a> Resolver<'a> {
     }
 
     /// Resolves an AST match to a core match.
-    fn resolve_match(&self, ast_match: &crate::syntax::ast::Match) -> Match {
-        Match {
+    fn resolve_match(&self, ast_match: &Match) -> CoreMatch {
+        CoreMatch {
             pat: self.resolve_pat(&ast_match.pat),
             expr: self.resolve_expr(&ast_match.expr),
         }
@@ -818,7 +814,7 @@ impl<'a> Resolver<'a> {
         let temp_id = Box::new(CoreExpr::Identifier(expr_type, temp_name));
 
         // Create a case expression to match the complex pattern.
-        let match_ = Match {
+        let match_ = CoreMatch {
             pat: pat.clone(),
             expr: result_expr.clone(),
         };
