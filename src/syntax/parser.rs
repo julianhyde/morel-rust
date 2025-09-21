@@ -396,9 +396,9 @@ impl MorelParser {
                     let selector =
                         ExprKind::RecordSelector(label.name.to_string())
                             .spanned(&label.span);
-                    let span = &acc.span.union(&label.span);
+                    let span = acc.span.union(&label.span);
                     ExprKind::Apply(Box::new(selector), Box::new(acc))
-                        .spanned(span)
+                        .spanned(&span)
                 })
             },
         ))
@@ -407,16 +407,15 @@ impl MorelParser {
     fn tuple_expr(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
             [expr(exprs)..] => {
-                match exprs.len() {
+                let expr_vec: Vec<_> = exprs.into_iter().collect();
+                match expr_vec.len() {
                     0 => {
                         let literal = LiteralKind::Unit.wrap(input);
-                        let span = &literal.span.clone();
-                        ExprKind::Literal(literal).spanned(span)
+                        let span = literal.span.clone();
+                        ExprKind::Literal(literal).spanned(&span)
                     },
-                    1 => exprs.into_iter().next().unwrap(),
-                    _ => {
-                        ExprKind::Tuple(exprs.into_iter().collect()).wrap(input)
-                    },
+                    1 => expr_vec[0].clone(),
+                    _ => ExprKind::Tuple(expr_vec).wrap(input),
                 }
             },
         ))
@@ -1177,13 +1176,13 @@ impl MorelParser {
                     type_vec.iter().fold(
                         t,
                         |acc, t2| {
-                            let span = &acc.span.union(&t2.span);
+                            let span = acc.span.union(&t2.span);
                             let type_args = match &acc.kind {
                                 TypeKind::Tuple(types) => types.clone(),
                                 _ => vec![acc.clone()],
                             };
                         TypeKind::App(type_args, Box::new(t2.clone()))
-                            .spanned(span)
+                            .spanned(&span)
                     }
                 )}
             },
@@ -1563,8 +1562,8 @@ fn fold(
     let mut rest = exprs.iter();
     let first = rest.next().unwrap();
     rest.fold(first.clone(), |acc, e| {
-        let span = &acc.span.union(&e.span);
-        f(Box::new(acc), Box::new(e.clone())).spanned(span)
+        let span = acc.span.union(&e.span);
+        f(Box::new(acc), Box::new(e.clone())).spanned(&span)
     })
 }
 
@@ -1577,8 +1576,8 @@ fn fold2(
     f: impl Fn(Box<Expr>, Box<Expr>) -> ExprKind<Expr>,
 ) -> Expr {
     exprs.iter().fold(first.clone(), |acc, e| {
-        let span = &acc.span.union(&e.span);
-        f(Box::new(acc), Box::new(e.clone())).spanned(span)
+        let span = acc.span.union(&e.span);
+        f(Box::new(acc), Box::new(e.clone())).spanned(&span)
     })
 }
 
@@ -1591,8 +1590,8 @@ fn fold_heterogeneous(
 ) -> Expr {
     args.iter().fold(first.clone(), |acc, op_arg| {
         let (op, e) = op_arg;
-        let span = &acc.span.union(&e.span);
-        f(op, Box::new(acc), Box::new(e.clone())).spanned(span)
+        let span = acc.span.union(&e.span);
+        f(op, Box::new(acc), Box::new(e.clone())).spanned(&span)
     })
 }
 
