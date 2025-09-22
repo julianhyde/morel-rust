@@ -488,7 +488,9 @@ impl Eager0 {
     }
 
     fn implements(&self, b: &mut LibBuilder, f: BuiltInFunction) {
-        b.fn_impls.insert(f, Impl::E0(*self));
+        if b.fn_impls.insert(f, Impl::E0(*self)).is_some() {
+            panic!("Already implemented {:?}", f);
+        }
     }
 }
 
@@ -519,7 +521,9 @@ impl Eager1 {
     }
 
     fn implements(&self, b: &mut LibBuilder, f: BuiltInFunction) {
-        b.fn_impls.insert(f, Impl::E1(*self));
+        if b.fn_impls.insert(f, Impl::E1(*self)).is_some() {
+            panic!("Already implemented {:?}", f);
+        }
     }
 }
 
@@ -653,7 +657,9 @@ impl Eager2 {
     }
 
     fn implements(&self, b: &mut LibBuilder, f: BuiltInFunction) {
-        b.fn_impls.insert(f, Impl::E2(*self));
+        if b.fn_impls.insert(f, Impl::E2(*self)).is_some() {
+            panic!("Already implemented {:?}", f);
+        }
     }
 }
 
@@ -672,7 +678,9 @@ pub enum EagerV2 {
 
 impl EagerV2 {
     fn implements(&self, b: &mut LibBuilder, f: BuiltInFunction) {
-        b.fn_impls.insert(f, Impl::EV2(*self));
+        if b.fn_impls.insert(f, Impl::EV2(*self)).is_some() {
+            panic!("Already implemented {:?}", f);
+        }
     }
 
     // Passing Val by value is OK because it is small.
@@ -720,7 +728,9 @@ impl Eager3 {
     }
 
     fn implements(&self, b: &mut LibBuilder, f: BuiltInFunction) {
-        b.fn_impls.insert(f, Impl::E3(*self));
+        if b.fn_impls.insert(f, Impl::E3(*self)).is_some() {
+            panic!("Already implemented {:?}", f);
+        }
     }
 }
 
@@ -800,7 +810,9 @@ impl Custom {
     }
 
     fn implements(&self, b: &mut LibBuilder, f: BuiltInFunction) {
-        b.fn_impls.insert(f, Impl::Custom);
+        if b.fn_impls.insert(f, Impl::Custom).is_some() {
+            panic!("Already implemented {:?}", f);
+        }
     }
 }
 
@@ -856,7 +868,6 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager2::IntOpLe.implements(&mut b, IntOpLe);
     Eager2::IntOpLt.implements(&mut b, IntOpLt);
     Eager2::IntOpNe.implements(&mut b, IntOpNe);
-    Eager2::IntMinus.implements(&mut b, IntMinus);
     Eager2::IntPlus.implements(&mut b, IntPlus);
     Eager2::IntTimes.implements(&mut b, IntTimes);
     Eager0::ListNil.implements(&mut b, ListNil);
