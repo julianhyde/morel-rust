@@ -19,7 +19,7 @@
  * Expressions that use recursion, function values, and closure.
  *)
 
-(*) A simple non-recursive function.
+(*) 1. Plus. A simple non-recursive function
 let
   fun plus (x, y) = x + y
 in
@@ -27,7 +27,7 @@ in
 end;
 > val it = 7 : int
 
-(*) Simple factorial function
+(*) 2. Factorial. A basic recursive function
 let
   fun fact n =
     if n = 0 then 1 else n * fact (n - 1)
@@ -36,7 +36,7 @@ in
 end;
 > val it = 120 : int
 
-(*) Similar, but using parallel functions
+(*) 2.1. Factorial using parallel functions
 let
   fun fact 0 = 1
     | fact n = n * fact (n - 1)
@@ -45,7 +45,7 @@ in
 end;
 > val it = 120 : int
 
-(*) Similar, but using 'case'
+(*) 2.2. Factorial using 'case'
 let
   fun fact n =
     case n
@@ -56,7 +56,7 @@ in
 end;
 > val it = 120 : int
 
-(*) Similar, but 'val rec'
+(*) 2.3. Factorial using 'val rec'
 let
   val rec fact =
     fn n =>
@@ -68,8 +68,55 @@ in
 end;
 > val it = 120 : int
 
+(*) 3. Map. A function that uses function values (not closures)
+let
+  fun map (f, []) = []
+    | map (f, (x::xs)) = (f x) :: map (f, xs)
+in
+  map ((fn x => x + 1), [1, 2, 3])
+end;
+> val it = [2,3,4] : int list
+
+(*) 3.1. Map, using 'case'
+let
+  fun map (f, list) =
+    case list
+      of [] => []
+       | x::xs => (f x) :: map (f, xs)
+in
+  map ((fn x => x + 1), [1, 2, 3])
+end;
+> val it = [2,3,4] : int list
+
 set("mode", "validate");
 > val it = () : unit
+
+(*) 1.1. Plus, uncurried
+let
+  fun plus x y = x + y
+in
+  plus 3 4
+end;
+
+(*) 1.2. Plus, explicitly uncurried
+let
+  val plus = fn x => fn y => x + y
+in
+  let
+    val plus3 = plus 3
+  in
+    plus3 4
+  end
+end;
+
+(*) 3.2. Map, uncurried
+let
+  fun map f [] = []
+    | map f (x::xs) = f x :: map f xs
+in
+  map (fn x => x + 1) [1, 2, 3]
+end;
+> val it = [2,3,4] : int list
 
 (*) Closure; int variable 'n' is captured in the function definition
 val one = 1;

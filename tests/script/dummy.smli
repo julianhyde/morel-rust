@@ -16,7 +16,66 @@
  * language governing permissions and limitations under the
  * License.
  *)
-"this is a simple script; modify it for debugging test cases";
-> val it = "this is a simple script; modify it for debugging test cases" : string
+let
+  fun map (f, []) = []
+    | map (f, (x::xs)) = (f x) :: map (f, xs)
+in
+  map ((fn x => x + 1), [1, 2, 3])
+end;
+> val it = [2,3,4] : int list
+
+let
+  fun append x y = x :: y
+in
+  append 1 [2, 3]
+end;
+> val it = [2,3,4] : int list
+
+let
+  val x = 1
+in
+  fn y => x + y
+end;
+> val it = fn : int -> int
+
+(let
+  val x = 1
+in
+  fn y => x + y
+end) 3;
+> val it = 4 : int
+
+(*
+let
+  val plus = fn x => fn y => x + y
+in
+  let
+    val plus2 = plus 2
+  in
+    plus2 3
+  end
+end;
+*)
+
+(*
+let
+  fun map f [] = []
+    | map f (x::xs) = f x :: map f xs
+in
+  map (fn x => x + 1) [1, 2, 3]
+end;
+> val it = [2, 3, 4] : int list
+*)
+
+
+
+(* todo: type inference
+fun hello nnn : string = "hello!";
+> val hello = fn : string * int -> string
+*)
+(* todo: resolve
+fun plus x y = x + y;
+> val plus : int -> int -> int
+*)
 
 (*) End dummy.smli

@@ -20,13 +20,14 @@ use crate::compile::type_env::Binding;
 use crate::compile::type_parser;
 use crate::compile::types::{Label, Type};
 use crate::eval::code::EagerV2::SysSet;
+use crate::eval::frame::FrameDef;
 use crate::eval::session::Session;
 use crate::eval::val::Val;
 use crate::shell::main::{MorelError, Shell};
 use std::collections::{BTreeMap, HashMap};
 use std::iter::zip;
 use std::str::FromStr;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use strum::{EnumProperty, IntoEnumIterator};
 
 /// Evaluation mode.
@@ -69,8 +70,10 @@ pub enum Code {
     // lint: sort until '#}' where '##[A-Z][A-Za-z0-9]*\('
     /// `Apply(fn_code, arg_code)` calls a function.
     Apply(Box<Code>, Box<Code>),
-    /// `ApplyFixed(fn_code, arg_code)` calls a function whose code is known at
-    /// compile time.
+    /// `ApplyClosure(fn_code, arg_code, bind_codes)` calls a closure.
+    ApplyClosure(Box<Code>, Box<Code>, Vec<Code>),
+    /// `ApplyConstant(fn_code, arg_code)` calls a function whose code is known
+    /// at compile time.
     ApplyConstant(Box<Code>, Box<Code>),
     /// `Bind(pat, expr)` binds the pattern to the expression; throws if the
     /// value does not match.
@@ -88,8 +91,8 @@ pub enum Code {
     /// `BindLiteral(val)` succeeds if the argument is equal to `val`.
     BindLiteral(Val),
     /// `BindSlot(slot, name)` assigns the argument to the `slot`th
-    /// variable in the current frame. `name` is for debugging purposes.
-    BindSlot(usize, String),
+    /// variable in the current frame. `name` is for debugging.
+    BindSlot(Arc<FrameDef>, usize),
     /// `BindTuple(patterns)` succeeds if all patterns successfully bind.
     /// Every pattern is a code that takes 1 argument and returns a boolean
     /// value.
@@ -100,16 +103,30 @@ pub enum Code {
     /// pairs until it can find the value to a pattern and finally evaluates
     /// the expression.
     Case(Vec<Code>),
+
+    /// `Constant(val)` returns the value `val`.
     Constant(Val),
-    /// `Fn(local_names, matches)` first creates a frame to contain the required
+
+    /// `CreateClosure(frame, matches, binds)` creates a [Val::Closure] value
+    /// that is similar to a function, but has a frame pre-populated with one
+    /// or more values.
+    CreateClosure(Arc<FrameDef>, Vec<(Code, Code)>, Vec<Code>),
+
+    /// `Fn(frame, matches)` first creates a frame to contain the required
     /// local variables, next iterates the (pattern, expression) pairs until it
     /// can bind the argument to a pattern and finally evaluates the
     /// expression.
-    Fn(Vec<Binding>, Vec<(Code, Code)>),
-    /// `GetLocal(slot)` returns the value of the `slot`th variable in the
-    /// current stack frame. See [Code::BindSlot].
-    GetLocal(usize),
+    Fn(Arc<FrameDef>, Vec<(Code, Code)>),
+
+    /// `GetLocal(slot, frame_def)` returns the value of the `slot`th variable
+    /// in the current stack frame.
+    /// `frame_def` is for debugging. See [Code::BindSlot].
+    GetLocal(Arc<FrameDef>, usize),
+
+    /// `Let(codes, result_code)` evaluates all the `codes` in the current
+    /// frame, to bind values to variables, then evaluates the result code.
     Let(Vec<Code>, Box<Code>),
+
     /// `Link(slot, name)` is a reference to the code in the `slot`th slot of
     /// the code table. It used to represent recursive functions, because at
     /// the time the recursive function is being compiled, there is not yet
@@ -124,8 +141,15 @@ pub enum Code {
 }
 
 impl Code {
-    pub(crate) fn new_apply(f: &Code, a: &Code) -> Code {
-        if let Code::Constant(Val::Code(c)) = f {
+    pub(crate) fn new_apply(f: &Code, a: &Code, refs: &[Binding]) -> Code {
+        if !refs.is_empty() {
+            let bind_codes: Vec<Code> = Vec::new();
+            Code::ApplyClosure(
+                Box::new(f.clone()),
+                Box::new(a.clone()),
+                bind_codes,
+            )
+        } else if let Code::Constant(Val::Code(c)) = f {
             Code::ApplyConstant(c.clone(), Box::new(a.clone()))
         } else {
             Code::Apply(Box::new(f.clone()), Box::new(a.clone()))
@@ -148,12 +172,31 @@ impl Code {
         Code::BindLiteral(val.clone())
     }
 
-    pub(crate) fn new_bind_slot(slot: usize, name: &str) -> Code {
-        Code::BindSlot(slot, name.to_string())
+    pub(crate) fn new_bind_slot(frame_def: Arc<FrameDef>, slot: usize) -> Code {
+        Code::BindSlot(frame_def, slot)
     }
 
     pub(crate) fn new_bind(pat_code: &Code, expr_code: &Code) -> Code {
         Code::Bind(Box::new((pat_code.clone(), expr_code.clone())))
+    }
+
+    pub(crate) fn new_closure(
+        frame_def: Arc<FrameDef>,
+        pat_expr_codes: &[(Code, Code)],
+        bind_codes: &[Code],
+    ) -> Code {
+        // If there are no refs, you don't need a closure; a fn is enough.
+        assert!(!frame_def.bound_vars.is_empty());
+        assert_eq!(frame_def.bound_vars.len(), bind_codes.len());
+
+        for (pat_code, _) in pat_expr_codes {
+            pat_code.assert_supports_eval_mode(&EvalMode::EagerV1);
+        }
+        Code::CreateClosure(
+            frame_def,
+            pat_expr_codes.to_vec(),
+            bind_codes.to_vec(),
+        )
     }
 
     pub(crate) fn new_constant(v: Val) -> Code {
@@ -161,16 +204,19 @@ impl Code {
     }
 
     pub(crate) fn new_fn(
-        local_vars: &[Binding],
+        frame_def: Arc<FrameDef>,
         pat_expr_codes: &[(Code, Code)],
     ) -> Code {
+        // If there are refs, you need a closure.
+        assert!(frame_def.bound_vars.is_empty());
+
         // REVIEW A function could also support Eager1 (without environment)
         // if it does not use global variables or have effects. The environment
         // is currently necessary to create a frame.
         for (pat_code, _) in pat_expr_codes {
             pat_code.assert_supports_eval_mode(&EvalMode::EagerV1);
         }
-        Code::Fn(local_vars.to_vec(), pat_expr_codes.to_vec())
+        Code::Fn(frame_def, pat_expr_codes.to_vec())
     }
 
     pub(crate) fn new_bind_list(codes: &[Code]) -> Code {
@@ -267,6 +313,7 @@ impl Code {
         match self {
             // lint: sort until '#}' where '##Code::'
             Code::Apply(_, _) => *mode == EvalMode::Eager0,
+            Code::ApplyClosure(_, _, _) => *mode == EvalMode::Eager0,
             Code::ApplyConstant(_, _) => *mode == EvalMode::Eager0,
             Code::Bind(_) => *mode == EvalMode::Eager0,
             Code::BindCons(_, _) => {
@@ -288,8 +335,9 @@ impl Code {
             Code::Constant(_) => {
                 *mode == EvalMode::Eager0 || *mode == EvalMode::EagerV0
             }
+            Code::CreateClosure(_, _, _) => *mode == EvalMode::EagerV0,
             Code::Fn(_, _) => *mode == EvalMode::EagerV1,
-            Code::GetLocal(_) => *mode == EvalMode::EagerV0,
+            Code::GetLocal(_, _) => *mode == EvalMode::EagerV0,
             Code::Let(_, _) => *mode == EvalMode::Eager0,
             Code::Link(_, _) => todo!("{:?}", self),
             Code::Native0(_) => *mode == EvalMode::Eager0,
@@ -315,8 +363,19 @@ impl Code {
             Code::Apply(fn_code, arg_code) => {
                 let arg = arg_code.eval_f0(r, f)?;
                 let fn_ = fn_code.eval_f0(r, f)?;
-                let fn_code2 = fn_.expect_code();
-                fn_code2.eval_f1(r, f, &arg)
+                match &fn_ {
+                    Val::Code(c) => c.eval_f1(r, f, &arg),
+                    Val::Closure(frame_def, matches, bound_vals) => {
+                        Frame::create_bind_and_eval(
+                            frame_def, matches, bound_vals, r, &arg,
+                        )
+                    }
+                    _ => panic!("Expected code"),
+                }
+            }
+            Code::ApplyClosure(fn_code, arg_code, _bind_codes) => {
+                let arg = arg_code.eval_f0(r, f)?;
+                fn_code.eval_f1(r, f, &arg)
             }
             Code::ApplyConstant(fn_code, arg_code) => {
                 let arg = arg_code.eval_f0(r, f)?;
@@ -346,18 +405,25 @@ impl Code {
                 Err(MorelError::Bind)
             }
             Code::Constant(c) => Ok(c.clone()),
+            Code::CreateClosure(frame_def, matches, bind_codes) => {
+                let mut values = Vec::with_capacity(bind_codes.len());
+                for bind_code in bind_codes {
+                    values.push(bind_code.eval_f0(r, f)?);
+                }
+                Ok(Val::Closure(frame_def.clone(), matches.clone(), values))
+            }
             Code::Fn(_, _) => {
                 // Fn is practically a literal. When evaluated, it returns
                 // itself.
                 Ok(Val::Code(Box::new(self.clone())))
             }
-            Code::GetLocal(ordinal) => Ok(f.vals[*ordinal].clone()),
-            Code::Let(codes, code) => {
+            Code::GetLocal(_, slot) => Ok(f.vals[*slot].clone()),
+            Code::Let(codes, result_code) => {
                 // REVIEW: Could codes and code be merged into one vector?
                 for code in codes {
                     code.eval_f0(r, f)?;
                 }
-                code.eval_f0(r, f)
+                result_code.eval_f0(r, f)
             }
             Code::Link(_, _) => {
                 todo!()
@@ -404,6 +470,9 @@ impl Code {
     ) -> Result<Val, MorelError> {
         match &self {
             // lint: sort until '#}' where '##Code::'
+            Code::ApplyClosure(_fn_code, _arg_code, _bind_codes) => {
+                todo!("eval_f1: {:?}", self)
+            }
             Code::BindCons(head_code, tail_code) => {
                 let list = a0.expect_list();
                 if list.is_empty() {
@@ -426,37 +495,23 @@ impl Code {
                 if list.len() != codes.len() {
                     return Ok(Val::Bool(false));
                 }
-                for (code, val) in zip(codes, list) {
-                    let result = code.eval_f1(r, f, val)?;
-                    if !result.expect_bool() {
-                        return Ok(result);
-                    }
-                }
-                Ok(Val::Bool(true))
+                Self::eval_all_f1(r, f, codes, list)
             }
             Code::BindLiteral(val) => Ok(Val::Bool(a0 == val)),
-            Code::BindSlot(ordinal, _) => {
-                f.vals[*ordinal] = a0.clone();
+            Code::BindSlot(_, slot) => {
+                f.vals[*slot] = a0.clone();
                 Ok(Val::Bool(true))
             }
             Code::BindTuple(codes) => {
                 let list = a0.expect_list();
-                for (code, val) in zip(codes, list) {
-                    let result = code.eval_f1(r, f, val)?;
-                    if !result.expect_bool() {
-                        // One match failed. Return false.
-                        return Ok(result);
-                    }
-                }
-                // All matches succeeded. Return true.
-                Ok(Val::Bool(true))
+                Self::eval_all_f1(r, f, codes, list)
             }
             Code::BindWildcard => Ok(Val::Bool(true)),
             Code::Constant(v) => Ok(v.clone()),
             Code::Fn(local_names, matches) => {
                 Frame::create_and_eval(local_names, matches, r, a0)
             }
-            Code::GetLocal(ordinal) => Ok(f.vals[*ordinal].clone()),
+            Code::GetLocal(_, slot) => Ok(f.vals[*slot].clone()),
             Code::Link(slot, _) => {
                 let code = r.link_codes[*slot].clone();
                 code.eval_f1(r, f, a0)
@@ -466,6 +521,23 @@ impl Code {
             }
         }
     }
+
+    fn eval_all_f1(
+        r: &mut EvalEnv,
+        f: &mut Frame,
+        codes: &[Code],
+        list: &[Val],
+    ) -> Result<Val, MorelError> {
+        for (code, val) in zip(codes, list) {
+            let result = code.eval_f1(r, f, val)?;
+            if !result.expect_bool() {
+                // One match failed. Return false.
+                return Ok(result);
+            }
+        }
+        // All matches succeeded. Return true.
+        Ok(Val::Bool(true))
+    }
 }
 
 /// Stack frame for evaluating [Code].
@@ -474,18 +546,43 @@ pub struct Frame<'a> {
 }
 
 impl<'a> Frame<'a> {
-    /// Creates a frame, binds an argument to one of a list of patterns,
+    /// Creates a frame, binds an argument to one of several patterns,
     /// and executes the corresponding expression.
     ///
     /// This is the implementation of a function call.
     fn create_and_eval(
-        local_names: &[Binding],
+        frame_def: &FrameDef,
         matches: &[(Code, Code)],
         r: &mut EvalEnv,
         arg: &Val,
     ) -> Result<Val, MorelError> {
-        let mut val_vec: Vec<Val> = vec![Val::Unit; local_names.len()];
+        let mut val_vec: Vec<Val> =
+            vec![Val::Char('a'); frame_def.local_vars.len()];
+        Self::eval(&mut val_vec, matches, r, arg)
+    }
 
+    fn create_bind_and_eval(
+        frame_def: &FrameDef,
+        matches: &[(Code, Code)],
+        bound_vals: &[Val],
+        r: &mut EvalEnv,
+        arg: &Val,
+    ) -> Result<Val, MorelError> {
+        let mut val_vec: Vec<Val> = bound_vals
+            .iter()
+            .cloned()
+            .chain(std::iter::repeat(Val::Unit))
+            .take(frame_def.local_vars.len())
+            .collect();
+        Self::eval(&mut val_vec, matches, r, arg)
+    }
+
+    fn eval(
+        val_vec: &mut [Val],
+        matches: &[(Code, Code)],
+        r: &mut EvalEnv,
+        arg: &Val,
+    ) -> Result<Val, MorelError> {
         for (pat_code, expr_code) in matches {
             let mut frame = Frame {
                 vals: &mut val_vec[..],

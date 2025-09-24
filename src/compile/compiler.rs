@@ -20,7 +20,9 @@ use crate::compile::pretty::Pretty;
 use crate::compile::type_env::{Binding, Id};
 use crate::compile::type_resolver::TypeMap;
 use crate::compile::types::{PrimitiveType, Type};
+use crate::compile::var_collector::VarCollector;
 use crate::eval::code::{Code, Effect, EvalEnv, EvalMode, Frame};
+use crate::eval::frame::FrameDef;
 use crate::eval::session::Session;
 use crate::eval::val::Val;
 use crate::shell::Shell;
@@ -28,6 +30,7 @@ use crate::shell::config::Config as ShellConfig;
 use crate::shell::main::Environment;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 /// Compiles a declaration to code that can be evaluated.
 pub fn compile_statement(
@@ -67,6 +70,8 @@ impl Closure {
     }
 }
 
+const UNIT_TYPE: Type = Type::Primitive(PrimitiveType::Unit);
+
 impl<'a> Compiler<'a> {
     thread_local! {
         static ORDINAL_CODE: RefCell<Vec<i32>> = RefCell::new(vec![0]);
@@ -103,7 +108,7 @@ impl<'a> Compiler<'a> {
 
         let type_ = match decl {
             Decl::NonRecVal(val_bind) => val_bind.t.clone(),
-            _ => Type::Primitive(PrimitiveType::Unit),
+            _ => UNIT_TYPE.clone(),
         };
 
         let context = self.create_context(env);
@@ -165,9 +170,6 @@ impl<'a> Compiler<'a> {
         bindings: &mut Vec<Binding>,
         actions: Option<&mut Vec<Box<dyn Action>>>,
     ) {
-        let binding_count = bindings.len();
-        Self::bind_pattern(bindings, decl);
-
         // Remember the ordinal of the first link.
         // After we have defined recursive functions, we will
         // iterate the links again and assign the code.
@@ -185,38 +187,37 @@ impl<'a> Compiler<'a> {
             });
         }
 
-        let new_bindings = &bindings.as_slice()[binding_count..];
-        let cx1 = cx.bind_all(new_bindings);
-        bindings.truncate(binding_count);
+        let cx1 = cx.bind_all(bindings);
 
         // Collect all bindings first to avoid borrowing issues
         let mut collected_actions = Vec::new();
 
         decl.for_each_binding(
             &mut |pat: &Pat, expr: &Expr, _overload_pat: &Option<Box<Id>>| {
-                let pat_code = self.compile_pat(&cx1, pat);
+                let mut collector = VarCollector::new(&cx1.env);
+                pat.collect_vars(&mut collector);
+                expr.collect_vars(&mut collector);
+                let frame_def = Arc::new(collector.into_frame_def());
+                let cx2 = cx1.with_frame(frame_def);
 
-                let fn_expr = if actions.is_some() {
+                let pat_code = self.compile_pat(&cx2, pat);
+
+                let wrapped_expr = if actions.is_some() {
                     // If there are actions, we are at the top level.
                     // Wrap 'expr' as 'fn () => 'expr'. A function is able to
                     // allocate a frame with space for all local variables.
                     Expr::Fn(
-                        Box::new(Type::Fn(
-                            Box::new(Type::Primitive(PrimitiveType::Unit)),
-                            expr.type_(),
-                        )),
+                        Box::new(Type::Fn(Box::new(UNIT_TYPE), expr.type_())),
                         vec![Match {
-                            pat: Pat::Literal(
-                                Box::new(Type::Primitive(PrimitiveType::Unit)),
-                                Val::Unit,
-                            ),
+                            pat: Pat::Literal(Box::new(UNIT_TYPE), Val::Unit),
                             expr: expr.clone(),
                         }],
                     )
                 } else {
                     expr.clone()
                 };
-                let expr_code = self.compile_expr(&cx1, &fn_expr);
+                let expr_code =
+                    self.compile_expr(&cx2, Some(&cx1), &wrapped_expr);
                 match_codes.push(Code::new_bind(&pat_code, &expr_code));
 
                 // Special treatment for 'val id =' so that 'fun' declarations
@@ -257,18 +258,6 @@ impl<'a> Compiler<'a> {
                 actions.push(Box::new(action));
             }
         }
-    }
-
-    /// Richer than {@link #acceptBinding(TypeSystem, Core.Pat, List)}
-    /// because we have the expression.
-    fn bind_pattern(bindings: &mut Vec<Binding>, decl: &Decl) {
-        decl.for_each_binding(
-            &mut (|pat: &Pat,
-                   _expr: &Expr,
-                   _overload_pat: &Option<Box<Id>>| {
-                pat.collect_vars(bindings);
-            }),
-        );
     }
 
     fn compile_over_decl(
@@ -329,8 +318,8 @@ impl<'a> Compiler<'a> {
                 Code::new_bind_constructor(name, &code)
             }
             Pat::Identifier(_, name) => {
-                let i = cx.var_index(name);
-                Code::new_bind_slot(i, name)
+                let slot = cx.frame_def.var_index(name);
+                Code::new_bind_slot(cx.frame_def.clone(), slot)
             }
             Pat::List(_, pats) => {
                 let codes = pats
@@ -360,7 +349,7 @@ impl<'a> Compiler<'a> {
 
     /// Compiles the argument to "apply".
     pub fn compile_arg(&mut self, cx: &Context, expr: &Expr) -> Code {
-        self.compile_expr(cx, expr)
+        self.compile_expr(cx, None, expr)
     }
 
     /// Compiles the argument to a call, producing a list with N elements if the
@@ -368,7 +357,7 @@ impl<'a> Compiler<'a> {
     pub fn compile_args(&mut self, cx: &Context, expr: &Expr) -> Vec<Code> {
         match expr {
             Expr::Tuple(_, args) => self.compile_arg_list(cx, args),
-            _ => vec![self.compile_expr(cx, expr)],
+            _ => vec![self.compile_expr(cx, None, expr)],
         }
     }
 
@@ -378,7 +367,9 @@ impl<'a> Compiler<'a> {
         cx: &Context,
         args: &[Expr],
     ) -> Vec<Code> {
-        args.iter().map(|e| self.compile_expr(cx, e)).collect()
+        args.iter()
+            .map(|e| self.compile_expr(cx, None, e))
+            .collect()
     }
 
     /// Compiles an expression that is evaluated once per row.
@@ -387,7 +378,7 @@ impl<'a> Compiler<'a> {
 
         Self::ORDINAL_CODE.with(|oc| {
             let old_slots = oc.replace(ordinal_slots.clone());
-            let code = self.compile_expr(cx, expression);
+            let code = self.compile_expr(cx, None, expression);
             ordinal_slots = oc.replace(old_slots);
 
             if ordinal_slots[0] == 0 {
@@ -419,7 +410,7 @@ impl<'a> Compiler<'a> {
             let mut map_codes = BTreeMap::new();
 
             for (name, exp) in name_exps {
-                let code = self.compile_expr(cx, exp);
+                let code = self.compile_expr(cx, None, exp);
                 map_codes.insert(name.clone(), code);
             }
 
@@ -437,7 +428,12 @@ impl<'a> Compiler<'a> {
     }
 
     /// Compiles an expression.
-    pub fn compile_expr(&mut self, cx: &Context, expr: &Expr) -> Code {
+    pub fn compile_expr(
+        &mut self,
+        cx: &Context,
+        pcx: Option<&Context>,
+        expr: &Expr,
+    ) -> Code {
         match expr {
             // lint: sort until '#}' where '##Expr::'
             Expr::Apply(_, f, a) => match f.as_ref() {
@@ -448,50 +444,74 @@ impl<'a> Compiler<'a> {
                 }
                 Expr::Identifier(_, name) => {
                     let arg_code = self.compile_arg(cx, a);
-                    if let Some(Val::Code(code)) = &cx.env.get(name) {
-                        let fn_code =
-                            Code::new_constant(Val::Code(code.clone()));
-                        Code::new_apply(&fn_code, &arg_code)
-                    } else {
-                        let fn_code = self.compile_arg(cx, f);
-                        Code::new_apply(&fn_code, &arg_code)
-                    }
+                    let fn_code =
+                        if let Some(Val::Code(code)) = &cx.env.get(name) {
+                            Code::new_constant(Val::Code(code.clone()))
+                        } else {
+                            self.compile_arg(cx, f)
+                        };
+                    Code::new_apply(
+                        &fn_code,
+                        &arg_code,
+                        &cx.frame_def.bound_vars,
+                    )
                 }
                 _ => {
                     let arg_code = self.compile_arg(cx, a);
                     let fn_code = self.compile_arg(cx, f);
-                    Code::new_apply(&fn_code, &arg_code)
+                    Code::new_apply(&fn_code, &arg_code, &[])
                 }
             },
             Expr::Case(_, expr, matches) => {
-                let expr_code = self.compile_expr(cx, expr);
+                let expr_code = self.compile_expr(cx, None, expr);
                 let mut codes = vec![expr_code];
 
                 for m in matches {
                     let pat_code = self.compile_pat(cx, &m.pat);
-                    let expr_code = self.compile_expr(cx, &m.expr);
+                    let expr_code = self.compile_expr(cx, None, &m.expr);
                     codes.push(pat_code);
                     codes.push(expr_code);
                 }
                 Code::new_match(&codes)
             }
             Expr::Fn(_, match_list) => {
-                let mut bindings = Vec::new();
+                let mut collector = VarCollector::new(&cx.env);
                 match_list.iter().for_each(|m| {
-                    m.collect_vars(&mut bindings);
+                    m.collect_vars(&mut collector);
                 });
-
-                let cx1 = cx.with_frame(&bindings);
+                let frame_def = Arc::new(collector.into_frame_def());
+                let cx1 = cx.with_frame(frame_def.clone());
                 let mut pat_expr_codes = Vec::new();
                 assert!(!match_list.is_empty(), "match list is empty");
                 for m in match_list {
                     let pat_code = self.compile_pat(&cx1, &m.pat);
-                    let expr_code = self.compile_expr(&cx1, &m.expr);
+                    let expr_code = self.compile_expr(&cx1, Some(cx), &m.expr);
                     pat_expr_codes.push((pat_code, expr_code));
                 }
-                Code::new_fn(&cx1.local_vars, &pat_expr_codes)
+                if frame_def.bound_vars.is_empty() {
+                    Code::new_fn(cx1.frame_def, &pat_expr_codes)
+                } else {
+                    let mut codes = Vec::new();
+                    for binding in &frame_def.bound_vars {
+                        // Create code to move the closure values into the
+                        // closure. We use pcx because it needs to execute in
+                        // the caller's environment.
+                        // Use a dummy type (until binding has a type).
+                        let type_ = Box::new(UNIT_TYPE);
+                        let id = Expr::Identifier(
+                            type_,
+                            binding.id.name.to_string(),
+                        );
+                        let code = self.compile_expr(pcx.unwrap(), None, &id);
+                        codes.push(code);
+                    }
+                    Code::new_closure(cx1.frame_def, &pat_expr_codes, &codes)
+                }
             }
-            Expr::Identifier(_, name) => Code::GetLocal(cx.var_index(name)),
+            Expr::Identifier(_, name) => {
+                let slot = cx.frame_def.var_index(name);
+                Code::GetLocal(cx.frame_def.clone(), slot)
+            }
             Expr::Let(_, decl_list, expr) => {
                 let mut bindings = Vec::new();
                 let mut match_codes = Vec::new();
@@ -507,7 +527,7 @@ impl<'a> Compiler<'a> {
                     );
                 }
                 let cx1 = cx.bind_all(&bindings);
-                let code = self.compile_expr(&cx1, expr);
+                let code = self.compile_expr(&cx1, Some(cx), expr);
                 Code::Let(match_codes, Box::new(code))
             }
             Expr::List(_, args) => {
@@ -595,22 +615,22 @@ impl ValDeclAction {
 pub struct Context {
     env: Environment,
 
-    /// The local variables in the current stack frame.
-    local_vars: Vec<Binding>,
+    /// Definition of the current stack frame.
+    frame_def: Arc<FrameDef>,
 }
 
 impl Context {
     pub fn new(env: Environment) -> Self {
         Self {
             env,
-            local_vars: Vec::new(),
+            frame_def: Arc::new(FrameDef::new(&[], &[])),
         }
     }
 
     pub fn bind_all(&self, bindings: &[Binding]) -> Self {
         Self {
             env: self.env.bind_all(bindings),
-            local_vars: bindings.to_vec(),
+            frame_def: Arc::new(FrameDef::new(&[], bindings)),
         }
     }
 
@@ -654,25 +674,11 @@ impl Context {
     /// The variables are [`n`, `left`, `right`, `left_size`, `right_size`].
     /// (Yes, some of those can be inlined or removed, and some variables
     /// could occupy the same slot. But let's not consider optimizations here.)
-    pub(crate) fn with_frame(&self, vars: &[Binding]) -> Self {
+    pub(crate) fn with_frame(&self, frame_def: Arc<FrameDef>) -> Self {
         Context {
             env: self.env.clone(),
-            local_vars: vars.to_vec(),
+            frame_def,
         }
-    }
-
-    /// Returns the index within the current frame of a variable with a given
-    /// name. Panics if not found.
-    pub(crate) fn var_index(&self, name: &str) -> usize {
-        self.local_vars
-            .iter()
-            .position(|v| v.id.name == name)
-            .unwrap_or_else(|| {
-                panic!(
-                    "variable {} not found in frame {:?}",
-                    name, self.local_vars
-                )
-            })
     }
 }
 
@@ -733,97 +739,6 @@ mod calcite_functions {
             _environment: Environment,
         ) -> Context {
             todo!()
-        }
-    }
-}
-
-impl Pat {
-    fn collect_vars(&self, bindings: &mut Vec<Binding>) {
-        match self {
-            // lint: sort until '#}' where '##Pat::'
-            Pat::As(_, name, pat) => {
-                bindings.push(Binding::of_name(name));
-                pat.collect_vars(bindings);
-            }
-            Pat::Cons(_, head, tail) => {
-                head.collect_vars(bindings);
-                tail.collect_vars(bindings);
-            }
-            Pat::Constructor(_, _name, pat) => {
-                pat.iter().for_each(|p| p.collect_vars(bindings));
-            }
-            Pat::Identifier(_, name) => {
-                bindings.push(Binding::of_name(name));
-            }
-            Pat::List(_, pats) | Pat::Tuple(_, pats) => {
-                pats.iter().for_each(|p| p.collect_vars(bindings));
-            }
-            Pat::Literal(_, _) => {
-                // no variables
-            }
-            Pat::Wildcard(_) => {
-                // no variables
-            }
-            _ => todo!("collect_vars {:?}", self),
-        }
-    }
-}
-
-impl Match {
-    fn collect_vars(&self, bindings: &mut Vec<Binding>) {
-        self.pat.collect_vars(bindings);
-        self.expr.collect_vars(bindings);
-    }
-}
-
-impl Decl {
-    fn collect_vars(&self, bindings: &mut Vec<Binding>) {
-        match self {
-            Decl::NonRecVal(val_bind) => {
-                val_bind.pat.collect_vars(bindings);
-                val_bind.expr.collect_vars(bindings);
-            }
-            Decl::RecVal(val_binds) => {
-                for val_bind in val_binds {
-                    val_bind.pat.collect_vars(bindings);
-                    val_bind.expr.collect_vars(bindings);
-                }
-            }
-            _ => {
-                // no expressions in other declarations, therefore no variables
-            }
-        }
-    }
-}
-
-impl Expr {
-    fn collect_vars(&self, bindings: &mut Vec<Binding>) {
-        match self {
-            // lint: sort until '#}' where '##Expr::'
-            Expr::Apply(_, f, a) => {
-                f.collect_vars(bindings);
-                a.collect_vars(bindings);
-            }
-            Expr::Case(_, expr, matches) => {
-                expr.collect_vars(bindings);
-                matches.iter().for_each(|m| m.collect_vars(bindings));
-            }
-            Expr::Fn(_, matches) => {
-                matches.iter().for_each(|m| m.collect_vars(bindings));
-            }
-            Expr::Identifier(_, name) => {
-                bindings.push(Binding::of_name(name));
-            }
-            Expr::Let(_, decls, _) => {
-                decls.iter().for_each(|d| d.collect_vars(bindings));
-            }
-            Expr::List(_, exprs) | Expr::Tuple(_, exprs) => {
-                exprs.iter().for_each(|e| e.collect_vars(bindings));
-            }
-            Expr::Literal(_, _) => {
-                // no variables
-            }
-            _ => todo!("collect_vars {:?}", self),
         }
     }
 }
