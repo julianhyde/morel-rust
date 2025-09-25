@@ -16,6 +16,14 @@
  * language governing permissions and limitations under the
  * License.
  *)
+Sys;
+> val it = {set=fn} : {set:string * 'a -> unit}
+
+Sys.set;
+> val it = {set=fn} : {set:string * 'a -> unit}
+
+(*
+
 let
   fun map (f, []) = []
     | map (f, (x::xs)) = (f x) :: map (f, xs)
@@ -44,6 +52,8 @@ in
   fn y => x + y
 end) 3;
 > val it = 4 : int
+
+*)
 
 (*
 let

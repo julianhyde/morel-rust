@@ -24,6 +24,7 @@
 #![allow(clippy::collapsible_if)]
 
 use crate::unify;
+use im::HashSet;
 use std::cell::RefCell;
 use std::cmp::{PartialEq, max};
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -298,6 +299,14 @@ pub struct Substitution {
 }
 
 impl Substitution {
+    fn from_result(p0: &HashMap<Rc<Var>, Term>) -> Self {
+        let mut map = BTreeMap::new();
+        p0.iter().for_each(|(k, v)| {
+            map.insert(k.clone(), v.clone());
+        });
+        Substitution { substitutions: map }
+    }
+
     fn resolve(&self) -> Self {
         if self.has_cycles() {
             return self.clone();
@@ -311,7 +320,7 @@ impl Substitution {
         }
     }
 
-    fn resolve_term(&self, term: &Term) -> Term {
+    pub fn resolve_term(&self, term: &Term) -> Term {
         let mut previous;
         let mut current = term.clone();
         loop {
@@ -966,15 +975,18 @@ impl Unifier {
     /// Creates a substitution from a variable to a term.
     fn substitution(
         &self,
-        substitutions: BTreeMap<Rc<Var>, Term>,
+        substitutions: &BTreeMap<Rc<Var>, Term>,
     ) -> Substitution {
-        Substitution { substitutions }
+        Substitution {
+            substitutions: substitutions.clone(),
+        }
     }
 
     pub fn unify(
         &self,
         term_pairs: &[(Term, Term)],
         _tracer: &dyn Tracer,
+        term_actions: &[Box<dyn Action>],
     ) -> Result<Substitution, UnificationFailure> {
         let tracer = &NullTracer; // switch to PrintTracer for debugging
         if false {
@@ -1071,15 +1083,23 @@ impl Unifier {
                     }
                 }
 
-                /*
                 if !term_actions.is_empty() {
-                    final Set<Variable> set = new HashSet<>();
-                    act(variable, term, work, new Substitution(result),
-                        termActions, set);
-                    checkArgument(set.isEmpty(), "Working set not empty: %s",
-                        set);
+                    let mut seen = HashSet::new();
+                    let substitution = Substitution::from_result(&work.result);
+                    self.act(
+                        &variable,
+                        &term,
+                        &work,
+                        substitution,
+                        term_actions,
+                        &mut seen,
+                    );
+                    assert!(
+                        seen.is_empty(),
+                        "Working set not empty: {:?}",
+                        seen
+                    );
                 }
-                */
 
                 if let Some(failure) = work.substitute_list(&variable, &term) {
                     return Err(failure);
@@ -1116,6 +1136,83 @@ impl Unifier {
             return Ok(Substitution { substitutions });
         }
     }
+
+    fn act(
+        &self,
+        variable: &Rc<Var>,
+        term: &Term,
+        work: &Work,
+        substitution: Substitution,
+        term_actions: &[Box<dyn Action>],
+        seen: &mut HashSet<Rc<Var>>,
+    ) {
+        // To prevent infinite recursion, this method is a no-op if the variable
+        // is already in the working set.
+        if seen.insert(variable.clone()).is_none() {
+            self.act2(variable, term, work, substitution, term_actions, seen);
+
+            // Remove the variable from the working set.
+            seen.remove(variable);
+        }
+    }
+
+    fn act2(
+        &self,
+        variable: &Rc<Var>,
+        term: &Term,
+        work: &mut Work,
+        substitution: &Substitution,
+        term_actions: &HashMap<Rc<Var>, Box<dyn Action>>,
+        seen: &mut HashSet<Rc<Var>>,
+    ) {
+        if let Some(action) = term_actions.get(variable) {
+            let mut to_add = Vec::new();
+            action.accept(variable, term, substitution, &mut to_add);
+            to_add.iter().for_each(|(t1, t2)| work.add(*t1, *t2))
+        }
+        if let Term::Variable(variable) = term {
+            // Create a temporary list to prevent concurrent modification, in case the
+            // action appends to the list. Limit on depth, to prevent infinite
+            // recursion.
+            let termPairsCopy = work.allTermPairs();
+            termPairsCopy.forEach(
+                termPair -> {
+                    if (termPair.left.equals(term)) {
+                        act(
+                            variable,
+                            termPair.right,
+                            work,
+                            substitution,
+                            termActions,
+                            set);
+                    }
+                });
+            // If the term is a variable, recurse to see whether there is an
+            // action for that variable. Limit on depth to prevent swapping back.
+            if (set.size() < 2) {
+                act((Variable) term, variable, work, substitution, termActions, set);
+            }
+        }
+        substitution.resultMap.forEach(
+            (variable2, v) -> {
+                // Substitution contains "variable2 -> variable"; call the actions of
+                // "variable2", because it too has just been unified.
+                if (v.equals(variable)) {
+                    act(variable2, term, work, substitution, termActions, set);
+                }
+            });
+    }
+}
+
+/// Called by the [Unifier] when a Term's type becomes known.
+pub trait Action {
+    fn accept(
+        &self,
+        variable: &Var,
+        term: &Term,
+        substitution: &Substitution,
+        term_pairs: &mut Vec<(Term, Term)>,
+    );
 }
 
 /// Test for Unifier.
@@ -1233,7 +1330,7 @@ impl UnifierTest {
         term_pairs: &[(Term, Term)],
         expected: &str,
     ) {
-        let result = self.unifier.unify(term_pairs, &NullTracer);
+        let result = self.unifier.unify(term_pairs, &NullTracer, &[]);
         let substitution = result.unwrap().resolve();
         assert_eq!(substitution.to_string(), expected);
     }
@@ -1254,7 +1351,7 @@ impl UnifierTest {
     }
 
     fn assert_that_cannot_unify_pairs(&self, pair_list: &[(Term, Term)]) {
-        let _result = self.unifier.unify(pair_list, &NullTracer);
+        let _result = self.unifier.unify(pair_list, &NullTracer, &[]);
 
         // Mock assertion - in real implementation, check if result is not
         // Substitution
