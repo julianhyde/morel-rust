@@ -21,6 +21,7 @@ use crate::unify::unifier::{
 };
 use pest::Span;
 use pest_consume::{Parser, match_nodes};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 type ParseInput<'input> = pest_consume::Node<'input, Rule, Rc<str>>;
@@ -206,7 +207,9 @@ impl UnifierTask {
     /// Runs the unification.
     pub fn unify(&self) -> Result<Substitution, UnificationFailure> {
         let tracer = NullTracer; // switch to PrintTracer for debugging
-        self.unifier.unify(self.pairs.as_slice(), &tracer, &[])
+        let term_actions = HashMap::new();
+        self.unifier
+            .unify(self.pairs.as_slice(), &tracer, &term_actions)
     }
 }
 

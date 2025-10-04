@@ -21,7 +21,10 @@ use std::fmt::Write;
 /// Definition of a frame.
 ///
 /// It is mainly used at compile time, but we include it in code
-/// (e.g. [Code::BindSlot], [Code::GetLocal], [Code::Fn], [Code::Closure])
+/// (e.g. [crate::eval::code::Code::BindSlot],
+/// [crate::eval::code::Code::GetLocal],
+/// [crate::eval::code::Code::Fn],
+/// [crate::eval::code::Code::CreateClosure])
 /// because it aids debugging.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrameDef {

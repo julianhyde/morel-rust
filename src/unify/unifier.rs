@@ -64,6 +64,20 @@ pub enum Term {
 }
 
 impl Term {
+    fn expect_sequence(&self) -> &Sequence {
+        match self {
+            Term::Sequence(s) => s,
+            _ => panic!("Expected Sequence, got {}", self),
+        }
+    }
+
+    fn expect_variable(&self) -> &Rc<Var> {
+        match self {
+            Term::Variable(v) => v,
+            _ => panic!("Expected Variable, got {}", self),
+        }
+    }
+
     /// Returns whether this term references a given variable.
     fn contains(&self, var: &Rc<Var>) -> bool {
         match self {
@@ -621,6 +635,23 @@ impl<'a> Work<'a> {
         })
     }
 
+    /// Returns a list of all term pairs.
+    fn all_term_pairs(&self) -> Vec<(Term, Term)> {
+        self.seq_seq_queue
+            .borrow()
+            .iter()
+            .map(|(s1, s2)| {
+                (Term::Sequence(s1.clone()), Term::Sequence(s2.clone()))
+            })
+            .chain(
+                self.var_any_queue
+                    .borrow()
+                    .iter()
+                    .map(|(v, t)| (Term::Variable(v.clone()), t.clone())),
+            )
+            .collect()
+    }
+
     /// Applies a mapping to all term pairs in a list, modifying them in place.
     fn substitute_list(
         &mut self,
@@ -986,7 +1017,7 @@ impl Unifier {
         &self,
         term_pairs: &[(Term, Term)],
         _tracer: &dyn Tracer,
-        term_actions: &[Box<dyn Action>],
+        term_actions: &HashMap<Rc<Var>, Box<dyn Action>>,
     ) -> Result<Substitution, UnificationFailure> {
         let tracer = &NullTracer; // switch to PrintTracer for debugging
         if false {
@@ -1084,20 +1115,20 @@ impl Unifier {
                 }
 
                 if !term_actions.is_empty() {
-                    let mut seen = HashSet::new();
+                    let mut active = HashSet::new();
                     let substitution = Substitution::from_result(&work.result);
                     self.act(
                         &variable,
                         &term,
-                        &work,
-                        substitution,
-                        term_actions,
-                        &mut seen,
+                        &mut work,
+                        &substitution,
+                        &term_actions,
+                        &mut active,
                     );
                     assert!(
-                        seen.is_empty(),
+                        active.is_empty(),
                         "Working set not empty: {:?}",
-                        seen
+                        active
                     );
                 }
 
@@ -1141,18 +1172,18 @@ impl Unifier {
         &self,
         variable: &Rc<Var>,
         term: &Term,
-        work: &Work,
-        substitution: Substitution,
-        term_actions: &[Box<dyn Action>],
-        seen: &mut HashSet<Rc<Var>>,
+        work: &mut Work,
+        substitution: &Substitution,
+        term_actions: &HashMap<Rc<Var>, Box<dyn Action>>,
+        active: &mut HashSet<Rc<Var>>,
     ) {
         // To prevent infinite recursion, this method is a no-op if the variable
         // is already in the working set.
-        if seen.insert(variable.clone()).is_none() {
-            self.act2(variable, term, work, substitution, term_actions, seen);
+        if active.insert(variable.clone()).is_none() {
+            self.act2(variable, term, work, substitution, term_actions, active);
 
             // Remove the variable from the working set.
-            seen.remove(variable);
+            active.remove(variable);
         }
     }
 
@@ -1163,42 +1194,65 @@ impl Unifier {
         work: &mut Work,
         substitution: &Substitution,
         term_actions: &HashMap<Rc<Var>, Box<dyn Action>>,
-        seen: &mut HashSet<Rc<Var>>,
+        active: &mut HashSet<Rc<Var>>,
     ) {
         if let Some(action) = term_actions.get(variable) {
             let mut to_add = Vec::new();
             action.accept(variable, term, substitution, &mut to_add);
-            to_add.iter().for_each(|(t1, t2)| work.add(*t1, *t2))
+            to_add
+                .iter()
+                .for_each(|(t1, t2)| work.add(t1.clone(), t2.clone()))
         }
         if let Term::Variable(variable) = term {
-            // Create a temporary list to prevent concurrent modification, in case the
-            // action appends to the list. Limit on depth, to prevent infinite
-            // recursion.
-            let termPairsCopy = work.allTermPairs();
-            termPairsCopy.forEach(
-                termPair -> {
-                    if (termPair.left.equals(term)) {
-                        act(
-                            variable,
-                            termPair.right,
-                            work,
-                            substitution,
-                            termActions,
-                            set);
-                    }
-                });
+            // Create a temporary list to prevent concurrent modification, in
+            // case the action appends to the list. Limit on depth, to prevent
+            // infinite recursion.
+            let term_pairs_copy = work.all_term_pairs();
+            term_pairs_copy.iter().for_each(|(left, right)| {
+                if left == term {
+                    self.act(
+                        variable,
+                        right,
+                        work,
+                        substitution,
+                        term_actions,
+                        active,
+                    );
+                }
+            });
             // If the term is a variable, recurse to see whether there is an
-            // action for that variable. Limit on depth to prevent swapping back.
-            if (set.size() < 2) {
-                act((Variable) term, variable, work, substitution, termActions, set);
+            // action for that variable. Limit on depth to prevent swapping
+            // back.
+            if active.len() < 2
+                && let Term::Variable(v) = term
+            {
+                self.act(
+                    v,
+                    &Term::Variable(variable.clone()),
+                    work,
+                    substitution,
+                    term_actions,
+                    active,
+                );
             }
         }
-        substitution.resultMap.forEach(
-            (variable2, v) -> {
-                // Substitution contains "variable2 -> variable"; call the actions of
-                // "variable2", because it too has just been unified.
-                if (v.equals(variable)) {
-                    act(variable2, term, work, substitution, termActions, set);
+        substitution
+            .substitutions
+            .iter()
+            .for_each(|(variable2, term)| {
+                // Substitution contains "variable2 -> variable"; call the
+                // actions of "variable2", because it too has just been unified.
+                if let Term::Variable(v) = term
+                    && v.id == variable.id
+                {
+                    self.act(
+                        variable2,
+                        term,
+                        work,
+                        substitution,
+                        term_actions,
+                        active,
+                    );
                 }
             });
     }
@@ -1330,7 +1384,8 @@ impl UnifierTest {
         term_pairs: &[(Term, Term)],
         expected: &str,
     ) {
-        let result = self.unifier.unify(term_pairs, &NullTracer, &[]);
+        let term_actions = HashMap::new();
+        let result = self.unifier.unify(term_pairs, &NullTracer, &term_actions);
         let substitution = result.unwrap().resolve();
         assert_eq!(substitution.to_string(), expected);
     }
@@ -1351,7 +1406,8 @@ impl UnifierTest {
     }
 
     fn assert_that_cannot_unify_pairs(&self, pair_list: &[(Term, Term)]) {
-        let _result = self.unifier.unify(pair_list, &NullTracer, &[]);
+        let term_actions = HashMap::new();
+        let _result = self.unifier.unify(pair_list, &NullTracer, &term_actions);
 
         // Mock assertion - in real implementation, check if result is not
         // Substitution
@@ -1474,7 +1530,7 @@ mod tests {
         };
         let mut map: BTreeMap<Rc<Var>, Term> = BTreeMap::new();
         map.insert(z_v, f_a_y);
-        let sub = t.unifier.substitution(map);
+        let sub = t.unifier.substitution(&map);
         assert_eq!(sub.to_string(), "[f(a, Y)/Z]");
     }
 
@@ -1789,7 +1845,8 @@ mod tests {
             (t9.clone(), t5.clone()),
         ];
 
-        let result = t.unifier.unify(&term_pairs, &NullTracer);
+        let term_actions = HashMap::new();
+        let result = t.unifier.unify(&term_pairs, &NullTracer, &term_actions);
         let expected = "[\
         ->(->(T5, ->(T7, T6)), ->(->(T5, T7), ->(T5, T6)))/T0, \
         ->(T5, ->(T7, T6))/T1, \
@@ -1846,7 +1903,8 @@ mod tests {
             (t0.clone(), string_.clone()), // "string = T0"
             (t0.clone(), string_.clone()), // "string = T0"
         ];
-        let result = t.unifier.unify(&term_pairs, &NullTracer);
+        let term_actions = HashMap::new();
+        let result = t.unifier.unify(&term_pairs, &NullTracer, &term_actions);
         let expected = "[\
             string/T0, \
             bool/T1, \

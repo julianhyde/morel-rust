@@ -293,27 +293,31 @@ impl TypeResolver {
             .map(|(var, term)| (term.clone(), Term::Variable(var.clone())))
             .collect();
 
-        let substitution =
-            match self.unifier.unify(term_pairs.as_ref(), &NullTracer, &[]) {
-                Ok(x) => {
-                    /*
-                    eprintln!(
-                        "Unification result: {:?}\n{}",
-                        x.clone(),
-                        self.terms_to_string()
-                    );
-                     */
-                    x
-                }
-                Err(x) => {
-                    let string = self.terms_to_string();
-                    panic!(
-                        "Unification failed: {}\n\
+        let term_actions = HashMap::new();
+        let substitution = match self.unifier.unify(
+            term_pairs.as_ref(),
+            &NullTracer,
+            &term_actions,
+        ) {
+            Ok(x) => {
+                /*
+                eprintln!(
+                    "Unification result: {:?}\n{}",
+                    x.clone(),
+                    self.terms_to_string()
+                );
+                 */
+                x
+            }
+            Err(x) => {
+                let string = self.terms_to_string();
+                panic!(
+                    "Unification failed: {}\n\
                         term pairs: {}\n",
-                        x, string
-                    )
-                }
-            };
+                    x, string
+                )
+            }
+        };
 
         // Create a map with the results of unification.
         let mut type_map = TypeMap::new(&self.node_var_map);

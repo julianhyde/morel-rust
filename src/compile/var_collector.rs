@@ -71,9 +71,15 @@ impl<'a> VarCollector<'a> {
     pub fn local_vars(&self) -> Vec<Binding> {
         // Make the collection unique, retaining order.
         let mut seen = HashSet::new();
-        let mut defs2 = self.defs.clone();
-        defs2.retain(|b| seen.insert(b.id.name.clone()));
-        defs2
+        let mut result = Vec::new();
+
+        for binding in &self.defs {
+            if seen.insert(binding.id.name.clone()) {
+                result.push(binding.clone());
+            }
+        }
+
+        result
     }
 
     /// Returns the bindings of all variables that are referred to but not
@@ -82,14 +88,25 @@ impl<'a> VarCollector<'a> {
     pub fn bound_vars(&self) -> Vec<Binding> {
         // Make a collection of references, skipping variables that are
         // defined, eliminating duplicates, and preserving order.
-        let mut seen = HashSet::new();
-        let _ = self.defs.iter().map(|b| seen.insert(b.id.name.clone()));
-        let mut refs2 = self.refs.clone();
-        refs2.retain(|b| {
-            seen.insert(b.id.name.clone())
-                && self.rec_fns.get(&b.id.name).is_none()
-        });
-        refs2
+        let defined_vars: HashSet<String> =
+            self.defs.iter().map(|b| b.id.name.clone()).collect();
+
+        let mut seen_refs = HashSet::new();
+        let mut result = Vec::new();
+
+        for binding in &self.refs {
+            let name = &binding.id.name;
+            // Include this binding if not defined locally, not a recursive
+            // function, and not already seen.
+            if !defined_vars.contains(name)
+                && self.rec_fns.get(name).is_none()
+                && seen_refs.insert(name.clone())
+            {
+                result.push(binding.clone());
+            }
+        }
+
+        result
     }
 
     /// Creates a frame definition from the bindings of this collector.
@@ -158,6 +175,18 @@ impl Decl {
 }
 
 impl Expr {
+    pub(crate) fn collect_vars_top(&self, collector: &mut VarCollector) {
+        match self {
+            Expr::Fn(_, matches) => {
+                // We only traverse into 'fn' if it is the whole expression.
+                matches.iter().for_each(|m| m.collect_vars(collector));
+            }
+            _ => {
+                self.collect_vars(collector);
+            }
+        }
+    }
+
     pub(crate) fn collect_vars(&self, collector: &mut VarCollector) {
         match self {
             // lint: sort until '#}' where '##Expr::'
@@ -170,13 +199,17 @@ impl Expr {
                 matches.iter().for_each(|m| m.collect_vars(collector));
             }
             Expr::Fn(_, matches) => {
-                matches.iter().for_each(|m| m.collect_vars(collector));
+                // do not traverse into a function
+                if false {
+                    matches.iter().for_each(|m| m.collect_vars(collector));
+                }
             }
             Expr::Identifier(_, name) => {
                 collector.add_ref(Binding::of_name(name));
             }
-            Expr::Let(_, decls, _) => {
+            Expr::Let(_, decls, expr) => {
                 decls.iter().for_each(|d| d.collect_vars(collector));
+                expr.collect_vars(collector);
             }
             Expr::List(_, exprs) | Expr::Tuple(_, exprs) => {
                 exprs.iter().for_each(|e| e.collect_vars(collector));
