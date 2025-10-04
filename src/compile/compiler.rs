@@ -215,16 +215,6 @@ impl<'a> Compiler<'a> {
 
         decl.for_each_binding(
             &mut |pat: &Pat, expr: &Expr, _overload_pat: &Option<Box<Id>>| {
-                let mut collector = VarCollector::new(&cx1.env);
-                pat.collect_vars(&mut collector);
-                expr.collect_vars_top(&mut collector);
-                let frame_def = Arc::new(collector.into_frame_def());
-                println!(
-                    "Expression {}\nand pattern {}\ngave frame {}\n",
-                    expr, pat, frame_def.description
-                );
-                // let cx2 = cx1.with_frame(frame_def);
-
                 let pat_code = self.compile_pat(&cx1, pat);
                 let expr_code = self.compile_expr(&cx1, None, expr);
                 match_codes.push(Code::new_bind(&pat_code, &expr_code));
@@ -489,7 +479,6 @@ impl<'a> Compiler<'a> {
                     m.collect_vars(&mut collector);
                 }
                 let frame_def = Arc::new(collector.into_frame_def());
-                println!("\ngave frame {}\n", frame_def.description);
 
                 let cx1 = cx.with_frame(frame_def.clone());
                 let mut pat_expr_codes = Vec::new();
