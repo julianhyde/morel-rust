@@ -93,9 +93,22 @@ impl Expr {
         match &self {
             // lint: sort until '#}' where '##Expr::'
             Expr::Apply(result_type, f, a) => {
-                let f2 = Box::new(x.transform_expr(env, f));
-                let a2 = Box::new(x.transform_expr(env, a));
-                Expr::Apply(result_type.clone(), f2, a2)
+                let f2 = x.transform_expr(env, f);
+                let a2 = x.transform_expr(env, a);
+                match (&f2, &a2) {
+                    (Expr::RecordSelector(_, slot), Expr::Literal(_, v)) => {
+                        let fn_type = result_type.expect_fn();
+                        Expr::Literal(
+                            Box::new(fn_type.1.clone()),
+                            v.expect_list()[*slot].clone(),
+                        )
+                    }
+                    (..) => Expr::Apply(
+                        result_type.clone(),
+                        Box::new(f2),
+                        Box::new(a2),
+                    ),
+                }
             }
             Expr::Case(t, expr, matches) => {
                 let expr2 = Box::new(x.transform_expr(env, expr));
@@ -137,6 +150,7 @@ impl Expr {
                 Self::visit_list(env, x, expr_list).into_iter().collect(),
             ),
             Expr::Literal(_t, _v) => self.clone(),
+            Expr::RecordSelector(_t, _) => self.clone(),
             Expr::Tuple(t, expr_list) => Expr::Tuple(
                 t.clone(),
                 Self::visit_list(env, x, expr_list).into_iter().collect(),

@@ -1017,9 +1017,11 @@ impl Unifier {
         &self,
         term_pairs: &[(Term, Term)],
         _tracer: &dyn Tracer,
-        term_actions: &HashMap<Rc<Var>, Box<dyn Action>>,
+        term_action_list: &[(Rc<Var>, Rc<dyn Action>)],
     ) -> Result<Substitution, UnificationFailure> {
         let tracer = &NullTracer; // switch to PrintTracer for debugging
+        let term_actions: HashMap<Rc<Var>, Rc<dyn Action>> =
+            term_action_list.iter().cloned().collect();
         if false {
             // Uncomment this section to generate a unit test.
             eprintln!(
@@ -1174,7 +1176,7 @@ impl Unifier {
         term: &Term,
         work: &mut Work,
         substitution: &Substitution,
-        term_actions: &HashMap<Rc<Var>, Box<dyn Action>>,
+        term_actions: &HashMap<Rc<Var>, Rc<dyn Action>>,
         active: &mut HashSet<Rc<Var>>,
     ) {
         // To prevent infinite recursion, this method is a no-op if the variable
@@ -1193,7 +1195,7 @@ impl Unifier {
         term: &Term,
         work: &mut Work,
         substitution: &Substitution,
-        term_actions: &HashMap<Rc<Var>, Box<dyn Action>>,
+        term_actions: &HashMap<Rc<Var>, Rc<dyn Action>>,
         active: &mut HashSet<Rc<Var>>,
     ) {
         if let Some(action) = term_actions.get(variable) {
@@ -1385,7 +1387,11 @@ impl UnifierTest {
         expected: &str,
     ) {
         let term_actions = HashMap::new();
-        let result = self.unifier.unify(term_pairs, &NullTracer, &term_actions);
+        let term_actions_vec: Vec<(Rc<Var>, Rc<dyn Action>)> =
+            term_actions.into_iter().collect();
+        let result =
+            self.unifier
+                .unify(term_pairs, &NullTracer, &term_actions_vec);
         let substitution = result.unwrap().resolve();
         assert_eq!(substitution.to_string(), expected);
     }
@@ -1406,8 +1412,7 @@ impl UnifierTest {
     }
 
     fn assert_that_cannot_unify_pairs(&self, pair_list: &[(Term, Term)]) {
-        let term_actions = HashMap::new();
-        let _result = self.unifier.unify(pair_list, &NullTracer, &term_actions);
+        let _result = self.unifier.unify(pair_list, &NullTracer, &[]);
 
         // Mock assertion - in real implementation, check if result is not
         // Substitution
@@ -1845,8 +1850,7 @@ mod tests {
             (t9.clone(), t5.clone()),
         ];
 
-        let term_actions = HashMap::new();
-        let result = t.unifier.unify(&term_pairs, &NullTracer, &term_actions);
+        let result = t.unifier.unify(&term_pairs, &NullTracer, &[]);
         let expected = "[\
         ->(->(T5, ->(T7, T6)), ->(->(T5, T7), ->(T5, T6)))/T0, \
         ->(T5, ->(T7, T6))/T1, \
@@ -1903,8 +1907,7 @@ mod tests {
             (t0.clone(), string_.clone()), // "string = T0"
             (t0.clone(), string_.clone()), // "string = T0"
         ];
-        let term_actions = HashMap::new();
-        let result = t.unifier.unify(&term_pairs, &NullTracer, &term_actions);
+        let result = t.unifier.unify(&term_pairs, &NullTracer, &[]);
         let expected = "[\
             string/T0, \
             bool/T1, \

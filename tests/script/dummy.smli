@@ -16,6 +16,15 @@
  * language governing permissions and limitations under the
  * License.
  *)
+{a = 1, b = true};
+> val it = {a=1,b=true} : {a:int, b:bool}
+
+#a {a = 1, b = true};
+> val it = 1 : int
+
+{a = 1, b = true}.a;
+> val it = 1 : int
+
 (* works
 let
   fun foo n = case n of 1 => "one" | 2 => "two" | _ => "other"

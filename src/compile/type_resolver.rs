@@ -227,7 +227,7 @@ pub struct TypeResolver {
     overload_op: Rc<Op>,
     record_op: Rc<Op>,
     fn_op: Rc<Op>,
-    action_map: HashMap<Rc<Var>, Box<dyn Action>>,
+    actions: Vec<(Rc<Var>, Rc<dyn Action>)>,
 }
 
 impl Default for TypeResolver {
@@ -251,7 +251,7 @@ impl TypeResolver {
         Self {
             warnings: Vec::new(),
             node_var_map: HashMap::new(),
-            action_map: HashMap::new(),
+            actions: Vec::new(),
             terms: Vec::new(),
             next_id: 0,
             unifier,
@@ -293,20 +293,19 @@ impl TypeResolver {
             .map(|(var, term)| (term.clone(), Term::Variable(var.clone())))
             .collect();
 
-        let term_actions = HashMap::new();
         let substitution = match self.unifier.unify(
             term_pairs.as_ref(),
             &NullTracer,
-            &term_actions,
+            self.actions.as_ref(),
         ) {
             Ok(x) => {
-                /*
-                eprintln!(
-                    "Unification result: {:?}\n{}",
-                    x.clone(),
-                    self.terms_to_string()
-                );
-                 */
+                if false {
+                    eprintln!(
+                        "Unification result: {:?}\n{}",
+                        x.clone(),
+                        self.terms_to_string()
+                    );
+                }
                 x
             }
             Err(x) => {
@@ -812,39 +811,8 @@ impl TypeResolver {
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Record(with_expr, labeled_expr_list) => {
-                // First, create a copy of expressions and their labels,
-                // sorted into the order that they will appear in the record
-                // type.
-                let mut label_expr_map: BTreeMap<Label, LabeledExpr> =
-                    BTreeMap::new();
-                for labeled_expr in labeled_expr_list {
-                    let label = if let Some(label_name) = &labeled_expr.label {
-                        Label::from(&label_name.name)
-                    } else {
-                        // Field has no label, so generate a temporary name.
-                        // FIXME The temporary name might overlap with later
-                        // explicit labels, and certain types of expressions
-                        // have an implicit label.
-                        let ordinal = label_expr_map.len() + 1;
-                        Label::Ordinal(ordinal)
-                    };
-                    label_expr_map.insert(label, labeled_expr.clone());
-                }
-
-                // Second, duplicate the record expression and its labels.
-                let mut label_terms: BTreeMap<Label, Term> = BTreeMap::new();
-                let mut labeled_expr_list2 = Vec::new();
-                for (label, labeled_expr) in &label_expr_map {
-                    let v2 = self.variable();
-                    let e2 =
-                        self.deduce_expr_type(env, &labeled_expr.expr, &v2);
-                    labeled_expr_list2.push(LabeledExpr {
-                        expr: e2,
-                        ..labeled_expr.clone()
-                    });
-                    label_terms.insert(label.clone(), Term::Variable(v2));
-                }
-                self.record_term(&label_terms, v);
+                let labeled_expr_list2 =
+                    self.deduce_record_type(env, labeled_expr_list, v);
                 let x = ExprKind::Record(with_expr.clone(), labeled_expr_list2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
@@ -976,7 +944,7 @@ impl TypeResolver {
             // "apply" is "#field arg" and has type "v";
             // "#field" has type "v_arg -> v";
             // "arg" has type "v_arg".
-            // When we resolve "v_arg" we can then deduce "v".
+            // When we resolve "v_arg", we can then deduce "v".
             let span = fun.span.union(&arg.span);
             self.deduce_record_selector_type(env, name, &span, &v_arg, v_result)
         } else {
@@ -1059,13 +1027,13 @@ impl TypeResolver {
                 }
             }
         }
-        self.action_map.insert(
+        self.actions.push((
             v_rec.clone(),
-            Box::new(ActionImpl {
+            Rc::new(ActionImpl {
                 field_name: field_name.to_string(),
                 v_field: v_field.clone(),
             }),
-        );
+        ));
 
         // if name == "set" {
         // Temporary workaround. Resolve 'Sys.set' as if they wrote 'set'.
@@ -1077,6 +1045,46 @@ impl TypeResolver {
         // Create a record selector expression
         let selector_kind = ExprKind::RecordSelector(field_name.to_string());
         self.reg_expr(&selector_kind, &span, None, &v_fn)
+    }
+
+    fn deduce_record_type(
+        &mut self,
+        env: &dyn TypeEnv,
+        labeled_expr_list: &Vec<LabeledExpr>,
+        v: &Rc<Var>,
+    ) -> Vec<LabeledExpr> {
+        // First, create a copy of expressions and their labels,
+        // sorted into the order that they will appear in the record
+        // type.
+        let mut label_expr_map: BTreeMap<Label, LabeledExpr> = BTreeMap::new();
+        for labeled_expr in labeled_expr_list {
+            let label = if let Some(label_name) = &labeled_expr.label {
+                Label::from(&label_name.name)
+            } else {
+                // Field has no label, so generate a temporary name.
+                // FIXME The temporary name might overlap with later
+                // explicit labels, and certain types of expressions
+                // have an implicit label.
+                let ordinal = label_expr_map.len() + 1;
+                Label::Ordinal(ordinal)
+            };
+            label_expr_map.insert(label, labeled_expr.clone());
+        }
+
+        // Second, duplicate the record expression and its labels.
+        let mut label_terms: BTreeMap<Label, Term> = BTreeMap::new();
+        let mut labeled_expr_list2 = Vec::new();
+        for (label, labeled_expr) in &label_expr_map {
+            let v2 = self.variable();
+            let e2 = self.deduce_expr_type(env, &labeled_expr.expr, &v2);
+            labeled_expr_list2.push(LabeledExpr {
+                expr: e2,
+                ..labeled_expr.clone()
+            });
+            label_terms.insert(label.clone(), Term::Variable(v2));
+        }
+        self.record_term(&label_terms, v);
+        labeled_expr_list2
     }
 
     fn deduce_call1_type(
