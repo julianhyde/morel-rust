@@ -662,13 +662,15 @@ impl Pretty {
             // lint: sort until '#}' where '##Type::'
             Type::Data(name, arg_types) => {
                 const OP: Op = Op::APPLY;
+                let mut buf2 = String::new();
                 match arg_types.len() {
                     0 => {}
                     1 => {
-                        let t = Val::new_type(prefix, &arg_types[0]);
+                        let t = Val::new_type("", &arg_types[0]);
                         self.pretty1(
                             buf, indent2, line_end, depth, &BOOL, &t, 0, 0,
                         )?;
+                        buf2.push(' ');
                     }
                     _ => {
                         let mut prefix = "(";
@@ -679,10 +681,10 @@ impl Pretty {
                             )?;
                             prefix = ", ";
                         }
-                        self.pretty_raw(buf, indent2, line_end, depth, ")")?;
+                        buf2.push(')');
+                        buf2.push(' ');
                     }
                 }
-                let mut buf2 = String::from("");
                 append_id(&mut buf2, name.as_str());
                 self.pretty_raw(buf, indent2, line_end, depth, buf2.as_str())
             }
@@ -710,6 +712,29 @@ impl Pretty {
                 left,
                 right,
             ),
+            Type::Named(args, name) => {
+                if args.len() == 1 {
+                    let v_arg = Val::new_type("", &args[0]);
+                    self.pretty1(
+                        buf, indent2, line_end, depth, &BOOL, &v_arg, left, 0,
+                    )?;
+                    buf.push(' ');
+                } else if args.len() > 1 {
+                    // Handle multiple args like (int * string) option
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            buf.push_str(" * ");
+                        }
+                        let v_arg = Val::new_type("", arg);
+                        self.pretty1(
+                            buf, indent2, line_end, depth, &BOOL, &v_arg, left,
+                            0,
+                        )?;
+                    }
+                    buf.push(' ');
+                }
+                self.pretty_raw(buf, indent2, line_end, depth, name)
+            }
             Type::Primitive(p) => {
                 self.pretty_raw(buf, indent2, line_end, depth, p.as_str())
             }

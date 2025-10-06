@@ -731,6 +731,7 @@ pub enum Eager0 {
     BoolFalse,
     BoolTrue,
     IntMaxInt,
+    IntMinInt,
     IntPrecision,
     ListNil,
     OptionNone,
@@ -744,6 +745,7 @@ impl Eager0 {
             Eager0::BoolFalse => Val::Bool(false),
             Eager0::BoolTrue => Val::Bool(true),
             Eager0::IntMaxInt => Val::Some(Box::new(Val::Int(i32::MAX))),
+            Eager0::IntMinInt => Val::Some(Box::new(Val::Int(i32::MIN))),
             Eager0::IntPrecision => Val::Some(Box::new(Val::Int(32))),
             Eager0::ListNil => Val::List(vec![]),
             Eager0::OptionNone => Val::Unit,
@@ -788,17 +790,10 @@ impl Eager1 {
             Eager1::IntFromLarge => a0,
             Eager1::IntFromString => {
                 let s = a0.expect_string();
-                match s.parse::<i32>() {
-                    Ok(n) => {
-                        // Create SOME n - for now just return the number
-                        // TODO: Proper option implementation
-                        Val::Int(n)
-                    }
-                    Err(_) => {
-                        // Create NONE - for now return Unit
-                        // TODO: Proper option implementation
-                        Val::Unit
-                    }
+                let s_converted = s.replace('~', "-");
+                match s_converted.parse::<i32>() {
+                    Ok(n) => Val::Some(Box::new(Val::Int(n))),
+                    Err(_) => Val::Unit,
                 }
             }
             Eager1::IntNegate => Val::Int(-a0.expect_int()),
@@ -814,7 +809,15 @@ impl Eager1 {
             }
             Eager1::IntToInt => a0,
             Eager1::IntToLarge => a0,
-            Eager1::IntToString => Val::String(a0.expect_int().to_string()),
+            Eager1::IntToString => {
+                let i = a0.expect_int();
+                let s = if i < 0 {
+                    format!("~{}", -i)
+                } else {
+                    i.to_string()
+                };
+                Val::String(s)
+            }
             Eager1::OptionSome => Val::Some(Box::new(a0)),
             Eager1::RealNegate => Val::Real(-a0.expect_real()),
         }
@@ -917,11 +920,34 @@ impl Eager2 {
                     Val::Int(Order::EQUAL as i32)
                 }
             }
-            Eager2::IntDiv => Val::Int(a0.expect_int() / a1.expect_int()),
+            Eager2::IntDiv => {
+                let a = a0.expect_int();
+                let b = a1.expect_int();
+                // SML division truncates towards negative infinity (floor
+                // division)
+                let result = if (a >= 0) == (b >= 0) {
+                    a / b
+                } else {
+                    (a / b) - if a % b != 0 { 1 } else { 0 }
+                };
+                Val::Int(result)
+            }
             Eager2::IntMax => Val::Int(a0.expect_int().max(a1.expect_int())),
             Eager2::IntMin => Val::Int(a0.expect_int().min(a1.expect_int())),
             Eager2::IntMinus => Val::Int(a0.expect_int() - a1.expect_int()),
-            Eager2::IntMod => Val::Int(a0.expect_int() % a1.expect_int()),
+            Eager2::IntMod => {
+                let a = a0.expect_int();
+                let b = a1.expect_int();
+                // SML modulo: (a div b) * b + (a mod b) = a
+                // and (a mod b) has the same sign as b (or is zero)
+                let r = a % b;
+                let result = if r != 0 && (a >= 0) != (b >= 0) {
+                    r + b
+                } else {
+                    r
+                };
+                Val::Int(result)
+            }
             Eager2::IntOpEq => Val::Bool(a0.expect_int() == a1.expect_int()),
             Eager2::IntOpGe => Val::Bool(a0.expect_int() >= a1.expect_int()),
             Eager2::IntOpGt => Val::Bool(a0.expect_int() > a1.expect_int()),
@@ -1214,6 +1240,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager2::IntMax.implements(&mut b, IntMax);
     Eager0::IntMaxInt.implements(&mut b, IntMaxInt);
     Eager2::IntMin.implements(&mut b, IntMin);
+    Eager0::IntMinInt.implements(&mut b, IntMinInt);
     Eager2::IntMinus.implements(&mut b, IntMinus);
     Eager2::IntMod.implements(&mut b, IntMod);
     Eager1::IntNegate.implements(&mut b, IntNegate);

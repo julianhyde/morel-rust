@@ -173,7 +173,7 @@ impl Type {
                 elem_type.describe(f, left, OP.right)?;
                 write!(f, " list")
             }
-            Type::Named(args, name) => {
+            Type::Named(args, name) | Type::Data(name, args) => {
                 const OP: Op = Op::LIST;
                 if args.len() == 1 {
                     args.first().unwrap().describe(f, left, OP.left)?;
