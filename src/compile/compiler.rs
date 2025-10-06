@@ -485,9 +485,7 @@ impl<'a> Compiler<'a> {
             }
             Expr::Fn(_, match_list) => {
                 let mut collector = VarCollector::new(&cx.env);
-                print!("fn");
                 for m in match_list {
-                    print!(" {}", m);
                     m.collect_vars(&mut collector);
                 }
                 let frame_def = Arc::new(collector.into_frame_def());
