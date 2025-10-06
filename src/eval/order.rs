@@ -16,9 +16,22 @@
 // License.
 
 /// Support for the `order` enum type.
-pub struct Order {}
+pub enum Order {
+    Less,
+    Equal,
+    Greater,
+}
 
 impl Order {
+    pub(crate) fn from_u8(u: u8) -> Self {
+        match u {
+            0 => Order::Less,
+            1 => Order::Equal,
+            2 => Order::Greater,
+            _ => panic!("Invalid order value: {}", u),
+        }
+    }
+
     pub(crate) const LESS: u8 = 0;
     pub(crate) const EQUAL: u8 = 1;
     pub(crate) const GREATER: u8 = 2;

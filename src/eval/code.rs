@@ -21,7 +21,7 @@ use crate::compile::type_parser;
 use crate::compile::types::{Label, Type};
 use crate::eval::code::EagerV2::SysSet;
 use crate::eval::frame::FrameDef;
-use crate::eval::order::Order;
+use crate::eval::int::Int;
 use crate::eval::session::Session;
 use crate::eval::val::Val;
 use crate::shell::main::{MorelError, Shell};
@@ -789,34 +789,17 @@ impl Eager1 {
             Eager1::IntFromInt => a0,
             Eager1::IntFromLarge => a0,
             Eager1::IntFromString => {
-                let s = a0.expect_string();
-                let s_converted = s.replace('~', "-");
-                match s_converted.parse::<i32>() {
-                    Ok(n) => Val::Some(Box::new(Val::Int(n))),
-                    Err(_) => Val::Unit,
+                match Int::from_string(&a0.expect_string()) {
+                    Some(n) => Val::Some(Box::new(Val::Int(n))),
+                    None => Val::Unit,
                 }
             }
             Eager1::IntNegate => Val::Int(-a0.expect_int()),
-            Eager1::IntSign => {
-                let n = a0.expect_int();
-                Val::Int(if n > 0 {
-                    1
-                } else if n < 0 {
-                    -1
-                } else {
-                    0
-                })
-            }
+            Eager1::IntSign => Val::Int(Int::sign(a0.expect_int())),
             Eager1::IntToInt => a0,
             Eager1::IntToLarge => a0,
             Eager1::IntToString => {
-                let i = a0.expect_int();
-                let s = if i < 0 {
-                    format!("~{}", -i)
-                } else {
-                    i.to_string()
-                };
-                Val::String(s)
+                Val::String(Int::_to_string(a0.expect_int()))
             }
             Eager1::OptionSome => Val::Some(Box::new(a0)),
             Eager1::RealNegate => Val::Real(-a0.expect_real()),
@@ -910,43 +893,16 @@ impl Eager2 {
             Eager2::CharOpNe => Val::Bool(a0.expect_char() != a1.expect_char()),
             Eager2::GeneralOpO => Val::Unit,
             Eager2::IntCompare => {
-                let n1 = a0.expect_int();
-                let n2 = a1.expect_int();
-                if n1 < n2 {
-                    Val::Int(Order::LESS as i32)
-                } else if n1 > n2 {
-                    Val::Int(Order::GREATER as i32)
-                } else {
-                    Val::Int(Order::EQUAL as i32)
-                }
+                Val::Int(Int::compare(a0.expect_int(), a1.expect_int()) as i32)
             }
             Eager2::IntDiv => {
-                let a = a0.expect_int();
-                let b = a1.expect_int();
-                // SML division truncates towards negative infinity (floor
-                // division)
-                let result = if (a >= 0) == (b >= 0) {
-                    a / b
-                } else {
-                    (a / b) - if a % b != 0 { 1 } else { 0 }
-                };
-                Val::Int(result)
+                Val::Int(Int::div(a0.expect_int(), a1.expect_int()))
             }
             Eager2::IntMax => Val::Int(a0.expect_int().max(a1.expect_int())),
             Eager2::IntMin => Val::Int(a0.expect_int().min(a1.expect_int())),
             Eager2::IntMinus => Val::Int(a0.expect_int() - a1.expect_int()),
             Eager2::IntMod => {
-                let a = a0.expect_int();
-                let b = a1.expect_int();
-                // SML modulo: (a div b) * b + (a mod b) = a
-                // and (a mod b) has the same sign as b (or is zero)
-                let r = a % b;
-                let result = if r != 0 && (a >= 0) != (b >= 0) {
-                    r + b
-                } else {
-                    r
-                };
-                Val::Int(result)
+                Val::Int(Int::_mod(a0.expect_int(), a1.expect_int()))
             }
             Eager2::IntOpEq => Val::Bool(a0.expect_int() == a1.expect_int()),
             Eager2::IntOpGe => Val::Bool(a0.expect_int() >= a1.expect_int()),
