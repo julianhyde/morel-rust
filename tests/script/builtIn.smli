@@ -58,6 +58,8 @@ Char;
 >      `op >`:char * char -> bool, `op >=`:char * char -> bool, ord:char -> int,
 >      pred:char -> char, succ:char -> char, toCString:char -> string,
 >      toLower:char -> char, toString:char -> string, toUpper:char -> char}
+set("mode", "evaluate");
+> val it = () : unit
 Int;
 > val it =
 >   {abs=fn,compare=fn,div=fn,fromInt=fn,fromLarge=fn,fromString=fn,max=fn,
@@ -71,6 +73,8 @@ Int;
 >      quot:int * int -> int, rem:int * int -> int, sameSign:int * int -> bool,
 >      sign:int -> int, toInt:int -> int, toLarge:int -> int,
 >      toString:int -> string}
+set("mode", "validate");
+> val it = () : unit
 Interact;
 > val it = {use=fn,useSilently=fn}
 >   : {use:string -> unit, useSilently:string -> unit}
@@ -2783,6 +2787,9 @@ Char.compare (#"a", #"D");
 > val it = GREATER : order
 
 (* Int --------------------------------------------------------- *)
+set("mode", "evaluate");
+> val it = () : unit
+
 Int.abs;
 > val it = fn : int -> int
 Int.abs 5;
@@ -2893,6 +2900,8 @@ Int.toString ~345;
 > val it = "~345" : string
 
 (* Real -------------------------------------------------------- *)
+set("mode", "validate");
+> val it = () : unit
 
 (*) val radix : int
 Real.radix;

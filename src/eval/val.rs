@@ -47,6 +47,10 @@ pub enum Val {
     /// Contents of a structure.
     ImplList(Vec<Impl>),
 
+    /// `Some(v)` represents the `Option` value `SOME v`. (The other `Option`
+    /// value, `NONE`, is represented as [Val::Unit].)
+    Some(Box<Val>),
+
     /// Wrapper that indicates that a value should be printed with its name
     /// and type.
     ///
@@ -202,6 +206,7 @@ impl Display for Val {
                     write!(f, "{}", r)
                 }
             }
+            Val::Some(v) => write!(f, "SOME {}", v),
             Val::String(s) => write!(f, "\"{}\"", parser::string_to_string(s)),
             Val::Unit => write!(f, "()"),
             _ => todo!("{:?}", self),

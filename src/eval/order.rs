@@ -15,9 +15,13 @@
 // language governing permissions and limitations under the
 // License.
 
-// lint: sort until '^$' erase 'pub '
-pub mod code;
-pub mod frame;
-pub mod order;
-pub mod session;
-pub mod val;
+/// Support for the `order` enum type.
+pub struct Order {}
+
+impl Order {
+    pub(crate) const LESS: u8 = 0;
+    pub(crate) const EQUAL: u8 = 1;
+    pub(crate) const GREATER: u8 = 2;
+
+    pub(crate) const NAMES: [&'static str; 3] = ["LESS", "EQUAL", "GREATER"];
+}

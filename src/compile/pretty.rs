@@ -16,6 +16,7 @@
 // License.
 
 use crate::compile::types::{Op, PrimitiveType, Type, TypeVariable};
+use crate::eval::order::Order;
 use crate::eval::val::Val;
 use crate::shell::prop::Output as PropOutput;
 use crate::syntax::parser::{
@@ -565,7 +566,29 @@ impl Pretty {
         args: &[Type],
         value: &Val,
     ) -> Result<(), std::fmt::Error> {
-        let list = value.expect_list();
+        let list = match &value {
+            Val::Int(i) => {
+                if name == "order" {
+                    let name = Order::NAMES[*i as usize];
+                    return self.pretty_raw(buf, indent, line_end, depth, name);
+                }
+                panic!("Expected list")
+            }
+            Val::List(list) => list,
+            Val::Some(v) => {
+                self.pretty_raw(buf, indent, line_end, depth, "SOME ")?;
+                return self
+                    .pretty1(buf, indent, line_end, depth, &BOOL, v, 0, 0);
+            }
+            Val::Unit => {
+                if name == "option" {
+                    return self
+                        .pretty_raw(buf, indent, line_end, depth, "NONE");
+                }
+                panic!("Expected list")
+            }
+            _ => panic!("Expected list"),
+        };
         if name == "vector" {
             let arg_type = args.first().unwrap();
             buf.push('#');
@@ -637,6 +660,32 @@ impl Pretty {
 
         match type_ref {
             // lint: sort until '#}' where '##Type::'
+            Type::Data(name, arg_types) => {
+                const OP: Op = Op::APPLY;
+                match arg_types.len() {
+                    0 => {}
+                    1 => {
+                        let t = Val::new_type(prefix, &arg_types[0]);
+                        self.pretty1(
+                            buf, indent2, line_end, depth, &BOOL, &t, 0, 0,
+                        )?;
+                    }
+                    _ => {
+                        let mut prefix = "(";
+                        for arg_type in arg_types {
+                            let t = Val::new_type(prefix, arg_type);
+                            self.pretty1(
+                                buf, indent2, line_end, depth, &BOOL, &t, 0, 0,
+                            )?;
+                            prefix = ", ";
+                        }
+                        self.pretty_raw(buf, indent2, line_end, depth, ")")?;
+                    }
+                }
+                let mut buf2 = String::from("");
+                append_id(&mut buf2, name.as_str());
+                self.pretty_raw(buf, indent2, line_end, depth, buf2.as_str())
+            }
             Type::Fn(param_type, result_type) => {
                 const OP: Op = Op::FN;
                 let v_param = Val::new_type("", param_type);
@@ -720,7 +769,7 @@ impl Pretty {
                 self.pretty_raw(buf, indent2, line_end, depth, s.as_str())
             }
             _ => {
-                write!(buf, "unknown type {:?}", type_ref)
+                todo!("unknown type {:?}", type_ref)
             }
         }
     }
@@ -838,8 +887,14 @@ impl TypeVarRenumberer {
                 Type::Forall(Box::new(self.visit(type_)), *size)
             }
             Type::List(inner) => Type::List(Box::new(self.visit(inner))),
-            // Primitive types don't contain type variables
-            Type::Primitive(_) => type_ref.clone(),
+            Type::Named(types, name) => {
+                let types2 = self.visit_list(types.as_slice());
+                Type::Named(types2, name.clone())
+            }
+            Type::Primitive(_) => {
+                // Primitive types don't contain type variables
+                type_ref.clone()
+            }
             Type::Record(progressive, arg_name_types) => Type::Record(
                 *progressive,
                 arg_name_types

@@ -36,6 +36,9 @@ pub enum Type {
     /// `Tuple(args)` represents the type `arg0 * ... * argN`.
     Tuple(Vec<Type>),
     Variable(TypeVariable),
+    /// `Named(types, name)` represents a reference to a built-in or named type
+    /// if `types` are empty, or a specialization of a parameterized type.
+    /// For example, `order` or `int option`.
     Named(Vec<Type>, String),
 
     /// `Alias(name, type_, args)` represents the declaration

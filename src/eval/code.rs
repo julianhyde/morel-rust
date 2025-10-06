@@ -21,6 +21,7 @@ use crate::compile::type_parser;
 use crate::compile::types::{Label, Type};
 use crate::eval::code::EagerV2::SysSet;
 use crate::eval::frame::FrameDef;
+use crate::eval::order::Order;
 use crate::eval::session::Session;
 use crate::eval::val::Val;
 use crate::shell::main::{MorelError, Shell};
@@ -729,6 +730,8 @@ pub enum Eager0 {
     // lint: sort until '#}'
     BoolFalse,
     BoolTrue,
+    IntMaxInt,
+    IntPrecision,
     ListNil,
     OptionNone,
 }
@@ -740,11 +743,10 @@ impl Eager0 {
             // lint: sort until '#}' where 'Eager0::'
             Eager0::BoolFalse => Val::Bool(false),
             Eager0::BoolTrue => Val::Bool(true),
+            Eager0::IntMaxInt => Val::Some(Box::new(Val::Int(i32::MAX))),
+            Eager0::IntPrecision => Val::Some(Box::new(Val::Int(32))),
             Eager0::ListNil => Val::List(vec![]),
-            Eager0::OptionNone => {
-                // TODO: Proper option none implementation
-                Val::Unit
-            }
+            Eager0::OptionNone => Val::Unit,
         }
     }
 
@@ -761,7 +763,15 @@ impl Eager0 {
 pub enum Eager1 {
     // lint: sort until '#}'
     GeneralIgnore,
+    IntAbs,
+    IntFromInt,
+    IntFromLarge,
+    IntFromString,
     IntNegate,
+    IntSign,
+    IntToInt,
+    IntToLarge,
+    IntToString,
     OptionSome,
     RealNegate,
 }
@@ -773,12 +783,39 @@ impl Eager1 {
         match &self {
             // lint: sort until '#}' where 'Eager1::'
             Eager1::GeneralIgnore => Val::Unit,
-            Eager1::IntNegate => Val::Int(-a0.expect_int()),
-            Eager1::OptionSome => {
-                // TODO: Proper option some implementation
-                // For now return the value
-                a0
+            Eager1::IntAbs => Val::Int(a0.expect_int().abs()),
+            Eager1::IntFromInt => a0,
+            Eager1::IntFromLarge => a0,
+            Eager1::IntFromString => {
+                let s = a0.expect_string();
+                match s.parse::<i32>() {
+                    Ok(n) => {
+                        // Create SOME n - for now just return the number
+                        // TODO: Proper option implementation
+                        Val::Int(n)
+                    }
+                    Err(_) => {
+                        // Create NONE - for now return Unit
+                        // TODO: Proper option implementation
+                        Val::Unit
+                    }
+                }
             }
+            Eager1::IntNegate => Val::Int(-a0.expect_int()),
+            Eager1::IntSign => {
+                let n = a0.expect_int();
+                Val::Int(if n > 0 {
+                    1
+                } else if n < 0 {
+                    -1
+                } else {
+                    0
+                })
+            }
+            Eager1::IntToInt => a0,
+            Eager1::IntToLarge => a0,
+            Eager1::IntToString => Val::String(a0.expect_int().to_string()),
+            Eager1::OptionSome => Val::Some(Box::new(a0)),
             Eager1::RealNegate => Val::Real(-a0.expect_real()),
         }
     }
@@ -807,7 +844,10 @@ pub enum Eager2 {
     CharOpLt,
     CharOpNe,
     GeneralOpO,
+    IntCompare,
     IntDiv,
+    IntMax,
+    IntMin,
     IntMinus,
     IntMod,
     IntOpEq,
@@ -817,6 +857,9 @@ pub enum Eager2 {
     IntOpLt,
     IntOpNe,
     IntPlus,
+    IntQuot,
+    IntRem,
+    IntSameSign,
     IntTimes,
     ListOpAt,
     ListOpCons,
@@ -863,7 +906,20 @@ impl Eager2 {
             Eager2::CharOpLt => Val::Bool(a0.expect_char() < a1.expect_char()),
             Eager2::CharOpNe => Val::Bool(a0.expect_char() != a1.expect_char()),
             Eager2::GeneralOpO => Val::Unit,
+            Eager2::IntCompare => {
+                let n1 = a0.expect_int();
+                let n2 = a1.expect_int();
+                if n1 < n2 {
+                    Val::Int(Order::LESS as i32)
+                } else if n1 > n2 {
+                    Val::Int(Order::GREATER as i32)
+                } else {
+                    Val::Int(Order::EQUAL as i32)
+                }
+            }
             Eager2::IntDiv => Val::Int(a0.expect_int() / a1.expect_int()),
+            Eager2::IntMax => Val::Int(a0.expect_int().max(a1.expect_int())),
+            Eager2::IntMin => Val::Int(a0.expect_int().min(a1.expect_int())),
             Eager2::IntMinus => Val::Int(a0.expect_int() - a1.expect_int()),
             Eager2::IntMod => Val::Int(a0.expect_int() % a1.expect_int()),
             Eager2::IntOpEq => Val::Bool(a0.expect_int() == a1.expect_int()),
@@ -873,6 +929,21 @@ impl Eager2 {
             Eager2::IntOpLt => Val::Bool(a0.expect_int() < a1.expect_int()),
             Eager2::IntOpNe => Val::Bool(a0.expect_int() != a1.expect_int()),
             Eager2::IntPlus => Val::Int(a0.expect_int() + a1.expect_int()),
+            Eager2::IntQuot => {
+                let n1 = a0.expect_int();
+                let n2 = a1.expect_int();
+                Val::Int(n1 / n2) // Truncation towards zero
+            }
+            Eager2::IntRem => {
+                let n1 = a0.expect_int();
+                let n2 = a1.expect_int();
+                Val::Int(n1 - (n1 / n2) * n2) // Remainder after quot
+            }
+            Eager2::IntSameSign => {
+                let n1 = a0.expect_int();
+                let n2 = a1.expect_int();
+                Val::Bool((n1 >= 0 && n2 >= 0) || (n1 < 0 && n2 < 0))
+            }
             Eager2::IntTimes => Val::Int(a0.expect_int() * a1.expect_int()),
             Eager2::ListOpAt => {
                 let mut list = a0.expect_list().to_vec();
@@ -1134,18 +1205,36 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Custom::GOpTimes.implements(&mut b, GOpTimes);
     Eager1::GeneralIgnore.implements(&mut b, GeneralIgnore);
     Eager2::GeneralOpO.implements(&mut b, GeneralOpO);
+    Eager1::IntAbs.implements(&mut b, IntAbs);
+    Eager2::IntCompare.implements(&mut b, IntCompare);
     Eager2::IntDiv.implements(&mut b, IntDiv);
+    Eager1::IntFromInt.implements(&mut b, IntFromInt);
+    Eager1::IntFromLarge.implements(&mut b, IntFromLarge);
+    Eager1::IntFromString.implements(&mut b, IntFromString);
+    Eager2::IntMax.implements(&mut b, IntMax);
+    Eager0::IntMaxInt.implements(&mut b, IntMaxInt);
+    Eager2::IntMin.implements(&mut b, IntMin);
     Eager2::IntMinus.implements(&mut b, IntMinus);
     Eager2::IntMod.implements(&mut b, IntMod);
     Eager1::IntNegate.implements(&mut b, IntNegate);
+    Eager2::IntDiv.implements(&mut b, IntOpDiv);
     Eager2::IntOpEq.implements(&mut b, IntOpEq);
     Eager2::IntOpGe.implements(&mut b, IntOpGe);
     Eager2::IntOpGt.implements(&mut b, IntOpGt);
     Eager2::IntOpLe.implements(&mut b, IntOpLe);
     Eager2::IntOpLt.implements(&mut b, IntOpLt);
+    Eager2::IntMod.implements(&mut b, IntOpMod);
     Eager2::IntOpNe.implements(&mut b, IntOpNe);
     Eager2::IntPlus.implements(&mut b, IntPlus);
+    Eager0::IntPrecision.implements(&mut b, IntPrecision);
+    Eager2::IntQuot.implements(&mut b, IntQuot);
+    Eager2::IntRem.implements(&mut b, IntRem);
+    Eager2::IntSameSign.implements(&mut b, IntSameSign);
+    Eager1::IntSign.implements(&mut b, IntSign);
     Eager2::IntTimes.implements(&mut b, IntTimes);
+    Eager1::IntToInt.implements(&mut b, IntToInt);
+    Eager1::IntToLarge.implements(&mut b, IntToLarge);
+    Eager1::IntToString.implements(&mut b, IntToString);
     Eager0::ListNil.implements(&mut b, ListNil);
     Eager2::ListOpAt.implements(&mut b, ListOpAt);
     Eager2::ListOpCons.implements(&mut b, ListOpCons);
@@ -1222,8 +1311,20 @@ impl LibBuilder {
             let mut vals = Vec::new();
             let mut name_types: BTreeMap<Label, Type> = BTreeMap::new();
             for (n, f) in names_fns {
-                vals.push(Val::Fn(*f));
                 let t = &fn_map.get(f).unwrap().0;
+                match &t {
+                    Type::Fn(_, _) | Type::Forall(_, _) => {
+                        vals.push(Val::Fn(*f));
+                    }
+                    _ => {
+                        // Built-in is a constant like Int.maxInt.
+                        if let Some((_t, Impl::E0(eager0))) = fn_map.get(f) {
+                            vals.push(eager0.apply());
+                        } else {
+                            panic!("missing implementation for {:?}", f);
+                        }
+                    }
+                }
                 name_types.insert(Label::String(n.clone()), t.clone());
             }
             let t = Type::Record(false, name_types.clone());
