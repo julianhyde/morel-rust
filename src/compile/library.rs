@@ -247,11 +247,11 @@ impl BuiltInFunction {
 #[derive(EnumCount, EnumString, EnumProperty, EnumIter)]
 pub enum BuiltInRecord {
     // lint: sort until '^}$' where '##[A-Z]'
-    #[strum(props(name = "General", type = "{op +: int * int -> int"))]
+    #[strum(props(name = "General"))]
     General,
-    #[strum(props(name = "Int", type = "{op +: int * int -> int"))]
+    #[strum(props(name = "Int"))]
     Int,
-    #[strum(props(name = "Sys", type = "forall 1 {set: string * 'a -> unit}"))]
+    #[strum(props(name = "Sys"))]
     Sys,
 }
 
