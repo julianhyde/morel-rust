@@ -97,9 +97,8 @@ impl Expr {
                 let a2 = x.transform_expr(env, a);
                 match (&f2, &a2) {
                     (Expr::RecordSelector(_, slot), Expr::Literal(_, v)) => {
-                        let fn_type = result_type.expect_fn();
                         Expr::Literal(
-                            Box::new(fn_type.1.clone()),
+                            result_type.clone(),
                             v.expect_list()[*slot].clone(),
                         )
                     }
