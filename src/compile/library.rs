@@ -87,6 +87,9 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Char", name = "chr", global = true))]
     #[strum(props(type = "int -> char", throws = "Chr"))]
     CharChr,
+    #[strum(props(p = "Char", name = "compare"))]
+    #[strum(props(type = "char * char -> `order`"))]
+    CharCompare,
     #[strum(props(p = "Char", name = "op =", type = "char * char -> bool"))]
     CharOpEq,
     #[strum(props(p = "Char", name = "op >=", type = "char * char -> bool"))]
@@ -99,6 +102,8 @@ pub enum BuiltInFunction {
     CharOpLt,
     #[strum(props(p = "Char", name = "op <>", type = "char * char -> bool"))]
     CharOpNe,
+    #[strum(props(p = "Char", name = "toLower", type = "char -> char"))]
+    CharToLower,
     #[strum(props(name = "op =", global = true))]
     #[strum(props(type = "forall 1 'a * 'a -> bool"))]
     GOpEq,
@@ -243,15 +248,32 @@ pub enum BuiltInFunction {
     RealOpPlus,
     #[strum(props(p = "Real", name = "op *", type = "real * real -> real"))]
     RealOpTimes,
-    #[strum(props(p = "String", name = "explode", global = true))]
-    #[strum(props(type = "string -> char list"))]
-    StringExplode,
-    #[strum(props(p = "String", name = "implode", global = true))]
-    #[strum(props(type = "char list -> string"))]
-    StringImplode,
+    #[strum(props(p = "String", name = "collate"))]
+    #[strum(props(
+        type = "(char * char -> `order`) -> string * string -> `order`"
+    ))]
+    StringCollate,
     #[strum(props(p = "String", name = "compare"))]
     #[strum(props(type = "string * string -> `order`"))]
     StringCompare,
+    #[strum(props(p = "String", name = "concat", global = true))]
+    #[strum(props(type = "string list -> string"))]
+    StringConcat,
+    #[strum(props(p = "String", name = "concatWith"))]
+    #[strum(props(type = "string -> string list -> string"))]
+    StringConcatWith,
+    #[strum(props(p = "String", name = "explode"))]
+    #[strum(props(type = "string -> char list"))]
+    StringExplode,
+    #[strum(props(p = "String", name = "extract"))]
+    #[strum(props(type = "string * int * int option -> string"))]
+    StringExtract,
+    #[strum(props(p = "String", name = "fields"))]
+    #[strum(props(type = "(char -> bool) -> string -> string list"))]
+    StringFields,
+    #[strum(props(p = "String", name = "implode", global = true))]
+    #[strum(props(type = "char list -> string"))]
+    StringImplode,
     #[strum(props(p = "String", name = "isPrefix"))]
     #[strum(props(type = "string -> string -> bool"))]
     StringIsPrefix,
@@ -261,37 +283,30 @@ pub enum BuiltInFunction {
     #[strum(props(p = "String", name = "isSuffix"))]
     #[strum(props(type = "string -> string -> bool"))]
     StringIsSuffix,
-    #[strum(props(p = "String", name = "fields"))]
-    #[strum(props(type = "(char -> bool) -> string -> string list"))]
-    StringFields,
     #[strum(props(p = "String", name = "map"))]
     #[strum(props(type = "(char -> char) -> string -> string"))]
     StringMap,
-    #[strum(props(p = "String", name = "tokens"))]
-    #[strum(props(type = "(char -> bool) -> string -> string list"))]
-    StringTokens,
-    #[strum(props(p = "String", name = "translate"))]
-    #[strum(props(type = "(char -> string) -> string -> string"))]
-    StringTranslate,
-    #[strum(props(name = "op ^", global = true))]
+    #[strum(props(p = "String", name = "maxSize", type = "int"))]
+    StringMaxSize,
+    #[strum(props(p = "String", name = "op ^", global = true))]
     #[strum(props(type = "string * string -> string"))]
     StringOpCaret,
-    #[strum(props(name = "op ="))]
+    #[strum(props(p = "String", name = "op ="))]
     #[strum(props(type = "string * string -> bool"))]
     StringOpEq,
-    #[strum(props(name = "op >="))]
+    #[strum(props(p = "String", name = "op >="))]
     #[strum(props(type = "string * string -> bool"))]
     StringOpGe,
-    #[strum(props(name = "op >"))]
+    #[strum(props(p = "String", name = "op >"))]
     #[strum(props(type = "string * string -> bool"))]
     StringOpGt,
-    #[strum(props(name = "op <="))]
+    #[strum(props(p = "String", name = "op <="))]
     #[strum(props(type = "string * string -> bool"))]
     StringOpLe,
-    #[strum(props(name = "op <"))]
+    #[strum(props(p = "String", name = "op <"))]
     #[strum(props(type = "string * string -> bool"))]
     StringOpLt,
-    #[strum(props(name = "op <>"))]
+    #[strum(props(p = "String", name = "op <>"))]
     #[strum(props(type = "string * string -> bool"))]
     StringOpNe,
     #[strum(props(p = "String", name = "size"))]
@@ -300,6 +315,18 @@ pub enum BuiltInFunction {
     #[strum(props(p = "String", name = "str"))]
     #[strum(props(type = "char -> string"))]
     StringStr,
+    #[strum(props(p = "String", name = "sub"))]
+    #[strum(props(type = "string * int -> char"))]
+    StringSub,
+    #[strum(props(p = "String", name = "substring"))]
+    #[strum(props(type = "string * int * int -> string"))]
+    StringSubstring,
+    #[strum(props(p = "String", name = "tokens"))]
+    #[strum(props(type = "(char -> bool) -> string -> string list"))]
+    StringTokens,
+    #[strum(props(p = "String", name = "translate"))]
+    #[strum(props(type = "(char -> string) -> string -> string"))]
+    StringTranslate,
     #[strum(props(p = "Sys", name = "plan", global = true))]
     #[strum(props(type = "unit -> string"))]
     SysPlan,

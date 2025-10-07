@@ -459,28 +459,28 @@ impl<'a> Compiler<'a> {
                 Expr::Literal(_t, Val::Fn(f)) => {
                     let impl_ = f.get_impl();
                     let codes = self.compile_args_boxed(cx, a);
-                    // TODO: Support partial application of curried built-in functions
-                    // Currently only works when all arguments are provided
+                    // TODO: Support partial application of curried built-in
+                    // functions. Currently only works when all arguments are
+                    // provided.
                     Code::new_native(impl_, &codes, span)
                 }
                 // Handle curried application of EV2 and E2 functions like
                 // String.map and String.isPrefix. Pattern:
                 //   (String.map f) s => String.map (f, s)
                 Expr::Apply(_, inner_f, first_arg, span) => {
-                    if let Expr::Literal(_t, Val::Fn(func)) = inner_f.as_ref() {
-                        if matches!(func.get_impl(), Impl::EF2(_) | Impl::E2(_))
-                        {
-                            // This is a curried call to an EV2 or E2 function
-                            // Gather both arguments
-                            let arg1_code =
-                                Box::new(self.compile_arg(cx, first_arg));
-                            let arg2_code = Box::new(self.compile_arg(cx, a));
-                            return Code::new_native(
-                                func.get_impl(),
-                                &[arg1_code, arg2_code],
-                                &span,
-                            );
-                        }
+                    if let Expr::Literal(_t, Val::Fn(func)) = inner_f.as_ref()
+                        && matches!(func.get_impl(), Impl::EF2(_) | Impl::E2(_))
+                    {
+                        // This is a curried call to an EF2 or E2 function.
+                        // Gather both arguments.
+                        let arg1_code =
+                            Box::new(self.compile_arg(cx, first_arg));
+                        let arg2_code = Box::new(self.compile_arg(cx, a));
+                        return Code::new_native(
+                            func.get_impl(),
+                            &[arg1_code, arg2_code],
+                            span,
+                        );
                     }
                     // Fall through to default handling
                     let arg_code = self.compile_arg(cx, a);

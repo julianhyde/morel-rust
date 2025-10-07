@@ -15,7 +15,252 @@
 // language governing permissions and limitations under the
 // License.
 
+use crate::eval::code::{Code, EvalEnv, Frame};
+use crate::eval::order::Order;
+use crate::eval::val::Val;
+use crate::shell::main::MorelError;
+use std::sync::Arc;
+
 /// Support for the `string` built-in type and the `String` structure.
 pub struct Str;
 
-impl Str {}
+impl Str {
+    /// Computes the Morel expression `String.explode s`.
+    ///
+    /// Returns the list of characters in the string `s`.
+    pub(crate) fn explode(s: &str) -> Vec<Val> {
+        s.chars().map(Val::Char).collect()
+    }
+
+    /// Computes the Morel expression `String.implode l`.
+    ///
+    /// Generates the string containing the characters in the list `l`.
+    pub(crate) fn implode(chars: &[Val]) -> String {
+        chars.iter().map(Val::expect_char).collect()
+    }
+
+    /// Computes the Morel expression `String.map f s`.
+    ///
+    /// Applies function `f` to each element of `s` from left to right,
+    /// returning the resulting string.
+    pub(crate) fn map(
+        r: &mut EvalEnv,
+        f: &mut Frame,
+        func: &Arc<Code>,
+        s: &str,
+    ) -> Result<Val, MorelError> {
+        let chars: Result<String, _> = s
+            .chars()
+            .map(|c| {
+                let result = func.eval_f1(r, f, &Val::Char(c))?;
+                Ok(result.expect_char())
+            })
+            .collect();
+        Ok(Val::String(chars?))
+    }
+
+    /// Computes the Morel expression `String.translate f s`.
+    ///
+    /// Returns the string generated from `s` by mapping each character in `s`
+    /// by `f`. Equivalent to `concat(List.map f (explode s))`.
+    pub(crate) fn translate(
+        r: &mut EvalEnv,
+        f: &mut Frame,
+        func: &Arc<Code>,
+        s: &str,
+    ) -> Result<Val, MorelError> {
+        let mut result = String::new();
+        for c in s.chars() {
+            let str_val = func.eval_f1(r, f, &Val::Char(c))?;
+            result.push_str(&str_val.expect_string());
+        }
+        Ok(Val::String(result))
+    }
+
+    /// Computes the Morel expression `String.tokens f s`.
+    ///
+    /// Returns a list of tokens derived from `s` from left to right. A token
+    /// is a non-empty maximal substring of `s` not containing any delimiter.
+    /// A delimiter is a character satisfying the predicate `f`. Two tokens may
+    /// be separated by more than one delimiter.
+    pub(crate) fn tokens(
+        r: &mut EvalEnv,
+        f: &mut Frame,
+        func: &Arc<Code>,
+        s: &str,
+    ) -> Result<Val, MorelError> {
+        let mut tokens = Vec::new();
+        let mut current_token = String::new();
+
+        for c in s.chars() {
+            let is_delimiter = func.eval_f1(r, f, &Val::Char(c))?;
+            if is_delimiter.expect_bool() {
+                // This is a delimiter
+                if !current_token.is_empty() {
+                    tokens.push(Val::String(current_token.clone()));
+                    current_token.clear();
+                }
+            } else {
+                // Not a delimiter, add to current token
+                current_token.push(c);
+            }
+        }
+
+        // Don't forget the last token if it's non-empty
+        if !current_token.is_empty() {
+            tokens.push(Val::String(current_token));
+        }
+
+        Ok(Val::List(tokens))
+    }
+
+    /// Computes the Morel expression `String.fields f s`.
+    ///
+    /// Returns a list of fields derived from `s` from left to right. A field
+    /// is a (possibly empty) maximal substring of `s` not containing any
+    /// delimiter. A delimiter is a character satisfying the predicate `f`.
+    pub(crate) fn fields(
+        r: &mut EvalEnv,
+        f: &mut Frame,
+        func: &Arc<Code>,
+        s: &str,
+    ) -> Result<Val, MorelError> {
+        let mut fields = Vec::new();
+        let mut current_field = String::new();
+
+        for c in s.chars() {
+            let is_delimiter = func.eval_f1(r, f, &Val::Char(c))?;
+            if is_delimiter.expect_bool() {
+                // This is a delimiter
+                // Always save the current field (even if empty)
+                fields.push(Val::String(current_field.clone()));
+                current_field.clear();
+            } else {
+                // Not a delimiter, add to current field
+                current_field.push(c);
+            }
+        }
+
+        // Always add the last field (even if empty)
+        fields.push(Val::String(current_field));
+
+        Ok(Val::List(fields))
+    }
+
+    /// Computes the Morel expression `String.isPrefix s1 s2`.
+    ///
+    /// Returns `true` if the string `s1` is a prefix of the string `s2`.
+    pub(crate) fn is_prefix(s1: &str, s2: &str) -> bool {
+        s2.starts_with(s1)
+    }
+
+    /// Computes the Morel expression `String.isSuffix s1 s2`.
+    ///
+    /// Returns `true` if the string `s1` is a suffix of the string `s2`.
+    pub(crate) fn is_suffix(s1: &str, s2: &str) -> bool {
+        s2.ends_with(s1)
+    }
+
+    /// Computes the Morel expression `String.isSubstring s1 s2`.
+    ///
+    /// Returns `true` if the string `s1` is a substring of the string `s2`.
+    pub(crate) fn is_substring(s1: &str, s2: &str) -> bool {
+        s2.contains(s1)
+    }
+
+    /// Computes the Morel expression `String.compare (s1, s2)`.
+    ///
+    /// Does a lexicographic comparison of the two strings using the ordering
+    /// `Char.compare` on the characters. Returns `LESS`, `EQUAL`, or `GREATER`,
+    /// if `s1` is less than, equal to, or greater than `s2`, respectively.
+    pub(crate) fn compare(s1: &str, s2: &str) -> Order {
+        match s1.cmp(s2) {
+            std::cmp::Ordering::Less => Order::Less,
+            std::cmp::Ordering::Equal => Order::Equal,
+            std::cmp::Ordering::Greater => Order::Greater,
+        }
+    }
+
+    /// Computes the Morel expression `String.concat l`.
+    ///
+    /// Returns the concatenation of all the strings in `l`.
+    pub(crate) fn concat(strings: &[Val]) -> String {
+        strings
+            .iter()
+            .map(Val::expect_string)
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    /// Computes the Morel expression `String.concatWith sep l`.
+    ///
+    /// Returns the concatenation of the strings in the list `l` using the
+    /// string `sep` as a separator.
+    pub(crate) fn concat_with(sep: &str, strings: &[Val]) -> String {
+        strings
+            .iter()
+            .map(Val::expect_string)
+            .collect::<Vec<_>>()
+            .join(sep)
+    }
+
+    /// Computes the Morel expression `String.collate f (s1, s2)`.
+    ///
+    /// Performs lexicographic comparison of the two strings using the given
+    /// ordering `f` on characters.
+    pub(crate) fn collate(
+        r: &mut EvalEnv,
+        f: &mut Frame,
+        func_val: &Val,
+        s1: &str,
+        s2: &str,
+    ) -> Result<Order, MorelError> {
+        let chars1: Vec<char> = s1.chars().collect();
+        let chars2: Vec<char> = s2.chars().collect();
+
+        for i in 0..chars1.len().min(chars2.len()) {
+            // Apply comparison function to both chars
+            let c1 = Val::Char(chars1[i]);
+            let c2 = Val::Char(chars2[i]);
+
+            let result = match func_val {
+                Val::Code(fn_code) => {
+                    // User-defined function: apply to tuple
+                    let tuple = Val::List(vec![c1, c2]);
+                    fn_code.eval_f1(r, f, &tuple)?
+                }
+                Val::Fn(builtin_fn) => {
+                    // Built-in function: directly use the implementation
+                    use crate::compile::library::BuiltInFunction;
+
+                    if *builtin_fn == BuiltInFunction::CharCompare {
+                        Val::Int(crate::eval::char::Char::compare(
+                            c1.expect_char(),
+                            c2.expect_char(),
+                        ) as i32)
+                    } else {
+                        panic!(
+                            "Unsupported built-in function for collate: {:?}",
+                            builtin_fn
+                        );
+                    }
+                }
+                _ => {
+                    panic!("Expected function for collate, got {:?}", func_val)
+                }
+            };
+
+            let order = result.expect_int();
+            if order != Order::Equal as i32 {
+                return Ok(Order::from_u8(order as u8));
+            }
+        }
+
+        // All compared characters are equal, compare lengths
+        Ok(match chars1.len().cmp(&chars2.len()) {
+            std::cmp::Ordering::Less => Order::Less,
+            std::cmp::Ordering::Equal => Order::Equal,
+            std::cmp::Ordering::Greater => Order::Greater,
+        })
+    }
+}

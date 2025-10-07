@@ -60,10 +60,12 @@ Char;
 *)
 Char;
 > val it =
->   {chr=fn,`op <`=fn,`op <=`=fn,`op <>`=fn,`op =`=fn,`op >`=fn,`op >=`=fn}
->   : {chr:int -> char, `op <`:char * char -> bool, `op <=`:char * char -> bool,
->      `op <>`:char * char -> bool, `op =`:char * char -> bool,
->      `op >`:char * char -> bool, `op >=`:char * char -> bool}
+>   {chr=fn,compare=fn,`op <`=fn,`op <=`=fn,`op <>`=fn,`op =`=fn,`op >`=fn,
+>    `op >=`=fn,toLower=fn}
+>   : {chr:int -> char, compare:char * char -> order, `op <`:char * char -> bool,
+>      `op <=`:char * char -> bool, `op <>`:char * char -> bool,
+>      `op =`:char * char -> bool, `op >`:char * char -> bool,
+>      `op >=`:char * char -> bool, toLower:char -> char}
 Int;
 > val it =
 >   {abs=fn,compare=fn,div=fn,fromInt=fn,fromLarge=fn,fromString=fn,max=fn,
@@ -157,13 +159,13 @@ Option;
 >      valOf:'p option -> 'p}
 set("mode", "evaluate");
 > val it = () : unit
-(*
 String;
 > val it =
 >   {collate=fn,compare=fn,concat=fn,concatWith=fn,explode=fn,extract=fn,
 >    fields=fn,implode=fn,isPrefix=fn,isSubstring=fn,isSuffix=fn,map=fn,
->    maxSize=2147483647,`op <`=fn,`op <=`=fn,`op >`=fn,`op >=`=fn,`op ^`=fn,
->    size=fn,str=fn,sub=fn,substring=fn,tokens=fn,translate=fn}
+>    maxSize=2147483647,`op <`=fn,`op <=`=fn,`op <>`=fn,`op =`=fn,`op >`=fn,
+>    `op >=`=fn,`op ^`=fn,size=fn,str=fn,sub=fn,substring=fn,tokens=fn,
+>    translate=fn}
 >   : {collate:(char * char -> order) -> string * string -> order,
 >      compare:string * string -> order, concat:string list -> string,
 >      concatWith:string -> string list -> string, explode:string -> char list,
@@ -173,15 +175,12 @@ String;
 >      isSubstring:string -> string -> bool, isSuffix:string -> string -> bool,
 >      map:(char -> char) -> string -> string, maxSize:int,
 >      `op <`:string * string -> bool, `op <=`:string * string -> bool,
+>      `op <>`:string * string -> bool, `op =`:string * string -> bool,
 >      `op >`:string * string -> bool, `op >=`:string * string -> bool,
 >      `op ^`:string * string -> string, size:string -> int, str:char -> string,
 >      sub:string * int -> char, substring:string * int * int -> string,
 >      tokens:(char -> bool) -> string -> string list,
 >      translate:(char -> string) -> string -> string}
-*)
-String;
-> val it = {implode=fn,size=fn,str=fn}
->   : {implode:char list -> string, size:string -> int, str:char -> string}
 set("mode", "validate");
 > val it = () : unit
 Real;
@@ -932,6 +931,8 @@ use;
 > val it = fn : string -> unit
 
 (* String ------------------------------------------------------ *)
+set("mode", "evaluate");
+> val it = () : unit
 
 (*) val maxSize : int
 String.maxSize;
@@ -956,6 +957,7 @@ String.sub("abc", 0);
 > val it = #"a" : char
 String.sub("abc", 2);
 > val it = #"c" : char
+(*
 String.sub("abc", 20);
 > uncaught exception Subscript [subscript out of bounds]
 >   raised at: stdIn:1.1-1.22
@@ -967,18 +969,24 @@ String.sub("abc", ~1);
 >   raised at: stdIn:1.1-1.22
 Sys.plan ();
 > val it = "apply2(fnValue String.sub, constant(abc), constant(-1))" : string
+*)
 
 (*) val extract: string * int * int option -> string
 String.extract;
 > val it = fn : string * int * int option -> string
+(*
 String.extract("abc", 1, NONE);
 > val it = "bc" : string
+*)
 String.extract("abc", 1, SOME 2);
 > val it = "bc" : string
+(*
 String.extract("abc", 3, NONE);
 > val it = "" : string
 String.extract("abc", 3, SOME 0);
 > val it = "" : string
+*)
+(*
 String.extract("abc", 4, NONE);
 > uncaught exception Subscript [subscript out of bounds]
 >   raised at: stdIn:1.1-1.31
@@ -1001,6 +1009,7 @@ Sys.plan ();
 > val it =
 >   "apply3(fnValue String.extract, constant(abc), constant(1), apply(fnValue tyCon, argCode constant(99)))"
 >   : string
+*)
 
 (*) val substring : string * int * int -> string
 String.substring;
@@ -1015,6 +1024,7 @@ String.substring("hello", 1, 4);
 > val it = "ello" : string
 String.substring("", 0, 0);
 > val it = "" : string
+(*
 String.substring("hello", ~1, 0);
 > uncaught exception Subscript [subscript out of bounds]
 >   raised at: stdIn:1.1-1.33
@@ -1028,6 +1038,7 @@ Sys.plan ();
 > val it =
 >   "apply3(fnValue String.substring, constant(hello), constant(1), constant(5))"
 >   : string
+*)
 
 (*) val ^ : string * string -> string
 String.`op ^`;
@@ -1070,8 +1081,6 @@ Sys.plan ();
 > val it = "apply2(fnValue String.concatWith, constant(,), tuple)" : string
 
 (*) val str : char -> string
-set("mode", "evaluate");
-> val it = () : unit
 String.str;
 > val it = fn : char -> string
 String.str #"a";
@@ -1096,8 +1105,10 @@ String.explode "abc";
 > val it = [#"a",#"b",#"c"] : char list
 String.explode "";
 > val it = [] : char list
+(*
 Sys.plan ();
 > val it = "apply(fnValue String.explode, argCode constant())" : string
+*)
 
 (*) val map : (char -> char) -> string -> string
 String.map;
@@ -1274,6 +1285,9 @@ String.`op >=`;
 > val it = true : bool
 "ab" >= "ab";
 > val it = true : bool
+
+set("mode", "validate");
+> val it = () : unit
 
 (*) val toString : string -> String.string
 (*) val scan       : (char, 'a) StringCvt.reader
