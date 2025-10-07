@@ -243,27 +243,36 @@ pub enum BuiltInFunction {
     RealOpPlus,
     #[strum(props(p = "Real", name = "op *", type = "real * real -> real"))]
     RealOpTimes,
-    #[strum(props(p = "String", name = "op ^", global = true))]
+    #[strum(props(p = "String", name = "implode", global = true))]
+    #[strum(props(type = "char list -> string"))]
+    StringImplode,
+    #[strum(props(name = "op ^", global = true))]
     #[strum(props(type = "string * string -> string"))]
     StringOpCaret,
-    #[strum(props(p = "String", name = "op ="))]
+    #[strum(props(name = "op ="))]
     #[strum(props(type = "string * string -> bool"))]
     StringOpEq,
-    #[strum(props(p = "String", name = "op >="))]
+    #[strum(props(name = "op >="))]
     #[strum(props(type = "string * string -> bool"))]
     StringOpGe,
-    #[strum(props(p = "String", name = "op >"))]
+    #[strum(props(name = "op >"))]
     #[strum(props(type = "string * string -> bool"))]
     StringOpGt,
-    #[strum(props(p = "String", name = "op <="))]
+    #[strum(props(name = "op <="))]
     #[strum(props(type = "string * string -> bool"))]
     StringOpLe,
-    #[strum(props(p = "String", name = "op <"))]
+    #[strum(props(name = "op <"))]
     #[strum(props(type = "string * string -> bool"))]
     StringOpLt,
-    #[strum(props(p = "String", name = "op <>"))]
+    #[strum(props(name = "op <>"))]
     #[strum(props(type = "string * string -> bool"))]
     StringOpNe,
+    #[strum(props(p = "String", name = "size"))]
+    #[strum(props(type = "string -> int"))]
+    StringSize,
+    #[strum(props(p = "String", name = "str"))]
+    #[strum(props(type = "char -> string"))]
+    StringStr,
     #[strum(props(p = "Sys", name = "plan", global = true))]
     #[strum(props(type = "unit -> string"))]
     SysPlan,

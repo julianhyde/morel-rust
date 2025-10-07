@@ -967,6 +967,9 @@ pub enum Eager1 {
     IntToString,
     OptionSome,
     RealNegate,
+    StringImplode,
+    StringSize,
+    StringStr,
 }
 
 impl Eager1 {
@@ -993,6 +996,15 @@ impl Eager1 {
             IntToString => Val::String(Int::_to_string(a0.expect_int())),
             OptionSome => Val::Some(Box::new(a0)),
             RealNegate => Val::Real(-a0.expect_real()),
+            StringImplode => {
+                let chars = a0.expect_list();
+                Val::String(chars.iter().map(Val::expect_char).collect())
+            }
+            StringSize => Val::Int(a0.expect_string().len() as i32),
+            StringStr => {
+                let c = a0.expect_char();
+                Val::String(c.to_string())
+            }
         }
     }
 
@@ -1421,6 +1433,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager2::RealOpNe.implements(&mut b, RealOpNe);
     Eager2::RealOpPlus.implements(&mut b, RealOpPlus);
     Eager2::RealOpTimes.implements(&mut b, RealOpTimes);
+    Eager1::StringImplode.implements(&mut b, StringImplode);
     Eager2::StringOpCaret.implements(&mut b, StringOpCaret);
     Eager2::StringOpEq.implements(&mut b, StringOpEq);
     Eager2::StringOpGe.implements(&mut b, StringOpGe);
@@ -1428,6 +1441,8 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager2::StringOpLe.implements(&mut b, StringOpLe);
     Eager2::StringOpLt.implements(&mut b, StringOpLt);
     Eager2::StringOpNe.implements(&mut b, StringOpNe);
+    Eager1::StringSize.implements(&mut b, StringSize);
+    Eager1::StringStr.implements(&mut b, StringStr);
     EagerF0::SysPlan.implements(&mut b, SysPlan);
     EagerF2::SysSet.implements(&mut b, SysSet);
     EagerF1::SysUnset.implements(&mut b, SysUnset);

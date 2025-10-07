@@ -336,8 +336,11 @@ Exception:
 | Real.op &gt; | real * real &rarr; bool | As "&lt;" |
 | Real.op &gt;= | real * real &rarr; bool | As "&lt;" |
 | Real.op ~ | real &rarr; real | "~ r" returns the negation of `r`. |
+| String.implode | char list &rarr; string | "implode l" generates the string containing the characters in the list `l`. This is equivalent to `concat (List.map str l)`. This raises `Size` if the resulting string would have size greater than `maxSize`. |
 | String.op ^ | string * string &rarr; string | "s ^ t" is the concatenation of the strings `s` and `t`. This raises `Size` if `\|s\| + \|t\| &gt; maxSize`. |
 | String.concat | string list &rarr; string | "concat l" is the concatenation of all the strings in `l`. This raises `Size` if the sum of all the sizes is greater than `maxSize`. |
+| String.size | string &rarr; int | "size s" returns \|`s`\|, the number of characters in string `s`. |
+| String.str | char &rarr; string | "str c" is the string of size one containing the character `c`. |
 | Sys.plan | unit &rarr; string | "plan ()" prints the plan of the most recently executed expression. |
 | Sys.set | string * &alpha; &rarr; unit | "set (property, value)" sets the value of `property` to `value`. (See [Properties](#properties) below.) |
 | Sys.unset | string &rarr; unit | "unset property" clears the current the value of `property`. |

@@ -155,6 +155,9 @@ Option;
 >      map:('l -> 'm) -> 'l option -> 'm option,
 >      mapPartial:('n -> 'o option) -> 'n option -> 'o option,
 >      valOf:'p option -> 'p}
+set("mode", "evaluate");
+> val it = () : unit
+(*
 String;
 > val it =
 >   {collate=fn,compare=fn,concat=fn,concatWith=fn,explode=fn,extract=fn,
@@ -175,6 +178,12 @@ String;
 >      sub:string * int -> char, substring:string * int * int -> string,
 >      tokens:(char -> bool) -> string -> string list,
 >      translate:(char -> string) -> string -> string}
+*)
+String;
+> val it = {implode=fn,size=fn,str=fn}
+>   : {implode:char list -> string, size:string -> int, str:char -> string}
+set("mode", "validate");
+> val it = () : unit
 Real;
 > val it =
 >   {abs=fn,ceil=fn,checkFloat=fn,compare=fn,copySign=fn,floor=fn,fromInt=fn,
@@ -345,6 +354,8 @@ set("mode", "validate");
 (* "val implode : char list -> string" maps to "String.implode" *)
 implode;
 > val it = fn : char list -> string
+set("mode", "validate");
+> val it = () : unit
 (* "val isSome : 'a option -> bool" maps to "Option.isSome" *)
 isSome;
 > val it = fn : 'a option -> bool
@@ -1059,20 +1070,28 @@ Sys.plan ();
 > val it = "apply2(fnValue String.concatWith, constant(,), tuple)" : string
 
 (*) val str : char -> string
+set("mode", "evaluate");
+> val it = () : unit
 String.str;
 > val it = fn : char -> string
 String.str #"a";
 > val it = "a" : string
+set("mode", "validate");
+> val it = () : unit
 Sys.plan ();
 > val it = "apply(fnValue String.str, argCode constant(a))" : string
 
 (*) val implode : char list -> string
+set("mode", "evaluate");
+> val it = () : unit
 String.implode;
 > val it = fn : char list -> string
 String.implode [#"a", #"b", #"c"];
 > val it = "abc" : string
 String.implode [];
 > val it = "" : string
+set("mode", "validate");
+> val it = () : unit
 Sys.plan ();
 > val it = "apply(fnValue String.implode, argCode tuple)" : string
 
