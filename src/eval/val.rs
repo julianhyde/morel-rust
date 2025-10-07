@@ -79,7 +79,7 @@ pub enum Val {
 
     /// A constant piece of code. TODO This is a short-term way of representing
     /// user-defined functions. Long-term, they should be handled by inlining.
-    Code(Box<Code>),
+    Code(Arc<Code>),
 
     /// `Closure(frame_def, matches, bound_vals)` is a closure.
     /// It is evaluated similarly to `Fn(frame_def, matches)`, except
@@ -125,7 +125,7 @@ impl Val {
         }
     }
 
-    pub(crate) fn expect_code(&self) -> Box<Code> {
+    pub(crate) fn expect_code(&self) -> Arc<Code> {
         match self {
             Val::Code(c) => c.clone(),
             _ => panic!("Expected code"),
