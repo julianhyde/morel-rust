@@ -84,6 +84,8 @@ pub enum BuiltInFunction {
     BoolOrElse,
     #[strum(props(name = "true", type = "bool"))]
     BoolTrue,
+    #[strum(props(p = "Char", name = "chr", type = "int -> char"))]
+    CharChr,
     #[strum(props(p = "Char", name = "op =", type = "char * char -> bool"))]
     CharOpEq,
     #[strum(props(p = "Char", name = "op >=", type = "char * char -> bool"))]
@@ -208,6 +210,9 @@ pub enum BuiltInFunction {
     #[strum(props(p = "List", name = "op ::", global = true))]
     #[strum(props(type = "forall 1 'a * 'a list -> 'a list"))]
     ListOpCons,
+    #[strum(props(p = "List", name = "tabulate"))]
+    #[strum(props(type = "forall 1 int * (int -> 'a) -> 'a list"))]
+    ListTabulate,
     #[strum(props(p = "Option", name = "NONE", global = true))]
     #[strum(props(type = "forall 1 'a option", constructor = true))]
     OptionNone,

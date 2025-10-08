@@ -921,6 +921,7 @@ impl EagerF1 {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Eager1 {
     // lint: sort until '#}'
+    CharChr,
     GeneralIgnore,
     IntAbs,
     IntFromInt,
@@ -944,6 +945,7 @@ impl Eager1 {
 
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
+            CharChr => Val::Char(a0.expect_int() as u8 as char),
             GeneralIgnore => Val::Unit,
             IntAbs => Val::Int(a0.expect_int().abs()),
             IntFromInt => a0,
@@ -1128,6 +1130,7 @@ impl Eager2 {
 #[derive(Clone, Copy, Debug, strum_macros::Display, PartialEq)]
 pub enum EagerF2 {
     // lint: sort until '#}'
+    ListTabulate,
     SysSet,
 }
 
@@ -1135,6 +1138,7 @@ impl EagerF2 {
     fn plan(&self) -> String {
         match self {
             EagerF2::SysSet => "Sys.set".to_string(),
+            EagerF2::ListTabulate => "List.tabulate".to_string(),
         }
     }
 
@@ -1149,7 +1153,7 @@ impl EagerF2 {
     fn apply(
         &self,
         r: &mut EvalEnv,
-        _f: &mut Frame,
+        f: &mut Frame,
         a0: Val,
         a1: Val,
     ) -> Result<Val, MorelError> {
@@ -1158,6 +1162,9 @@ impl EagerF2 {
 
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
+            ListTabulate => {
+                List::tabulate(r, f, a0.expect_int(), &a1.expect_code())
+            }
             SysSet => {
                 let prop = a0.expect_string();
                 let val = a1;
@@ -1201,7 +1208,7 @@ impl Eager3 {
     }
 }
 
-/// Enumerates built-in functions that have a custom implementation.
+/// Built-in functions that have a custom implementation.
 #[allow(clippy::enum_variant_names)]
 enum Custom {
     // lint: sort until '#}'
@@ -1312,6 +1319,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager2::BoolOpNe.implements(&mut b, BoolOpNe);
     Eager2::BoolOrElse.implements(&mut b, BoolOrElse);
     Eager0::BoolTrue.implements(&mut b, BoolTrue);
+    Eager1::CharChr.implements(&mut b, CharChr);
     Eager2::CharOpEq.implements(&mut b, CharOpEq);
     Eager2::CharOpGe.implements(&mut b, CharOpGe);
     Eager2::CharOpGt.implements(&mut b, CharOpGt);
@@ -1364,6 +1372,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager0::ListNil.implements(&mut b, ListNil);
     Eager2::ListOpAt.implements(&mut b, ListOpAt);
     Eager2::ListOpCons.implements(&mut b, ListOpCons);
+    EagerF2::ListTabulate.implements(&mut b, ListTabulate);
     Eager0::OptionNone.implements(&mut b, OptionNone);
     Eager1::OptionSome.implements(&mut b, OptionSome);
     Eager2::RealDivide.implements(&mut b, RealDivide);
