@@ -243,9 +243,36 @@ pub enum BuiltInFunction {
     RealOpPlus,
     #[strum(props(p = "Real", name = "op *", type = "real * real -> real"))]
     RealOpTimes,
+    #[strum(props(p = "String", name = "explode", global = true))]
+    #[strum(props(type = "string -> char list"))]
+    StringExplode,
     #[strum(props(p = "String", name = "implode", global = true))]
     #[strum(props(type = "char list -> string"))]
     StringImplode,
+    #[strum(props(p = "String", name = "compare"))]
+    #[strum(props(type = "string * string -> `order`"))]
+    StringCompare,
+    #[strum(props(p = "String", name = "isPrefix"))]
+    #[strum(props(type = "string -> string -> bool"))]
+    StringIsPrefix,
+    #[strum(props(p = "String", name = "isSubstring"))]
+    #[strum(props(type = "string -> string -> bool"))]
+    StringIsSubstring,
+    #[strum(props(p = "String", name = "isSuffix"))]
+    #[strum(props(type = "string -> string -> bool"))]
+    StringIsSuffix,
+    #[strum(props(p = "String", name = "fields"))]
+    #[strum(props(type = "(char -> bool) -> string -> string list"))]
+    StringFields,
+    #[strum(props(p = "String", name = "map"))]
+    #[strum(props(type = "(char -> char) -> string -> string"))]
+    StringMap,
+    #[strum(props(p = "String", name = "tokens"))]
+    #[strum(props(type = "(char -> bool) -> string -> string list"))]
+    StringTokens,
+    #[strum(props(p = "String", name = "translate"))]
+    #[strum(props(type = "(char -> string) -> string -> string"))]
+    StringTranslate,
     #[strum(props(name = "op ^", global = true))]
     #[strum(props(type = "string * string -> string"))]
     StringOpCaret,

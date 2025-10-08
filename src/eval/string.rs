@@ -15,13 +15,7 @@
 // language governing permissions and limitations under the
 // License.
 
-// lint: sort until '^$' erase 'pub '
-pub mod char;
-pub mod code;
-pub mod frame;
-pub mod int;
-pub mod list;
-pub mod order;
-pub mod session;
-pub mod string;
-pub mod val;
+/// Support for the `string` built-in type and the `String` structure.
+pub struct Str;
+
+impl Str {}

@@ -1076,22 +1076,16 @@ String.str;
 > val it = fn : char -> string
 String.str #"a";
 > val it = "a" : string
-set("mode", "validate");
-> val it = () : unit
 Sys.plan ();
 > val it = "apply(fnValue String.str, argCode constant(a))" : string
 
 (*) val implode : char list -> string
-set("mode", "evaluate");
-> val it = () : unit
 String.implode;
 > val it = fn : char list -> string
 String.implode [#"a", #"b", #"c"];
 > val it = "abc" : string
 String.implode [];
 > val it = "" : string
-set("mode", "validate");
-> val it = () : unit
 Sys.plan ();
 > val it = "apply(fnValue String.implode, argCode tuple)" : string
 
@@ -1170,6 +1164,8 @@ Sys.plan ();
 > val it = "apply2(fnValue String.isPrefix, constant(), constant())" : string
 
 (*) Partial evaluation
+set("mode", "validate");
+> val it = () : unit
 val p = String.isPrefix "he";
 > val p = fn : string -> bool
 Sys.plan ();
@@ -1178,6 +1174,8 @@ p "hello";
 > val it = true : bool
 p "goodbye";
 > val it = false : bool
+set("mode", "evaluate");
+> val it = () : unit
 
 (*) val isSubstring : string -> string -> bool
 String.isSubstring;

@@ -24,6 +24,7 @@ use crate::eval::frame::FrameDef;
 use crate::eval::int::Int;
 use crate::eval::list::List;
 use crate::eval::session::Session;
+use crate::eval::string::Str;
 use crate::eval::val::Val;
 use crate::shell::main::{MorelError, Shell};
 use std::collections::{BTreeMap, HashMap};
@@ -33,6 +34,39 @@ use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use strum::{EnumProperty, IntoEnumIterator};
+
+/// Converts a camel-case enum variant name to a dotted function name.
+///
+/// For example:
+/// - "StringFields" -> "String.fields"
+/// - "ListTabulate" -> "List.tabulate"
+/// - "SysSet" -> "Sys.set"
+fn camel_to_dotted(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+    let mut first_word = true;
+
+    while let Some(c) = chars.next() {
+        if c.is_uppercase() && !first_word {
+            // Start of a new word
+            result.push('.');
+            result.push(c.to_lowercase().next().unwrap());
+        } else if first_word {
+            result.push(c);
+        } else {
+            result.push(c);
+        }
+
+        // Check if next char is uppercase - if so, we're starting a new word
+        if let Some(&next_c) = chars.peek() {
+            if next_c.is_uppercase() {
+                first_word = false;
+            }
+        }
+    }
+
+    result
+}
 
 /// Evaluation mode.
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -382,7 +416,9 @@ impl Code {
             Code::BindSlot(_, _) => *mode == EvalMode::EagerV1,
             Code::BindTuple(_) => *mode == EvalMode::EagerV1,
             Code::BindWildcard => *mode == EvalMode::EagerV1,
-            Code::Case(_) => *mode == EvalMode::EagerV1,
+            Code::Case(_) => {
+                *mode == EvalMode::EagerV1 || *mode == EvalMode::EagerF0
+            }
             Code::Constant(_) => {
                 *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
             }
@@ -594,6 +630,19 @@ impl Code {
                 Self::eval_all_f1(r, f, codes, list)
             }
             Code::BindWildcard => Ok(Val::Bool(true)),
+            Code::Case(codes) => {
+                let mut i = 1;
+                while i < codes.len() {
+                    let pat = &codes[i];
+                    let matched = pat.eval_f1(r, f, a0)?;
+                    if matched.expect_bool() {
+                        let expr = &codes[i + 1];
+                        return expr.eval_f0(r, f);
+                    }
+                    i += 2;
+                }
+                panic!("Match not exhaustive")
+            }
             Code::Constant(v) => Ok(v.clone()),
             Code::Fn(frame_def, pat_expr_codes) => {
                 Frame::create_and_eval(frame_def, pat_expr_codes, r, a0)
@@ -657,6 +706,9 @@ impl Display for Code {
                 }
                 write!(f, ")")
             }
+            Code::Native1(eager, code0) => {
+                write!(f, "apply2(fnValue {}, {})", eager.plan(), code0,)
+            }
             Code::Native2(eager, code0, code1) => {
                 write!(
                     f,
@@ -675,6 +727,25 @@ impl Display for Code {
                     code1
                 )
             }
+            Code::Tuple(codes) => {
+                for code in codes {
+                    write!(f, "{}, ", code)?;
+                }
+                Ok(())
+            }
+            Code::BindSlot(_, slot) => write!(f, "bind({})", slot),
+            Code::BindWildcard => write!(f, "_"),
+            Code::Case(codes) => {
+                write!(f, "case(")?;
+                for (i, code) in codes.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", code)?;
+                }
+                write!(f, ")")
+            }
+            Code::GetLocal(_, slot) => write!(f, "get({})", slot),
             _ => todo!("fmt: {:?}", self),
         }
     }
@@ -952,7 +1023,7 @@ impl EagerF1 {
 
 /// Function implementation that takes one argument.
 /// The argument is eagerly evaluated before the function is called.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, strum_macros::Display, PartialEq)]
 pub enum Eager1 {
     // lint: sort until '#}'
     GeneralIgnore,
@@ -967,9 +1038,16 @@ pub enum Eager1 {
     IntToString,
     OptionSome,
     RealNegate,
+    StringExplode,
     StringImplode,
     StringSize,
     StringStr,
+}
+
+impl Eager1 {
+    pub(crate) fn plan(&self) -> String {
+        camel_to_dotted(&self.to_string())
+    }
 }
 
 impl Eager1 {
@@ -996,9 +1074,13 @@ impl Eager1 {
             IntToString => Val::String(Int::_to_string(a0.expect_int())),
             OptionSome => Val::Some(Box::new(a0)),
             RealNegate => Val::Real(-a0.expect_real()),
+            StringExplode => {
+                let s = a0.expect_string();
+                Val::List(Str::explode(&s))
+            }
             StringImplode => {
                 let chars = a0.expect_list();
-                Val::String(chars.iter().map(Val::expect_char).collect())
+                Val::String(Str::implode(chars))
             }
             StringSize => Val::Int(a0.expect_string().len() as i32),
             StringStr => {
@@ -1061,6 +1143,10 @@ pub enum Eager2 {
     RealOpNe,
     RealOpPlus,
     RealOpTimes,
+    StringCompare,
+    StringIsPrefix,
+    StringIsSubstring,
+    StringIsSuffix,
     StringOpCaret,
     StringOpEq,
     StringOpGe,
@@ -1074,7 +1160,7 @@ impl Eager2 {
     fn plan(&self) -> String {
         match self {
             Eager2::IntPlus => "+".to_string(),
-            _ => self.to_string(),
+            _ => camel_to_dotted(&self.to_string()),
         }
     }
 
@@ -1143,6 +1229,22 @@ impl Eager2 {
             RealOpNe => Val::Bool(a0.expect_real() != a1.expect_real()),
             RealOpPlus => Val::Real(a0.expect_real() + a1.expect_real()),
             RealOpTimes => Val::Real(a0.expect_real() * a1.expect_real()),
+            StringCompare => {
+                Val::Int(Str::compare(&a0.expect_string(), &a1.expect_string())
+                    as i32)
+            }
+            StringIsPrefix => Val::Bool(Str::is_prefix(
+                &a0.expect_string(),
+                &a1.expect_string(),
+            )),
+            StringIsSubstring => Val::Bool(Str::is_substring(
+                &a0.expect_string(),
+                &a1.expect_string(),
+            )),
+            StringIsSuffix => Val::Bool(Str::is_suffix(
+                &a0.expect_string(),
+                &a1.expect_string(),
+            )),
             StringOpCaret => Val::String(format!(
                 "{}{}",
                 a0.expect_string(),
@@ -1176,16 +1278,16 @@ pub enum EagerF2 {
     // lint: sort until '#}'
     CharChr,
     ListTabulate,
+    StringFields,
+    StringMap,
+    StringTokens,
+    StringTranslate,
     SysSet,
 }
 
 impl EagerF2 {
     fn plan(&self) -> String {
-        match self {
-            EagerF2::CharChr => "Char.chr".to_string(),
-            EagerF2::SysSet => "Sys.set".to_string(),
-            EagerF2::ListTabulate => "List.tabulate".to_string(),
-        }
+        camel_to_dotted(&self.to_string())
     }
 
     fn implements(&self, b: &mut LibBuilder, f: BuiltInFunction) {
@@ -1211,6 +1313,26 @@ impl EagerF2 {
             CharChr => Char::chr(a0.expect_int(), &a1.expect_span()),
             ListTabulate => {
                 List::tabulate(r, f, a0.expect_int(), &a1.expect_code())
+            }
+            StringFields => {
+                let func = a0.expect_code();
+                let s = a1.expect_string();
+                Str::fields(r, f, &func, &s)
+            }
+            StringMap => {
+                let func = a0.expect_code();
+                let s = a1.expect_string();
+                Str::map(r, f, &func, &s)
+            }
+            StringTokens => {
+                let func = a0.expect_code();
+                let s = a1.expect_string();
+                Str::tokens(r, f, &func, &s)
+            }
+            StringTranslate => {
+                let func = a0.expect_code();
+                let s = a1.expect_string();
+                Str::translate(r, f, &func, &s)
             }
             SysSet => {
                 let prop = a0.expect_string();
@@ -1433,7 +1555,16 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager2::RealOpNe.implements(&mut b, RealOpNe);
     Eager2::RealOpPlus.implements(&mut b, RealOpPlus);
     Eager2::RealOpTimes.implements(&mut b, RealOpTimes);
+    Eager1::StringExplode.implements(&mut b, StringExplode);
     Eager1::StringImplode.implements(&mut b, StringImplode);
+    Eager2::StringCompare.implements(&mut b, StringCompare);
+    EagerF2::StringFields.implements(&mut b, StringFields);
+    Eager2::StringIsPrefix.implements(&mut b, StringIsPrefix);
+    Eager2::StringIsSubstring.implements(&mut b, StringIsSubstring);
+    Eager2::StringIsSuffix.implements(&mut b, StringIsSuffix);
+    EagerF2::StringMap.implements(&mut b, StringMap);
+    EagerF2::StringTokens.implements(&mut b, StringTokens);
+    EagerF2::StringTranslate.implements(&mut b, StringTranslate);
     Eager2::StringOpCaret.implements(&mut b, StringOpCaret);
     Eager2::StringOpEq.implements(&mut b, StringOpEq);
     Eager2::StringOpGe.implements(&mut b, StringOpGe);
