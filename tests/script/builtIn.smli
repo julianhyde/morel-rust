@@ -1918,6 +1918,8 @@ ListPair.zipEq ([], ["a", "b"]);
    is a NaN, the return value is a NaN. In a list of rules specifying
    the behavior of a function in special cases, the first matching
    rule defines the semantics. *)
+set("mode", "evaluate");
+> val it = () : unit
 
 (* "acos x" returns the arc cosine of x. acos is the inverse of cos.
    Its result is guaranteed to be in the closed interval [0, pi]. If
@@ -2256,6 +2258,8 @@ List.map (fn x => (x, Math.tanh x))
 > val it =
 >   [(0.0,0.0),(~0.0,~0.0),(1.0,0.7615942),(inf,1.0),(~inf,~1.0),(nan,nan)]
 >   : (real * real) list
+set("mode", "validate");
+> val it = () : unit
 
 (* Option ------------------------------------------------------ *)
 (*) val getOpt : 'a option * 'a -> 'a

@@ -21,6 +21,7 @@ pub mod code;
 pub mod frame;
 pub mod int;
 pub mod list;
+pub mod math;
 pub mod order;
 pub mod session;
 pub mod string;

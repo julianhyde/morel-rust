@@ -207,6 +207,9 @@ pub enum BuiltInFunction {
     IntToLarge,
     #[strum(props(p = "Int", name = "toString", type = "int -> string"))]
     IntToString,
+    #[strum(props(p = "List", name = "map"))]
+    #[strum(props(type = "forall 2 ('a -> 'b) -> 'a list -> 'b list"))]
+    ListMap,
     #[strum(props(p = "List", name = "nil", global = true))]
     #[strum(props(type = "forall 1 'a list", constructor = true))]
     ListNil,
@@ -219,6 +222,40 @@ pub enum BuiltInFunction {
     #[strum(props(p = "List", name = "tabulate"))]
     #[strum(props(type = "forall 1 int * (int -> 'a) -> 'a list"))]
     ListTabulate,
+    #[strum(props(p = "Math", name = "acos", type = "real -> real"))]
+    MathAcos,
+    #[strum(props(p = "Math", name = "asin", type = "real -> real"))]
+    MathAsin,
+    #[strum(props(p = "Math", name = "atan", type = "real -> real"))]
+    MathAtan,
+    #[strum(props(p = "Math", name = "atan2", type = "real * real -> real"))]
+    MathAtan2,
+    #[strum(props(p = "Math", name = "cos", type = "real -> real"))]
+    MathCos,
+    #[strum(props(p = "Math", name = "cosh", type = "real -> real"))]
+    MathCosh,
+    #[strum(props(p = "Math", name = "e", type = "real"))]
+    MathE,
+    #[strum(props(p = "Math", name = "exp", type = "real -> real"))]
+    MathExp,
+    #[strum(props(p = "Math", name = "ln", type = "real -> real"))]
+    MathLn,
+    #[strum(props(p = "Math", name = "log10", type = "real -> real"))]
+    MathLog10,
+    #[strum(props(p = "Math", name = "pi", type = "real"))]
+    MathPi,
+    #[strum(props(p = "Math", name = "pow", type = "real * real -> real"))]
+    MathPow,
+    #[strum(props(p = "Math", name = "sin", type = "real -> real"))]
+    MathSin,
+    #[strum(props(p = "Math", name = "sinh", type = "real -> real"))]
+    MathSinh,
+    #[strum(props(p = "Math", name = "sqrt", type = "real -> real"))]
+    MathSqrt,
+    #[strum(props(p = "Math", name = "tan", type = "real -> real"))]
+    MathTan,
+    #[strum(props(p = "Math", name = "tanh", type = "real -> real"))]
+    MathTanh,
     #[strum(props(p = "Option", name = "NONE", global = true))]
     #[strum(props(type = "forall 1 'a option", constructor = true))]
     OptionNone,
@@ -228,6 +265,8 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Real", name = "op /", global = true))]
     #[strum(props(type = "real * real -> real"))]
     RealDivide,
+    #[strum(props(p = "Real", name = "negInf", type = "real"))]
+    RealNegInf,
     #[strum(props(p = "Real", name = "op ~", type = "real -> real"))]
     RealNegate,
     #[strum(props(p = "Real", name = "op =", type = "real * real -> bool"))]
@@ -248,6 +287,8 @@ pub enum BuiltInFunction {
     RealOpPlus,
     #[strum(props(p = "Real", name = "op *", type = "real * real -> real"))]
     RealOpTimes,
+    #[strum(props(p = "Real", name = "posInf", type = "real"))]
+    RealPosInf,
     #[strum(props(p = "String", name = "collate"))]
     #[strum(props(
         type = "(char * char -> `order`) -> string * string -> `order`"
@@ -376,6 +417,10 @@ pub enum BuiltInRecord {
     Int,
     #[strum(props(name = "List"))]
     List,
+    #[strum(props(name = "Math"))]
+    Math,
+    #[strum(props(name = "Real"))]
+    Real,
     #[strum(props(name = "String"))]
     String,
     #[strum(props(name = "Sys"))]

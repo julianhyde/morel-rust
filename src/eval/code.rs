@@ -23,6 +23,7 @@ use crate::eval::char::Char;
 use crate::eval::frame::FrameDef;
 use crate::eval::int::Int;
 use crate::eval::list::List;
+use crate::eval::math::Math;
 use crate::eval::session::Session;
 use crate::eval::string::Str;
 use crate::eval::val::Val;
@@ -937,7 +938,11 @@ pub enum Eager0 {
     IntMinInt,
     IntPrecision,
     ListNil,
+    MathE,
+    MathPi,
     OptionNone,
+    RealNegInf,
+    RealPosInf,
     StringMaxSize,
 }
 
@@ -954,7 +959,11 @@ impl Eager0 {
             IntMinInt => Val::Some(Box::new(Val::Int(i32::MIN))),
             IntPrecision => Val::Some(Box::new(Val::Int(32))),
             ListNil => Val::List(vec![]),
+            MathE => Val::Real(Math::E),
+            MathPi => Val::Real(Math::PI),
             OptionNone => Val::Unit,
+            RealNegInf => Val::Real(f32::NEG_INFINITY),
+            RealPosInf => Val::Real(f32::INFINITY),
             StringMaxSize => Val::Int(i32::MAX),
         }
     }
@@ -1063,6 +1072,19 @@ pub enum Eager1 {
     IntToInt,
     IntToLarge,
     IntToString,
+    MathAcos,
+    MathAsin,
+    MathAtan,
+    MathCos,
+    MathCosh,
+    MathExp,
+    MathLn,
+    MathLog10,
+    MathSin,
+    MathSinh,
+    MathSqrt,
+    MathTan,
+    MathTanh,
     OptionSome,
     RealNegate,
     StringConcat,
@@ -1099,6 +1121,19 @@ impl Eager1 {
             IntToInt => a0,
             IntToLarge => a0,
             IntToString => Val::String(Int::_to_string(a0.expect_int())),
+            MathAcos => Val::Real(Math::acos(a0.expect_real())),
+            MathAsin => Val::Real(Math::asin(a0.expect_real())),
+            MathAtan => Val::Real(Math::atan(a0.expect_real())),
+            MathCos => Val::Real(Math::cos(a0.expect_real())),
+            MathCosh => Val::Real(Math::cosh(a0.expect_real())),
+            MathExp => Val::Real(Math::exp(a0.expect_real())),
+            MathLn => Val::Real(Math::ln(a0.expect_real())),
+            MathLog10 => Val::Real(Math::log10(a0.expect_real())),
+            MathSin => Val::Real(Math::sin(a0.expect_real())),
+            MathSinh => Val::Real(Math::sinh(a0.expect_real())),
+            MathSqrt => Val::Real(Math::sqrt(a0.expect_real())),
+            MathTan => Val::Real(Math::tan(a0.expect_real())),
+            MathTanh => Val::Real(Math::tanh(a0.expect_real())),
             OptionSome => Val::Some(Box::new(a0)),
             RealNegate => Val::Real(-a0.expect_real()),
             StringConcat => {
@@ -1165,6 +1200,8 @@ pub enum Eager2 {
     IntTimes,
     ListOpAt,
     ListOpCons,
+    MathAtan2,
+    MathPow,
     RealDivide,
     RealOpEq,
     RealOpGe,
@@ -1256,6 +1293,16 @@ impl Eager2 {
                 Val::List(List::append(a0.expect_list(), a1.expect_list()))
             }
             ListOpCons => Val::List(List::cons(&a0, a1.expect_list())),
+            MathAtan2 => {
+                let y = a0.expect_real();
+                let x = a1.expect_real();
+                Val::Real(Math::atan2(y, x))
+            }
+            MathPow => {
+                let x = a0.expect_real();
+                let y = a1.expect_real();
+                Val::Real(Math::pow(x, y))
+            }
             RealDivide => Val::Real(a0.expect_real() / a1.expect_real()),
             RealOpEq => Val::Bool(a0.expect_real() == a1.expect_real()),
             RealOpGe => Val::Bool(a0.expect_real() >= a1.expect_real()),
@@ -1314,6 +1361,7 @@ impl Eager2 {
 pub enum EagerF2 {
     // lint: sort until '#}'
     CharChr,
+    ListMap,
     ListTabulate,
     StringCollate,
     StringConcatWith,
@@ -1350,6 +1398,7 @@ impl EagerF2 {
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
             CharChr => Char::chr(a0.expect_int(), &a1.expect_span()),
+            ListMap => List::map(r, f, &a0.expect_code(), a1.expect_list()),
             ListTabulate => {
                 List::tabulate(r, f, a0.expect_int(), &a1.expect_code())
             }
@@ -1737,13 +1786,32 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::IntToInt.implements(&mut b, IntToInt);
     Eager1::IntToLarge.implements(&mut b, IntToLarge);
     Eager1::IntToString.implements(&mut b, IntToString);
+    EagerF2::ListMap.implements(&mut b, ListMap);
     Eager0::ListNil.implements(&mut b, ListNil);
     Eager2::ListOpAt.implements(&mut b, ListOpAt);
     Eager2::ListOpCons.implements(&mut b, ListOpCons);
     EagerF2::ListTabulate.implements(&mut b, ListTabulate);
+    Eager1::MathAcos.implements(&mut b, MathAcos);
+    Eager1::MathAsin.implements(&mut b, MathAsin);
+    Eager1::MathAtan.implements(&mut b, MathAtan);
+    Eager2::MathAtan2.implements(&mut b, MathAtan2);
+    Eager1::MathCos.implements(&mut b, MathCos);
+    Eager1::MathCosh.implements(&mut b, MathCosh);
+    Eager0::MathE.implements(&mut b, MathE);
+    Eager1::MathExp.implements(&mut b, MathExp);
+    Eager1::MathLn.implements(&mut b, MathLn);
+    Eager1::MathLog10.implements(&mut b, MathLog10);
+    Eager0::MathPi.implements(&mut b, MathPi);
+    Eager2::MathPow.implements(&mut b, MathPow);
+    Eager1::MathSin.implements(&mut b, MathSin);
+    Eager1::MathSinh.implements(&mut b, MathSinh);
+    Eager1::MathSqrt.implements(&mut b, MathSqrt);
+    Eager1::MathTan.implements(&mut b, MathTan);
+    Eager1::MathTanh.implements(&mut b, MathTanh);
     Eager0::OptionNone.implements(&mut b, OptionNone);
     Eager1::OptionSome.implements(&mut b, OptionSome);
     Eager2::RealDivide.implements(&mut b, RealDivide);
+    Eager0::RealNegInf.implements(&mut b, RealNegInf);
     Eager1::RealNegate.implements(&mut b, RealNegate);
     Eager2::RealOpEq.implements(&mut b, RealOpEq);
     Eager2::RealOpGe.implements(&mut b, RealOpGe);
@@ -1754,6 +1822,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager2::RealOpNe.implements(&mut b, RealOpNe);
     Eager2::RealOpPlus.implements(&mut b, RealOpPlus);
     Eager2::RealOpTimes.implements(&mut b, RealOpTimes);
+    Eager0::RealPosInf.implements(&mut b, RealPosInf);
     EagerF2::StringCollate.implements(&mut b, StringCollate);
     Eager2::StringCompare.implements(&mut b, StringCompare);
     Eager1::StringConcat.implements(&mut b, StringConcat);
