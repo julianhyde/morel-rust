@@ -545,7 +545,20 @@ impl Pretty {
             }
             PrimitiveType::Real => {
                 if let Val::Real(f) = value {
-                    write!(buf, "{}", f)?;
+                    let mut f = *f;
+                    if f.is_nan() {
+                        write!(buf, "nan")?;
+                    } else {
+                        if f.is_sign_negative() {
+                            write!(buf, "~")?;
+                            f = -f;
+                        }
+                        if f.fract() == 0.0 {
+                            write!(buf, "{:.1}", f)?;
+                        } else {
+                            write!(buf, "{}", f)?;
+                        }
+                    }
                 }
             }
             PrimitiveType::String => {

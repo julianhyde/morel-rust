@@ -691,6 +691,13 @@ impl Display for Code {
             Code::BindLiteral(v) => write!(f, "{}", v),
             Code::Constant(v) => match v {
                 Val::Char(c) => write!(f, "constant({})", c),
+                Val::Real(x) => {
+                    if x.fract() == 0.0 {
+                        write!(f, "constant({:.1})", x)
+                    } else {
+                        write!(f, "constant({})", x)
+                    }
+                }
                 Val::String(s) => write!(f, "constant({})", s),
                 _ => write!(f, "constant({})", v),
             },
