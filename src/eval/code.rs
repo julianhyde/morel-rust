@@ -338,15 +338,12 @@ impl Code {
                     code_or_span(codes, span, 1),
                 )
             }
-            Impl::EF3(ev3) => {
-                assert_eq!(codes.len(), 3);
-                Code::NativeF3(
-                    ev3,
-                    codes[0].clone(),
-                    codes[1].clone(),
-                    codes[2].clone(),
-                )
-            }
+            Impl::EF3(ev3) => Code::NativeF3(
+                ev3,
+                codes[0].clone(),
+                codes[1].clone(),
+                code_or_span(codes, span, 2),
+            ),
         }
     }
 
@@ -693,7 +690,7 @@ impl Display for Code {
                 write!(f, ")")
             }
             Code::Native1(eager, code0) => {
-                write!(f, "apply2(fnValue {}, {})", eager.plan(), code0)
+                write!(f, "apply(fnValue {}, argCode {})", eager.plan(), code0)
             }
             Code::Native2(eager, code0, code1) => {
                 write!(
@@ -1160,7 +1157,6 @@ pub enum Eager2 {
     StringOpLe,
     StringOpLt,
     StringOpNe,
-    StringSub,
 }
 
 impl Eager2 {
@@ -1268,15 +1264,6 @@ impl Eager2 {
             StringOpLe => Val::Bool(a0.expect_string() <= a1.expect_string()),
             StringOpLt => Val::Bool(a0.expect_string() < a1.expect_string()),
             StringOpNe => Val::Bool(a0.expect_string() != a1.expect_string()),
-            StringSub => {
-                let s = a0.expect_string();
-                let index = a1.expect_int() as usize;
-                let chars: Vec<char> = s.chars().collect();
-                if index >= chars.len() {
-                    panic!("Subscript out of bounds");
-                }
-                Val::Char(chars[index])
-            }
         }
     }
 
@@ -1389,6 +1376,7 @@ impl EagerF2 {
 #[derive(Clone, Copy, Debug, strum_macros::Display, PartialEq)]
 pub enum EagerF3 {
     // lint: sort until '#}'
+    StringSub,
 }
 
 impl EagerF3 {
@@ -1408,12 +1396,20 @@ impl EagerF3 {
         &self,
         _r: &mut EvalEnv,
         _f: &mut Frame,
-        _a0: Val,
-        _a1: Val,
-        _a2: Val,
+        a0: Val,
+        a1: Val,
+        a2: Val,
     ) -> Result<Val, MorelError> {
-        // Empty enum - no variants to match
-        unreachable!("EagerF3 has no variants")
+        #[expect(clippy::enum_glob_use)]
+        use crate::eval::code::EagerF3::*;
+
+        match &self {
+            StringSub => Str::sub(
+                &a0.expect_string(),
+                a1.expect_int(),
+                &a2.expect_span(),
+            ),
+        }
     }
 }
 
@@ -1734,7 +1730,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager2::StringOpNe.implements(&mut b, StringOpNe);
     Eager1::StringSize.implements(&mut b, StringSize);
     Eager1::StringStr.implements(&mut b, StringStr);
-    Eager2::StringSub.implements(&mut b, StringSub);
+    EagerF3::StringSub.implements(&mut b, StringSub);
     Eager3::StringSubstring.implements(&mut b, StringSubstring);
     EagerF2::StringTokens.implements(&mut b, StringTokens);
     EagerF2::StringTranslate.implements(&mut b, StringTranslate);

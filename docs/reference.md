@@ -290,6 +290,7 @@ Datatype:
 Exception:
 * `Bind` (in structure `General`)
 * `Chr` (in structure `General`)
+* `Subscript` \[subscript out of bounds\] (in structure `General`)
 
 ## Built-in functions
 

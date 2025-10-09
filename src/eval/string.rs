@@ -15,7 +15,8 @@
 // language governing permissions and limitations under the
 // License.
 
-use crate::eval::code::{Code, EvalEnv, Frame};
+use crate::compile::library::BuiltInExn;
+use crate::eval::code::{Code, EvalEnv, Frame, Span};
 use crate::eval::order::Order;
 use crate::eval::val::Val;
 use crate::shell::main::MorelError;
@@ -57,6 +58,23 @@ impl Str {
             })
             .collect();
         Ok(Val::String(chars?))
+    }
+
+    /// Computes the Morel expression `String.sub`.
+    ///
+    /// `sub (s, i)` returns the `i`(th) character of `s`, counting from zero.
+    /// This raises `Subscript` if `i` &lt; 0 or |`s`| &le; `i`.
+    pub(crate) fn sub(
+        s: &str,
+        index: i32,
+        span: &Span,
+    ) -> Result<Val, MorelError> {
+        let chars: Vec<char> = s.chars().collect();
+        if index < 0 || index as usize >= chars.len() {
+            Err(MorelError::Runtime(BuiltInExn::Subscript, span.clone()))
+        } else {
+            Ok(Val::Char(chars[index as usize]))
+        }
     }
 
     /// Computes the Morel expression `String.translate f s`.

@@ -351,6 +351,10 @@ impl BuiltInFunction {
         self.get_str("name").unwrap()
     }
 
+    pub(crate) fn is_constructor(&self) -> bool {
+        self.get_bool("constructor").is_some_and(|b| b)
+    }
+
     pub(crate) fn is_global(&self) -> bool {
         self.get_bool("global").is_some_and(|b| b)
     }
@@ -402,9 +406,15 @@ pub enum BuiltInExn {
     Bind,
     #[strum(props(p = "General"))]
     Chr,
+    #[strum(props(p = "General", explain = "subscript out of bounds"))]
+    Subscript,
 }
 
 impl BuiltInExn {
+    pub(crate) fn explain(&self) -> Option<&'static str> {
+        self.get_str("explain")
+    }
+
     pub(crate) fn package(&self) -> &'static str {
         self.get_str("p").unwrap()
     }
@@ -420,7 +430,6 @@ OPTION("Option", "Option"),
 OVERFLOW("General", "Overflow"),
 ERROR("Interact", "Error"), // not in standard basis
 SIZE("General", "Size"),
-SUBSCRIPT("General", "Subscript [subscript out of bounds]"),
 UNEQUAL_LENGTHS("ListPair", "UnequalLengths"),
 UNORDERED("IEEEReal", "Unordered");
  */

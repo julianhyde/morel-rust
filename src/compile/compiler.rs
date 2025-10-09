@@ -18,6 +18,7 @@
 use crate::compile::core::{
     DatatypeBind, Decl, Expr, Match, Pat, TypeBind, ValBind,
 };
+use crate::compile::library::BuiltInFunction;
 use crate::compile::pretty::Pretty;
 use crate::compile::type_env::{Binding, Id};
 use crate::compile::type_resolver::TypeMap;
@@ -584,7 +585,16 @@ impl<'a> Compiler<'a> {
                 let codes = self.compile_arg_list(cx, args);
                 Code::new_list(&codes)
             }
-            Expr::Literal(_t, val) => Code::new_constant(val.clone()),
+            Expr::Literal(_t, val) => {
+                if let Val::Fn(f) = val
+                    && f.is_constructor()
+                    && *f == BuiltInFunction::OptionNone
+                {
+                    Code::new_constant(Val::Unit)
+                } else {
+                    Code::new_constant(val.clone())
+                }
+            }
             Expr::RecordSelector(t, slot) => {
                 let (record_type, _) = t.expect_fn();
                 Code::new_nth(record_type, *slot)
@@ -678,6 +688,7 @@ impl Action for ValDeclAction {
     fn apply(&self, r: &mut EvalEnv, f: &mut Frame) {
         // self.code is a function with unit argument.
         self.code.assert_supports_eval_mode(&EvalMode::EagerV1);
+        r.emit_effect(Effect::EmitCode(self.code.clone()));
         match self.code.eval_f1(r, f, &Val::Unit) {
             Err(e) => {
                 r.emit_effect(Effect::EmitLine(e.to_string()));
@@ -697,7 +708,6 @@ impl Action for ValDeclAction {
 
                     r.emit_effect(Effect::EmitLine(line));
                 });
-                r.emit_effect(Effect::EmitCode(self.code.clone()));
             }
         }
     }
