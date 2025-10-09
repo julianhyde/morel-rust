@@ -19,6 +19,7 @@ use crate::compile::library::{BuiltIn, BuiltInFunction, BuiltInRecord};
 use crate::compile::type_env::Binding;
 use crate::compile::type_parser;
 use crate::compile::types::{Label, Type};
+use crate::eval::char::Char;
 use crate::eval::frame::FrameDef;
 use crate::eval::int::Int;
 use crate::eval::list::List;
@@ -76,8 +77,8 @@ pub enum Effect {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Code {
     // lint: sort until '#}' where '##[A-Z][A-Za-z0-9]*\('
-    /// `Apply(fn_code, arg_code)` calls a function.
-    Apply(Box<Code>, Box<Code>),
+    /// `Apply(fn_code, arg_code, span)` calls a function.
+    Apply(Box<Code>, Box<Code>, Span),
     /// `ApplyClosure(fn_code, arg_code, bind_codes)` calls a closure.
     ApplyClosure(Box<Code>, Box<Code>, Vec<Code>),
     /// `ApplyConstant(fn_code, arg_code)` calls a function whose code is known
@@ -169,7 +170,8 @@ impl Code {
                 Box::new(a.clone()),
             )
         } else {
-            Code::Apply(Box::new(f.clone()), Box::new(a.clone()))
+            let span = Span::new("?");
+            Code::Apply(Box::new(f.clone()), Box::new(a.clone()), span)
         }
     }
 
@@ -282,7 +284,11 @@ impl Code {
         Code::Case(codes.to_vec())
     }
 
-    pub(crate) fn new_native(impl_: Impl, codes: &[Code]) -> Code {
+    pub(crate) fn new_native(
+        impl_: Impl,
+        codes: &[Box<Code>],
+        span: &Span,
+    ) -> Code {
         match impl_ {
             // lint: sort until '#}' where '##Impl::'
             Impl::Custom => {
@@ -297,42 +303,37 @@ impl Code {
             }
             Impl::E1(e1) => {
                 assert_eq!(codes.len(), 1);
-                Code::Native1(e1, Box::new(codes[0].clone()))
+                Code::Native1(e1, codes[0].clone())
             }
             Impl::E2(e2) => {
                 assert_eq!(codes.len(), 2);
-                Code::Native2(
-                    e2,
-                    Box::new(codes[0].clone()),
-                    Box::new(codes[1].clone()),
-                )
+                Code::Native2(e2, codes[0].clone(), codes[1].clone())
             }
             Impl::E3(e3) => {
                 assert_eq!(codes.len(), 3);
                 Code::Native3(
                     e3,
-                    Box::new(codes[0].clone()),
-                    Box::new(codes[1].clone()),
-                    Box::new(codes[2].clone()),
+                    codes[0].clone(),
+                    codes[1].clone(),
+                    codes[2].clone(),
                 )
             }
-            Impl::EV0(ev0) => {
+            Impl::EF0(ev0) => {
                 assert_eq!(codes.len(), 1);
-                assert!(matches!(codes[0], Code::Constant(Val::Unit)));
+                assert!(matches!(*codes[0], Code::Constant(Val::Unit)));
                 Code::NativeF0(ev0)
             }
-            Impl::EV1(ev1) => {
+            Impl::EF1(ev1) => {
                 assert_eq!(codes.len(), 1);
-                Code::NativeF1(ev1, Box::new(codes[0].clone()))
+                Code::NativeF1(ev1, codes[0].clone())
             }
-            Impl::EV2(ev2) => {
+            Impl::EF2(ev2) => {
                 // TODO: handle cases like 'let args = (1, 2) in f args
                 // end'; see Gather in Morel-Java
-                assert_eq!(codes.len(), 2);
                 Code::NativeF2(
                     ev2,
-                    Box::new(codes[0].clone()),
-                    Box::new(codes[1].clone()),
+                    codes[0].clone(),
+                    code_or_span(codes, span, 1),
                 )
             }
         }
@@ -363,7 +364,7 @@ impl Code {
     fn supports_eval_mode(&self, mode: &EvalMode) -> bool {
         match self {
             // lint: sort until '#}' where '##Code::'
-            Code::Apply(_, _) => *mode == EvalMode::Eager0,
+            Code::Apply(_, _, _) => *mode == EvalMode::Eager0,
             Code::ApplyClosure(_, _, _) => *mode == EvalMode::Eager0,
             Code::ApplyConstant(_, _) => *mode == EvalMode::Eager0,
             Code::Bind(_) => *mode == EvalMode::Eager0,
@@ -416,7 +417,7 @@ impl Code {
     ) -> Result<Val, MorelError> {
         match &self {
             // lint: sort until '#}' where '##Code::'
-            Code::Apply(fn_code, arg_code) => {
+            Code::Apply(fn_code, arg_code, _) => {
                 let fn_ = fn_code.eval_f0(r, f)?;
                 let arg = arg_code.eval_f0(r, f)?;
                 match &fn_ {
@@ -537,7 +538,7 @@ impl Code {
     ) -> Result<Val, MorelError> {
         match &self {
             // lint: sort until '#}' where '##Code::'
-            Code::Apply(fn_code, arg_code) => {
+            Code::Apply(fn_code, arg_code, _) => {
                 let fun = fn_code.eval_f0(r, f)?;
                 let arg = arg_code.eval_f0(r, f)?;
                 let closure = fun.expect_code().eval_f1(r, f, &arg)?;
@@ -627,6 +628,15 @@ impl Code {
     }
 }
 
+fn code_or_span(codes: &[Box<Code>], span: &Span, n: usize) -> Box<Code> {
+    if codes.len() == n + 1 {
+        codes[n].clone()
+    } else {
+        assert_eq!(codes.len(), n);
+        Box::new(Code::Constant(Val::String(span.0.clone())))
+    }
+}
+
 impl Display for Code {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -668,6 +678,31 @@ impl Display for Code {
             }
             _ => todo!("fmt: {:?}", self),
         }
+    }
+}
+
+/// Code location.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Span(String);
+
+impl Span {
+    pub fn new(s: &str) -> Self {
+        Span(s.to_string())
+    }
+
+    pub fn from_pest_span(span: &pest::Span) -> Self {
+        let start = span.start_pos().line_col();
+        let end = span.end_pos().line_col();
+        Self::new(&format!(
+            "stdIn:{}.{}-{}.{}",
+            start.0, start.1, end.0, end.1
+        ))
+    }
+}
+
+impl Display for Span {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -791,9 +826,9 @@ pub enum Impl {
     E1(Eager1),
     E2(Eager2),
     E3(Eager3),
-    EV0(EagerF0),
-    EV1(EagerF1),
-    EV2(EagerF2),
+    EF0(EagerF0),
+    EF1(EagerF1),
+    EF2(EagerF2),
 }
 
 pub struct Applicable;
@@ -868,7 +903,7 @@ impl EagerF0 {
     }
 
     fn implements(&self, b: &mut LibBuilder, f: BuiltInFunction) {
-        if b.fn_impls.insert(f, Impl::EV0(*self)).is_some() {
+        if b.fn_impls.insert(f, Impl::EF0(*self)).is_some() {
             panic!("Already implemented {:?}", f);
         }
     }
@@ -889,7 +924,7 @@ pub enum EagerF1 {
 
 impl EagerF1 {
     fn implements(&self, b: &mut LibBuilder, f: BuiltInFunction) {
-        if b.fn_impls.insert(f, Impl::EV1(*self)).is_some() {
+        if b.fn_impls.insert(f, Impl::EF1(*self)).is_some() {
             panic!("Already implemented {:?}", f);
         }
     }
@@ -921,7 +956,6 @@ impl EagerF1 {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Eager1 {
     // lint: sort until '#}'
-    CharChr,
     GeneralIgnore,
     IntAbs,
     IntFromInt,
@@ -945,7 +979,6 @@ impl Eager1 {
 
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
-            CharChr => Val::Char(a0.expect_int() as u8 as char),
             GeneralIgnore => Val::Unit,
             IntAbs => Val::Int(a0.expect_int().abs()),
             IntFromInt => a0,
@@ -1130,6 +1163,7 @@ impl Eager2 {
 #[derive(Clone, Copy, Debug, strum_macros::Display, PartialEq)]
 pub enum EagerF2 {
     // lint: sort until '#}'
+    CharChr,
     ListTabulate,
     SysSet,
 }
@@ -1137,13 +1171,14 @@ pub enum EagerF2 {
 impl EagerF2 {
     fn plan(&self) -> String {
         match self {
+            EagerF2::CharChr => "Char.chr".to_string(),
             EagerF2::SysSet => "Sys.set".to_string(),
             EagerF2::ListTabulate => "List.tabulate".to_string(),
         }
     }
 
     fn implements(&self, b: &mut LibBuilder, f: BuiltInFunction) {
-        if b.fn_impls.insert(f, Impl::EV2(*self)).is_some() {
+        if b.fn_impls.insert(f, Impl::EF2(*self)).is_some() {
             panic!("Already implemented {:?}", f);
         }
     }
@@ -1162,6 +1197,7 @@ impl EagerF2 {
 
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
+            CharChr => Char::chr(a0.expect_int(), &a1.expect_span()),
             ListTabulate => {
                 List::tabulate(r, f, a0.expect_int(), &a1.expect_code())
             }
@@ -1319,7 +1355,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager2::BoolOpNe.implements(&mut b, BoolOpNe);
     Eager2::BoolOrElse.implements(&mut b, BoolOrElse);
     Eager0::BoolTrue.implements(&mut b, BoolTrue);
-    Eager1::CharChr.implements(&mut b, CharChr);
+    EagerF2::CharChr.implements(&mut b, CharChr);
     Eager2::CharOpEq.implements(&mut b, CharOpEq);
     Eager2::CharOpGe.implements(&mut b, CharOpGe);
     Eager2::CharOpGt.implements(&mut b, CharOpGt);

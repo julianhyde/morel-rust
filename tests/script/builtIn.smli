@@ -2389,6 +2389,8 @@ Char.maxOrd;
 
 (* [chr i] returns the character whose code is i.  Raises Chr if
    i<0 or i>maxOrd. *)
+set("mode", "evaluate");
+> val it = () : unit
 Char.chr;
 > val it = fn : int -> char
 Char.chr 65;
@@ -2396,6 +2398,8 @@ Char.chr 65;
 Char.chr ~1;
 > uncaught exception Chr
 >   raised at: stdIn:1.1-1.12
+set("mode", "validate");
+> val it = () : unit
 Char.chr 256;
 > uncaught exception Chr
 >   raised at: stdIn:1.1-1.13

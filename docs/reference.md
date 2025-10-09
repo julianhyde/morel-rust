@@ -287,6 +287,10 @@ Datatype:
 * `datatype 'a option = NONE | SOME of 'a` (in structure `Option`)
 * `datatype 'a order = LESS | EQUAL | GREATER` (in structure `General`)
 
+Exception:
+* `Bind` (in structure `General`)
+* `Chr` (in structure `General`)
+
 ## Built-in functions
 
 {% comment %}START TABLE{% endcomment %}

@@ -327,6 +327,40 @@ impl BuiltInRecord {
     }
 }
 
+/// Built-in exception.
+#[derive(Debug, Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+#[repr(u8)]
+#[derive(
+    EnumCount, EnumString, EnumProperty, EnumIter, strum_macros::Display,
+)]
+pub enum BuiltInExn {
+    #[strum(props(p = "General"))]
+    Bind,
+    #[strum(props(p = "General"))]
+    Chr,
+}
+
+impl BuiltInExn {
+    pub(crate) fn package(&self) -> &'static str {
+        self.get_str("p").unwrap()
+    }
+}
+
+/*
+The following exceptions are in Morel Java but not yet in Morel Rust.
+
+DIV("General", "Div"),
+DOMAIN("General", "Domain"),
+EMPTY("List", "Empty"),
+OPTION("Option", "Option"),
+OVERFLOW("General", "Overflow"),
+ERROR("Interact", "Error"), // not in standard basis
+SIZE("General", "Size"),
+SUBSCRIPT("General", "Subscript [subscript out of bounds]"),
+UNEQUAL_LENGTHS("ListPair", "UnequalLengths"),
+UNORDERED("IEEEReal", "Unordered");
+ */
+
 /// Built-in function or record.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
