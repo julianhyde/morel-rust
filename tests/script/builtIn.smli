@@ -2341,8 +2341,6 @@ end;
 > val it =
 >   [(0.0,0.0),(~0.0,~0.0),(1.0,0.7615942),(inf,1.0),(~inf,~1.0),(nan,nan)]
 >   : (real * real) list
-set("mode", "validate");
-> val it = () : unit
 
 (* Option ------------------------------------------------------ *)
 (*) val getOpt : 'a option * 'a -> 'a
@@ -2378,7 +2376,7 @@ Sys.plan ();
 > val it =
 >   "apply(fnCode match(true, constant([NONE]), _, apply(fnValue tyCon, argCode constant(0))), argCode constant(true))"
 >   : string
-Option.valOf noneInt;
+Option.valOf (if true then NONE else SOME 0);
 > uncaught exception Option
 >   raised at: stdIn:1.1-1.21
 Sys.plan ();
@@ -2398,7 +2396,7 @@ Sys.plan ();
 (*) (The function name is quoted using backticks because 'join' is a keyword.)
 Option.`join` (SOME (SOME 1));
 > val it = SOME 1 : int option
-Option.`join` (SOME noneInt);
+Option.`join` (SOME (if true then NONE else SOME 0));
 > val it = NONE : int option
 (* sml-nj gives
   stdIn:1.2-1.18 Warning: type vars not generalized because of
@@ -2478,8 +2476,6 @@ Sys.plan ();
 >   : string
 
 (* Char -------------------------------------------------------- *)
-set("mode", "evaluate");
-> val it = () : unit
 
 (* Utility function used to test the functions below. *)
 (*

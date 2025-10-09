@@ -24,6 +24,7 @@ use crate::eval::frame::FrameDef;
 use crate::eval::int::Int;
 use crate::eval::list::List;
 use crate::eval::math::Math;
+use crate::eval::option::Opt;
 use crate::eval::session::Session;
 use crate::eval::string::Str;
 use crate::eval::val::Val;
@@ -1118,6 +1119,8 @@ pub enum Eager1 {
     MathSqrt,
     MathTan,
     MathTanh,
+    OptionIsSome,
+    OptionJoin,
     OptionSome,
     RealNegate,
     StringConcat,
@@ -1187,6 +1190,8 @@ impl Eager1 {
             MathSqrt => Val::Real(Math::sqrt(a0.expect_real())),
             MathTan => Val::Real(Math::tan(a0.expect_real())),
             MathTanh => Val::Real(Math::tanh(a0.expect_real())),
+            OptionIsSome => Val::Bool(Opt::is_some(&a0)),
+            OptionJoin => Opt::join(&a0),
             OptionSome => Val::Some(Box::new(a0)),
             RealNegate => Val::Real(-a0.expect_real()),
             StringConcat => {
@@ -1257,6 +1262,7 @@ pub enum Eager2 {
     ListOpCons,
     MathAtan2,
     MathPow,
+    OptionGetOpt,
     RealDivide,
     RealOpEq,
     RealOpGe,
@@ -1365,6 +1371,7 @@ impl Eager2 {
                 let y = a1.expect_real();
                 Val::Real(Math::pow(x, y))
             }
+            OptionGetOpt => Opt::get_opt(&a0, &a1),
             RealDivide => Val::Real(a0.expect_real() / a1.expect_real()),
             RealOpEq => Val::Bool(a0.expect_real() == a1.expect_real()),
             RealOpGe => Val::Bool(a0.expect_real() >= a1.expect_real()),
@@ -1427,6 +1434,13 @@ pub enum EagerF2 {
     CharSucc,
     ListMap,
     ListTabulate,
+    OptionApp,
+    OptionCompose,
+    OptionComposePartial,
+    OptionFilter,
+    OptionMap,
+    OptionMapPartial,
+    OptionValOf,
     StringCollate,
     StringConcatWith,
     StringFields,
@@ -1468,6 +1482,23 @@ impl EagerF2 {
             ListTabulate => {
                 List::tabulate(r, f, a0.expect_int(), &a1.expect_code())
             }
+            OptionApp => Opt::app(r, f, &a0.expect_code(), &a1),
+            OptionCompose => {
+                let tuple = a0.expect_list();
+                let func_f = tuple[0].expect_code();
+                let func_g = tuple[1].expect_code();
+                Opt::compose(r, f, &func_f, &func_g, &a1)
+            }
+            OptionComposePartial => {
+                let tuple = a0.expect_list();
+                let func_f = tuple[0].expect_code();
+                let func_g = tuple[1].expect_code();
+                Opt::compose_partial(r, f, &func_f, &func_g, &a1)
+            }
+            OptionFilter => Opt::filter(r, f, &a0.expect_code(), &a1),
+            OptionMap => Opt::map(r, f, &a0.expect_code(), &a1),
+            OptionMapPartial => Opt::map_partial(r, f, &a0.expect_code(), &a1),
+            OptionValOf => Opt::val_of(&a0, &a1.expect_span()),
             StringCollate => {
                 let tuple = a1.expect_list();
                 if tuple.len() != 2 {
@@ -1901,8 +1932,18 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::MathSqrt.implements(&mut b, MathSqrt);
     Eager1::MathTan.implements(&mut b, MathTan);
     Eager1::MathTanh.implements(&mut b, MathTanh);
+    EagerF2::OptionApp.implements(&mut b, OptionApp);
+    EagerF2::OptionCompose.implements(&mut b, OptionCompose);
+    EagerF2::OptionComposePartial.implements(&mut b, OptionComposePartial);
+    EagerF2::OptionFilter.implements(&mut b, OptionFilter);
+    Eager2::OptionGetOpt.implements(&mut b, OptionGetOpt);
+    Eager1::OptionIsSome.implements(&mut b, OptionIsSome);
+    Eager1::OptionJoin.implements(&mut b, OptionJoin);
+    EagerF2::OptionMap.implements(&mut b, OptionMap);
+    EagerF2::OptionMapPartial.implements(&mut b, OptionMapPartial);
     Eager0::OptionNone.implements(&mut b, OptionNone);
     Eager1::OptionSome.implements(&mut b, OptionSome);
+    EagerF2::OptionValOf.implements(&mut b, OptionValOf);
     Eager2::RealDivide.implements(&mut b, RealDivide);
     Eager0::RealNegInf.implements(&mut b, RealNegInf);
     Eager1::RealNegate.implements(&mut b, RealNegate);
