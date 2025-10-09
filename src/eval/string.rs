@@ -15,7 +15,8 @@
 // language governing permissions and limitations under the
 // License.
 
-use crate::compile::library::BuiltInExn;
+use crate::compile::library::{BuiltInExn, BuiltInFunction};
+use crate::eval::char::Char;
 use crate::eval::code::{Code, EvalEnv, Frame, Span};
 use crate::eval::order::Order;
 use crate::eval::val::Val;
@@ -248,11 +249,8 @@ impl Str {
                     fn_code.eval_f1(r, f, &tuple)?
                 }
                 Val::Fn(builtin_fn) => {
-                    // Built-in function: directly use the implementation
-                    use crate::compile::library::BuiltInFunction;
-
                     if *builtin_fn == BuiltInFunction::CharCompare {
-                        Val::Int(crate::eval::char::Char::compare(
+                        Val::Int(Char::compare(
                             c1.expect_char(),
                             c2.expect_char(),
                         ) as i32)
@@ -280,5 +278,61 @@ impl Str {
             std::cmp::Ordering::Equal => Order::Equal,
             std::cmp::Ordering::Greater => Order::Greater,
         })
+    }
+
+    /// Computes the Morel expression `String.extract (s, i, NONE)` or
+    /// `String.extract (s, i, SOME j)`.
+    ///
+    /// Returns the substring of `s` from the `i`-th character to the end of
+    /// the string, or (if `j` is specified) the substring of `s` from the
+    /// `i`-th character for length `j`.
+    /// May throw [BuiltInExn::Subscript].
+    pub(crate) fn extract(
+        s: &str,
+        i: i32,
+        j_opt: Option<i32>,
+        span: &Span,
+    ) -> Result<Val, MorelError> {
+        let chars: Vec<char> = s.chars().collect();
+        if i < 0
+            || j_opt.unwrap_or(0) < 0
+            || (i + j_opt.unwrap_or(0)) as usize > chars.len()
+        {
+            return Err(MorelError::Runtime(
+                BuiltInExn::Subscript,
+                span.clone(),
+            ));
+        }
+        let start = i as usize;
+        let end = if let Some(j) = j_opt {
+            (i + j) as usize
+        } else {
+            chars.len()
+        };
+        Ok(Val::String(chars[start..end].iter().collect()))
+    }
+
+    /// Computes the Morel expression `String.substring (s, i, j)`.
+    ///
+    /// Returns the substring of `s` from the `i`-th character for length `j`.
+    /// May throw [BuiltInExn::Subscript].
+    pub(crate) fn substring(
+        s: &str,
+        i: i32,
+        j: i32,
+        span: &Span,
+    ) -> Result<Val, MorelError> {
+        let chars: Vec<char> = s.chars().collect();
+        let start = i as usize;
+        let end = (i + j) as usize;
+
+        if i < 0 || j < 0 || end > chars.len() {
+            return Err(MorelError::Runtime(
+                BuiltInExn::Subscript,
+                span.clone(),
+            ));
+        }
+
+        Ok(Val::String(chars[start..end].iter().collect()))
     }
 }

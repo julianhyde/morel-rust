@@ -262,10 +262,10 @@ pub enum BuiltInFunction {
     #[strum(props(p = "String", name = "concatWith"))]
     #[strum(props(type = "string -> string list -> string"))]
     StringConcatWith,
-    #[strum(props(p = "String", name = "explode"))]
+    #[strum(props(p = "String", name = "explode", global = true))]
     #[strum(props(type = "string -> char list"))]
     StringExplode,
-    #[strum(props(p = "String", name = "extract"))]
+    #[strum(props(p = "String", name = "extract", throws = "Subscript"))]
     #[strum(props(type = "string * int * int option -> string"))]
     StringExtract,
     #[strum(props(p = "String", name = "fields"))]
@@ -309,17 +309,18 @@ pub enum BuiltInFunction {
     #[strum(props(p = "String", name = "op <>"))]
     #[strum(props(type = "string * string -> bool"))]
     StringOpNe,
-    #[strum(props(p = "String", name = "size"))]
+    #[strum(props(p = "String", name = "size", global = true))]
     #[strum(props(type = "string -> int"))]
     StringSize,
-    #[strum(props(p = "String", name = "str"))]
+    #[strum(props(p = "String", name = "str", global = true))]
     #[strum(props(type = "char -> string"))]
     StringStr,
-    #[strum(props(p = "String", name = "sub"))]
+    #[strum(props(p = "String", name = "sub", throws = "Subscript"))]
     #[strum(props(type = "string * int -> char"))]
     StringSub,
-    #[strum(props(p = "String", name = "substring"))]
+    #[strum(props(p = "String", name = "substring", global = true))]
     #[strum(props(type = "string * int * int -> string"))]
+    #[strum(props(throws = "Subscript"))]
     StringSubstring,
     #[strum(props(p = "String", name = "tokens"))]
     #[strum(props(type = "(char -> bool) -> string -> string list"))]

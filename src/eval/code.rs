@@ -48,6 +48,7 @@ pub enum EvalMode {
     Eager3,
     EagerV2,
     EagerV3,
+    EagerV4,
 }
 
 /// Effects that can be applied to modify the state of the current shell or
@@ -151,6 +152,7 @@ pub enum Code {
     NativeF1(EagerF1, Box<Code>),
     NativeF2(EagerF2, Box<Code>, Box<Code>),
     NativeF3(EagerF3, Box<Code>, Box<Code>, Box<Code>),
+    NativeF4(EagerF4, Box<Code>, Box<Code>, Box<Code>, Box<Code>),
     /// `Nth(Type, slot)` returns the `slot`th element of a record.
     /// The type must be a record type.
     Nth(Box<Type>, usize),
@@ -344,6 +346,13 @@ impl Code {
                 codes[1].clone(),
                 code_or_span(codes, span, 2),
             ),
+            Impl::EF4(ev4) => Code::NativeF4(
+                ev4,
+                codes[0].clone(),
+                codes[1].clone(),
+                codes[2].clone(),
+                code_or_span(codes, span, 3),
+            ),
         }
     }
 
@@ -414,6 +423,7 @@ impl Code {
             Code::NativeF1(_, _) => *mode == EvalMode::EagerV1,
             Code::NativeF2(_, _, _) => *mode == EvalMode::EagerV2,
             Code::NativeF3(_, _, _, _) => *mode == EvalMode::EagerV3,
+            Code::NativeF4(_, _, _, _, _) => *mode == EvalMode::EagerV4,
             Code::Nth(_, _) => {
                 *mode == EvalMode::Eager1 || *mode == EvalMode::EagerF0
             }
@@ -533,6 +543,13 @@ impl Code {
                 let v1 = code1.eval_f0(r, f)?;
                 let v2 = code2.eval_f0(r, f)?;
                 eager.apply(r, f, v0, v1, v2)
+            }
+            Code::NativeF4(eager, code0, code1, code2, code3) => {
+                let v0 = code0.eval_f0(r, f)?;
+                let v1 = code1.eval_f0(r, f)?;
+                let v2 = code2.eval_f0(r, f)?;
+                let v3 = code3.eval_f0(r, f)?;
+                eager.apply(r, f, v0, v1, v2, v3)
             }
             Code::Tuple(codes) => {
                 let mut values = Vec::with_capacity(codes.capacity());
@@ -720,6 +737,17 @@ impl Display for Code {
                     code2
                 )
             }
+            Code::NativeF4(eager, code0, code1, code2, code3) => {
+                write!(
+                    f,
+                    "apply(fnValue {}, argCode tuple({}, {}, {}, {}))",
+                    eager.plan(),
+                    code0,
+                    code1,
+                    code2,
+                    code3
+                )
+            }
             Code::Tuple(codes) => {
                 write!(f, "tuple")?;
                 for code in codes {
@@ -894,6 +922,7 @@ pub enum Impl {
     EF1(EagerF1),
     EF2(EagerF2),
     EF3(EagerF3),
+    EF4(EagerF4),
 }
 
 pub struct Applicable;
@@ -1413,14 +1442,68 @@ impl EagerF3 {
     }
 }
 
+/// Function implementation that takes four arguments, the fourth being a span.
+/// The arguments are eagerly evaluated before the function is called.
+#[derive(Clone, Copy, Debug, strum_macros::Display, PartialEq)]
+pub enum EagerF4 {
+    // lint: sort until '#}'
+    StringExtract,
+    StringSubstring,
+}
+
+impl EagerF4 {
+    fn plan(&self) -> String {
+        camel_to_dotted(&self.to_string())
+    }
+
+    fn implements(&self, b: &mut LibBuilder, f: BuiltInFunction) {
+        if b.fn_impls.insert(f, Impl::EF4(*self)).is_some() {
+            panic!("Already implemented {:?}", f);
+        }
+    }
+
+    // Passing Val by value is OK because it is small.
+    #[allow(clippy::needless_pass_by_value)]
+    fn apply(
+        &self,
+        _r: &mut EvalEnv,
+        _f: &mut Frame,
+        a0: Val,
+        a1: Val,
+        a2: Val,
+        a3: Val,
+    ) -> Result<Val, MorelError> {
+        #[expect(clippy::enum_glob_use)]
+        use crate::eval::code::EagerF4::*;
+
+        match &self {
+            StringExtract => {
+                let s = a0.expect_string();
+                let i = a1.expect_int();
+                let j = match a2 {
+                    Val::Unit => None,
+                    Val::Some(v) => Some(v.expect_int()),
+                    _ => panic!("Expected int option"),
+                };
+                let span = a3.expect_span();
+                Str::extract(&s, i, j, &span)
+            }
+            StringSubstring => Str::substring(
+                &a0.expect_string(),
+                a1.expect_int(),
+                a2.expect_int(),
+                &a3.expect_span(),
+            ),
+        }
+    }
+}
+
 /// Function implementation that takes three arguments.
 /// The arguments are eagerly evaluated before the function is called.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Eager3 {
     // lint: sort until '#}'
     BoolIf,
-    StringExtract,
-    StringSubstring,
 }
 
 impl Eager3 {
@@ -1437,43 +1520,6 @@ impl Eager3 {
                 } else {
                     a2
                 }
-            }
-            StringExtract => {
-                let s = a0.expect_string();
-                let start = a1.expect_int() as usize;
-                let chars: Vec<char> = s.chars().collect();
-
-                if start > chars.len() {
-                    panic!("Subscript out of bounds");
-                }
-
-                match &a2 {
-                    Val::Unit => {
-                        // None case - extract to end of string
-                        Val::String(chars[start..].iter().collect())
-                    }
-                    Val::Some(length_val) => {
-                        // Some(length) case
-                        let length = length_val.expect_int() as usize;
-                        if start + length > chars.len() {
-                            panic!("Subscript out of bounds");
-                        }
-                        Val::String(
-                            chars[start..start + length].iter().collect(),
-                        )
-                    }
-                    _ => panic!("Expected option type for third parameter"),
-                }
-            }
-            StringSubstring => {
-                let s = a0.expect_string();
-                let start = a1.expect_int() as usize;
-                let length = a2.expect_int() as usize;
-                let chars: Vec<char> = s.chars().collect();
-                if start > chars.len() || start + length > chars.len() {
-                    panic!("Subscript out of bounds");
-                }
-                Val::String(chars[start..start + length].iter().collect())
             }
         }
     }
@@ -1713,7 +1759,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::StringConcat.implements(&mut b, StringConcat);
     EagerF2::StringConcatWith.implements(&mut b, StringConcatWith);
     Eager1::StringExplode.implements(&mut b, StringExplode);
-    Eager3::StringExtract.implements(&mut b, StringExtract);
+    EagerF4::StringExtract.implements(&mut b, StringExtract);
     EagerF2::StringFields.implements(&mut b, StringFields);
     Eager1::StringImplode.implements(&mut b, StringImplode);
     Eager2::StringIsPrefix.implements(&mut b, StringIsPrefix);
@@ -1731,7 +1777,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::StringSize.implements(&mut b, StringSize);
     Eager1::StringStr.implements(&mut b, StringStr);
     EagerF3::StringSub.implements(&mut b, StringSub);
-    Eager3::StringSubstring.implements(&mut b, StringSubstring);
+    EagerF4::StringSubstring.implements(&mut b, StringSubstring);
     EagerF2::StringTokens.implements(&mut b, StringTokens);
     EagerF2::StringTranslate.implements(&mut b, StringTranslate);
     EagerF0::SysPlan.implements(&mut b, SysPlan);
