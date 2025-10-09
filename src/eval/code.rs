@@ -77,8 +77,8 @@ pub enum Effect {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Code {
     // lint: sort until '#}' where '##[A-Z][A-Za-z0-9]*\('
-    /// `Apply(fn_code, arg_code, span)` calls a function.
-    Apply(Box<Code>, Box<Code>, Span),
+    /// `Apply(fn_code, arg_code)` calls a function.
+    Apply(Box<Code>, Box<Code>),
     /// `ApplyClosure(fn_code, arg_code, bind_codes)` calls a closure.
     ApplyClosure(Box<Code>, Box<Code>, Vec<Code>),
     /// `ApplyConstant(fn_code, arg_code)` calls a function whose code is known
@@ -170,8 +170,7 @@ impl Code {
                 Box::new(a.clone()),
             )
         } else {
-            let span = Span::new("?");
-            Code::Apply(Box::new(f.clone()), Box::new(a.clone()), span)
+            Code::Apply(Box::new(f.clone()), Box::new(a.clone()))
         }
     }
 
@@ -364,7 +363,7 @@ impl Code {
     fn supports_eval_mode(&self, mode: &EvalMode) -> bool {
         match self {
             // lint: sort until '#}' where '##Code::'
-            Code::Apply(_, _, _) => *mode == EvalMode::Eager0,
+            Code::Apply(_, _) => *mode == EvalMode::Eager0,
             Code::ApplyClosure(_, _, _) => *mode == EvalMode::Eager0,
             Code::ApplyConstant(_, _) => *mode == EvalMode::Eager0,
             Code::Bind(_) => *mode == EvalMode::Eager0,
@@ -417,7 +416,7 @@ impl Code {
     ) -> Result<Val, MorelError> {
         match &self {
             // lint: sort until '#}' where '##Code::'
-            Code::Apply(fn_code, arg_code, _) => {
+            Code::Apply(fn_code, arg_code) => {
                 let fn_ = fn_code.eval_f0(r, f)?;
                 let arg = arg_code.eval_f0(r, f)?;
                 match &fn_ {
@@ -538,7 +537,7 @@ impl Code {
     ) -> Result<Val, MorelError> {
         match &self {
             // lint: sort until '#}' where '##Code::'
-            Code::Apply(fn_code, arg_code, _) => {
+            Code::Apply(fn_code, arg_code) => {
                 let fun = fn_code.eval_f0(r, f)?;
                 let arg = arg_code.eval_f0(r, f)?;
                 let closure = fun.expect_code().eval_f1(r, f, &arg)?;

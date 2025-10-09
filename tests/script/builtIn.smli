@@ -297,8 +297,12 @@ app;
 ceil;
 > val it = fn : real -> int
 (* "val chr : int -> char" maps to "Char.chr" *)
+set("mode", "evaluate");
+> val it = () : unit
 chr;
 > val it = fn : int -> char
+set("mode", "validate");
+> val it = () : unit
 (* "val compare : 'a * 'a -> order" maps to "String.compare" *)
 String.compare;
 > val it = fn : string * string -> order
@@ -2398,14 +2402,14 @@ Char.chr 65;
 Char.chr ~1;
 > uncaught exception Chr
 >   raised at: stdIn:1.1-1.12
-set("mode", "validate");
-> val it = () : unit
 Char.chr 256;
 > uncaught exception Chr
 >   raised at: stdIn:1.1-1.13
 Char.chr 12345678;
 > uncaught exception Chr
 >   raised at: stdIn:1.1-1.18
+set("mode", "validate");
+> val it = () : unit
 
 (* [ord c] returns the code of character c. *)
 Char.ord;
