@@ -320,9 +320,9 @@ impl<'a> Compiler<'a> {
                 let tail_code = self.compile_pat(cx, tail);
                 Code::new_bind_cons(&head_code, &tail_code)
             }
-            Pat::Constructor(_, name, p) => {
+            Pat::Constructor(type_, name, p) => {
                 let code = p.clone().map(|p2| self.compile_pat(cx, &p2));
-                Code::new_bind_constructor(name, &code)
+                Code::new_bind_constructor(type_, name, &code)
             }
             Pat::Identifier(_, name) => {
                 let slot = cx.frame_def.var_index(name);
