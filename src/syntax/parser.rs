@@ -2112,7 +2112,7 @@ mod test {
     #[test]
     fn test_parse_build() {
         // ml("1").assert_statement(&is("1"));
-        ml("val x = 5").assert_statement(&is("val x = 5"));
+        ml("val x = 5").assert_statement(is("val x = 5"));
     }
 
     #[test]
