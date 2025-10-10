@@ -25,6 +25,7 @@ use crate::eval::frame::FrameDef;
 use crate::eval::int::Int;
 use crate::eval::list::List;
 use crate::eval::option::Opt;
+use crate::eval::real::Real;
 use crate::eval::session::Session;
 use crate::eval::string::Str;
 use crate::eval::val::Val;
@@ -36,7 +37,6 @@ use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use strum::{EnumProperty, IntoEnumIterator};
-use crate::eval::code::Eager2::StringCompare;
 
 /// Evaluation mode.
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -1004,7 +1004,8 @@ impl Eager0 {
             OrderLess => Val::Int(-1),
             RealMaxFinite => Val::Real(f32::MAX),
             RealMinNormalPos => Val::Real(f32::MIN_POSITIVE),
-            RealMinPos => Val::Real(f32::MIN_POSITIVE),
+            // Smallest denormalized positive (2^-149)
+            RealMinPos => Val::Real(1.4e-45_f32),
             RealNegInf => Val::Real(f32::NEG_INFINITY),
             RealPosInf => Val::Real(f32::INFINITY),
             RealPrecision => Val::Int(24), // IEEE 754 single precision

@@ -352,7 +352,8 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Real", name = "compare"))]
     #[strum(props(type = "real * real -> `order`", throws = "Unordered"))]
     RealCompare,
-    #[strum(props(p = "Real", name = "copySign", type = "real * real -> real"))]
+    #[strum(props(p = "Real", name = "copySign"))]
+    #[strum(props(type = "real * real -> real"))]
     RealCopySign,
     #[strum(props(p = "Real", name = "op /", global = true))]
     #[strum(props(type = "real * real -> real"))]
@@ -427,7 +428,8 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Real", name = "round"))]
     #[strum(props(type = "real -> int", throws = "Overflow"))]
     RealRound,
-    #[strum(props(p = "Real", name = "sameSign", type = "real * real -> bool"))]
+    #[strum(props(p = "Real", name = "sameSign"))]
+    #[strum(props(type = "real * real -> bool"))]
     RealSameSign,
     #[strum(props(p = "Real", name = "sign"))]
     #[strum(props(type = "real -> int", throws = "Domain"))]
@@ -590,6 +592,8 @@ pub enum BuiltInRecord {
     List,
     #[strum(props(name = "Option"))]
     Option,
+    #[strum(props(name = "Real"))]
+    Real,
     #[strum(props(name = "String"))]
     String,
     #[strum(props(name = "Sys"))]
