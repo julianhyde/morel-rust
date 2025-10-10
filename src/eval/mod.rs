@@ -23,6 +23,7 @@ pub mod int;
 pub mod list;
 pub mod math;
 pub mod order;
+pub mod real;
 pub mod session;
 pub mod string;
 pub mod val;

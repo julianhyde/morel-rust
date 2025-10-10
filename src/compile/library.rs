@@ -324,9 +324,64 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Option", name = "SOME", global = true))]
     #[strum(props(type = "forall 1 'a -> 'a option", constructor = true))]
     OptionSome,
+    #[strum(props(p = "Real", name = "abs", type = "real -> real"))]
+    RealAbs,
+    #[strum(props(
+        p = "Real",
+        name = "ceil",
+        type = "real -> int",
+        throws = "Overflow"
+    ))]
+    RealCeil,
+    #[strum(props(p = "Real", name = "checkFloat"))]
+    #[strum(props(type = "real -> real", throws = "Div, Overflow"))]
+    RealCheckFloat,
+    #[strum(props(p = "Real", name = "compare"))]
+    #[strum(props(type = "real * real -> `order`", throws = "Unordered"))]
+    RealCompare,
+    #[strum(props(
+        p = "Real",
+        name = "copySign",
+        type = "real * real -> real"
+    ))]
+    RealCopySign,
     #[strum(props(p = "Real", name = "op /", global = true))]
     #[strum(props(type = "real * real -> real"))]
     RealDivide,
+    #[strum(props(
+        p = "Real",
+        name = "floor",
+        type = "real -> int",
+        throws = "Overflow"
+    ))]
+    RealFloor,
+    #[strum(props(p = "Real", name = "fromInt", type = "int -> real"))]
+    RealFromInt,
+    #[strum(props(p = "Real", name = "fromManExp"))]
+    #[strum(props(type = "{exp:int, man:real} -> real"))]
+    RealFromManExp,
+    #[strum(props(
+        p = "Real",
+        name = "fromString",
+        type = "string -> real option"
+    ))]
+    RealFromString,
+    #[strum(props(p = "Real", name = "isFinite", type = "real -> bool"))]
+    RealIsFinite,
+    #[strum(props(p = "Real", name = "isNan", type = "real -> bool"))]
+    RealIsNan,
+    #[strum(props(p = "Real", name = "isNormal", type = "real -> bool"))]
+    RealIsNormal,
+    #[strum(props(p = "Real", name = "max", type = "real * real -> real"))]
+    RealMax,
+    #[strum(props(p = "Real", name = "maxFinite", type = "real"))]
+    RealMaxFinite,
+    #[strum(props(p = "Real", name = "min", type = "real * real -> real"))]
+    RealMin,
+    #[strum(props(p = "Real", name = "minNormalPos", type = "real"))]
+    RealMinNormalPos,
+    #[strum(props(p = "Real", name = "minPos", type = "real"))]
+    RealMinPos,
     #[strum(props(p = "Real", name = "negInf", type = "real"))]
     RealNegInf,
     #[strum(props(p = "Real", name = "op ~", type = "real -> real"))]
@@ -351,6 +406,71 @@ pub enum BuiltInFunction {
     RealOpTimes,
     #[strum(props(p = "Real", name = "posInf", type = "real"))]
     RealPosInf,
+    #[strum(props(p = "Real", name = "precision", type = "int"))]
+    RealPrecision,
+    #[strum(props(p = "Real", name = "radix", type = "int"))]
+    RealRadix,
+    #[strum(props(p = "Real", name = "realCeil", type = "real -> real"))]
+    RealRealCeil,
+    #[strum(props(p = "Real", name = "realFloor", type = "real -> real"))]
+    RealRealFloor,
+    #[strum(props(p = "Real", name = "realMod", type = "real -> real"))]
+    RealRealMod,
+    #[strum(props(p = "Real", name = "realRound", type = "real -> real"))]
+    RealRealRound,
+    #[strum(props(p = "Real", name = "realTrunc", type = "real -> real"))]
+    RealRealTrunc,
+    #[strum(props(p = "Real", name = "rem", type = "real * real -> real"))]
+    RealRem,
+    #[strum(props(
+        p = "Real",
+        name = "round",
+        type = "real -> int",
+        throws = "Overflow"
+    ))]
+    RealRound,
+    #[strum(props(
+        p = "Real",
+        name = "sameSign",
+        type = "real * real -> bool"
+    ))]
+    RealSameSign,
+    #[strum(props(
+        p = "Real",
+        name = "sign",
+        type = "real -> int",
+        throws = "Domain"
+    ))]
+    RealSign,
+    #[strum(props(p = "Real", name = "signBit", type = "real -> bool"))]
+    RealSignBit,
+    #[strum(props(
+        p = "Real",
+        name = "split",
+        type = "real -> {frac:real, whole:real}"
+    ))]
+    RealSplit,
+    #[strum(props(
+        p = "Real",
+        name = "toManExp",
+        type = "real -> {man:real, exp:int}"
+    ))]
+    RealToManExp,
+    #[strum(props(p = "Real", name = "toString", type = "real -> string"))]
+    RealToString,
+    #[strum(props(
+        p = "Real",
+        name = "trunc",
+        type = "real -> int",
+        throws = "Overflow"
+    ))]
+    RealTrunc,
+    #[strum(props(
+        p = "Real",
+        name = "unordered",
+        type = "real * real -> bool"
+    ))]
+    RealUnordered,
     #[strum(props(p = "String", name = "collate"))]
     #[strum(props(
         type = "(char * char -> `order`) -> string * string -> `order`"
@@ -514,8 +634,16 @@ pub enum BuiltInExn {
     Bind,
     #[strum(props(p = "General"))]
     Chr,
+    #[strum(props(p = "General"))]
+    Div,
+    #[strum(props(p = "General"))]
+    Domain,
+    #[strum(props(p = "General"))]
+    Overflow,
     #[strum(props(p = "General", explain = "subscript out of bounds"))]
     Subscript,
+    #[strum(props(p = "IEEEReal"))]
+    Unordered,
 }
 
 impl BuiltInExn {
