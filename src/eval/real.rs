@@ -20,6 +20,7 @@ use crate::eval::code::Span;
 use crate::eval::order::Order;
 use crate::eval::val::Val;
 use crate::shell::main::MorelError;
+use std::cmp::Ordering;
 
 /// Support for the `real` built-in type and the `Real` structure.
 pub struct Real;
@@ -73,12 +74,14 @@ impl Real {
     ) -> Result<Val, MorelError> {
         if x.is_nan() || y.is_nan() {
             Err(MorelError::Runtime(BuiltInExn::Unordered, span.clone()))
-        } else if x < y {
-            Ok(Val::Int(Order::Less as i32))
-        } else if x > y {
-            Ok(Val::Int(Order::Greater as i32))
         } else {
-            Ok(Val::Int(Order::Equal as i32))
+            Ok(Val::Order(Order(if x < y {
+                Ordering::Less
+            } else if x == y {
+                Ordering::Equal
+            } else {
+                Ordering::Greater
+            })))
         }
     }
 

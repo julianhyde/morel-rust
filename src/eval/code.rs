@@ -1351,10 +1351,9 @@ impl Eager2 {
             BoolOpEq => Val::Bool(a0.expect_bool() == a1.expect_bool()),
             BoolOpNe => Val::Bool(a0.expect_bool() != a1.expect_bool()),
             BoolOrElse => Val::Bool(a0.expect_bool() || a1.expect_bool()),
-            CharCompare => Val::Int(Char::compare(
-                a0.expect_char(),
-                a1.expect_char(),
-            ) as i32),
+            CharCompare => {
+                Val::Order(Char::compare(a0.expect_char(), a1.expect_char()))
+            }
             CharContains => {
                 Val::Bool(Char::contains(&a0.expect_string(), a1.expect_char()))
             }
@@ -1370,7 +1369,7 @@ impl Eager2 {
             CharOpNe => Val::Bool(a0.expect_char() != a1.expect_char()),
             GeneralOpO => Val::Unit,
             IntCompare => {
-                Val::Int(Int::compare(a0.expect_int(), a1.expect_int()) as i32)
+                Val::Order(Int::compare(a0.expect_int(), a1.expect_int()))
             }
             IntDiv => Val::Int(Int::div(a0.expect_int(), a1.expect_int())),
             IntMax => Val::Int(a0.expect_int().max(a1.expect_int())),
@@ -1442,10 +1441,10 @@ impl Eager2 {
             RealUnordered => {
                 Val::Bool(Real::unordered(a0.expect_real(), a1.expect_real()))
             }
-            StringCompare => {
-                Val::Int(Str::compare(&a0.expect_string(), &a1.expect_string())
-                    as i32)
-            }
+            StringCompare => Val::Order(Str::compare(
+                &a0.expect_string(),
+                &a1.expect_string(),
+            )),
             StringIsPrefix => Val::Bool(Str::is_prefix(
                 &a0.expect_string(),
                 &a1.expect_string(),
@@ -1565,8 +1564,7 @@ impl EagerF2 {
                 }
                 let s1 = tuple[0].expect_string();
                 let s2 = tuple[1].expect_string();
-                let order = Str::collate(r, f, &a0, &s1, &s2)?;
-                Ok(Val::Int(order as i32))
+                Ok(Val::Order(Str::collate(r, f, &a0, &s1, &s2)?))
             }
             StringConcatWith => {
                 let sep = a0.expect_string();

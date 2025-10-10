@@ -20,6 +20,7 @@ use crate::compile::types::Label;
 use crate::compile::types::Type;
 use crate::eval::code::{Code, Impl, Span};
 use crate::eval::frame::FrameDef;
+use crate::eval::order::Order;
 use crate::syntax::parser;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -39,6 +40,7 @@ pub enum Val {
     Bool(bool),
     Char(char),
     Int(i32),
+    Order(Order),
     Real(f32),
     String(String),
     List(Vec<Val>),
@@ -136,6 +138,13 @@ impl Val {
         match self {
             Val::Int(i) => *i,
             _ => panic!("Expected int"),
+        }
+    }
+
+    pub(crate) fn expect_order(&self) -> Order {
+        match self {
+            Val::Order(i) => i.clone(),
+            _ => panic!("Expected order"),
         }
     }
 

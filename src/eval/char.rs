@@ -44,11 +44,7 @@ impl Char {
     /// Returns `LESS`, `EQUAL`, or `GREATER` according to whether its first
     /// argument is less than, equal to, or greater than the second.
     pub(crate) fn compare(c1: char, c2: char) -> Order {
-        match c1.cmp(&c2) {
-            std::cmp::Ordering::Less => Order::Less,
-            std::cmp::Ordering::Equal => Order::Equal,
-            std::cmp::Ordering::Greater => Order::Greater,
-        }
+        Order(c1.cmp(&c2))
     }
 
     /// Computes the Morel expression `Char.contains s c`.

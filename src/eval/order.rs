@@ -15,26 +15,37 @@
 // language governing permissions and limitations under the
 // License.
 
-/// Support for the `order` enum type.
-pub enum Order {
-    Less,
-    Equal,
-    Greater,
-}
+use std::cmp::Ordering;
+
+/// Support for Morel's `order` enum type.
+///
+/// The representation is the same as Rust's built-in [Ordering] type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Order(pub Ordering);
 
 impl Order {
-    pub(crate) fn from_u8(u: u8) -> Self {
-        match u {
-            0 => Order::Less,
-            1 => Order::Equal,
-            2 => Order::Greater,
-            _ => panic!("Invalid order value: {}", u),
-        }
+    pub(crate) fn from_i32(i: i32) -> Self {
+        Order(i8_to_ordering(i as i8))
     }
 
-    pub(crate) const LESS: u8 = 0;
-    pub(crate) const EQUAL: u8 = 1;
-    pub(crate) const GREATER: u8 = 2;
+    pub(crate) const LESS: u8 = Ordering::Less as u8;
+    pub(crate) const EQUAL: u8 = Ordering::Equal as u8;
+    pub(crate) const GREATER: u8 = Ordering::Greater as u8;
 
-    pub(crate) const NAMES: [&'static str; 3] = ["LESS", "EQUAL", "GREATER"];
+    pub fn name(&self) -> &'static str {
+        match self.0 {
+            Ordering::Less => "LESS",
+            Ordering::Equal => "EQUAL",
+            Ordering::Greater => "GREATER",
+        }
+    }
+}
+
+fn i8_to_ordering(value: i8) -> Ordering {
+    match value {
+        -1 => Ordering::Less,
+        0 => Ordering::Equal,
+        1 => Ordering::Greater,
+        _ => panic!("Invalid i8 value for Ordering conversion"),
+    }
 }

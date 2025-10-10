@@ -22,13 +22,7 @@ pub struct Int {}
 
 impl Int {
     pub(crate) fn compare(n1: i32, n2: i32) -> Order {
-        if n1 < n2 {
-            Order::Less
-        } else if n1 > n2 {
-            Order::Greater
-        } else {
-            Order::Equal
-        }
+        Order(n1.cmp(&n2))
     }
 
     /// Performs Standard ML's `div` operation.

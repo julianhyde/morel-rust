@@ -21,6 +21,7 @@ use crate::eval::code::{Code, EvalEnv, Frame, Span};
 use crate::eval::order::Order;
 use crate::eval::val::Val;
 use crate::shell::main::MorelError;
+use std::cmp::Ordering;
 use std::sync::Arc;
 
 /// Support for the `string` built-in type and the `String` structure.
@@ -193,11 +194,7 @@ impl Str {
     /// `Char.compare` on the characters. Returns `LESS`, `EQUAL`, or `GREATER`,
     /// if `s1` is less than, equal to, or greater than `s2`, respectively.
     pub(crate) fn compare(s1: &str, s2: &str) -> Order {
-        match s1.cmp(s2) {
-            std::cmp::Ordering::Less => Order::Less,
-            std::cmp::Ordering::Equal => Order::Equal,
-            std::cmp::Ordering::Greater => Order::Greater,
-        }
+        Order(s1.cmp(s2))
     }
 
     /// Computes the Morel expression `String.concat l`.
@@ -238,7 +235,7 @@ impl Str {
         let chars2: Vec<char> = s2.chars().collect();
 
         for i in 0..chars1.len().min(chars2.len()) {
-            // Apply comparison function to both chars
+            // Apply a comparison function to both chars.
             let c1 = Val::Char(chars1[i]);
             let c2 = Val::Char(chars2[i]);
 
@@ -250,10 +247,10 @@ impl Str {
                 }
                 Val::Fn(builtin_fn) => {
                     if *builtin_fn == BuiltInFunction::CharCompare {
-                        Val::Int(Char::compare(
+                        Val::Order(Char::compare(
                             c1.expect_char(),
                             c2.expect_char(),
-                        ) as i32)
+                        ))
                     } else {
                         panic!(
                             "Unsupported built-in function for collate: {:?}",
@@ -266,18 +263,14 @@ impl Str {
                 }
             };
 
-            let order = result.expect_int();
-            if order != Order::Equal as i32 {
-                return Ok(Order::from_u8(order as u8));
+            let order = result.expect_order();
+            if order.0 != Ordering::Equal {
+                return Ok(order);
             }
         }
 
-        // All compared characters are equal, compare lengths
-        Ok(match chars1.len().cmp(&chars2.len()) {
-            std::cmp::Ordering::Less => Order::Less,
-            std::cmp::Ordering::Equal => Order::Equal,
-            std::cmp::Ordering::Greater => Order::Greater,
-        })
+        // All compared characters are equal, so now compare lengths.
+        Ok(Order(chars1.len().cmp(&chars2.len())))
     }
 
     /// Computes the Morel expression `String.extract (s, i, NONE)` or

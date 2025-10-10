@@ -16,7 +16,6 @@
 // License.
 
 use crate::compile::types::{Op, PrimitiveType, Type, TypeVariable};
-use crate::eval::order::Order;
 use crate::eval::real::Real;
 use crate::eval::val::Val;
 use crate::shell::prop::Output as PropOutput;
@@ -587,12 +586,8 @@ impl Pretty {
         value: &Val,
     ) -> Result<(), std::fmt::Error> {
         let list = match &value {
-            Val::Int(i) => {
-                if name == "order" {
-                    let name = Order::NAMES[*i as usize];
-                    return self.pretty_raw(buf, indent, line_end, depth, name);
-                }
-                panic!("Expected list")
+            Val::Order(o) => {
+                return self.pretty_raw(buf, indent, line_end, depth, o.name());
             }
             Val::List(list) => list,
             Val::Some(v) => {
