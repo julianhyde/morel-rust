@@ -983,7 +983,8 @@ impl Eager0 {
             OptionNone => Val::Unit,
             RealMaxFinite => Val::Real(f32::MAX),
             RealMinNormalPos => Val::Real(f32::MIN_POSITIVE),
-            RealMinPos => Val::Real(f32::MIN_POSITIVE),
+            // Smallest denormalized positive (2^-149)
+            RealMinPos => Val::Real(1.4e-45_f32),
             RealNegInf => Val::Real(f32::NEG_INFINITY),
             RealPosInf => Val::Real(f32::INFINITY),
             RealPrecision => Val::Int(24), // IEEE 754 single precision

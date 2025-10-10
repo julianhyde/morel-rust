@@ -17,6 +17,7 @@
 
 use crate::compile::types::{Op, PrimitiveType, Type, TypeVariable};
 use crate::eval::order::Order;
+use crate::eval::real::Real;
 use crate::eval::val::Val;
 use crate::shell::prop::Output as PropOutput;
 use crate::syntax::parser::{
@@ -545,20 +546,7 @@ impl Pretty {
             }
             PrimitiveType::Real => {
                 if let Val::Real(f) = value {
-                    let mut f = *f;
-                    if f.is_nan() {
-                        write!(buf, "nan")?;
-                    } else {
-                        if f.is_sign_negative() {
-                            write!(buf, "~")?;
-                            f = -f;
-                        }
-                        if f.fract() == 0.0 {
-                            write!(buf, "{:.1}", f)?;
-                        } else {
-                            write!(buf, "{}", f)?;
-                        }
-                    }
+                    buf.push_str(&Real::to_string(*f));
                 }
             }
             PrimitiveType::String => {
