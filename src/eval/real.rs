@@ -205,7 +205,13 @@ impl Real {
     ///
     /// Returns the fractional part of `r`.
     pub(crate) fn real_mod(r: f32) -> f32 {
-        r.fract()
+        if r == 0.0 || r.is_nan() {
+            r // 0 -> 0, ~0 -> ~0, nan -> nan
+        } else if r.is_infinite() {
+            0_f32.copysign(r) // +inf -> 0, -inf -> ~0
+        } else {
+            r.fract()
+        }
     }
 
     /// Computes the Morel expression `Real.realRound r`.
@@ -213,7 +219,7 @@ impl Real {
     /// Rounds to the integer-valued real value that is nearest to `r`.
     /// In the case of a tie, it rounds to the nearest even integer.
     pub(crate) fn real_round(r: f32) -> f32 {
-        r.round()
+        r.round_ties_even()
     }
 
     /// Computes the Morel expression `Real.realTrunc r`.
@@ -290,8 +296,23 @@ impl Real {
     /// Returns `{frac, whole}`, where `frac` and `whole` are the fractional
     /// and integral parts of `r`, respectively.
     pub(crate) fn split(r: f32) -> Val {
-        let whole = r.trunc();
-        let frac = r - whole;
+        let (frac, whole) = if r == 0.0 {
+            // split ~0.0 -> (~0.0, ~0.0)
+            // split 0.0 -> (0.0, 0.0)
+            (r, r)
+        } else if r.is_infinite() {
+            // split posInf -> (0.0, inf)
+            // split negInf -> (~0.0, ~inf)
+            (if r.is_sign_positive() { 0_f32 } else { -0_f32 }, r)
+        } else if r.is_nan() {
+            // split nan -> (nan, nan)
+            (r, r)
+        } else {
+            // split 2.75 -> (.75, 2.0)
+            // split ~2.75 -> (~.75, ~2.0)
+            let w = r.trunc();
+            (r - w, w)
+        };
         Val::List(vec![Val::Real(frac), Val::Real(whole)])
     }
 
@@ -314,62 +335,28 @@ impl Real {
     ///
     /// Returns `{man, exp}`, where `man` and `exp` are the mantissa
     /// and exponent of r, respectively.
+    /// Satisfies: r = man * 2^exp, where man is in [0.5, 1.0) or (-1.0, -0.5]
+    #[allow(clippy::wrong_self_convention)]
     pub(crate) fn to_man_exp(r: f32) -> Val {
-        if r == 0.0 || r.is_infinite() || r.is_nan() {
-            Val::List(vec![Val::Real(r), Val::Int(0)])
-        } else {
-            let exp = r.abs().log2().floor() as i32;
-            let man = r / 2_f32.powi(exp);
-            Val::List(vec![Val::Real(man), Val::Int(exp)])
-        }
-    }
-
-    /// Formats a real number for display in the REPL.
-    /// Uses `~` for both negative numbers and negative exponents.
-    pub(crate) fn display(r: f32) -> String {
-        if r.is_nan() {
-            "nan".to_string()
-        } else if r.is_infinite() {
-            if r > 0.0 {
-                "inf".to_string()
-            } else {
-                "~inf".to_string()
-            }
+        if r.is_nan() || r.is_infinite() {
+            // Special cases: NaN, infinity use exp = 129
+            Val::List(vec![Val::Int(129), Val::Real(r)])
         } else if r == 0.0 {
-            // Handle negative zero specially
-            if r.is_sign_negative() {
-                "~0".to_string()
-            } else {
-                "0".to_string()
-            }
+            // Zero uses exp = -126
+            Val::List(vec![Val::Int(-126), Val::Real(r)])
+        } else if !r.is_normal() {
+            // Subnormal numbers: use exp = -126 and compute mantissa
+            // accordingly. For subnormal: r = man * 2^(-126).
+            let man = r * 2_f32.powi(126);
+            Val::List(vec![Val::Int(-126), Val::Real(man)])
         } else {
-            // Use scientific notation for very large or very small numbers
+            // Normal numbers: use frexp-like calculation.
+            // Satisfies: r = man * 2^exp, where man is in [0.5, 1.0) or
+            // (-1.0, -0.5].
             let abs = r.abs();
-            if !(1e-5..1e7).contains(&abs) {
-                // Format in scientific notation with uppercase E
-                // Rust's default precision for {:E} prints only
-                // significant digits
-                let s = format!("{:E}", r);
-                // Replace leading - with ~ and E- with E~
-                let s = if let Some(stripped) = s.strip_prefix('-') {
-                    format!("~{}", stripped)
-                } else {
-                    s
-                };
-                s.replace("E-", "E~")
-            } else if r.fract() == 0.0 && abs < i64::MAX as f32 {
-                // Whole numbers display without .0
-                if r.is_sign_negative() {
-                    format!("~{}", -r.trunc() as i64)
-                } else {
-                    format!("{}", r.trunc() as i64)
-                }
-            } else {
-                // For non-whole numbers, use default formatting
-                let s = format!("{}", r);
-                // Replace negative sign with ~
-                s.replace('-', "~")
-            }
+            let exp = abs.log2().floor() as i32 + 1;
+            let man = r / 2_f32.powi(exp);
+            Val::List(vec![Val::Int(exp), Val::Real(man)])
         }
     }
 

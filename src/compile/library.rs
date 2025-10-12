@@ -341,6 +341,9 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Order", name = "LESS", global = true))]
     #[strum(props(type = "`order`", constructor = true))]
     OrderLess,
+    /// `real` is a synonym for `Real.fromInt`
+    #[strum(props(name = "real", type = "int -> real", global = true))]
+    Real,
     #[strum(props(p = "Real", name = "abs", type = "real -> real"))]
     RealAbs,
     #[strum(props(p = "Real", name = "ceil"))]

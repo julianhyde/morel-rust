@@ -322,10 +322,11 @@ impl Code {
                 assert_eq!(codes.len(), 1);
                 Code::Native1(e1, codes[0].clone())
             }
-            Impl::E2(e2) => {
-                assert_eq!(codes.len(), 2);
-                Code::Native2(e2, codes[0].clone(), codes[1].clone())
-            }
+            Impl::E2(e2) => Code::Native2(
+                e2,
+                codes[0].clone(),
+                code_or_span(codes, span, 1),
+            ),
             Impl::E3(e3) => {
                 assert_eq!(codes.len(), 3);
                 Code::Native3(
@@ -535,6 +536,16 @@ impl Code {
             Code::Native2(eager, code0, code1) => {
                 let v0 = code0.eval_f0(r, f)?;
                 let v1 = code1.eval_f0(r, f)?;
+                // If v0 is a list and v1 is a span string, it means we're
+                // applying the function to a single tuple/record argument that
+                // should be unpacked.
+                if let (Val::List(list), Val::String(_)) = (&v0, &v1) {
+                    if list.len() == 2 {
+                        return Ok(
+                            eager.apply(list[0].clone(), list[1].clone())
+                        );
+                    }
+                }
                 Ok(eager.apply(v0, v1))
             }
             Code::Native3(eager, code0, code1, code2) => {
@@ -1413,10 +1424,9 @@ impl Eager2 {
             }
             RealDivide => Val::Real(a0.expect_real() / a1.expect_real()),
             RealFromManExp => {
-                let tuple = a0.expect_list();
-                let man = tuple[0].expect_real();
-                let exp = tuple[1].expect_int();
-                Val::Real(Real::from_man_exp(man, exp))
+                // Type: {exp:int, man:real} -> real
+                // Record fields are passed in order: a0 = exp, a1 = man
+                Val::Real(Real::from_man_exp(a1.expect_real(), a0.expect_int()))
             }
             RealMax => Val::Real(Real::max(a0.expect_real(), a1.expect_real())),
             RealMin => Val::Real(Real::min(a0.expect_real(), a1.expect_real())),
@@ -1497,7 +1507,6 @@ pub enum EagerF2 {
     OptionValOf,
     RealCeil,
     RealCheckFloat,
-    RealCompare,
     RealFloor,
     RealRound,
     RealSign,
@@ -1560,14 +1569,6 @@ impl EagerF2 {
             RealCheckFloat => {
                 Real::check_float(a0.expect_real(), &a1.expect_span())
             }
-            RealCompare => {
-                let tuple = a0.expect_list();
-                Real::compare(
-                    tuple[0].expect_real(),
-                    tuple[1].expect_real(),
-                    &a1.expect_span(),
-                )
-            }
             RealFloor => Real::floor(a0.expect_real(), &a1.expect_span()),
             RealRound => Real::round(a0.expect_real(), &a1.expect_span()),
             RealSign => Real::sign(a0.expect_real(), &a1.expect_span()),
@@ -1623,6 +1624,7 @@ impl EagerF2 {
 #[derive(Clone, Copy, Debug, strum_macros::Display, PartialEq)]
 pub enum EagerF3 {
     // lint: sort until '#}'
+    RealCompare,
     StringSub,
 }
 
@@ -1651,6 +1653,11 @@ impl EagerF3 {
         use crate::eval::code::EagerF3::*;
 
         match &self {
+            RealCompare => Real::compare(
+                a0.expect_real(),
+                a1.expect_real(),
+                &a2.expect_span(),
+            ),
             StringSub => Str::sub(
                 &a0.expect_string(),
                 a1.expect_int(),
@@ -2004,10 +2011,11 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager0::OrderEqual.implements(&mut b, OrderEqual);
     Eager0::OrderGreater.implements(&mut b, OrderGreater);
     Eager0::OrderLess.implements(&mut b, OrderLess);
+    Eager1::RealFromInt.implements(&mut b, Real);
     Eager1::RealAbs.implements(&mut b, RealAbs);
     EagerF2::RealCeil.implements(&mut b, RealCeil);
     EagerF2::RealCheckFloat.implements(&mut b, RealCheckFloat);
-    EagerF2::RealCompare.implements(&mut b, RealCompare);
+    EagerF3::RealCompare.implements(&mut b, RealCompare);
     Eager2::RealCopySign.implements(&mut b, RealCopySign);
     Eager2::RealDivide.implements(&mut b, RealDivide);
     EagerF2::RealFloor.implements(&mut b, RealFloor);

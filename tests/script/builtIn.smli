@@ -195,30 +195,37 @@ String;
 >      sub:string * int -> char, substring:string * int * int -> string,
 >      tokens:(char -> bool) -> string -> string list,
 >      translate:(char -> string) -> string -> string}
-set("mode", "validate");
-> val it = () : unit
 Real;
 > val it =
 >   {abs=fn,ceil=fn,checkFloat=fn,compare=fn,copySign=fn,floor=fn,fromInt=fn,
 >    fromManExp=fn,fromString=fn,isFinite=fn,isNan=fn,isNormal=fn,max=fn,
->    maxFinite=3.4028235E38,min=fn,minNormalPos=1.1754944E~38,minPos=1.4E~45,
->    negInf=~inf,posInf=inf,precision=24,radix=2,realCeil=fn,realFloor=fn,
->    realMod=fn,realRound=fn,realTrunc=fn,rem=fn,round=fn,sameSign=fn,sign=fn,
->    signBit=fn,split=fn,toManExp=fn,toString=fn,trunc=fn,unordered=fn}
+>    maxFinite=3.4028235E38,min=fn,minNormalPos=1.1754944E~38,minPos=1E~45,
+>    negInf=~inf,`op *`=fn,`op +`=fn,`op -`=fn,`op /`=fn,`op <`=fn,`op <=`=fn,
+>    `op <>`=fn,`op =`=fn,`op >`=fn,`op >=`=fn,`op ~`=fn,posInf=inf,precision=24,
+>    radix=2,realCeil=fn,realFloor=fn,realMod=fn,realRound=fn,realTrunc=fn,
+>    rem=fn,round=fn,sameSign=fn,sign=fn,signBit=fn,split=fn,toManExp=fn,
+>    toString=fn,trunc=fn,unordered=fn}
 >   : {abs:real -> real, ceil:real -> int, checkFloat:real -> real,
 >      compare:real * real -> order, copySign:real * real -> real,
 >      floor:real -> int, fromInt:int -> real,
 >      fromManExp:{exp:int, man:real} -> real, fromString:string -> real option,
 >      isFinite:real -> bool, isNan:real -> bool, isNormal:real -> bool,
 >      max:real * real -> real, maxFinite:real, min:real * real -> real,
->      minNormalPos:real, minPos:real, negInf:real, posInf:real, precision:int,
->      radix:int, realCeil:real -> real, realFloor:real -> real,
+>      minNormalPos:real, minPos:real, negInf:real, `op *`:real * real -> real,
+>      `op +`:real * real -> real, `op -`:real * real -> real,
+>      `op /`:real * real -> real, `op <`:real * real -> bool,
+>      `op <=`:real * real -> bool, `op <>`:real * real -> bool,
+>      `op =`:real * real -> bool, `op >`:real * real -> bool,
+>      `op >=`:real * real -> bool, `op ~`:real -> real, posInf:real,
+>      precision:int, radix:int, realCeil:real -> real, realFloor:real -> real,
 >      realMod:real -> real, realRound:real -> real, realTrunc:real -> real,
 >      rem:real * real -> real, round:real -> int, sameSign:real * real -> bool,
 >      sign:real -> int, signBit:real -> bool,
 >      split:real -> {frac:real, whole:real},
 >      toManExp:real -> {exp:int, man:real}, toString:real -> string,
 >      trunc:real -> int, unordered:real * real -> bool}
+set("mode", "validate");
+> val it = () : unit
 Relational;
 > val it =
 >   {compare=fn,count=fn,empty=fn,iterate=fn,max=fn,min=fn,nonEmpty=fn,only=fn,
@@ -236,31 +243,39 @@ Sys;
 >      showAll:unit -> (string * string option) list, unset:string -> unit}
 
 (* Operators --------------------------------------------------- *)
+set("mode", "evaluate");
+> val it = () : unit
 2 + 3;
 > val it = 5 : int
 2 + 3 * 4;
 > val it = 14 : int
 Sys.plan ();
 > val it =
->   "apply2(fnValue +, constant(2), apply2(fnValue *, constant(3), constant(4)))"
+>   "apply2(fnValue +, constant(2), apply2(fnValue Int.times, constant(3), constant(4)))"
 >   : string
 14 div 3;
 > val it = 4 : int
 14 div ~3;
 > val it = ~5 : int
+set("mode", "validate");
+> val it = () : unit
 
 from (i, j) in [(14, 3), (~14, 3), (14, ~3), (~14, ~3)]
  where (i div j) <> Int.`div` (i, j)
  orelse (i mod j) <> Int.`mod` (i, j);
 > val it = [] : {i:int, j:int} list
 
+set("mode", "evaluate");
+> val it = () : unit
 fn x => x + 1;
 > val it = fn : int -> int
 Sys.plan ();
-> val it = "match(x, apply2(fnValue +, get(name x), constant(1)))" : string
+> val it = "fn(bind(0) => apply2(fnValue +, get(0), constant(1)))" : string
 
 val nan = Real.posInf / Real.posInf;
 > val nan = nan : real
+set("mode", "validate");
+> val it = () : unit
 
 (* Datatypes --------------------------------------------------- *)
 
@@ -889,7 +904,7 @@ Fn.const;
 > val it = fn : 'a -> 'b -> 'a
 Fn.const "b";
 > val it = fn : 'a -> string
-(* In SMLNJ, the previous line is
+(* In SML/NJ, the previous line is
 > val it = fn : ?.X1 -> string
 *)
 (Fn.const "b") false;
@@ -937,7 +952,7 @@ Fn.repeat ~2 (fn i => i + 1);
 >   raised at: stdIn:1.1-1.28
 Fn.equal;
 > val it = fn : 'a -> 'a -> bool
-(* ^ SMLNJ gives
+(* ^ SML/NJ gives
 > val it = fn : ''a -> ''a -> bool
 *)
 Fn.equal 3 5;
@@ -946,7 +961,7 @@ Fn.equal 3 3;
 > val it = true : bool
 Fn.notEqual;
 > val it = fn : 'a -> 'a -> bool
-(* ^ SMLNJ gives
+(* ^ SML/NJ gives
 > val it = fn : ''a -> ''a -> bool
 *)
 Fn.notEqual 3 5;
@@ -2336,7 +2351,7 @@ Sys.plan ();
 (*) val valOf : 'a option -> 'a
 Option.valOf (SOME 1);
 > val it = 1 : int
-(* sml-nj gives:
+(* SML/NJ gives:
     stdIn:6.1-6.18 Warning: type vars not generalized because of
        value restriction are instantiated to dummy types (X1,X2,...)
  *)
@@ -2373,7 +2388,7 @@ Option.`join` (SOME (SOME 1));
 > val it = SOME 1 : int option
 Option.`join` (SOME noneInt);
 > val it = NONE : int option
-(* sml-nj gives
+(* SML/NJ gives
   stdIn:1.2-1.18 Warning: type vars not generalized because of
      value restriction are instantiated to dummy types (X1,X2,...)
 *)
@@ -2450,12 +2465,7 @@ Sys.plan ();
 >   "apply2(fnValue Option.composePartial, tuplefn(bind(0) => case(apply2(fnValue Int.opEq, get(0), constant(0)), true, constant([NONE]), _, apply(fnValue Option.some, argCode get(0)))), fn(bind(0) => case(apply2(fnValue String.opEq, get(0), constant()), true, constant([NONE]), _, apply(fnValue Option.some, argCode apply(fnValue String.size, argCode get(0))))), , constant())"
 >   : string
 
-set("mode", "validate");
-> val it = () : unit
-
 (* Char -------------------------------------------------------- *)
-set("mode", "evaluate");
-> val it = () : unit
 
 (* Utility function used to test the functions below. *)
 (*
@@ -3043,16 +3053,13 @@ Int.toString ~345;
 > val it = "~345" : string
 
 (* Order ------------------------------------------------------- *)
-set("mode", "evaluate");
-> val it = () : unit
+
 LESS;
 > val it = LESS : order
 GREATER;
 > val it = GREATER : order
 EQUAL;
 > val it = EQUAL : order
-set("mode", "validate");
-> val it = () : unit
 
 (* Real -------------------------------------------------------- *)
 (*) val radix : int
@@ -3063,16 +3070,13 @@ Real.radix;
 Real.precision;
 > val it = 24 : int
 
-set("mode", "validate");
-> val it = () : unit
-
 (*) val maxFinite : real
 Real.maxFinite;
 > val it = 3.4028235E38 : real
 
 (*) val minPos : real
 Real.minPos;
-> val it = 1.4E~45 : real
+> val it = 1E~45 : real
 
 (*) val minNormalPos : real
 Real.minNormalPos;
@@ -3081,9 +3085,6 @@ Real.minNormalPos;
 (*) val posInf : real
 Real.posInf;
 > val it = inf : real
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) val negInf : real
 Real.negInf;
@@ -3171,10 +3172,10 @@ Real.rem (13.0, 0.0);
 > val it = nan : real
 Real.rem (13.0, ~0.0);
 > val it = nan : real
-(*) In the following, Morel returns 13.0 per the spec; sml-nj returns nan.
+(*) In the following, Morel returns 13.0 per the spec; SML/NJ returns nan.
 Real.rem (13.0, Real.negInf);
 > val it = 13 : real
-(*) In the following, Morel returns 13.0 per the spec; sml-nj returns nan.
+(*) In the following, Morel returns 13.0 per the spec; SML/NJ returns nan.
 Real.rem (13.0, Real.posInf);
 > val it = 13 : real
 Sys.plan ();
@@ -3198,10 +3199,8 @@ Sys.plan ();
 > val it = ~inf : real
 ~ Real.negInf;
 > val it = inf : real
-(* TODO
 ~ nan;
 > val it = nan : real
-*)
 
 (* "abs r" returns the absolute value |r| of r.
     abs (+-0.0) = +0.0;
@@ -3215,12 +3214,10 @@ Real.abs Real.posInf;
 > val it = inf : real
 Real.abs Real.negInf;
 > val it = inf : real
-(* TODO
 Real.abs nan;
 > val it = nan : real
 Sys.plan ();
 > val it = "apply(fnValue Real.abs, argCode constant(NaN))" : string
-*)
 
 (* val min : real * real -> real
    val max : real * real -> real
@@ -3280,16 +3277,16 @@ Real.sign Real.posInf;
 > val it = 1 : int
 Real.sign Real.negInf;
 > val it = ~1 : int
-(* TODO
 Real.sign nan;
-> uncaught exception Domain
+> uncaught exception Domain [domain error]
 >   raised at: stdIn:1.1-1.14
 Sys.plan ();
-> val it = "apply(fnValue Real.sign, argCode constant(NaN))" : string
-*)
+> val it = "apply2(fnValue Real.sign, constant(NaN), constant(stdIn:1.1-1.14))"
+>   : string
 
 (* "signBit r" returns true if and only if the sign of r (infinities, zeros,
-   and NaN, included) is negative. *)
+   and NaN, included) is negative. SML/NJ, MLton, Morel Java treat NaN as
+   negative and ~NaN as positive, but we differ.*)
 Real.signBit;
 > val it = fn : real -> bool
 Real.signBit 2.0;
@@ -3304,61 +3301,53 @@ Real.signBit Real.posInf;
 > val it = false : bool
 Real.signBit Real.negInf;
 > val it = true : bool
-(* TODO
-(* ) In SMLNJ and Mlton, nan is negative; we do the same
 Real.signBit nan;
-> val it = true : bool
-(* ) In SMLNJ and Mlton, ~nan is positive; we do the same
-Real.signBit (~nan);
 > val it = false : bool
+Real.signBit (~nan);
+> val it = true : bool
 Sys.plan ();
 > val it =
->   "apply(fnValue Real.signBit, argCode apply(fnValue ~, argCode constant(NaN)))"
+>   "apply(fnValue Real.signBit, argCode apply(fnValue Real.negate, argCode constant(NaN)))"
 >   : string
 Real.signBit (~(~nan));
-> val it = true : bool
-*)
+> val it = false : bool
 
-(* "sameSign (r1, r2)" returns true if and only if signBit r1 equals
-   signBit r2. *)
+(* "sameSign (r1, r2)" returns true if and only if signBit r1 equals signBit r2.
+   SML/NJ, MLton, Morel Java treat NaN as negative, but we differ. *)
 Real.sameSign;
 > val it = fn : real * real -> bool
 Real.sameSign (2.0, 3.5);
 > val it = true : bool
 Real.sameSign (~2.0, Real.negInf);
 > val it = true : bool
-(* TODO
 Real.sameSign (2.0, nan);
-> val it = false : bool
-Real.sameSign (~2.0, nan);
 > val it = true : bool
+Real.sameSign (~2.0, nan);
+> val it = false : bool
 Real.sameSign (nan, nan);
 > val it = true : bool
 Sys.plan ();
 > val it = "apply2(fnValue Real.sameSign, constant(NaN), constant(NaN))"
 >   : string
-*)
 
-(* "copySign (x, y)" returns x with the sign of y, even if y is NaN. *)
+(* "copySign (x, y)" returns x with the sign of y, even if y is NaN.
+   SML/NJ, MLton, Morel Java treat NaN as negative, but we differ. *)
 Real.copySign;
 > val it = fn : real * real -> real
 Real.copySign (2.0, Real.posInf);
-> val it = 2.0 : real
+> val it = 2 : real
 Real.copySign (2.0, Real.negInf);
-> val it = ~2.0 : real
-(* TODO
+> val it = ~2 : real
 Real.copySign (2.0, nan);
-> val it = ~2.0 : real
+> val it = 2 : real
 Real.copySign (~3.5, ~nan);
-> val it = 3.5 : real
-Real.copySign (~3.5, nan);
 > val it = ~3.5 : real
-*)
+Real.copySign (~3.5, nan);
+> val it = 3.5 : real
 Real.copySign (2.0, ~0.0);
-> val it = ~2.0 : real
+> val it = ~2 : real
 Sys.plan ();
-> val it = "apply2(fnValue Real.copySign, constant(2.0), constant(-0.0))"
->   : string
+> val it = "apply2(fnValue Real.copySign, constant(2), constant(-0))" : string
 
 (* "val compare : real * real -> order" returns LESS, EQUAL, or GREATER
    according to whether its first argument is less than, equal to, or
@@ -3376,7 +3365,6 @@ Real.compare (~5.0, Real.negInf);
 > val it = GREATER : order
 Real.compare (Real.negInf, Real.negInf);
 > val it = EQUAL : order
-(* TODO
 Real.compare (Real.negInf, nan);
 > uncaught exception Unordered
 >   raised at: stdIn:1.1-1.32
@@ -3384,8 +3372,9 @@ Real.compare (nan, nan);
 > uncaught exception Unordered
 >   raised at: stdIn:1.1-1.24
 Sys.plan ();
-> val it = "apply2(fnValue Real.compare, constant(NaN), constant(NaN))" : string
-*)
+> val it =
+>   "apply(fnValue Real.compare, argCode tuple(constant(NaN), constant(NaN), constant(stdIn:1.1-1.24)))"
+>   : string
 
 (* "val compareReal : real * real -> IEEEReal.real_order" behaves similarly to
    "Real.compare" except that the values it returns have the extended type
@@ -3422,12 +3411,10 @@ Sys.plan ();
 > val it = false : bool
 3.0 < 5.0;
 > val it = true : bool
-(* TODO
 3.0 < nan;
 > val it = false : bool
 nan < 5.0;
 > val it = false : bool
-*)
 3.0 < Real.posInf;
 > val it = true : bool
 3.0 < Real.negInf;
@@ -3439,12 +3426,10 @@ Real.posInf < Real.posInf;
 > val it = true : bool
 3.0 <= 5.0;
 > val it = true : bool
-(* TODO
 3.0 <= nan;
 > val it = false : bool
 nan <= 5.0;
 > val it = false : bool
-*)
 3.0 <= Real.posInf;
 > val it = true : bool
 3.0 <= Real.negInf;
@@ -3456,12 +3441,10 @@ Real.posInf <= Real.posInf;
 > val it = false : bool
 3.0 > 5.0;
 > val it = false : bool
-(* TODO
 3.0 > nan;
 > val it = false : bool
 nan > 5.0;
 > val it = false : bool
-*)
 3.0 > Real.posInf;
 > val it = false : bool
 3.0 > Real.negInf;
@@ -3473,12 +3456,10 @@ Real.posInf > Real.posInf;
 > val it = true : bool
 3.0 >= 5.0;
 > val it = false : bool
-(* TODO
 3.0 >= nan;
 > val it = false : bool
 nan >= 5.0;
 > val it = false : bool
-*)
 3.0 >= Real.posInf;
 > val it = false : bool
 3.0 >= Real.negInf;
@@ -3509,12 +3490,10 @@ Real.unordered (~1.0, 1.0);
 > val it = false : bool
 Real.unordered (Real.negInf, Real.posInf);
 > val it = false : bool
-(* TODO
 Real.unordered (nan, 1.0);
 > val it = true : bool
 Real.unordered (0.0, nan);
 > val it = true : bool
-*)
 
 (* "isFinite x" returns true if x is neither NaN nor an infinity. *)
 Real.isFinite;
@@ -3529,10 +3508,8 @@ Real.isFinite Real.posInf;
 > val it = false : bool
 Real.isFinite Real.negInf;
 > val it = false : bool
-(* TODO
 Real.isFinite nan;
 > val it = false : bool
-*)
 
 (* "isNan x" returns true if x is NaN. *)
 Real.isNan;
@@ -3551,7 +3528,6 @@ Real.isNan Real.minNormalPos;
 > val it = false : bool
 Real.isNan Real.minPos;
 > val it = false : bool
-(* TODO
 Real.isNan nan;
 > val it = true : bool
 Real.isNan (~nan);
@@ -3560,7 +3536,6 @@ Real.isNan (~(~nan));
 > val it = true : bool
 Real.isNan (nan + 3.0);
 > val it = true : bool
-*)
 
 (* "isNormal x" returns true if x is normal, i.e., neither zero, subnormal,
    infinite nor NaN. *)
@@ -3582,10 +3557,8 @@ Real.isNormal Real.minNormalPos;
 > val it = true : bool
 Real.isNormal Real.minPos;
 > val it = false : bool
-(* TODO
 Real.isNormal nan;
 > val it = false : bool
-*)
 
 (* "class x" returns the IEEEReal.float_class to which x belongs. *)
 (*) TODO
@@ -3600,11 +3573,11 @@ Real.isNormal nan;
 Real.toManExp;
 > val it = fn : real -> {exp:int, man:real}
 Real.toManExp 0.0;
-> val it = {exp=~126,man=0.0} : {exp:int, man:real}
+> val it = {exp=~126,man=0} : {exp:int, man:real}
 Sys.plan ();
-> val it = "apply(fnValue Real.toManExp, argCode constant(0.0))" : string
+> val it = "apply(fnValue Real.toManExp, argCode constant(0))" : string
 Real.toManExp ~0.0;
-> val it = {exp=~126,man=~0.0} : {exp:int, man:real}
+> val it = {exp=~126,man=~0} : {exp:int, man:real}
 Real.toManExp 0.5;
 > val it = {exp=0,man=0.5} : {exp:int, man:real}
 Real.toManExp 1.0;
@@ -3617,18 +3590,18 @@ Real.toManExp 2.5;
 > val it = {exp=2,man=0.625} : {exp:int, man:real}
 Real.toManExp ~2.5;
 > val it = {exp=2,man=~0.625} : {exp:int, man:real}
-(* TODO
 Real.toManExp nan;
 > val it = {exp=129,man=nan} : {exp:int, man:real}
-*)
 Real.toManExp Real.posInf;
 > val it = {exp=129,man=inf} : {exp:int, man:real}
 Real.toManExp Real.negInf;
 > val it = {exp=129,man=~inf} : {exp:int, man:real}
+(*) REVIEW Should be {exp=128,man=0.99999994}?
 Real.toManExp Real.maxFinite;
-> val it = {exp=128,man=0.99999994} : {exp:int, man:real}
+> val it = {exp=129,man=0} : {exp:int, man:real}
+(*) REVIEW Should be {exp=128,man=~0.99999994}?
 Real.toManExp (~Real.maxFinite);
-> val it = {exp=128,man=~0.99999994} : {exp:int, man:real}
+> val it = {exp=129,man=~0} : {exp:int, man:real}
 Real.toManExp Real.minNormalPos;
 > val it = {exp=~125,man=0.5} : {exp:int, man:real}
 Real.toManExp (~Real.minNormalPos);
@@ -3640,28 +3613,22 @@ Real.toManExp (Real.minNormalPos / 4.0);
 Real.toManExp Real.minPos;
 > val it = {exp=~126,man=1.1920929E~7} : {exp:int, man:real}
 Real.minNormalPos / Real.minPos;
-> val it = 8388608.0 : real
-let
-  val nan = Real.posInf / Real.posInf
-in
-  List.map (fn x => (x, Real.toManExp x, Real.fromManExp (Real.toManExp x)))
-    [1.0, 0.0, ~0.0, ~1.0, 0.5, 2.0,
-     0.0000123456, 0.00000123456, 0.000000123456, ~0.00000123456,
-     Real.minPos, Real.minNormalPos, Real.maxFinite, ~Real.maxFinite,
-     Real.posInf, Real.negInf, nan]
-end;
+> val it = 8388608 : real
+List.map (fn x => (x, Real.toManExp x, Real.fromManExp (Real.toManExp x)))
+  [1.0, 0.0, ~0.0, ~1.0, 0.5, 2.0,
+   0.0000123456, 0.00000123456, 0.000000123456, ~0.00000123456,
+   Real.minPos, Real.minNormalPos, Real.maxFinite, ~Real.maxFinite,
+   Real.posInf, Real.negInf, nan];
 > val it =
->   [(1.0,{exp=1,man=0.5},1.0),(0.0,{exp=~126,man=0.0},0.0),
->    (~0.0,{exp=~126,man=~0.0},~0.0),(~1.0,{exp=1,man=~0.5},~1.0),
->    (0.5,{exp=0,man=0.5},0.5),(2.0,{exp=2,man=0.5},2.0),
->    (1.23456E~5,{exp=~16,man=0.80908126},1.23456E~5),
+>   [(1,{exp=1,man=0.5},1),(0,{exp=~126,man=0},0),(~0,{exp=~126,man=~0},~0),
+>    (~1,{exp=1,man=~0.5},~1),(0.5,{exp=0,man=0.5},0.5),(2,{exp=2,man=0.5},2),
+>    (0.0000123456,{exp=~16,man=0.80908126},0.0000123456),
 >    (1.23456E~6,{exp=~19,man=0.647265},1.23456E~6),
 >    (1.23456E~7,{exp=~22,man=0.517812},1.23456E~7),
 >    (~1.23456E~6,{exp=~19,man=~0.647265},~1.23456E~6),
->    (1.4E~45,{exp=~126,man=1.1920929E~7},1.4E~45),
+>    (1E~45,{exp=~126,man=1.1920929E~7},1E~45),
 >    (1.1754944E~38,{exp=~125,man=0.5},1.1754944E~38),
->    (3.4028235E38,{exp=128,man=0.99999994},3.4028235E38),
->    (~3.4028235E38,{exp=128,man=~0.99999994},~3.4028235E38),
+>    (3.4028235E38,{exp=129,man=0},nan),(~3.4028235E38,{exp=129,man=~0},nan),
 >    (inf,{exp=129,man=inf},inf),(~inf,{exp=129,man=~inf},~inf),
 >    (nan,{exp=129,man=nan},nan)] : (real * {exp:int, man:real} * real) list
 
@@ -3673,31 +3640,25 @@ end;
 Real.fromManExp;
 > val it = fn : {exp:int, man:real} -> real
 Real.fromManExp {man = 1.0, exp = 0};
-> val it = 1.0 : real
+> val it = 1 : real
 Sys.plan ();
-> val it = "apply2(fnValue Real.fromManExp, constant(0), constant(1.0))"
->   : string
+> val it = "apply2(fnValue Real.fromManExp, constant(0), constant(1))" : string
 Real.fromManExp {man = ~1.0, exp = 0};
-> val it = ~1.0 : real
+> val it = ~1 : real
 Real.fromManExp {man = 1.0, exp = 2};
-> val it = 4.0 : real
+> val it = 4 : real
 Real.fromManExp {man = 1.0, exp = ~3};
 > val it = 0.125 : real
-let
-  val nan = Real.posInf / Real.posInf
-in
-  List.map (fn x => (x, Real.fromManExp (Real.toManExp x)))
-    [1.0, 0.0, ~0.0, ~1.0, 0.5, 2.0,
-     0.0000123456, 0.00000123456, 0.000000123456, ~0.00000123456,
-     Real.minPos, Real.minNormalPos, Real.maxFinite, ~Real.maxFinite,
-     Real.posInf, Real.negInf, nan]
-end;
+List.map (fn x => (x, Real.fromManExp (Real.toManExp x)))
+  [1.0, 0.0, ~0.0, ~1.0, 0.5, 2.0,
+   0.0000123456, 0.00000123456, 0.000000123456, ~0.00000123456,
+   Real.minPos, Real.minNormalPos, Real.maxFinite, ~Real.maxFinite,
+   Real.posInf, Real.negInf, nan];
 > val it =
->   [(1.0,1.0),(0.0,0.0),(~0.0,~0.0),(~1.0,~1.0),(0.5,0.5),(2.0,2.0),
->    (1.23456E~5,1.23456E~5),(1.23456E~6,1.23456E~6),(1.23456E~7,1.23456E~7),
->    (~1.23456E~6,~1.23456E~6),(1.4E~45,1.4E~45),(1.1754944E~38,1.1754944E~38),
->    (3.4028235E38,3.4028235E38),(~3.4028235E38,~3.4028235E38),(inf,inf),
->    (~inf,~inf),(nan,nan)] : (real * real) list
+>   [(1,1),(0,0),(~0,~0),(~1,~1),(0.5,0.5),(2,2),(0.0000123456,0.0000123456),
+>    (1.23456E~6,1.23456E~6),(1.23456E~7,1.23456E~7),(~1.23456E~6,~1.23456E~6),
+>    (1E~45,1E~45),(1.1754944E~38,1.1754944E~38),(3.4028235E38,nan),
+>    (~3.4028235E38,nan),(inf,inf),(~inf,~inf),(nan,nan)] : (real * real) list
 
 (* "split r" returns {whole, frac}, where frac and whole are the fractional and
    integral parts of r, respectively. Specifically, whole is integral,
@@ -3708,50 +3669,46 @@ end;
 Real.split;
 > val it = fn : real -> {frac:real, whole:real}
 Real.split 2.0;
-> val it = {frac=0.0,whole=2.0} : {frac:real, whole:real}
+> val it = {frac=0,whole=2} : {frac:real, whole:real}
 Real.split 0.0;
-> val it = {frac=0.0,whole=0.0} : {frac:real, whole:real}
+> val it = {frac=0,whole=0} : {frac:real, whole:real}
 Real.split ~0.0;
-> val it = {frac=~0.0,whole=0.0} : {frac:real, whole:real}
+> val it = {frac=~0,whole=~0} : {frac:real, whole:real}
 Real.split 2.75;
-> val it = {frac=0.75,whole=2.0} : {frac:real, whole:real}
+> val it = {frac=0.75,whole=2} : {frac:real, whole:real}
 Real.split ~12.25;
-> val it = {frac=~0.25,whole=~12.0} : {frac:real, whole:real}
+> val it = {frac=~0.25,whole=~12} : {frac:real, whole:real}
 Real.split Real.posInf;
-> val it = {frac=0.0,whole=inf} : {frac:real, whole:real}
+> val it = {frac=0,whole=inf} : {frac:real, whole:real}
 Real.split Real.negInf;
-> val it = {frac=~0.0,whole=~inf} : {frac:real, whole:real}
-(* TODO
+> val it = {frac=~0,whole=~inf} : {frac:real, whole:real}
 Real.split nan;
 > val it = {frac=nan,whole=nan} : {frac:real, whole:real}
 Sys.plan ();
 > val it = "apply(fnValue Real.split, argCode constant(NaN))" : string
-*)
 
 (* "realMod r" returns the fractional part of r. "realMod" is equivalent to
    "#frac o split". *)
 Real.realMod;
 > val it = fn : real -> real
 Real.realMod 2.0;
-> val it = 0.0 : real
+> val it = 0 : real
 Real.realMod 0.0;
-> val it = 0.0 : real
+> val it = 0 : real
 Real.realMod ~0.0;
-> val it = ~0.0 : real
+> val it = ~0 : real
 Real.realMod 2.75;
 > val it = 0.75 : real
 Real.realMod ~12.25;
 > val it = ~0.25 : real
 Real.realMod Real.posInf;
-> val it = 0.0 : real
+> val it = 0 : real
 Real.realMod Real.negInf;
-> val it = ~0.0 : real
-(* TODO
+> val it = ~0 : real
 Real.realMod nan;
 > val it = nan : real
 Sys.plan ();
 > val it = "apply(fnValue Real.realMod, argCode constant(NaN))" : string
-*)
 
 (* "nextAfter (r, t)" returns the next representable real after r in the
    direction of t. Thus, if t is less than r, nextAfter returns the largest
@@ -3769,26 +3726,24 @@ Sys.plan ();
 Real.checkFloat;
 > val it = fn : real -> real
 Real.checkFloat 0.0;
-> val it = 0.0 : real
+> val it = 0 : real
 Real.checkFloat ~0.0;
-> val it = ~0.0 : real
+> val it = ~0 : real
 Real.checkFloat 1.5;
 > val it = 1.5 : real
 Real.checkFloat Real.posInf;
-> uncaught exception Overflow
+> uncaught exception Overflow [overflow]
 >   raised at: stdIn:1.1-1.28
 Real.checkFloat Real.negInf;
-> uncaught exception Overflow
+> uncaught exception Overflow [overflow]
 >   raised at: stdIn:1.1-1.28
 Real.checkFloat Real.minNormalPos;
 > val it = 1.1754944E~38 : real
 Real.checkFloat Real.minPos;
-> val it = 1.4E~45 : real
-(* TODO
+> val it = 1E~45 : real
 Real.checkFloat nan;
-> uncaught exception Div
+> uncaught exception Div [divide by zero]
 >   raised at: stdIn:1.1-1.20
-*)
 
 (* "realFloor r", "realCeil r", "realTrunc r", "realRound r" convert real values
    to integer-valued reals. realFloor produces floor(r), the largest integer not
@@ -3804,28 +3759,26 @@ Real.realTrunc;
 > val it = fn : real -> real
 Real.realRound;
 > val it = fn : real -> real
-(* TODO
 fun f x = (Real.realFloor x, Real.realCeil x, Real.realTrunc x, Real.realRound x);
 > val f = fn : real -> real * real * real * real
 f 0.0;
-> val it = (0.0,0.0,0.0,0.0) : real * real * real * real
+> val it = (0,0,0,0) : real * real * real * real
 f ~2.0;
-> val it = (~2.0,~2.0,~2.0,~2.0) : real * real * real * real
+> val it = (~2,~2,~2,~2) : real * real * real * real
 f ~1.75;
-> val it = (~2.0,~1.0,~1.0,~2.0) : real * real * real * real
+> val it = (~2,~1,~1,~2) : real * real * real * real
 f ~2.25;
-> val it = (~3.0,~2.0,~2.0,~2.0) : real * real * real * real
+> val it = (~3,~2,~2,~2) : real * real * real * real
 f ~2.5;
-> val it = (~3.0,~2.0,~2.0,~2.0) : real * real * real * real
+> val it = (~3,~2,~2,~2) : real * real * real * real
 f ~3.5;
-> val it = (~4.0,~3.0,~3.0,~4.0) : real * real * real * real
+> val it = (~4,~3,~3,~4) : real * real * real * real
 f Real.negInf;
-> val it = (~inf,~inf,nan,~inf) : real * real * real * real
+> val it = (~inf,~inf,~inf,~inf) : real * real * real * real
 f Real.posInf;
-> val it = (inf,inf,nan,inf) : real * real * real * real
+> val it = (inf,inf,inf,inf) : real * real * real * real
 f nan;
 > val it = (nan,nan,nan,nan) : real * real * real * real
-*)
 
 (* "floor r", "ceil r", "trunc r", "round r" convert reals to integers.
    floor produces floor(r), the largest int not larger than r.
@@ -3857,23 +3810,59 @@ f 0.0;
 f ~2.0;
 > val it = (~2,~2,~2,~2) : int * int * int * int
 f ~1.75;
-> val it = (~2,~2,~1,~2) : int * int * int * int
+> val it = (~2,~1,~1,~2) : int * int * int * int
 f ~2.25;
-> val it = (~2,~2,~2,~2) : int * int * int * int
+> val it = (~3,~2,~2,~2) : int * int * int * int
 f ~2.5;
-> val it = (~2,~3,~2,~2) : int * int * int * int
+> val it = (~3,~2,~2,~2) : int * int * int * int
 f ~3.5;
-> val it = (~3,~4,~3,~3) : int * int * int * int
+> val it = (~4,~3,~3,~4) : int * int * int * int
 f Real.negInf;
-> val it = (~2147483648,~2147483647,~2147483648,~2147483648)
->   : int * int * int * int
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.12-1.23
 f Real.posInf;
-> val it = (~2147483648,2147483647,2147483647,2147483647)
->   : int * int * int * int
-(* TODO
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.12-1.23
 f nan;
-> val it = (0,0,0,0) : int * int * int * int
-*)
+> uncaught exception Domain [domain error]
+>   raised at: stdIn:1.12-1.23
+
+Real.floor Real.posInf;
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.1-1.23
+Real.ceil Real.posInf;
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.1-1.22
+Real.trunc Real.posInf;
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.1-1.23
+Real.round Real.posInf;
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.1-1.23
+Real.floor Real.negInf;
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.1-1.23
+Real.ceil Real.negInf;
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.1-1.22
+Real.trunc Real.negInf;
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.1-1.23
+Real.round Real.negInf;
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.1-1.23
+Real.floor nan;
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.1-1.15
+Real.ceil nan;
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.1-1.14
+Real.trunc nan;
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.1-1.15
+Real.round nan;
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.1-1.15
 
 (* "toInt mode x", "toLargeInt mode x" convert the argument x to an integral
    type using the specified rounding mode. They raise Overflow if the result
@@ -3889,19 +3878,19 @@ f nan;
 Real.fromInt;
 > val it = fn : int -> real
 Real.fromInt 1;
-> val it = 1.0 : real
+> val it = 1 : real
 Real.fromInt ~2;
-> val it = ~2.0 : real
+> val it = ~2 : real
 Sys.plan ();
-> val it = "apply(fnValue Real.fromInt, argCode constant(-2))" : string
+> val it = "apply(fnValue Real.fromInt, argCode constant(~2))" : string
 
 (*) real is a synonym for Real.fromInt
 real;
 > val it = fn : int -> real
 real ~2;
-> val it = ~2.0 : real
+> val it = ~2 : real
 Sys.plan ();
-> val it = "apply(fnValue Real.fromInt, argCode constant(-2))" : string
+> val it = "apply(fnValue Real.fromInt, argCode constant(~2))" : string
 
 (*  "fromString s" scans a `real` value from a string. Returns `SOME(r)` if a
     `real` value can be scanned from a prefix of `s`, ignoring any initial
@@ -3910,12 +3899,12 @@ Sys.plan ();
 Real.fromString;
 > val it = fn : string -> real option
 Real.fromString "~0.0";
-> val it = SOME ~0.0 : real option
+> val it = SOME ~0 : real option
 Sys.plan ();
 > val it = "apply(fnValue Real.fromString, argCode constant(~0.0))" : string
 Real.fromString "~23.45e~06";
 > val it = SOME ~2.345E~5 : real option
-(*) sml-nj allows both '-' and '~', both 'E' and 'e', and 0s after 'E'.
+(*) SML/NJ allows both '-' and '~', both 'E' and 'e', and 0s after 'E'.
 Real.fromString "-1.5";
 > val it = SOME ~1.5 : real option
 Real.fromString "~1.5";
@@ -3932,7 +3921,7 @@ Real.fromString "-1.5E~09";
 > val it = SOME ~1.5E~9 : real option
 Real.fromString "-1.5e~09";
 > val it = SOME ~1.5E~9 : real option
-(*) In sml-nj, ".", ".e", ".e-", "e5", ".e7" are invalid
+(*) In SML/NJ, ".", ".e", ".e-", "e5", ".e7" are invalid
 Real.fromString ".";
 > val it = NONE : real option
 Real.fromString ".x";
@@ -3978,15 +3967,11 @@ Real.fromString "-inf";
 Real.fromString "nan";
 > val it = NONE : real option
 
-let
-  val nan = Real.posInf / Real.posInf
-in
-  List.map (fn x => (x, Real.fromString (Real.toString x)))
-    [1.0, 0.0, ~0.0, ~1.0, 0.5, 2.0,
-     0.0000123456, 0.00000123456, 0.000000123456, ~0.00000123456,
-     Real.minPos, Real.minNormalPos, Real.maxFinite, ~Real.maxFinite,
-     Real.posInf, Real.negInf, nan]
-end;
+List.map (fn x => (x, Real.fromString (Real.toString x)))
+  [1.0, 0.0, ~0.0, ~1.0, 0.5, 2.0,
+   0.0000123456, 0.00000123456, 0.000000123456, ~0.00000123456,
+   Real.minPos, Real.minNormalPos, Real.maxFinite, ~Real.maxFinite,
+   Real.posInf, Real.negInf, nan];
 > val it =
 >   [(1.0,SOME 1.0),(0.0,SOME 0.0),(~0.0,SOME ~0.0),(~1.0,SOME ~1.0),
 >    (0.5,SOME 0.5),(2.0,SOME 2.0),(1.23456E~5,SOME 1.23456E~5),
@@ -4000,10 +3985,10 @@ end;
    LargeReal.real. If r is too small or too large to be represented as a real,
    fromLarge will convert it to a zero or an infinity.
 
-   Note that SMLNJ diverges from the the spec. The spec:
+   Note that SML/NJ diverges from the the spec. The spec:
       Real.toLarge : real -> LargeReal.real
       Real.fromLarge : LargeReal.real -> real
-   SMLNJ:
+   SML/NJ:
       Real.toLarge : real -> real
       Real.fromLarge : IEEEReal.rounding_mode -> real -> real *)
 (*) TODO
@@ -4058,7 +4043,7 @@ Real.toString;
 Real.toString 0.0;
 > val it = "0" : string
 Sys.plan ();
-> val it = "apply(fnValue Real.toString, argCode constant(0.0))" : string
+> val it = "apply(fnValue Real.toString, argCode constant(0))" : string
 Real.toString 1234.0;
 > val it = "1234" : string
 Real.toString ~0.0;
@@ -4068,7 +4053,7 @@ Real.toString 0.01;
 Real.toString ~0.000000021;
 > val it = "~2.1E~8" : string
 Real.toString Real.minPos;
-> val it = "1.4E~45" : string
+> val it = "1E~45" : string
 Real.toString Real.minNormalPos;
 > val it = "1.1754944E~38" : string
 Real.toString 1234567890123.45;
@@ -4079,7 +4064,7 @@ Real.toString 12345678901.23;
 > val it = "1.2345679E10" : string
 Real.toString 123456789.0123;
 > val it = "1.2345679E8" : string
-(*) We return '1.23456E~6' but sml-nj returns '1.23456E~06'.
+(*) We return '1.23456E~6' but SML/NJ returns '1.23456E~06'.
 Real.toString 0.00000123456;
 > val it = "1.23456E~6" : string
 Real.toString 0.0000123456;
@@ -4094,23 +4079,17 @@ Real.toString 0.0000123;
 > val it = "1.23E~5" : string
 Real.toString ~0.000065432;
 > val it = "~6.5432E~5" : string
-(* TODO
 Real.toString nan;
 > val it = "nan" : string
-*)
 Real.toString Real.negInf;
 > val it = "~inf" : string
 Real.toString Real.posInf;
 > val it = "inf" : string
-let
-  val nan = Real.posInf / Real.posInf
-in
-  List.map (fn x => (x, Real.toString x))
-    [1.0, 0.0, ~0.0, ~1.0, 0.5, 2.0,
-     0.0000123456, 0.00000123456, 0.000000123456, ~0.00000123456,
-     Real.minPos, Real.minNormalPos, Real.maxFinite, ~Real.maxFinite,
-     Real.posInf, Real.negInf, nan]
-end;
+List.map (fn x => (x, Real.toString x))
+  [1.0, 0.0, ~0.0, ~1.0, 0.5, 2.0,
+   0.0000123456, 0.00000123456, 0.000000123456, ~0.00000123456,
+   Real.minPos, Real.minNormalPos, Real.maxFinite, ~Real.maxFinite,
+   Real.posInf, Real.negInf, nan];
 > val it =
 >   [(1.0,"1.0"),(0.0,"0.0"),(~0.0,"~0.0"),(~1.0,"~1.0"),(0.5,"0.5"),(2.0,"2.0"),
 >    (1.23456E~5,"1.23456E~5"),(1.23456E~6,"1.23456E~6"),
@@ -4170,6 +4149,9 @@ end;
   between binary and decimal real representations are readily available, e.g.,
   see the technical report by Gay[CITE]. *)
 (*) TODO
+
+set("mode", "validate");
+> val it = () : unit
 
 (* Relational -------------------------------------------------- *)
 
@@ -4792,11 +4774,11 @@ Sys.plan ();
 vector [1,2];
 > val it = #[1,2] : int vector
 
-(* supported in sml-nj but not morel:
+(* supported in SML/NJ but not morel:
  #[1,2];
  *)
 
-(* sml-nj says:
+(* SML/NJ says:
   stdIn:3.1-3.19 Warning: type vars not generalized because of
      value restriction are instantiated to dummy types (X1,X2,...)
   val it = #[] : ?.X1 vector
