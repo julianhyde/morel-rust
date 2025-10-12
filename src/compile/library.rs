@@ -659,7 +659,6 @@ EMPTY("List", "Empty"),
 ERROR("Interact", "Error"), // not in standard basis
 SIZE("General", "Size"),
 UNEQUAL_LENGTHS("ListPair", "UnequalLengths"),
-UNORDERED("IEEEReal", "Unordered");
  */
 
 /// Built-in function or record.

@@ -3217,7 +3217,7 @@ Real.abs Real.negInf;
 Real.abs nan;
 > val it = nan : real
 Sys.plan ();
-> val it = "apply(fnValue Real.abs, argCode constant(NaN))" : string
+> val it = "apply(fnValue Real.abs, argCode constant(nan))" : string
 
 (* val min : real * real -> real
    val max : real * real -> real
@@ -3241,7 +3241,7 @@ Real.min (Real.posInf, 4.5);
 Real.min (Real.negInf, 4.5);
 > val it = ~inf : real
 Sys.plan ();
-> val it = "apply2(fnValue Real.min, constant(-inf), constant(4.5))" : string
+> val it = "apply2(fnValue Real.min, constant(~inf), constant(4.5))" : string
 
 Real.max;
 > val it = fn : real * real -> real
@@ -3258,7 +3258,7 @@ Real.max (Real.posInf, 4.5);
 Real.max (Real.negInf, 4.5);
 > val it = 4.5 : real
 Sys.plan ();
-> val it = "apply2(fnValue Real.max, constant(-inf), constant(4.5))" : string
+> val it = "apply2(fnValue Real.max, constant(~inf), constant(4.5))" : string
 
 (* "sign r" returns ~1 if r is negative, 0 if r is zero, or 1 if r is positive.
     An infinity returns its sign; a zero returns 0 regardless of its sign.
@@ -3281,7 +3281,7 @@ Real.sign nan;
 > uncaught exception Domain [domain error]
 >   raised at: stdIn:1.1-1.14
 Sys.plan ();
-> val it = "apply2(fnValue Real.sign, constant(NaN), constant(stdIn:1.1-1.14))"
+> val it = "apply2(fnValue Real.sign, constant(nan), constant(stdIn:1.1-1.14))"
 >   : string
 
 (* "signBit r" returns true if and only if the sign of r (infinities, zeros,
@@ -3307,7 +3307,7 @@ Real.signBit (~nan);
 > val it = true : bool
 Sys.plan ();
 > val it =
->   "apply(fnValue Real.signBit, argCode apply(fnValue Real.negate, argCode constant(NaN)))"
+>   "apply(fnValue Real.signBit, argCode apply(fnValue Real.negate, argCode constant(nan)))"
 >   : string
 Real.signBit (~(~nan));
 > val it = false : bool
@@ -3327,7 +3327,7 @@ Real.sameSign (~2.0, nan);
 Real.sameSign (nan, nan);
 > val it = true : bool
 Sys.plan ();
-> val it = "apply2(fnValue Real.sameSign, constant(NaN), constant(NaN))"
+> val it = "apply2(fnValue Real.sameSign, constant(nan), constant(nan))"
 >   : string
 
 (* "copySign (x, y)" returns x with the sign of y, even if y is NaN.
@@ -3347,7 +3347,7 @@ Real.copySign (~3.5, nan);
 Real.copySign (2.0, ~0.0);
 > val it = ~2 : real
 Sys.plan ();
-> val it = "apply2(fnValue Real.copySign, constant(2), constant(-0))" : string
+> val it = "apply2(fnValue Real.copySign, constant(2), constant(~0))" : string
 
 (* "val compare : real * real -> order" returns LESS, EQUAL, or GREATER
    according to whether its first argument is less than, equal to, or
@@ -3373,7 +3373,7 @@ Real.compare (nan, nan);
 >   raised at: stdIn:1.1-1.24
 Sys.plan ();
 > val it =
->   "apply(fnValue Real.compare, argCode tuple(constant(NaN), constant(NaN), constant(stdIn:1.1-1.24)))"
+>   "apply(fnValue Real.compare, argCode tuple(constant(nan), constant(nan), constant(stdIn:1.1-1.24)))"
 >   : string
 
 (* "val compareReal : real * real -> IEEEReal.real_order" behaves similarly to
@@ -3616,13 +3616,13 @@ Real.minNormalPos / Real.minPos;
 > val it = 8388608 : real
 List.map (fn x => (x, Real.toManExp x, Real.fromManExp (Real.toManExp x)))
   [1.0, 0.0, ~0.0, ~1.0, 0.5, 2.0,
-   0.0000123456, 0.00000123456, 0.000000123456, ~0.00000123456,
+   1.23456E~5, 0.00000123456, 0.000000123456, ~0.00000123456,
    Real.minPos, Real.minNormalPos, Real.maxFinite, ~Real.maxFinite,
    Real.posInf, Real.negInf, nan];
 > val it =
 >   [(1,{exp=1,man=0.5},1),(0,{exp=~126,man=0},0),(~0,{exp=~126,man=~0},~0),
 >    (~1,{exp=1,man=~0.5},~1),(0.5,{exp=0,man=0.5},0.5),(2,{exp=2,man=0.5},2),
->    (0.0000123456,{exp=~16,man=0.80908126},0.0000123456),
+>    (1.23456E~5,{exp=~16,man=0.80908126},1.23456E~5),
 >    (1.23456E~6,{exp=~19,man=0.647265},1.23456E~6),
 >    (1.23456E~7,{exp=~22,man=0.517812},1.23456E~7),
 >    (~1.23456E~6,{exp=~19,man=~0.647265},~1.23456E~6),
@@ -3651,11 +3651,11 @@ Real.fromManExp {man = 1.0, exp = ~3};
 > val it = 0.125 : real
 List.map (fn x => (x, Real.fromManExp (Real.toManExp x)))
   [1.0, 0.0, ~0.0, ~1.0, 0.5, 2.0,
-   0.0000123456, 0.00000123456, 0.000000123456, ~0.00000123456,
+   1.23456E~5, 0.00000123456, 0.000000123456, ~0.00000123456,
    Real.minPos, Real.minNormalPos, Real.maxFinite, ~Real.maxFinite,
    Real.posInf, Real.negInf, nan];
 > val it =
->   [(1,1),(0,0),(~0,~0),(~1,~1),(0.5,0.5),(2,2),(0.0000123456,0.0000123456),
+>   [(1,1),(0,0),(~0,~0),(~1,~1),(0.5,0.5),(2,2),(1.23456E~5,1.23456E~5),
 >    (1.23456E~6,1.23456E~6),(1.23456E~7,1.23456E~7),(~1.23456E~6,~1.23456E~6),
 >    (1E~45,1E~45),(1.1754944E~38,1.1754944E~38),(3.4028235E38,nan),
 >    (~3.4028235E38,nan),(inf,inf),(~inf,~inf),(nan,nan)] : (real * real) list
@@ -3685,7 +3685,7 @@ Real.split Real.negInf;
 Real.split nan;
 > val it = {frac=nan,whole=nan} : {frac:real, whole:real}
 Sys.plan ();
-> val it = "apply(fnValue Real.split, argCode constant(NaN))" : string
+> val it = "apply(fnValue Real.split, argCode constant(nan))" : string
 
 (* "realMod r" returns the fractional part of r. "realMod" is equivalent to
    "#frac o split". *)
@@ -3708,7 +3708,7 @@ Real.realMod Real.negInf;
 Real.realMod nan;
 > val it = nan : real
 Sys.plan ();
-> val it = "apply(fnValue Real.realMod, argCode constant(NaN))" : string
+> val it = "apply(fnValue Real.realMod, argCode constant(nan))" : string
 
 (* "nextAfter (r, t)" returns the next representable real after r in the
    direction of t. Thus, if t is less than r, nextAfter returns the largest
@@ -3824,7 +3824,7 @@ f Real.posInf;
 > uncaught exception Overflow [overflow]
 >   raised at: stdIn:1.12-1.23
 f nan;
-> uncaught exception Domain [domain error]
+> uncaught exception Overflow [overflow]
 >   raised at: stdIn:1.12-1.23
 
 Real.floor Real.posInf;
@@ -3861,7 +3861,7 @@ Real.trunc nan;
 > uncaught exception Overflow [overflow]
 >   raised at: stdIn:1.1-1.15
 Real.round nan;
-> uncaught exception Overflow [overflow]
+> uncaught exception Domain [domain error]
 >   raised at: stdIn:1.1-1.15
 
 (* "toInt mode x", "toLargeInt mode x" convert the argument x to an integral
@@ -3946,40 +3946,39 @@ Real.fromString "1.5e~";
 Real.fromString "1.5e~0";
 > val it = SOME 1.5 : real option
 Real.fromString "1.5e2";
-> val it = SOME 150.0 : real option
+> val it = SOME 150 : real option
 Real.fromString "1.5e2e";
-> val it = SOME 150.0 : real option
+> val it = SOME 150 : real option
 Real.fromString "1.5e2e3";
-> val it = SOME 150.0 : real option
+> val it = SOME 150 : real option
 Real.fromString "2e3.4";
-> val it = SOME 2000.0 : real option
+> val it = SOME 2000 : real option
 Real.fromString "  2e3.4";
-> val it = SOME 2000.0 : real option
+> val it = SOME 2000 : real option
 Real.fromString "2.x";
-> val it = SOME 2.0 : real option
+> val it = SOME 2 : real option
 (*) fromString cannot parse "inf", "nan" etc.
 Real.fromString "inf";
-> val it = NONE : real option
+> val it = SOME inf : real option
 Real.fromString "~inf";
-> val it = NONE : real option
+> val it = SOME ~inf : real option
 Real.fromString "-inf";
-> val it = NONE : real option
+> val it = SOME ~inf : real option
 Real.fromString "nan";
-> val it = NONE : real option
+> val it = SOME nan : real option
 
 List.map (fn x => (x, Real.fromString (Real.toString x)))
   [1.0, 0.0, ~0.0, ~1.0, 0.5, 2.0,
-   0.0000123456, 0.00000123456, 0.000000123456, ~0.00000123456,
+   1.23456E~5, 0.00000123456, 0.000000123456, ~0.00000123456,
    Real.minPos, Real.minNormalPos, Real.maxFinite, ~Real.maxFinite,
    Real.posInf, Real.negInf, nan];
 > val it =
->   [(1.0,SOME 1.0),(0.0,SOME 0.0),(~0.0,SOME ~0.0),(~1.0,SOME ~1.0),
->    (0.5,SOME 0.5),(2.0,SOME 2.0),(1.23456E~5,SOME 1.23456E~5),
->    (1.23456E~6,SOME 1.23456E~6),(1.23456E~7,SOME 1.23456E~7),
->    (~1.23456E~6,SOME ~1.23456E~6),(1.4E~45,SOME 1.4E~45),
->    (1.1754944E~38,SOME 1.1754944E~38),(3.4028235E38,SOME 3.4028235E38),
->    (~3.4028235E38,SOME ~3.4028235E38),(inf,NONE),(~inf,NONE),(nan,NONE)]
->   : (real * real option) list
+>   [(1,SOME 1),(0,SOME 0),(~0,SOME ~0),(~1,SOME ~1),(0.5,SOME 0.5),(2,SOME 2),
+>    (1.23456E~5,SOME 1.23456E~5),(1.23456E~6,SOME 1.23456E~6),
+>    (1.23456E~7,SOME 1.23456E~7),(~1.23456E~6,SOME ~1.23456E~6),
+>    (1E~45,SOME 1E~45),(1.1754944E~38,SOME 1.1754944E~38),
+>    (3.4028235E38,SOME 3.4028235E38),(~3.4028235E38,SOME ~3.4028235E38),
+>    (inf,SOME inf),(~inf,SOME ~inf),(nan,SOME nan)] : (real * real option) list
 
 (* "toLarge r", "fromLarge r" convert between values of type real and type
    LargeReal.real. If r is too small or too large to be represented as a real,
@@ -4067,7 +4066,7 @@ Real.toString 123456789.0123;
 (*) We return '1.23456E~6' but SML/NJ returns '1.23456E~06'.
 Real.toString 0.00000123456;
 > val it = "1.23456E~6" : string
-Real.toString 0.0000123456;
+Real.toString 1.23456E~5;
 > val it = "1.23456E~5" : string
 Real.toString 0.000123456;
 > val it = "1.23456E~4" : string
@@ -4087,13 +4086,13 @@ Real.toString Real.posInf;
 > val it = "inf" : string
 List.map (fn x => (x, Real.toString x))
   [1.0, 0.0, ~0.0, ~1.0, 0.5, 2.0,
-   0.0000123456, 0.00000123456, 0.000000123456, ~0.00000123456,
+   1.23456E~5, 0.00000123456, 0.000000123456, ~0.00000123456,
    Real.minPos, Real.minNormalPos, Real.maxFinite, ~Real.maxFinite,
    Real.posInf, Real.negInf, nan];
 > val it =
->   [(1.0,"1.0"),(0.0,"0.0"),(~0.0,"~0.0"),(~1.0,"~1.0"),(0.5,"0.5"),(2.0,"2.0"),
+>   [(1,"1"),(0,"0"),(~0,"~0"),(~1,"~1"),(0.5,"0.5"),(2,"2"),
 >    (1.23456E~5,"1.23456E~5"),(1.23456E~6,"1.23456E~6"),
->    (1.23456E~7,"1.23456E~7"),(~1.23456E~6,"~1.23456E~6"),(1.4E~45,"1.4E~45"),
+>    (1.23456E~7,"1.23456E~7"),(~1.23456E~6,"~1.23456E~6"),(1E~45,"1E~45"),
 >    (1.1754944E~38,"1.1754944E~38"),(3.4028235E38,"3.4028235E38"),
 >    (~3.4028235E38,"~3.4028235E38"),(inf,"inf"),(~inf,"~inf"),(nan,"nan")]
 >   : (real * string) list

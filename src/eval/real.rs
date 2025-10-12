@@ -126,11 +126,97 @@ impl Real {
     /// Scans a `real` value from a string.
     pub(crate) fn from_string(s: &str) -> Val {
         let trimmed = s.trim_start();
-        if let Ok(r) = trimmed.parse::<f32>() {
-            Val::Some(Box::new(Val::Real(r)))
-        } else {
-            Val::Unit // NONE
+
+        // Handle special values.
+        if trimmed.starts_with("inf") {
+            return Val::Some(Box::new(Val::Real(f32::INFINITY)));
+        } else if trimmed.starts_with("~inf") || trimmed.starts_with("-inf") {
+            return Val::Some(Box::new(Val::Real(f32::NEG_INFINITY)));
+        } else if trimmed.starts_with("nan")
+            || trimmed.starts_with("~nan")
+            || trimmed.starts_with("-nan")
+        {
+            return Val::Some(Box::new(Val::Real(f32::NAN)));
         }
+
+        // Replace ~ with - for parsing.
+        // (Standard ML uses ~ for negation.)
+        let normalized = trimmed.replace('~', "-");
+
+        // Try to parse the entire string first.
+        if let Ok(r) = normalized.parse::<f32>() {
+            return Val::Some(Box::new(Val::Real(r)));
+        }
+
+        // If that fails, try to parse as much as possible.
+        // This handles cases like "1.5e2e" -> parse "1.5e2".
+        let mut end_idx = 0;
+        // Last index where we had a valid number.
+        let mut last_valid_idx = 0;
+        let mut seen_dot = false;
+        let mut seen_e = false;
+        let mut seen_sign_after_e = false;
+        let mut seen_digit_after_e = false;
+        let chars: Vec<char> = normalized.chars().collect();
+
+        for (i, &ch) in chars.iter().enumerate() {
+            match ch {
+                '0'..='9' => {
+                    end_idx = i + 1;
+                    last_valid_idx = i + 1;
+                    if seen_e {
+                        seen_digit_after_e = true;
+                        seen_sign_after_e = false;
+                    }
+                }
+                '.' => {
+                    if seen_dot || seen_e {
+                        break; // Second dot or dot after 'e' is invalid.
+                    }
+                    seen_dot = true;
+                    end_idx = i + 1;
+                    last_valid_idx = i + 1;
+                }
+                'e' | 'E' => {
+                    if seen_e || end_idx == 0 {
+                        break; // Second 'e' or 'e' at start is invalid.
+                    }
+                    seen_e = true;
+                    // Don't update last_valid_idx yet.
+                    // Wait for digits after 'e'.
+                    end_idx = i + 1;
+                }
+                '-' | '+' => {
+                    if i == 0 {
+                        // Sign at start is OK, but needs digit after.
+                        continue;
+                    } else if seen_e && !seen_sign_after_e && i == end_idx {
+                        // Sign right after 'e' is OK.
+                        seen_sign_after_e = true;
+                        continue;
+                    } else {
+                        break; // Otherwise, stop parsing.
+                    }
+                }
+                _ => break, // Any other character stops parsing.
+            }
+        }
+
+        // If 'e' was seen but no digits after it, use last_valid_idx
+        // before 'e'.
+        if seen_e && !seen_digit_after_e {
+            end_idx = last_valid_idx;
+        }
+
+        // If we found a valid prefix, try to parse it.
+        if end_idx > 0 {
+            let prefix = &normalized[..end_idx];
+            if let Ok(r) = prefix.parse::<f32>() {
+                return Val::Some(Box::new(Val::Real(r)));
+            }
+        }
+
+        Val::Unit // NONE
     }
 
     /// Computes the Morel expression `Real.isFinite x`.
@@ -160,10 +246,8 @@ impl Real {
     /// Returns the larger of the arguments. If exactly one argument is NaN,
     /// returns the other argument. If both arguments are NaN, returns NaN.
     pub(crate) fn max(x: f32, y: f32) -> f32 {
-        if x.is_nan() && y.is_nan() {
-            f32::NAN
-        } else if x.is_nan() {
-            y
+        if x.is_nan() {
+            if y.is_nan() { f32::NAN } else { y }
         } else if y.is_nan() {
             x
         } else {
@@ -176,10 +260,8 @@ impl Real {
     /// Returns the smaller of the arguments. If exactly one argument is NaN,
     /// returns the other argument. If both arguments are NaN, returns NaN.
     pub(crate) fn min(x: f32, y: f32) -> f32 {
-        if x.is_nan() && y.is_nan() {
-            f32::NAN
-        } else if x.is_nan() {
-            y
+        if x.is_nan() {
+            if y.is_nan() { f32::NAN } else { y }
         } else if y.is_nan() {
             x
         } else {
@@ -249,8 +331,12 @@ impl Real {
     /// to the nearest even integer.
     #[allow(clippy::if_same_then_else)]
     pub(crate) fn round(r: f32, span: &Span) -> Result<Val, MorelError> {
-        let result = r.round();
-        if result.is_infinite() || result.is_nan() {
+        // Check for NaN first to return Domain exception
+        if r.is_nan() {
+            return Err(MorelError::Runtime(BuiltInExn::Domain, span.clone()));
+        }
+        let result = r.round_ties_even();
+        if result.is_infinite() {
             Err(MorelError::Runtime(BuiltInExn::Overflow, span.clone()))
         } else if result < i32::MIN as f32 || result > i32::MAX as f32 {
             Err(MorelError::Runtime(BuiltInExn::Overflow, span.clone()))
@@ -384,13 +470,13 @@ impl Real {
         } else {
             // Use scientific notation for very large or very small numbers.
             let abs = r.abs();
-            if !(1e-5..1e7).contains(&abs) {
+            if !(1e-3..1e7).contains(&abs) {
                 // Format in scientific notation with uppercase E.
                 // Rust's default precision for '{:E}' prints only
                 // significant digits.
                 format!("{:E}", r).replace("-", "~")
             } else if r.fract() == 0.0 && abs < i64::MAX as f32 {
-                // Whole numbers display without .0.
+                // Whole numbers display without a .0 suffix.
                 format!("{}", r.trunc() as i64).replace("-", "~")
             } else {
                 // For non-whole numbers, use default formatting.

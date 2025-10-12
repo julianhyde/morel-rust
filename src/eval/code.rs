@@ -539,12 +539,10 @@ impl Code {
                 // If v0 is a list and v1 is a span string, it means we're
                 // applying the function to a single tuple/record argument that
                 // should be unpacked.
-                if let (Val::List(list), Val::String(_)) = (&v0, &v1) {
-                    if list.len() == 2 {
-                        return Ok(
-                            eager.apply(list[0].clone(), list[1].clone())
-                        );
-                    }
+                if let (Val::List(list), Val::String(_)) = (&v0, &v1)
+                    && list.len() == 2
+                {
+                    return Ok(eager.apply(list[0].clone(), list[1].clone()));
                 }
                 Ok(eager.apply(v0, v1))
             }

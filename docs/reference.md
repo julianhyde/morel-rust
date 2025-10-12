@@ -290,7 +290,12 @@ Datatype:
 Exception:
 * `Bind` (in structure `General`)
 * `Chr` (in structure `General`)
-* `Subscript` \[subscript out of bounds\] (in structure `General`)
+* `Div` (in structure `General`)
+* `Domain` (in structure `General`)
+* `Option` (in structure `Option`)
+* `Overflow` (in structure `Option`)
+* `Subscript` (in structure `General`)
+* `Unordered` (in structure `IEEEReal`)
 
 ## Built-in functions
 
@@ -386,7 +391,7 @@ Exception:
 | Real.compare | real * real &rarr; order | "compare (x, y)" returns `LESS`, `EQUAL`, or `GREATER` according to whether its first argument is less than, equal to, or greater than the second. It raises `IEEEReal.Unordered` on unordered arguments. |
 | Real.copySign | real * real &rarr; real | "copySign (x, y)" returns `x` with the sign of `y`, even if `y` is NaN. |
 | Real.floor | real &rarr; int | "floor r" produces `floor(r)`, the largest int not larger than `r`. |
-| Real.fromInt, real | int &rarr; real | "fromInt i" converts the integer `i` to a `real` value. If the absolute value of `i` is larger than `maxFinite`, then the appropriate infinity is returned. If `i` cannot be exactly represented as a `real` value, uses current rounding mode to determine the resulting value. |
+| Real.fromInt, real | int &rarr; real | "fromInt i" (also "real i") converts the integer `i` to a `real` value. If the absolute value of `i` is larger than `maxFinite`, then the appropriate infinity is returned. If `i` cannot be exactly represented as a `real` value, uses current rounding mode to determine the resulting value. |
 | Real.fromManExp | {exp:int, man:real} &rarr; real | "fromManExp r" returns `{man, exp}`, where `man` and `exp` are the mantissa and exponent of r, respectively. |
 | Real.fromString | string &rarr; real option | "fromString s" scans a `real` value from a string. Returns `SOME (r)` if a `real` value can be scanned from a prefix of `s`, ignoring any initial whitespace; otherwise, it returns `NONE`. This function is equivalent to `StringCvt.scanString scan`. |
 | Real.isFinite | real &rarr; bool | "isFinite x" returns true if x is neither NaN nor an infinity. |
