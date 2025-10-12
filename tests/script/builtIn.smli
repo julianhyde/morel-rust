@@ -272,20 +272,20 @@ fn x => x + 1;
 Sys.plan ();
 > val it = "fn(bind(0) => apply2(fnValue +, get(0), constant(1)))" : string
 
-(* Create a "not a number" value whose sign bit is false. IEEE does not specify
+(* Create a "not a number" value whose sign bit is true. IEEE does not specify
    whether the sign bit of NaN values should be set. It is useful to
    "standardize" behavior for this particular value, for the duration of this
-   test, to behaves similarly to positive numbers. Otherwise subsequent tests
+   test, to behave similarly to negative numbers. Otherwise subsequent tests
    will give different results on different hardware. *)
 val nan =
   let
      val n = Real.posInf / Real.posInf
   in
-     Real.copySign (n, if Real.signBit n then ~1.0 else 1.0)
+     Real.copySign (n, if Real.signBit n then 1.0 else ~1.0)
  end;
 > val nan = nan : real
 Real.signBit nan;
-> val it = false : bool
+> val it = true : bool
 set("mode", "validate");
 > val it = () : unit
 
@@ -3298,7 +3298,7 @@ Sys.plan ();
 
 (* "signBit r" returns true if and only if the sign of r (infinities, zeros,
    and NaN, included) is negative. SML/NJ, MLton, Morel Java treat NaN as
-   negative and ~NaN as positive, but we differ.*)
+   negative and ~NaN as positive.*)
 Real.signBit;
 > val it = fn : real -> bool
 Real.signBit 2.0;
@@ -3314,18 +3314,18 @@ Real.signBit Real.posInf;
 Real.signBit Real.negInf;
 > val it = true : bool
 Real.signBit nan;
-> val it = false : bool
-Real.signBit (~nan);
 > val it = true : bool
+Real.signBit (~nan);
+> val it = false : bool
 Sys.plan ();
 > val it =
 >   "apply(fnValue Real.signBit, argCode apply(fnValue Real.negate, argCode constant(nan)))"
 >   : string
 Real.signBit (~(~nan));
-> val it = false : bool
+> val it = true : bool
 
 (* "sameSign (r1, r2)" returns true if and only if signBit r1 equals signBit r2.
-   SML/NJ, MLton, Morel Java treat NaN as negative, but we differ. *)
+   SML/NJ, MLton, Morel Java treat NaN as negative. *)
 Real.sameSign;
 > val it = fn : real * real -> bool
 Real.sameSign (2.0, 3.5);
@@ -3333,9 +3333,9 @@ Real.sameSign (2.0, 3.5);
 Real.sameSign (~2.0, Real.negInf);
 > val it = true : bool
 Real.sameSign (2.0, nan);
-> val it = true : bool
-Real.sameSign (~2.0, nan);
 > val it = false : bool
+Real.sameSign (~2.0, nan);
+> val it = true : bool
 Real.sameSign (nan, nan);
 > val it = true : bool
 Sys.plan ();
@@ -3343,7 +3343,7 @@ Sys.plan ();
 >   : string
 
 (* "copySign (x, y)" returns x with the sign of y, even if y is NaN.
-   SML/NJ, MLton, Morel Java treat NaN as negative, but we differ. *)
+   SML/NJ, MLton, Morel Java treat NaN as negative. *)
 Real.copySign;
 > val it = fn : real * real -> real
 Real.copySign (2.0, Real.posInf);
@@ -3351,11 +3351,11 @@ Real.copySign (2.0, Real.posInf);
 Real.copySign (2.0, Real.negInf);
 > val it = ~2 : real
 Real.copySign (2.0, nan);
-> val it = 2 : real
+> val it = ~2 : real
 Real.copySign (~3.5, ~nan);
-> val it = ~3.5 : real
-Real.copySign (~3.5, nan);
 > val it = 3.5 : real
+Real.copySign (~3.5, nan);
+> val it = ~3.5 : real
 Real.copySign (2.0, ~0.0);
 > val it = ~2 : real
 Sys.plan ();
