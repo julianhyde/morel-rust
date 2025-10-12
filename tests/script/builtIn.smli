@@ -281,7 +281,7 @@ val nan =
   let
      val n = Real.posInf / Real.posInf
   in
-     Real.copySign (n, if Real.signBit n then 1.0 else ~1.0)
+     if Real.signBit n then n else ~n
  end;
 > val nan = nan : real
 Real.signBit nan;
