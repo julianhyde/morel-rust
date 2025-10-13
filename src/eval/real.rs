@@ -26,6 +26,8 @@ use std::cmp::Ordering;
 pub struct Real;
 
 impl Real {
+    // lint: sort until '#}' where '##pub'
+
     /// Computes the Morel expression `Real.abs r`.
     ///
     /// Returns the absolute value of `r`.
@@ -402,21 +404,6 @@ impl Real {
         Val::List(vec![Val::Real(frac), Val::Real(whole)])
     }
 
-    /// Computes the Morel expression `Real.trunc r`.
-    ///
-    /// Rounds r towards zero.
-    #[allow(clippy::if_same_then_else)]
-    pub(crate) fn trunc(r: f32, span: &Span) -> Result<Val, MorelError> {
-        let result = r.trunc();
-        if result.is_infinite() || result.is_nan() {
-            Err(MorelError::Runtime(BuiltInExn::Overflow, span.clone()))
-        } else if result < i32::MIN as f32 || result > i32::MAX as f32 {
-            Err(MorelError::Runtime(BuiltInExn::Overflow, span.clone()))
-        } else {
-            Ok(Val::Int(result as i32))
-        }
-    }
-
     /// Computes the Morel expression `Real.toManExp r`.
     ///
     /// Returns `{man, exp}`, where `man` and `exp` are the mantissa
@@ -482,6 +469,21 @@ impl Real {
                 // For non-whole numbers, use default formatting.
                 format!("{}", r).replace('-', "~")
             }
+        }
+    }
+
+    /// Computes the Morel expression `Real.trunc r`.
+    ///
+    /// Rounds r towards zero.
+    #[allow(clippy::if_same_then_else)]
+    pub(crate) fn trunc(r: f32, span: &Span) -> Result<Val, MorelError> {
+        let result = r.trunc();
+        if result.is_infinite() || result.is_nan() {
+            Err(MorelError::Runtime(BuiltInExn::Overflow, span.clone()))
+        } else if result < i32::MIN as f32 || result > i32::MAX as f32 {
+            Err(MorelError::Runtime(BuiltInExn::Overflow, span.clone()))
+        } else {
+            Ok(Val::Int(result as i32))
         }
     }
 
