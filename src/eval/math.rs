@@ -19,6 +19,8 @@
 pub struct Math;
 
 impl Math {
+    // lint: sort until '#}' where '##pub'
+
     /// The constant e (base of natural logarithm).
     pub(crate) const E: f32 = std::f32::consts::E;
 
