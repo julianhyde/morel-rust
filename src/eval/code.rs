@@ -721,6 +721,7 @@ impl Display for Code {
             Code::Constant(_, v) => match v {
                 Val::Char(c) => write!(f, "constant({})", c),
                 Val::Fn(fun) => write!(f, "constant({})", fun.full_name()),
+                Val::Real(x) => write!(f, "constant({})", x),
                 Val::String(s) => write!(f, "constant({})", s),
                 Val::Unit => write!(f, "constant([NONE])"),
                 _ => write!(f, "constant({})", v),

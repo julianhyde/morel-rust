@@ -3229,7 +3229,7 @@ Real.abs Real.negInf;
 Real.abs nan;
 > val it = nan : real
 Sys.plan ();
-> val it = "apply(fnValue Real.abs, argCode constant(nan))" : string
+> val it = "apply(fnValue Real.abs, argCode constant(NaN))" : string
 
 (* val min : real * real -> real
    val max : real * real -> real
@@ -3253,7 +3253,7 @@ Real.min (Real.posInf, 4.5);
 Real.min (Real.negInf, 4.5);
 > val it = ~inf : real
 Sys.plan ();
-> val it = "apply2(fnValue Real.min, constant(~inf), constant(4.5))" : string
+> val it = "apply2(fnValue Real.min, constant(-inf), constant(4.5))" : string
 
 Real.max;
 > val it = fn : real * real -> real
@@ -3270,7 +3270,7 @@ Real.max (Real.posInf, 4.5);
 Real.max (Real.negInf, 4.5);
 > val it = 4.5 : real
 Sys.plan ();
-> val it = "apply2(fnValue Real.max, constant(~inf), constant(4.5))" : string
+> val it = "apply2(fnValue Real.max, constant(-inf), constant(4.5))" : string
 
 (* "sign r" returns ~1 if r is negative, 0 if r is zero, or 1 if r is positive.
     An infinity returns its sign; a zero returns 0 regardless of its sign.
@@ -3293,7 +3293,7 @@ Real.sign nan;
 > uncaught exception Domain [domain error]
 >   raised at: stdIn:1.1-1.14
 Sys.plan ();
-> val it = "apply2(fnValue Real.sign, constant(nan), constant(stdIn:1.1-1.14))"
+> val it = "apply2(fnValue Real.sign, constant(NaN), constant(stdIn:1.1-1.14))"
 >   : string
 
 (* "signBit r" returns true if and only if the sign of r (infinities, zeros,
@@ -3319,7 +3319,7 @@ Real.signBit (~nan);
 > val it = false : bool
 Sys.plan ();
 > val it =
->   "apply(fnValue Real.signBit, argCode apply(fnValue Real.negate, argCode constant(nan)))"
+>   "apply(fnValue Real.signBit, argCode apply(fnValue Real.negate, argCode constant(NaN)))"
 >   : string
 Real.signBit (~(~nan));
 > val it = true : bool
@@ -3339,7 +3339,7 @@ Real.sameSign (~2.0, nan);
 Real.sameSign (nan, nan);
 > val it = true : bool
 Sys.plan ();
-> val it = "apply2(fnValue Real.sameSign, constant(nan), constant(nan))"
+> val it = "apply2(fnValue Real.sameSign, constant(NaN), constant(NaN))"
 >   : string
 
 (* "copySign (x, y)" returns x with the sign of y, even if y is NaN.
@@ -3359,7 +3359,7 @@ Real.copySign (~3.5, nan);
 Real.copySign (2.0, ~0.0);
 > val it = ~2 : real
 Sys.plan ();
-> val it = "apply2(fnValue Real.copySign, constant(2), constant(~0))" : string
+> val it = "apply2(fnValue Real.copySign, constant(2), constant(-0))" : string
 
 (* "val compare : real * real -> order" returns LESS, EQUAL, or GREATER
    according to whether its first argument is less than, equal to, or
@@ -3385,7 +3385,7 @@ Real.compare (nan, nan);
 >   raised at: stdIn:1.1-1.24
 Sys.plan ();
 > val it =
->   "apply(fnValue Real.compare, argCode tuple(constant(nan), constant(nan), constant(stdIn:1.1-1.24)))"
+>   "apply(fnValue Real.compare, argCode tuple(constant(NaN), constant(NaN), constant(stdIn:1.1-1.24)))"
 >   : string
 
 (* "val compareReal : real * real -> IEEEReal.real_order" behaves similarly to
@@ -3697,7 +3697,7 @@ Real.split Real.negInf;
 Real.split nan;
 > val it = {frac=nan,whole=nan} : {frac:real, whole:real}
 Sys.plan ();
-> val it = "apply(fnValue Real.split, argCode constant(nan))" : string
+> val it = "apply(fnValue Real.split, argCode constant(NaN))" : string
 
 (* "realMod r" returns the fractional part of r. "realMod" is equivalent to
    "#frac o split". *)
@@ -3720,7 +3720,7 @@ Real.realMod Real.negInf;
 Real.realMod nan;
 > val it = nan : real
 Sys.plan ();
-> val it = "apply(fnValue Real.realMod, argCode constant(nan))" : string
+> val it = "apply(fnValue Real.realMod, argCode constant(NaN))" : string
 
 (* "nextAfter (r, t)" returns the next representable real after r in the
    direction of t. Thus, if t is less than r, nextAfter returns the largest
