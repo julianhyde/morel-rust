@@ -613,6 +613,16 @@ impl Pretty {
             Val::Order(o) => {
                 return self.pretty_raw(buf, indent, line_end, depth, o.name());
             }
+            Val::Inl(v) => {
+                self.pretty_raw(buf, indent, line_end, depth, "INL ")?;
+                return self
+                    .pretty1(buf, indent, line_end, depth, &args[0], v, 0, 0);
+            }
+            Val::Inr(v) => {
+                self.pretty_raw(buf, indent, line_end, depth, "INR ")?;
+                return self
+                    .pretty1(buf, indent, line_end, depth, &args[1], v, 0, 0);
+            }
             Val::Some(v) => {
                 self.pretty_raw(buf, indent, line_end, depth, "SOME ")?;
                 return self
@@ -743,18 +753,36 @@ impl Pretty {
                     )?;
                     buf.push(' ');
                 } else if args.len() > 1 {
-                    // Handle multiple args like (int * string) option
-                    for (i, arg) in args.iter().enumerate() {
-                        if i > 0 {
-                            buf.push_str(" * ");
+                    // Special handling for 'either' type which uses tuple
+                    // notation
+                    // TODO
+                    if name == "either" {
+                        buf.push('(');
+                        for (i, arg) in args.iter().enumerate() {
+                            if i > 0 {
+                                buf.push(',');
+                            }
+                            let v_arg = Val::new_type("", arg);
+                            self.pretty1(
+                                buf, indent2, line_end, depth, &BOOL, &v_arg,
+                                0, 0,
+                            )?;
                         }
-                        let v_arg = Val::new_type("", arg);
-                        self.pretty1(
-                            buf, indent2, line_end, depth, &BOOL, &v_arg, left,
-                            0,
-                        )?;
+                        buf.push_str(") ");
+                    } else {
+                        // Handle multiple args like (int * string) option
+                        for (i, arg) in args.iter().enumerate() {
+                            if i > 0 {
+                                buf.push_str(" * ");
+                            }
+                            let v_arg = Val::new_type("", arg);
+                            self.pretty1(
+                                buf, indent2, line_end, depth, &BOOL, &v_arg,
+                                left, 0,
+                            )?;
+                        }
+                        buf.push(' ');
                     }
-                    buf.push(' ');
                 }
                 self.pretty_raw(buf, indent2, line_end, depth, name)
             }

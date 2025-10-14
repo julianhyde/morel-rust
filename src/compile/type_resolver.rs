@@ -143,6 +143,27 @@ impl<'a> TermToTypeConverter<'a> {
                     let type_ = self.term_type(&sequence.terms[0]);
                     Box::new(Type::Bag(type_))
                 }
+                "either" => {
+                    assert_eq!(sequence.terms.len(), 1);
+                    // Either has a single term which is a tuple of the two type
+                    // arguments. TODO
+                    if let Term::Sequence(inner_seq) = &sequence.terms[0]
+                        && inner_seq.op.name == "tuple"
+                        && inner_seq.terms.len() == 2
+                    {
+                        let arg1 = *self.term_type(&inner_seq.terms[0]);
+                        let arg2 = *self.term_type(&inner_seq.terms[1]);
+                        Box::new(Type::Data(
+                            sequence.op.name.clone(),
+                            vec![arg1, arg2],
+                        ))
+                    } else {
+                        panic!(
+                            "Expected tuple of 2 types for either, got {:?}",
+                            sequence.terms[0]
+                        )
+                    }
+                }
                 "option" => {
                     assert_eq!(sequence.terms.len(), 1);
                     let args = vec![*self.term_type(&sequence.terms[0])];
@@ -1437,6 +1458,21 @@ impl TypeResolver {
                     let v2 = self.variable();
                     self.type_term(&arguments[0], subst, &v2);
                     self.bag_term(Term::Variable(v2), v);
+                } else if name == "either" {
+                    assert_eq!(arguments.len(), 2);
+                    // Either requires a tuple of the two type arguments
+                    let v1 = self.variable();
+                    self.type_term(&arguments[0], subst, &v1);
+                    let v2 = self.variable();
+                    self.type_term(&arguments[1], subst, &v2);
+                    let tuple_terms =
+                        vec![Term::Variable(v1), Term::Variable(v2)];
+                    let tuple_seq =
+                        self.unifier.apply(self.tuple_op.clone(), &tuple_terms);
+                    let op = self.unifier.op("either", Some(1));
+                    let sequence =
+                        self.unifier.apply(op, &[Term::Sequence(tuple_seq)]);
+                    self.equiv(&Term::Sequence(sequence), v);
                 } else {
                     let mut terms = Vec::new();
                     for argument in arguments {
