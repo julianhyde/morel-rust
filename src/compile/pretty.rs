@@ -745,18 +745,17 @@ impl Pretty {
             ),
             Type::Named(args, name) | Type::Data(name, args) => {
                 const OP: Op = Op::APPLY;
-                if args.len() == 1 {
-                    let v_arg = Val::new_type("", &args[0]);
-                    self.pretty1(
-                        buf, indent2, line_end, depth, &BOOL, &v_arg, left,
-                        OP.right,
-                    )?;
-                    buf.push(' ');
-                } else if args.len() > 1 {
-                    // Special handling for 'either' type which uses tuple
-                    // notation
-                    // TODO
-                    if name == "either" {
+                match args.len() {
+                    0 => {}
+                    1 => {
+                        let v_arg = Val::new_type("", &args[0]);
+                        self.pretty1(
+                            buf, indent2, line_end, depth, &BOOL, &v_arg, left,
+                            OP.right,
+                        )?;
+                        buf.push(' ');
+                    }
+                    _ => {
                         buf.push('(');
                         for (i, arg) in args.iter().enumerate() {
                             if i > 0 {
@@ -769,19 +768,6 @@ impl Pretty {
                             )?;
                         }
                         buf.push_str(") ");
-                    } else {
-                        // Handle multiple args like (int * string) option
-                        for (i, arg) in args.iter().enumerate() {
-                            if i > 0 {
-                                buf.push_str(" * ");
-                            }
-                            let v_arg = Val::new_type("", arg);
-                            self.pretty1(
-                                buf, indent2, line_end, depth, &BOOL, &v_arg,
-                                left, 0,
-                            )?;
-                        }
-                        buf.push(' ');
                     }
                 }
                 self.pretty_raw(buf, indent2, line_end, depth, name)
