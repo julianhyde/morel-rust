@@ -264,4 +264,9 @@ fn opt => case opt of
    | SOME (x, [y]) => SOME (y ^ "!", x + 1);
 >type it : (int * string list) option -> (string * int) option
 
+bag [1, 2];
+>type it : int bag
+Bag.concat [bag [1, 2], bag.nil];
+>type it : int bag
+
 (*) End type-inference.smli

@@ -16,6 +16,7 @@
 // License.
 
 // lint: sort until '^$' erase 'pub '
+pub mod bag;
 pub mod bool;
 pub mod char;
 pub mod code;
