@@ -1998,10 +1998,11 @@ impl<'a> TypeToTermConverter<'a> {
                 if let TypeKind::Id(name) = t.kind.clone() {
                     let mut terms = Vec::new();
                     let mut args2 = Vec::new();
-                    for arg in args {
+                    let flat_args = AstType::flatten(args);
+                    for arg in flat_args {
                         let v2 = self.type_resolver.variable();
                         terms.push(Term::Variable(v2.clone()));
-                        let arg2 = self.type_term(arg, subst, &v2);
+                        let arg2 = self.type_term(&arg, subst, &v2);
                         args2.push(arg2);
                     }
                     let op = self
