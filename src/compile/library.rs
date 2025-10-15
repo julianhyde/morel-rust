@@ -1070,7 +1070,7 @@ pub enum BuiltInExn {
     Chr,
     #[strum(props(p = "General", explain = "divide by zero"))]
     Div,
-    #[strum(props(p = "General", explain = "domain error"))]
+    #[strum(props(p = "General"))]
     Domain,
     #[strum(props(p = "List"))]
     Empty,

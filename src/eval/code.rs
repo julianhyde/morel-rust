@@ -23,6 +23,7 @@ use crate::eval::bool::Bool;
 use crate::eval::char::Char;
 use crate::eval::either::Either;
 use crate::eval::frame::FrameDef;
+use crate::eval::fun::Fn;
 use crate::eval::int::Int;
 use crate::eval::list::List;
 use crate::eval::list_pair::ListPair;
@@ -134,6 +135,18 @@ pub enum Code {
     /// or more values.
     CreateClosure(Arc<FrameDef>, Vec<(Code, Code)>, Vec<Code>),
 
+    /// `Curry(f)` wraps a function `f: 'a * 'b -> 'c` to create a curried
+    /// version `'a -> 'b -> 'c`.
+    Curry(Box<Code>),
+
+    /// `CurryPartial(f, a)` is the partially applied curried function.
+    /// When called with `b`, it evaluates `f (a, b)`.
+    CurryPartial(Box<Code>, Box<Val>),
+
+    /// `Flip(f)` wraps a function `f: 'a * 'b -> 'c` to create a flipped
+    /// version `'b * 'a -> 'c` that takes its arguments in reversed order.
+    Flip(Box<Code>),
+
     /// `Fn(frame, pat_expr_codes)` first creates a frame to contain the
     /// required local variables, next iterates the (pattern, expression) pairs
     /// until it can bind the argument to a pattern and finally evaluates the
@@ -167,6 +180,10 @@ pub enum Code {
     /// The type must be a record type.
     Nth(Box<Type>, usize),
     Tuple(Vec<Code>),
+
+    /// `Uncurry(f)` wraps a curried function `f: 'a -> 'b -> 'c` to create
+    /// an uncurried version `'a * 'b -> 'c`.
+    Uncurry(Box<Code>),
 }
 
 impl Code {
@@ -429,6 +446,9 @@ impl Code {
                 *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
             }
             Code::CreateClosure(_, _, _) => *mode == EvalMode::EagerF0,
+            Code::Curry(_) => *mode == EvalMode::EagerV1,
+            Code::CurryPartial(_, _) => *mode == EvalMode::EagerV1,
+            Code::Flip(_) => *mode == EvalMode::EagerV1,
             Code::Fn(_, _) => *mode == EvalMode::EagerV1,
             Code::GetLocal(_, _) => *mode == EvalMode::EagerF0,
             Code::Let(_, _) => *mode == EvalMode::Eager0,
@@ -450,6 +470,7 @@ impl Code {
                 *mode == EvalMode::Eager1 || *mode == EvalMode::EagerF0
             }
             Code::Tuple(_) => *mode == EvalMode::EagerF0,
+            Code::Uncurry(_) => *mode == EvalMode::EagerV1,
         }
     }
 
@@ -470,7 +491,7 @@ impl Code {
                             frame_def, matches, bound_vals, r, &arg,
                         )
                     }
-                    _ => panic!("Expected code"),
+                    _ => panic!("Expected code or closure, got {:?}", fn_),
                 }
             }
             Code::ApplyClosure(fn_code, arg_code, _bind_codes) => {
@@ -513,9 +534,14 @@ impl Code {
                 }
                 Ok(Val::Closure(frame_def.clone(), matches.clone(), values))
             }
-            Code::Fn(_, _) | Code::Nth(_, _) => {
-                // Fn and Nth are practically literals. When evaluated, they
-                // return themselves.
+            Code::Fn(_, _)
+            | Code::Nth(_, _)
+            | Code::Curry(_)
+            | Code::CurryPartial(_, _)
+            | Code::Uncurry(_)
+            | Code::Flip(_) => {
+                // Fn, Nth, Curry, CurryPartial, Uncurry, and Flip are
+                // practically literals. When evaluated, they return themselves.
                 Ok(Val::Code(Arc::new(self.clone())))
             }
             Code::GetLocal(frame_def, slot) => {
@@ -676,6 +702,30 @@ impl Code {
                 panic!("Match not exhaustive")
             }
             Code::Constant(_, v) => Ok(v.clone()),
+            Code::Curry(f) => {
+                // Curry(f) with arg a returns a function that takes b
+                // and calls f (a, b)
+                let captured_f = f.clone();
+                let captured_a = a0.clone();
+                Ok(Val::Code(Arc::new(Code::CurryPartial(
+                    captured_f,
+                    Box::new(captured_a),
+                ))))
+            }
+            Code::CurryPartial(func, a) => {
+                // CurryPartial(f, a) with arg b creates tuple (a, b) and
+                // calls f
+                let tuple = Val::List(vec![a.deref().clone(), a0.clone()]);
+                func.eval_f1(r, f, &tuple)
+            }
+            Code::Flip(func) => {
+                // Flip(f) with tuple (a, b) creates tuple (b, a) and calls f
+                let tuple = a0.expect_list();
+                let a = &tuple[0];
+                let b = &tuple[1];
+                let flipped = Val::List(vec![b.clone(), a.clone()]);
+                func.eval_f1(r, f, &flipped)
+            }
             Code::Fn(frame_def, pat_expr_codes) => {
                 Frame::create_and_eval(frame_def, pat_expr_codes, r, a0)
             }
@@ -684,6 +734,15 @@ impl Code {
                 code.eval_f1(r, f, a0)
             }
             Code::Nth(_, slot) => Ok(a0.expect_list()[*slot].clone()),
+            Code::Uncurry(func) => {
+                // Uncurry(f) with tuple (a, b) applies f a b
+                let tuple = a0.expect_list();
+                let a = &tuple[0];
+                let b = &tuple[1];
+                // First apply f to a, then apply result to b
+                let partial = func.eval_f1(r, f, a)?;
+                partial.apply_f1(r, f, b)
+            }
             _ => {
                 todo!("eval: {:?}", self)
             }
@@ -1312,23 +1371,33 @@ impl Eager1 {
                 Val::Code(Arc::new(Code::Fn(frame_def, pat_expr)))
             }
             FnCurry => {
-                // Fn.curry takes f: ('a * 'b -> 'c) and returns: 'a -> 'b -> 'c
+                // Fn.curry takes f: ('a * 'b -> 'c) and returns:
+                // 'a -> 'b -> 'c
                 // curry f = fn a => fn b => f (a, b)
-                // TODO: Needs proper implementation with nested closures
-                Val::Unit
+                // We create a Code::Curry wrapper that will handle the
+                // currying logic
+                Val::Code(Arc::new(Code::Curry(Box::new(
+                    a0.expect_code().deref().clone(),
+                ))))
             }
             FnFlip => {
                 // Fn.flip takes f: ('a * 'b -> 'c) and returns: 'b * 'a -> 'c
                 // flip f = fn (b, a) => f (a, b)
-                // TODO: Needs proper implementation
-                Val::Unit
+                // We create a Code::Flip wrapper that will handle the
+                // flipping logic
+                Val::Code(Arc::new(Code::Flip(Box::new(
+                    a0.expect_code().deref().clone(),
+                ))))
             }
             FnId => a0,
             FnUncurry => {
                 // Fn.uncurry takes f: ('a -> 'b -> 'c) and returns:
                 // 'a * 'b -> 'c. uncurry f = fn (a, b) => f a b
-                // TODO: Needs proper implementation
-                Val::Unit
+                // We create a Code::Uncurry wrapper that will handle the
+                // uncurrying logic
+                Val::Code(Arc::new(Code::Uncurry(Box::new(
+                    a0.expect_code().deref().clone(),
+                ))))
             }
             GeneralIgnore => Val::Unit,
             IntAbs => Val::Int(a0.expect_int().abs()),
@@ -2069,7 +2138,6 @@ pub enum EagerF3 {
     BagTabulate,
     BagTake,
     EitherFold,
-    FnRepeat,
     LPAppEq,
     LPFoldl,
     LPFoldr,
@@ -2135,18 +2203,6 @@ impl EagerF3 {
             EitherFold => {
                 let tuple = a0.expect_list();
                 Either::fold(r, f, &tuple[0], &tuple[1], &a1, &a2)
-            }
-            FnRepeat => {
-                // FnRepeat takes (n, f, value) and applies f n times to value
-                use crate::eval::r#fn::Fn;
-                Fn::repeat(
-                    r,
-                    f,
-                    a0.expect_int(),
-                    &a1.expect_code(),
-                    &a2,
-                    &Span::new(""),
-                )
             }
             LPAppEq => {
                 let tuple = a1.expect_list();
@@ -2263,6 +2319,7 @@ impl EagerF3 {
 #[derive(Clone, Copy, Debug, strum_macros::Display, PartialEq)]
 pub enum EagerF4 {
     // lint: sort until '#}'
+    FnRepeat,
     LPFoldlEq,
     LPFoldrEq,
     StringExtract,
@@ -2296,6 +2353,14 @@ impl EagerF4 {
         use crate::eval::code::EagerF4::*;
 
         match &self {
+            FnRepeat => Fn::repeat(
+                r,
+                f,
+                a0.expect_int(),
+                &a1.expect_code(),
+                &a2,
+                &a3.expect_span(),
+            ),
             LPFoldlEq => {
                 let span = a3.expect_span();
                 let tuple = a2.expect_list();
@@ -2622,7 +2687,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::FnId.implements(&mut b, FnId);
     Eager2::FnNotEqual.implements(&mut b, FnNotEqual);
     EagerF2::FnOpO.implements(&mut b, FnOpO);
-    EagerF3::FnRepeat.implements(&mut b, FnRepeat);
+    EagerF4::FnRepeat.implements(&mut b, FnRepeat);
     Eager1::FnUncurry.implements(&mut b, FnUncurry);
     Custom::GOpEq.implements(&mut b, GOpEq);
     Custom::GOpGe.implements(&mut b, GOpGe);

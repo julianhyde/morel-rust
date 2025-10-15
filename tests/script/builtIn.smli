@@ -907,7 +907,11 @@ Fn.apply (fn a => a + 3, 5);
 > val it = 8 : int
 Fn.curry;
 > val it = fn : ('a * 'b -> 'c) -> 'a -> 'b -> 'c
+(* TODO overloading
 Fn.curry (fn (a, b) => a + b);
+> val it = fn : int -> int -> int
+*)
+Fn.curry (fn (a, b) => a + b + 0);
 > val it = fn : int -> int -> int
 Fn.curry (fn (a, b) => a + b) 3 5;
 > val it = 8 : int
@@ -915,22 +919,35 @@ Fn.curry (fn (a, b) => a + b) 3;
 > val it = fn : int -> int
 Fn.uncurry;
 > val it = fn : ('a -> 'b -> 'c) -> 'a * 'b -> 'c
+(* TODO overloading
 Fn.uncurry (fn a => fn b => a + b);
+> val it = fn : int * int -> int
+*)
+Fn.uncurry (fn a => fn b => a + b + 0);
 > val it = fn : int * int -> int
 Fn.uncurry (fn a => fn b => a + b) (3, 5);
 > val it = 8 : int
 Fn.flip;
 > val it = fn : ('a * 'b -> 'c) -> 'b * 'a -> 'c
+(* TODO overloading
 Fn.flip (fn (a, b) => a - b);
+> val it = fn : int * int -> int
+*)
+Fn.flip (fn (a, b) => a - b + 0);
 > val it = fn : int * int -> int
 Fn.flip (fn (a, b) => a - b) (5, 3);
 > val it = ~2 : int
 Fn.repeat;
 > val it = fn : int -> ('a -> 'a) -> 'a -> 'a
+(* TODO partial application
 Fn.repeat 5 (fn i => i + 1);
 > val it = fn : int -> int
 it 8;
 > val it = 13 : int
+*)
+Fn.repeat 5 (fn i => i + 1) 8;
+> val it = 13 : int
+(* TODO partial application
 Fn.repeat 0 (fn i => i + 1);
 > val it = fn : int -> int
 it 8;
@@ -938,6 +955,16 @@ it 8;
 Fn.repeat ~2 (fn i => i + 1);
 > uncaught exception Domain
 >   raised at: stdIn:1.1-1.28
+Fn.repeat 3;
+> val it = fn : ('a -> 'a) -> 'a -> 'a
+it (fn s => s ^ "!") "hello";
+> val it = "hello!!!" : string
+*)
+Fn.repeat 0 (fn i => i + 1) 8;
+> val it = 8 : int
+Fn.repeat ~2 (fn i => i + 1) 6;
+> uncaught exception Domain
+>   raised at: stdIn:1.1-1.31
 Fn.equal;
 > val it = fn : 'a -> 'a -> bool
 (* ^ SML/NJ gives
@@ -3265,7 +3292,7 @@ Real.sign Real.posInf;
 Real.sign Real.negInf;
 > val it = ~1 : int
 Real.sign nan;
-> uncaught exception Domain [domain error]
+> uncaught exception Domain
 >   raised at: stdIn:1.1-1.14
 Sys.plan ();
 > val it = "apply2(fnValue Real.sign, constant(NaN), constant(stdIn:1.1-1.14))"
@@ -3848,7 +3875,7 @@ Real.trunc nan;
 > uncaught exception Overflow [overflow]
 >   raised at: stdIn:1.1-1.15
 Real.round nan;
-> uncaught exception Domain [domain error]
+> uncaught exception Domain
 >   raised at: stdIn:1.1-1.15
 
 (* "toInt mode x", "toLargeInt mode x" convert the argument x to an integral
