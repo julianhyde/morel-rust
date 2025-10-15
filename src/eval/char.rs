@@ -25,9 +25,11 @@ use crate::shell::main::MorelError;
 pub struct Char;
 
 impl Char {
+    // lint: sort until '#}' where '##pub'
+
     // Constants
-    pub(crate) const MAX_ORD: i32 = 255;
     pub(crate) const MAX_CHAR: char = '\u{00FF}';
+    pub(crate) const MAX_ORD: i32 = 255;
     pub(crate) const MIN_CHAR: char = '\u{0000}';
 
     /// Implements Morel `Char.chr i`. May throw [BuiltInExn::Chr].
@@ -55,6 +57,14 @@ impl Char {
         s.contains(c)
     }
 
+    /// Computes the Morel expression `Char.fromCString s`.
+    ///
+    /// Scans a char value from a string, skipping leading whitespace.
+    pub(crate) fn from_c_string(s: &str) -> Val {
+        let trimmed = s.trim_start();
+        Self::from_string(trimmed)
+    }
+
     /// Computes the Morel expression `Char.fromInt i`.
     ///
     /// Converts an `int` into a `char`. Returns SOME(c) if successful,
@@ -64,6 +74,82 @@ impl Char {
             Val::Some(Box::new(Val::Char(i as u8 as char)))
         } else {
             Val::Unit
+        }
+    }
+
+    /// Computes the Morel expression `Char.fromString s`.
+    ///
+    /// Attempts to scan a character or ML escape sequence from the string `s`.
+    /// Does not skip leading whitespace.
+    pub(crate) fn from_string(s: &str) -> Val {
+        if s.is_empty() {
+            return Val::Unit; // NONE
+        }
+
+        let bytes = s.as_bytes();
+
+        // Check for escape sequences.
+        if bytes[0] == b'\\' {
+            if bytes.len() < 2 {
+                return Val::Unit; // NONE - incomplete escape
+            }
+
+            return match bytes[1] {
+                // Standard escapes
+                b'a' => Val::Some(Box::new(Val::Char('\x07'))), // bell
+                b'b' => {
+                    Val::Some(Box::new(Val::Char('\x08'))) // backspace
+                }
+                b't' => Val::Some(Box::new(Val::Char('\t'))),
+                b'n' => Val::Some(Box::new(Val::Char('\n'))),
+                b'v' => {
+                    // vertical tab
+                    Val::Some(Box::new(Val::Char('\x0B')))
+                }
+                b'f' => {
+                    // form feed
+                    Val::Some(Box::new(Val::Char('\x0C')))
+                }
+                b'r' => Val::Some(Box::new(Val::Char('\r'))),
+                b'\\' => Val::Some(Box::new(Val::Char('\\'))),
+                b'"' => Val::Some(Box::new(Val::Char('"'))),
+                b'^' => {
+                    // Control character: \^X where X is A-Z or @ [ \ ] ^ _
+                    if bytes.len() < 3 {
+                        return Val::Unit; // NONE
+                    }
+                    let ctrl_char = bytes[2];
+                    if (b'@'..=b'_').contains(&ctrl_char) {
+                        let code = (ctrl_char - b'@') as char;
+                        return Val::Some(Box::new(Val::Char(code)));
+                    }
+                    Val::Unit // NONE
+                }
+                // Decimal escape: \ddd where ddd is 0-255
+                b'0'..=b'9' => {
+                    let mut num = 0;
+                    let mut i = 1;
+                    while i < bytes.len() && i < 4 && bytes[i].is_ascii_digit()
+                    {
+                        num = num * 10 + (bytes[i] - b'0') as i32;
+                        i += 1;
+                    }
+                    if num <= 255 {
+                        return Val::Some(Box::new(Val::Char(
+                            num as u8 as char,
+                        )));
+                    }
+                    Val::Unit // NONE
+                }
+                _ => Val::Unit, // NONE - unknown escape
+            };
+        }
+
+        // Regular character
+        if let Some(c) = s.chars().next() {
+            Val::Some(Box::new(Val::Char(c)))
+        } else {
+            Val::Unit // NONE
         }
     }
 
@@ -201,6 +287,35 @@ impl Char {
         }
     }
 
+    /// Computes the Morel expression `Char.toCString c`.
+    ///
+    /// Converts a char into a string using C-style escapes
+    /// (octal for non-printable).
+    #[allow(clippy::wrong_self_convention)]
+    pub(crate) fn to_c_string(c: char) -> String {
+        let code = c as u8;
+        match c {
+            '\x07' => "\\a".to_string(),
+            '\x08' => "\\b".to_string(),
+            '\t' => "\\t".to_string(),
+            '\n' => "\\n".to_string(),
+            '\x0B' => "\\v".to_string(),
+            '\x0C' => "\\f".to_string(),
+            '\r' => "\\r".to_string(),
+            '\\' => "\\\\".to_string(),
+            '"' => "\\\"".to_string(),
+            _ if code < 32 => {
+                // Control characters: use \^X notation for codes 0-31
+                format!("\\^{}", (b'@' + code) as char)
+            }
+            _ if code >= 127 => {
+                // Use octal escape for codes 127-255
+                format!("\\{:03o}", code)
+            }
+            _ => c.to_string(), // Printable character
+        }
+    }
+
     /// Computes the Morel expression `Char.toLower c`.
     ///
     /// Returns the lowercase letter corresponding to `c` if `c` is a letter
@@ -249,118 +364,5 @@ impl Char {
     #[allow(clippy::wrong_self_convention)]
     pub(crate) fn to_upper(c: char) -> char {
         c.to_uppercase().next().unwrap_or(c)
-    }
-
-    /// Computes the Morel expression `Char.fromString s`.
-    ///
-    /// Attempts to scan a character or ML escape sequence from the string `s`.
-    /// Does not skip leading whitespace.
-    pub(crate) fn from_string(s: &str) -> Val {
-        if s.is_empty() {
-            return Val::Unit; // NONE
-        }
-
-        let bytes = s.as_bytes();
-
-        // Check for escape sequences.
-        if bytes[0] == b'\\' {
-            if bytes.len() < 2 {
-                return Val::Unit; // NONE - incomplete escape
-            }
-
-            return match bytes[1] {
-                // Standard escapes
-                b'a' => Val::Some(Box::new(Val::Char('\x07'))), // bell
-                b'b' => {
-                    Val::Some(Box::new(Val::Char('\x08'))) // backspace
-                }
-                b't' => Val::Some(Box::new(Val::Char('\t'))),
-                b'n' => Val::Some(Box::new(Val::Char('\n'))),
-                b'v' => {
-                    // vertical tab
-                    Val::Some(Box::new(Val::Char('\x0B')))
-                }
-                b'f' => {
-                    // form feed
-                    Val::Some(Box::new(Val::Char('\x0C')))
-                }
-                b'r' => Val::Some(Box::new(Val::Char('\r'))),
-                b'\\' => Val::Some(Box::new(Val::Char('\\'))),
-                b'"' => Val::Some(Box::new(Val::Char('"'))),
-                b'^' => {
-                    // Control character: \^X where X is A-Z or @ [ \ ] ^ _
-                    if bytes.len() < 3 {
-                        return Val::Unit; // NONE
-                    }
-                    let ctrl_char = bytes[2];
-                    if (b'@'..=b'_').contains(&ctrl_char) {
-                        let code = (ctrl_char - b'@') as char;
-                        return Val::Some(Box::new(Val::Char(code)));
-                    }
-                    Val::Unit // NONE
-                }
-                // Decimal escape: \ddd where ddd is 0-255
-                b'0'..=b'9' => {
-                    let mut num = 0;
-                    let mut i = 1;
-                    while i < bytes.len() && i < 4 && bytes[i].is_ascii_digit()
-                    {
-                        num = num * 10 + (bytes[i] - b'0') as i32;
-                        i += 1;
-                    }
-                    if num <= 255 {
-                        return Val::Some(Box::new(Val::Char(
-                            num as u8 as char,
-                        )));
-                    }
-                    Val::Unit // NONE
-                }
-                _ => Val::Unit, // NONE - unknown escape
-            };
-        }
-
-        // Regular character
-        if let Some(c) = s.chars().next() {
-            Val::Some(Box::new(Val::Char(c)))
-        } else {
-            Val::Unit // NONE
-        }
-    }
-
-    /// Computes the Morel expression `Char.fromCString s`.
-    ///
-    /// Scans a char value from a string, skipping leading whitespace.
-    pub(crate) fn from_c_string(s: &str) -> Val {
-        let trimmed = s.trim_start();
-        Self::from_string(trimmed)
-    }
-
-    /// Computes the Morel expression `Char.toCString c`.
-    ///
-    /// Converts a char into a string using C-style escapes
-    /// (octal for non-printable).
-    #[allow(clippy::wrong_self_convention)]
-    pub(crate) fn to_c_string(c: char) -> String {
-        let code = c as u8;
-        match c {
-            '\x07' => "\\a".to_string(),
-            '\x08' => "\\b".to_string(),
-            '\t' => "\\t".to_string(),
-            '\n' => "\\n".to_string(),
-            '\x0B' => "\\v".to_string(),
-            '\x0C' => "\\f".to_string(),
-            '\r' => "\\r".to_string(),
-            '\\' => "\\\\".to_string(),
-            '"' => "\\\"".to_string(),
-            _ if code < 32 => {
-                // Control characters: use \^X notation for codes 0-31
-                format!("\\^{}", (b'@' + code) as char)
-            }
-            _ if code >= 127 => {
-                // Use octal escape for codes 127-255
-                format!("\\{:03o}", code)
-            }
-            _ => c.to_string(), // Printable character
-        }
     }
 }

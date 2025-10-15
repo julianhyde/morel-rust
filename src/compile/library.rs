@@ -277,7 +277,7 @@ pub enum BuiltInFunction {
     #[strum(props(p = "List", name = "all"))]
     #[strum(props(type = "forall 1 ('a -> bool) -> 'a list -> bool"))]
     ListAll,
-    #[strum(props(p = "List", name = "app"))]
+    #[strum(props(p = "List", name = "app", global = true))]
     #[strum(props(type = "forall 1 ('a -> unit) -> 'a list -> unit"))]
     ListApp,
     #[strum(props(p = "List", name = "at"))]
@@ -307,16 +307,16 @@ pub enum BuiltInFunction {
     #[strum(props(p = "List", name = "find"))]
     #[strum(props(type = "forall 1 ('a -> bool) -> 'a list -> 'a option"))]
     ListFind,
-    #[strum(props(p = "List", name = "foldl"))]
+    #[strum(props(p = "List", name = "foldl", global = true))]
     #[strum(props(type = "forall 2 ('a * 'b -> 'b) -> 'b -> 'a list -> 'b"))]
     ListFoldl,
-    #[strum(props(p = "List", name = "foldr"))]
+    #[strum(props(p = "List", name = "foldr", global = true))]
     #[strum(props(type = "forall 2 ('a * 'b -> 'b) -> 'b -> 'a list -> 'b"))]
     ListFoldr,
     #[strum(props(p = "List", name = "getItem"))]
     #[strum(props(type = "forall 1 'a list -> ('a * 'a list) option"))]
     ListGetItem,
-    #[strum(props(p = "List", name = "hd", throws = "Empty"))]
+    #[strum(props(p = "List", name = "hd", global = true, throws = "Empty"))]
     #[strum(props(type = "forall 1 'a list -> 'a"))]
     ListHd,
     #[strum(props(p = "List", name = "intersect"))]
@@ -325,7 +325,7 @@ pub enum BuiltInFunction {
     #[strum(props(p = "List", name = "last", throws = "Empty"))]
     #[strum(props(type = "forall 1 'a list -> 'a"))]
     ListLast,
-    #[strum(props(p = "List", name = "length"))]
+    #[strum(props(p = "List", name = "length", global = true))]
     #[strum(props(type = "forall 1 'a list -> int"))]
     ListLength,
     #[strum(props(p = "List", name = "map", global = true))]
@@ -343,7 +343,7 @@ pub enum BuiltInFunction {
     #[strum(props(p = "List", name = "nth", throws = "Subscript"))]
     #[strum(props(type = "forall 1 'a list * int -> 'a"))]
     ListNth,
-    #[strum(props(p = "List", name = "null"))]
+    #[strum(props(p = "List", name = "null", global = true))]
     #[strum(props(type = "forall 1 'a list -> bool"))]
     ListNull,
     #[strum(props(p = "List", name = "op @", global = true))]
@@ -357,7 +357,7 @@ pub enum BuiltInFunction {
         type = "forall 1 ('a -> bool) -> 'a list -> 'a list * 'a list"
     ))]
     ListPartition,
-    #[strum(props(p = "List", name = "rev"))]
+    #[strum(props(p = "List", name = "rev", global = true))]
     #[strum(props(type = "forall 1 'a list -> 'a list"))]
     ListRev,
     #[strum(props(p = "List", name = "revAppend"))]
@@ -369,7 +369,7 @@ pub enum BuiltInFunction {
     #[strum(props(p = "List", name = "take", throws = "Subscript"))]
     #[strum(props(type = "forall 1 'a list * int -> 'a list"))]
     ListTake,
-    #[strum(props(p = "List", name = "tl", throws = "Empty"))]
+    #[strum(props(p = "List", name = "tl", global = true, throws = "Empty"))]
     #[strum(props(type = "forall 1 'a list -> 'a list"))]
     ListTl,
     #[strum(props(p = "Math", name = "acos", type = "real -> real"))]
@@ -463,7 +463,7 @@ pub enum BuiltInFunction {
     Real,
     #[strum(props(p = "Real", name = "abs", type = "real -> real"))]
     RealAbs,
-    #[strum(props(p = "Real", name = "ceil"))]
+    #[strum(props(p = "Real", name = "ceil", global = true))]
     #[strum(props(type = "real -> int", throws = "Overflow"))]
     RealCeil,
     #[strum(props(p = "Real", name = "checkFloat"))]
@@ -478,7 +478,7 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Real", name = "op /", global = true))]
     #[strum(props(type = "real * real -> real"))]
     RealDivide,
-    #[strum(props(p = "Real", name = "floor"))]
+    #[strum(props(p = "Real", name = "floor", global = true))]
     #[strum(props(type = "real -> int", throws = "Overflow"))]
     RealFloor,
     #[strum(props(p = "Real", name = "fromInt", type = "int -> real"))]
@@ -545,7 +545,7 @@ pub enum BuiltInFunction {
     RealRealTrunc,
     #[strum(props(p = "Real", name = "rem", type = "real * real -> real"))]
     RealRem,
-    #[strum(props(p = "Real", name = "round"))]
+    #[strum(props(p = "Real", name = "round", global = true))]
     #[strum(props(type = "real -> int", throws = "Overflow"))]
     RealRound,
     #[strum(props(p = "Real", name = "sameSign"))]
@@ -564,7 +564,7 @@ pub enum BuiltInFunction {
     RealToManExp,
     #[strum(props(p = "Real", name = "toString", type = "real -> string"))]
     RealToString,
-    #[strum(props(p = "Real", name = "trunc"))]
+    #[strum(props(p = "Real", name = "trunc", global = true))]
     #[strum(props(type = "real -> int", throws = "Overflow"))]
     RealTrunc,
     #[strum(props(p = "Real", name = "unordered"))]
