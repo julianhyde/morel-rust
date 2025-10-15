@@ -873,9 +873,6 @@ Either.partition [yes, ten];
 > val it = ([true],[10]) : bool list * int list
 
 (* Fn ---------------------------------------------------------- *)
-set("mode", "validate");
-> val it = () : unit
-
 Fn;
 > val it =
 >   {apply=fn,const=fn,curry=fn,equal=fn,flip=fn,id=fn,notEqual=fn,`op o`=fn,
@@ -961,6 +958,8 @@ Fn.notEqual 3 3;
 > val it = false : bool
 
 (* General ----------------------------------------------------- *)
+set("mode", "validate");
+> val it = () : unit
 
 (*) op o - function composition
 val plusOne = fn x => x + 1;

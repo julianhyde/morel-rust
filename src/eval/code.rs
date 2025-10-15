@@ -1181,6 +1181,11 @@ pub enum Eager1 {
     EitherIsRight,
     EitherPartition,
     EitherProj,
+    FnConst,
+    FnCurry,
+    FnFlip,
+    FnId,
+    FnUncurry,
     GeneralIgnore,
     IntAbs,
     IntFromInt,
@@ -1291,6 +1296,40 @@ impl Eager1 {
             EitherIsRight => Val::Bool(Either::is_right(&a0)),
             EitherPartition => Either::partition(a0.expect_list()),
             EitherProj => Either::proj(&a0),
+            FnConst => {
+                // Fn.const takes a value and returns a function that
+                // ignores its argument. const x = fn _ => x
+                // Create a function that always returns a0
+                use crate::eval::frame::FrameDef;
+                let frame_def = Arc::new(FrameDef::new(&[], &[]));
+                let pat_expr = vec![(
+                    Code::BindWildcard,
+                    Code::Constant(
+                        Box::new(Type::Primitive(PrimitiveType::Unit)),
+                        a0,
+                    ),
+                )];
+                Val::Code(Arc::new(Code::Fn(frame_def, pat_expr)))
+            }
+            FnCurry => {
+                // Fn.curry takes f: ('a * 'b -> 'c) and returns: 'a -> 'b -> 'c
+                // curry f = fn a => fn b => f (a, b)
+                // TODO: Needs proper implementation with nested closures
+                Val::Unit
+            }
+            FnFlip => {
+                // Fn.flip takes f: ('a * 'b -> 'c) and returns: 'b * 'a -> 'c
+                // flip f = fn (b, a) => f (a, b)
+                // TODO: Needs proper implementation
+                Val::Unit
+            }
+            FnId => a0,
+            FnUncurry => {
+                // Fn.uncurry takes f: ('a -> 'b -> 'c) and returns:
+                // 'a * 'b -> 'c. uncurry f = fn (a, b) => f a b
+                // TODO: Needs proper implementation
+                Val::Unit
+            }
             GeneralIgnore => Val::Unit,
             IntAbs => Val::Int(a0.expect_int().abs()),
             IntFromInt => a0,
@@ -1399,6 +1438,8 @@ pub enum Eager2 {
     CharOpLe,
     CharOpLt,
     CharOpNe,
+    FnEqual,
+    FnNotEqual,
     GeneralOpO,
     IntCompare,
     IntDiv,
@@ -1500,6 +1541,8 @@ impl Eager2 {
             CharOpLe => Val::Bool(a0.expect_char() <= a1.expect_char()),
             CharOpLt => Val::Bool(a0.expect_char() < a1.expect_char()),
             CharOpNe => Val::Bool(a0.expect_char() != a1.expect_char()),
+            FnEqual => Val::Bool(a0 == a1),
+            FnNotEqual => Val::Bool(a0 != a1),
             GeneralOpO => Val::Unit,
             IntCompare => {
                 Val::Order(Int::compare(a0.expect_int(), a1.expect_int()))
@@ -1654,6 +1697,8 @@ pub enum EagerF2 {
     EitherMap,
     EitherMapLeft,
     EitherMapRight,
+    FnApply,
+    FnOpO,
     LPAll,
     LPAllEq,
     LPApp,
@@ -1792,6 +1837,28 @@ impl EagerF2 {
             }
             EitherMapLeft => Either::map_left(r, f, &a0.expect_code(), &a1),
             EitherMapRight => Either::map_right(r, f, &a0.expect_code(), &a1),
+            FnApply => {
+                // FnApply takes a function and a value, and applies
+                // the function to the value
+                let func = &a0.expect_code();
+                func.eval_f1(r, f, &a1)
+            }
+            FnOpO => {
+                // FnOpO takes (g, f) and returns g o f
+                // (function composition). Returns a closure that applies
+                // f then g
+                let tuple = a0.expect_list();
+                let _g = tuple[0].clone();
+                let _func_f = tuple[1].clone();
+                // Return a closure that composes the two functions
+                // The closure will take an argument, apply f, then apply
+                // g. We need to create a Fn that represents
+                // (fn x => g (f x)).
+                // For now, we'll return a simple placeholder that
+                // needs proper implementation. This is a complex case
+                // that requires creating a new Code::Fn value
+                Ok(Val::Unit) // Placeholder - needs proper closure
+            }
             LPAll => {
                 let tuple = a1.expect_list();
                 let result = ListPair::all(
@@ -2002,6 +2069,7 @@ pub enum EagerF3 {
     BagTabulate,
     BagTake,
     EitherFold,
+    FnRepeat,
     LPAppEq,
     LPFoldl,
     LPFoldr,
@@ -2067,6 +2135,18 @@ impl EagerF3 {
             EitherFold => {
                 let tuple = a0.expect_list();
                 Either::fold(r, f, &tuple[0], &tuple[1], &a1, &a2)
+            }
+            FnRepeat => {
+                // FnRepeat takes (n, f, value) and applies f n times to value
+                use crate::eval::r#fn::Fn;
+                Fn::repeat(
+                    r,
+                    f,
+                    a0.expect_int(),
+                    &a1.expect_code(),
+                    &a2,
+                    &Span::new(""),
+                )
             }
             LPAppEq => {
                 let tuple = a1.expect_list();
@@ -2534,6 +2614,16 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     EagerF2::EitherMapRight.implements(&mut b, EitherMapRight);
     Eager1::EitherPartition.implements(&mut b, EitherPartition);
     Eager1::EitherProj.implements(&mut b, EitherProj);
+    EagerF2::FnApply.implements(&mut b, FnApply);
+    Eager1::FnConst.implements(&mut b, FnConst);
+    Eager1::FnCurry.implements(&mut b, FnCurry);
+    Eager2::FnEqual.implements(&mut b, FnEqual);
+    Eager1::FnFlip.implements(&mut b, FnFlip);
+    Eager1::FnId.implements(&mut b, FnId);
+    Eager2::FnNotEqual.implements(&mut b, FnNotEqual);
+    EagerF2::FnOpO.implements(&mut b, FnOpO);
+    EagerF3::FnRepeat.implements(&mut b, FnRepeat);
+    Eager1::FnUncurry.implements(&mut b, FnUncurry);
     Custom::GOpEq.implements(&mut b, GOpEq);
     Custom::GOpGe.implements(&mut b, GOpGe);
     Custom::GOpGt.implements(&mut b, GOpGt);

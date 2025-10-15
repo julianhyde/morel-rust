@@ -27,6 +27,7 @@ pub mod list_pair;
 pub mod math;
 pub mod option;
 pub mod order;
+pub mod r#fn;
 pub mod real;
 pub mod session;
 pub mod string;
