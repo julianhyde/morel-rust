@@ -53,6 +53,7 @@ pub struct Shell {
     pub(crate) config: Config,
     environment: Environment,
     session: Rc<RefCell<Session>>,
+    link_codes: Vec<crate::eval::code::Code>,
 }
 
 /// Simple environment for storing bindings.
@@ -200,6 +201,7 @@ impl Shell {
             config,
             environment: Environment::new(),
             session: Rc::new(RefCell::new(Session::new())),
+            link_codes: Vec::new(),
         }
     }
 
@@ -432,10 +434,11 @@ impl Shell {
         let env2 = env.multi(&map);
         let decl2 = inliner::inline_decl(&env2, &decl);
 
-        let compiled_statement = compiler::compile_statement(
+        let compiled_statement = compiler::compile_statement_with_links(
             &resolved.type_map,
             &self.environment,
             &decl2,
+            &self.link_codes,
         );
         let mut result = String::new();
         let mut bindings = Vec::new();
@@ -450,6 +453,9 @@ impl Shell {
             &resolved.type_map,
         );
         drop(session); // Release the borrow before applying effects
+
+        // Update the shell's link_codes for use in future statements
+        self.link_codes = compiled_statement.get_link_codes().to_vec();
 
         // Apply effects
         for effect in effects {

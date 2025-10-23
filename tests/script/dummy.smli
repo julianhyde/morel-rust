@@ -16,7 +16,21 @@
  * language governing permissions and limitations under the
  * License.
  *)
-"this is a simple script; modify it for debugging test cases";
-> val it = "this is a simple script; modify it for debugging test cases" : string
+fun my_map f [] = []
+  | my_map f (x::xs) = (f x) :: (my_map f xs);
+> val
+fun double x = x * 2;
+> val
+map double [1, 2, 3, 4, 5];
+> val
+my_map (fn s => s ^ "!") ["hello", "world"];
+> val
+(*
+
+fun f 1 = 1
+ | f n = n * f (n - 1);
+> val f = fn : int -> int
+f 5;
+*)
 
 (*) End dummy.smli

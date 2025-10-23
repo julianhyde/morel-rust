@@ -45,8 +45,17 @@ pub fn compile_statement(
     env: &Environment,
     decl: &Decl,
 ) -> Box<dyn CompiledStatement> {
+    compile_statement_with_links(type_map, env, decl, &[])
+}
+
+pub fn compile_statement_with_links(
+    type_map: &TypeMap,
+    env: &Environment,
+    decl: &Decl,
+    existing_link_codes: &[Code],
+) -> Box<dyn CompiledStatement> {
     let mut compiler = Compiler::new(type_map);
-    compiler.compile_statement(env, decl, None, &HashSet::new())
+    compiler.compile_statement(env, decl, None, &HashSet::new(), existing_link_codes)
 }
 
 struct Compiler<'a> {
@@ -97,6 +106,7 @@ impl<'a> Compiler<'a> {
         decl: &Decl,
         skip_pat: Option<Id>,
         queries_to_wrap: &HashSet<Expr>,
+        existing_link_codes: &[Code],
     ) -> Box<dyn CompiledStatement> {
         let mut match_codes = Vec::new();
         let mut bindings = Vec::new();
@@ -138,13 +148,15 @@ impl<'a> Compiler<'a> {
         };
 
         let context = self.create_context(env);
-        let link_codes: Vec<Code> = self
+        let mut link_codes: Vec<Code> = existing_link_codes.to_vec();
+        let new_link_codes: Vec<Code> = self
             .links
             .iter()
             .filter_map(|link| {
                 link.code.as_ref().map(|code| code.deref().clone())
             })
             .collect();
+        link_codes.extend(new_link_codes);
 
         Box::new(CompiledStatementImpl {
             type_,
@@ -895,6 +907,9 @@ pub trait CompiledStatement {
         effects: &mut Vec<Effect>,
         type_map: &TypeMap,
     );
+
+    /// Returns the link codes from this compiled statement.
+    fn get_link_codes(&self) -> &[Code];
 }
 
 struct CompiledStatementImpl {
@@ -924,6 +939,10 @@ impl CompiledStatement for CompiledStatementImpl {
         for action in &self.actions {
             action.apply(&mut eval_env, &mut frame);
         }
+    }
+
+    fn get_link_codes(&self) -> &[Code] {
+        &self.link_codes
     }
 }
 
