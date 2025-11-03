@@ -493,9 +493,11 @@ impl TypeResolver {
             }
             DeclKind::Signature(_) => {
                 // Signatures don't have types themselves in the type system.
-                // They are purely compile-time constructs for defining interfaces.
-                // For now, we just return the original declaration unchanged.
-                // TODO: Implement proper signature type checking once structures are added.
+                // They are purely compile-time constructs for defining
+                // interfaces. For now, we just return the original
+                // declaration unchanged.
+                // TODO: Implement proper signature type checking once
+                // structures are added.
                 decl.clone()
             }
             _ => todo!("{:?}", decl.kind),

@@ -1232,12 +1232,15 @@ impl MorelParser {
 
     fn datatype_spec(input: ParseInput) -> ParseResult<SpecKind> {
         Ok(match_nodes!(input.children();
-            [_datatype(_), datatype_desc(desc), _and(_), datatype_desc(rest)..] => {
+            [_datatype(_), datatype_desc(desc), _and(_),
+             datatype_desc(rest)..] => {
                 let mut descs = vec![desc];
                 descs.extend(rest.collect::<Vec<_>>());
                 SpecKind::Datatype(descs)
             },
-            [_datatype(_), datatype_desc(desc)] => SpecKind::Datatype(vec![desc]),
+            [_datatype(_), datatype_desc(desc)] => {
+                SpecKind::Datatype(vec![desc])
+            },
         ))
     }
 
