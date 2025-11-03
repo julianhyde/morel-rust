@@ -482,6 +482,7 @@ impl MorelParser {
         Ok(match_nodes!(input.children();
             [literal(l)] => ExprKind::Literal(l).wrap(input),
             [identifier_expr(e)] => e,
+            [op_section(op)] => ExprKind::OpSection(op).wrap(input),
             [record_selector(r)] => {
                 // Record selector "#a" becomes RecordSelector("a").
                 ExprKind::RecordSelector(r[1..].to_string()).wrap(input)
@@ -499,6 +500,30 @@ impl MorelParser {
             [from_expr(e)] => e,
             [forall_expr(e)] => e,
             [expr(e)] => e, // parenthesized expression; should re-wrap?
+        ))
+    }
+
+    fn op_section(input: ParseInput) -> ParseResult<String> {
+        Ok(match_nodes!(input.children();
+            [_op(_), op_name(name)] => name,
+        ))
+    }
+
+    fn op_name(input: ParseInput) -> ParseResult<String> {
+        Ok(match_nodes!(input.children();
+            [identifier(id)] => id.to_string(),
+            [_div(_)] => "div".to_string(),
+            [_mod(_)] => "mod".to_string(),
+            [_andalso(_)] => "andalso".to_string(),
+            [_orelse(_)] => "orelse".to_string(),
+            [_o(_)] => "o".to_string(),
+            [_elem(_)] => "elem".to_string(),
+            [_notelem(_)] => "notelem".to_string(),
+            [] => {
+                // For simple operators like +, -, *, etc.,
+                // extract from the input string
+                input.as_str().to_string()
+            },
         ))
     }
 
@@ -1656,6 +1681,10 @@ impl MorelParser {
         Ok(())
     }
 
+    fn _op(input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
     fn _order(input: ParseInput) -> ParseResult<()> {
         Ok(())
     }
@@ -2407,5 +2436,36 @@ mod test {
         // Test signature with multiple specs
         ml("signature S = sig type t val x : t end")
             .assert_statement(is("signature S = sig type t; val x : t; end"));
+    }
+
+    #[test]
+    fn test_parse_op_section() {
+        // Test basic operator sections
+        ml("op +").assert_statement(is("op +"));
+        ml("op -").assert_statement(is("op -"));
+        ml("op *").assert_statement(is("op *"));
+        ml("op /").assert_statement(is("op /"));
+        ml("op ::").assert_statement(is("op ::"));
+        ml("op @").assert_statement(is("op @"));
+        ml("op =").assert_statement(is("op ="));
+        ml("op <>").assert_statement(is("op <>"));
+        ml("op <").assert_statement(is("op <"));
+        ml("op >").assert_statement(is("op >"));
+        ml("op <=").assert_statement(is("op <="));
+        ml("op >=").assert_statement(is("op >="));
+        ml("op ~").assert_statement(is("op ~"));
+        ml("op ^").assert_statement(is("op ^"));
+
+        // Test keyword operators
+        ml("op div").assert_statement(is("op div"));
+        ml("op mod").assert_statement(is("op mod"));
+        ml("op andalso").assert_statement(is("op andalso"));
+        ml("op orelse").assert_statement(is("op orelse"));
+        ml("op o").assert_statement(is("op o"));
+        ml("op elem").assert_statement(is("op elem"));
+        ml("op notelem").assert_statement(is("op notelem"));
+
+        // Test op with identifiers (for user-defined operators)
+        ml("op foo").assert_statement(is("op foo"));
     }
 }

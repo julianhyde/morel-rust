@@ -522,6 +522,11 @@ impl<'a> Resolver<'a> {
                     _ => todo!("resolve {:?}", a0),
                 }
             }
+            ExprKind::OpSection(name) => {
+                // Convert 'op <operator>' to an identifier reference
+                // The identifier "op +" will be resolved by the inliner
+                CoreExpr::Identifier(t, format!("op {}", name))
+            }
             ExprKind::OrElse(a0, a1) => {
                 self.call2(t, BuiltInFunction::BoolOrElse, &span, a0, a1)
             }
@@ -915,6 +920,7 @@ impl<'a> Resolver<'a> {
         let decl = CoreDecl::NonRecVal(Box::new(temp_val_bind));
         CoreExpr::Let(case_expr.type_(), vec![decl], case_expr)
     }
+
 }
 
 /// Returns whether any of the expressions in `exps` references any of
