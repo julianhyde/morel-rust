@@ -491,6 +491,13 @@ impl TypeResolver {
                 let val_decl = self.convert_fun_to_val(env, fun_binds);
                 self.deduce_decl_type(env, &val_decl, term_map)
             }
+            DeclKind::Signature(_) => {
+                // Signatures don't have types themselves in the type system.
+                // They are purely compile-time constructs for defining interfaces.
+                // For now, we just return the original declaration unchanged.
+                // TODO: Implement proper signature type checking once structures are added.
+                decl.clone()
+            }
             _ => todo!("{:?}", decl.kind),
         }
     }
