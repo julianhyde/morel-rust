@@ -1646,9 +1646,9 @@ impl TypeResolver {
                 let size = sequence.terms.len();
                 Some(ordinal_names(size))
             }
-            s if s.starts_with("record`") => {
+            s if s.starts_with("record:") => {
                 let fields =
-                    Self::split_quoted(&s["record`".len()..], '`', '\'');
+                    Self::split_quoted(&s["record:".len()..], ':', '`');
                 Some(fields)
             }
             _ => None,
@@ -1662,7 +1662,7 @@ impl TypeResolver {
     {
         let label_strs: Vec<String> =
             labels.into_iter().map(|l| l.to_string()).collect();
-        format!("record`{}", Self::join_quoted(&label_strs, '`', '\''))
+        format!("record:{}", Self::join_quoted(&label_strs, ':', '`'))
     }
 
     /// Generates ordinal names for tuple fields: ["1", "2", "3", ...]
@@ -2234,12 +2234,13 @@ mod tests {
         check_split_join("", vec![]);
         check_split_join("a,'b,c',d", vec!["a", "b,c", "d"]);
         check_split_join(",a,,bc,", vec!["", "a", "", "bc", ""]);
-        // Test with backtick separator (what we actually use)
-        let result = TypeResolver::split_quoted("a`'b`c'`d", '`', '\'');
-        assert_eq!(result, vec!["a", "b`c", "d"]);
+        // Test with colon separator and backtick quote (what we use for
+        // record fields)
+        let result = TypeResolver::split_quoted("a:`b:c`:d", ':', '`');
+        assert_eq!(result, vec!["a", "b:c", "d"]);
         assert_eq!(
-            TypeResolver::join_quoted(&["a", "b`c", "d"], '`', '\''),
-            "a`'b`c'`d"
+            TypeResolver::join_quoted(&["a", "b:c", "d"], ':', '`'),
+            "a:`b:c`:d"
         );
     }
 
