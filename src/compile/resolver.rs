@@ -525,7 +525,7 @@ impl<'a> Resolver<'a> {
             ExprKind::OpSection(name) => {
                 // Convert 'op <operator>' to a function literal
                 // The type tells us which specific built-in to use
-                self.op_section_to_literal(t, name)
+                self.op_section_to_literal(&t, name)
             }
             ExprKind::OrElse(a0, a1) => {
                 self.call2(t, BuiltInFunction::BoolOrElse, &span, a0, a1)
@@ -926,10 +926,10 @@ impl<'a> Resolver<'a> {
     /// directly map to the specific built-in function.
     fn op_section_to_literal(
         &self,
-        fn_type: Box<Type>,
+        fn_type: &Type,
         op_name: &str,
     ) -> CoreExpr {
-        match fn_type.as_ref() {
+        match fn_type {
             Type::Multi(_types) => {
                 // Overloaded function - create GOpNegate, GOpPlus, etc.
                 let builtin = self.multi_op_to_builtin(op_name);
@@ -956,9 +956,7 @@ impl<'a> Resolver<'a> {
                             Type::Variable(_) => {
                                 self.multi_op_to_builtin(op_name)
                             }
-                            _ => {
-                                self.binary_op_to_builtin(op_name, &args[0])
-                            }
+                            _ => self.binary_op_to_builtin(op_name, &args[0]),
                         }
                     }
                     _ => {
@@ -981,7 +979,13 @@ impl<'a> Resolver<'a> {
         op_name: &str,
         arg_type: &Type,
     ) -> BuiltInFunction {
-        use BuiltInFunction::*;
+        use BuiltInFunction::{
+            IntDiv, IntMinus, IntMod, IntOpGe, IntOpGt, IntOpLe, IntOpLt,
+            IntPlus, IntTimes, ListAt, ListOpCons, RealDivide, RealOpGe,
+            RealOpGt, RealOpLe, RealOpLt, RealOpMinus, RealOpPlus,
+            RealOpTimes, StringOpCaret, StringOpGe, StringOpGt, StringOpLe,
+            StringOpLt,
+        };
         match (op_name, arg_type) {
             // Integer operators
             ("+", Type::Primitive(PrimitiveType::Int)) => IntPlus,
@@ -1030,7 +1034,7 @@ impl<'a> Resolver<'a> {
         op_name: &str,
         arg_type: &Type,
     ) -> BuiltInFunction {
-        use BuiltInFunction::*;
+        use BuiltInFunction::{BoolOpNot, IntNegate, RealNegate};
         match (op_name, arg_type) {
             ("~", Type::Primitive(PrimitiveType::Int)) => IntNegate,
             ("~", Type::Primitive(PrimitiveType::Real)) => RealNegate,
@@ -1046,7 +1050,10 @@ impl<'a> Resolver<'a> {
     /// Maps an overloaded operator to its general (polymorphic) built-in
     /// function.
     fn multi_op_to_builtin(&self, op_name: &str) -> BuiltInFunction {
-        use BuiltInFunction::*;
+        use BuiltInFunction::{
+            GOpEq, GOpGe, GOpGt, GOpLe, GOpLt, GOpMinus, GOpNe, GOpNegate,
+            GOpPlus, GOpTimes,
+        };
         match op_name {
             "~" => GOpNegate,
             "+" => GOpPlus,
@@ -1061,7 +1068,6 @@ impl<'a> Resolver<'a> {
             _ => todo!("overloaded operator '{}' not supported", op_name),
         }
     }
-
 }
 
 /// Returns whether any of the expressions in `exps` references any of
