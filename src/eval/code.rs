@@ -1729,12 +1729,7 @@ impl EagerF2 {
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
             // Bag functions use List implementations
-            BagAll => Ok(Val::Bool(List::all(
-                r,
-                f,
-                &a0,
-                a1.expect_list(),
-            )?)),
+            BagAll => Ok(Val::Bool(List::all(r, f, &a0, a1.expect_list())?)),
             BagApp => {
                 List::app(r, f, &a0, a1.expect_list())?;
                 Ok(Val::Unit)
@@ -1743,32 +1738,17 @@ impl EagerF2 {
                 let tuple = a1.expect_list();
                 let bag1 = tuple[0].expect_list();
                 let bag2 = tuple[1].expect_list();
-                Ok(Val::Order(List::collate(
-                    r,
-                    f,
-                    &a0,
-                    bag1,
-                    bag2,
-                )?))
+                Ok(Val::Order(List::collate(r, f, &a0, bag1, bag2)?))
             }
-            BagExists => Ok(Val::Bool(List::exists(
-                r,
-                f,
-                &a0,
-                a1.expect_list(),
-            )?)),
-            BagFilter => {
-                List::filter(r, f, &a0, a1.expect_list())
+            BagExists => {
+                Ok(Val::Bool(List::exists(r, f, &a0, a1.expect_list())?))
             }
+            BagFilter => List::filter(r, f, &a0, a1.expect_list()),
             BagFind => List::find(r, f, &a0, a1.expect_list()),
             BagHd => List::hd(a0.expect_list(), &a1.expect_span()),
             BagMap => List::map(r, f, &a0, a1.expect_list()),
-            BagMapPartial => {
-                List::map_partial(r, f, &a0, a1.expect_list())
-            }
-            BagPartition => {
-                List::partition(r, f, &a0, a1.expect_list())
-            }
+            BagMapPartial => List::map_partial(r, f, &a0, a1.expect_list()),
+            BagPartition => List::partition(r, f, &a0, a1.expect_list()),
             BagTl => List::tl(a0.expect_list(), &a1.expect_span()),
             CharChr => Char::chr(a0.expect_int(), &a1.expect_span()),
             CharPred => Char::pred(a0.expect_char(), &a1.expect_span()),
@@ -1842,12 +1822,7 @@ impl EagerF2 {
                     tuple[1].expect_list(),
                 )
             }
-            ListAll => Ok(Val::Bool(List::all(
-                r,
-                f,
-                &a0,
-                a1.expect_list(),
-            )?)),
+            ListAll => Ok(Val::Bool(List::all(r, f, &a0, a1.expect_list())?)),
             ListApp => {
                 List::app(r, f, &a0, a1.expect_list())?;
                 Ok(Val::Unit)
@@ -1856,34 +1831,19 @@ impl EagerF2 {
                 let tuple = a1.expect_list();
                 let list1 = tuple[0].expect_list();
                 let list2 = tuple[1].expect_list();
-                Ok(Val::Order(List::collate(
-                    r,
-                    f,
-                    &a0,
-                    list1,
-                    list2,
-                )?))
+                Ok(Val::Order(List::collate(r, f, &a0, list1, list2)?))
             }
-            ListExists => Ok(Val::Bool(List::exists(
-                r,
-                f,
-                &a0,
-                a1.expect_list(),
-            )?)),
-            ListFilter => {
-                List::filter(r, f, &a0, a1.expect_list())
+            ListExists => {
+                Ok(Val::Bool(List::exists(r, f, &a0, a1.expect_list())?))
             }
+            ListFilter => List::filter(r, f, &a0, a1.expect_list()),
             ListFind => List::find(r, f, &a0, a1.expect_list()),
             ListHd => List::hd(a0.expect_list(), &a1.expect_span()),
             ListLast => List::last(a0.expect_list(), &a1.expect_span()),
             ListMap => List::map(r, f, &a0, a1.expect_list()),
-            ListMapPartial => {
-                List::map_partial(r, f, &a0, a1.expect_list())
-            }
+            ListMapPartial => List::map_partial(r, f, &a0, a1.expect_list()),
             ListMapi => List::mapi(r, f, &a0, a1.expect_list()),
-            ListPartition => {
-                List::partition(r, f, &a0, a1.expect_list())
-            }
+            ListPartition => List::partition(r, f, &a0, a1.expect_list()),
             ListTl => List::tl(a0.expect_list(), &a1.expect_span()),
             OptionApp => Opt::app(r, f, &a0, &a1),
             OptionCompose => {
@@ -1942,12 +1902,7 @@ impl EagerF2 {
                 r.emit_effect(Effect::SetShellProp(prop, val));
                 Ok(Val::Unit)
             }
-            VectorAll => Ok(Val::Bool(List::all(
-                r,
-                f,
-                &a0,
-                a1.expect_list(),
-            )?)),
+            VectorAll => Ok(Val::Bool(List::all(r, f, &a0, a1.expect_list())?)),
             VectorApp => {
                 Vector::app(r, f, &a0, a1.expect_list())?;
                 Ok(Val::Unit)
@@ -1960,28 +1915,15 @@ impl EagerF2 {
                 let tuple = a1.expect_list();
                 let vec1 = tuple[0].expect_list();
                 let vec2 = tuple[1].expect_list();
-                Ok(Val::Order(List::collate(
-                    r,
-                    f,
-                    &a0,
-                    vec1,
-                    vec2,
-                )?))
+                Ok(Val::Order(List::collate(r, f, &a0, vec1, vec2)?))
             }
-            VectorExists => Ok(Val::Bool(List::exists(
-                r,
-                f,
-                &a0,
-                a1.expect_list(),
-            )?)),
+            VectorExists => {
+                Ok(Val::Bool(List::exists(r, f, &a0, a1.expect_list())?))
+            }
             VectorFind => List::find(r, f, &a0, a1.expect_list()),
-            VectorFindi => {
-                Vector::findi(r, f, &a0, a1.expect_list())
-            }
+            VectorFindi => Vector::findi(r, f, &a0, a1.expect_list()),
             VectorMap => List::map(r, f, &a0, a1.expect_list()),
-            VectorMapi => {
-                Vector::mapi(r, f, &a0, a1.expect_list())
-            }
+            VectorMapi => Vector::mapi(r, f, &a0, a1.expect_list()),
         }
     }
 }
@@ -2048,13 +1990,9 @@ impl EagerF3 {
                 List::drop(a0.expect_list(), a1.expect_int(), &a2.expect_span())
             }
             BagFold => List::foldl(r, f, &a0, &a1, a2.expect_list()),
-            BagTabulate => List::tabulate(
-                r,
-                f,
-                a0.expect_int(),
-                &a1,
-                &a2.expect_span(),
-            ),
+            BagTabulate => {
+                List::tabulate(r, f, a0.expect_int(), &a1, &a2.expect_span())
+            }
             BagTake => {
                 List::take(a0.expect_list(), a1.expect_int(), &a2.expect_span())
             }
@@ -2082,13 +2020,9 @@ impl EagerF3 {
             ListNth => {
                 List::nth(a0.expect_list(), a1.expect_int(), &a2.expect_span())
             }
-            ListTabulate => List::tabulate(
-                r,
-                f,
-                a0.expect_int(),
-                &a1,
-                &a2.expect_span(),
-            ),
+            ListTabulate => {
+                List::tabulate(r, f, a0.expect_int(), &a1, &a2.expect_span())
+            }
             ListTake => {
                 List::take(a0.expect_list(), a1.expect_int(), &a2.expect_span())
             }
@@ -2149,13 +2083,9 @@ impl EagerF3 {
                 a1.expect_int(),
                 &a2.expect_span(),
             ),
-            VectorTabulate => List::tabulate(
-                r,
-                f,
-                a0.expect_int(),
-                &a1,
-                &a2.expect_span(),
-            ),
+            VectorTabulate => {
+                List::tabulate(r, f, a0.expect_int(), &a1, &a2.expect_span())
+            }
         }
     }
 }

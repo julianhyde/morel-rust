@@ -335,16 +335,16 @@ set("mode", "evaluate");
 (*) TODO :=;
 (* "val ~ : int -> int" maps to "Int.~" *)
 op ~;
-> val it = fn : int -> int
+> val it = fn : 'a -> 'a
 (* "val + : int * int -> int" maps to "Int.+" *)
 op +;
-> val it = fn : int * int -> int
+> val it = fn : 'a * 'a -> 'a
 (* "val - : int * int -> int" maps to "Int.-" *)
 op -;
-> val it = fn : int * int -> int
+> val it = fn : 'a * 'a -> 'a
 (* "val * : int * int -> int" maps to "Int.*" *)
 op *;
-> val it = fn : int * int -> int
+> val it = fn : 'a * 'a -> 'a
 (* "val @ : ('a list * 'a list) -> 'a list" maps to "List.@" *)
 op @;
 > val it = fn : 'a list * 'a list -> 'a list
@@ -1946,10 +1946,10 @@ ListPair.mapEq (op +) ([1, 2, 3], [4, 5, 6]);
 > val it = [5,7,9] : int list
 ListPair.mapEq (op +) ([1, 2, 3], [4, 5]);
 > uncaught exception UnequalLengths
->   raised at: stdIn:1.1-1.56
+>   raised at: stdIn:1.1-1.42
 ListPair.mapEq (op +) ([], [4, 5]);
 > uncaught exception UnequalLengths
->   raised at: stdIn:1.1-1.49
+>   raised at: stdIn:1.1-1.35
 
 (* [unzip xys] returns a pair (xs, ys), where xs is the list of first
    components of xys, and ys is the list of second components from

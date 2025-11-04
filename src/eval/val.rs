@@ -213,7 +213,8 @@ impl Val {
                         // Binary operators take a tuple as a single argument
                         if let Val::List(args) = arg {
                             if args.len() == 2 {
-                                Ok(eager2.apply(args[0].clone(), args[1].clone()))
+                                Ok(eager2
+                                    .apply(args[0].clone(), args[1].clone()))
                             } else {
                                 panic!(
                                     "Expected tuple with 2 elements, got {}",
@@ -221,7 +222,9 @@ impl Val {
                                 )
                             }
                         } else {
-                            panic!("Expected tuple argument for binary operator")
+                            panic!(
+                                "Expected tuple argument for binary operator"
+                            )
                         }
                     }
                     _ => panic!(

@@ -924,11 +924,7 @@ impl<'a> Resolver<'a> {
     /// Converts an operator section to a function literal.
     /// After type resolution, we know the concrete type, so we can
     /// directly map to the specific built-in function.
-    fn op_section_to_literal(
-        &self,
-        fn_type: &Type,
-        op_name: &str,
-    ) -> CoreExpr {
+    fn op_section_to_literal(&self, fn_type: &Type, op_name: &str) -> CoreExpr {
         match fn_type {
             Type::Multi(_types) => {
                 // Overloaded function - create GOpNegate, GOpPlus, etc.
@@ -982,9 +978,8 @@ impl<'a> Resolver<'a> {
         use BuiltInFunction::{
             IntDiv, IntMinus, IntMod, IntOpGe, IntOpGt, IntOpLe, IntOpLt,
             IntPlus, IntTimes, ListAt, ListOpCons, RealDivide, RealOpGe,
-            RealOpGt, RealOpLe, RealOpLt, RealOpMinus, RealOpPlus,
-            RealOpTimes, StringOpCaret, StringOpGe, StringOpGt, StringOpLe,
-            StringOpLt,
+            RealOpGt, RealOpLe, RealOpLt, RealOpMinus, RealOpPlus, RealOpTimes,
+            StringOpCaret, StringOpGe, StringOpGt, StringOpLe, StringOpLt,
         };
         match (op_name, arg_type) {
             // Integer operators
