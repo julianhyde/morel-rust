@@ -25,7 +25,9 @@ use crate::compile::type_env::{Binding, Id};
 use crate::compile::type_resolver::TypeMap;
 use crate::compile::types::{PrimitiveType, Type};
 use crate::compile::var_collector::VarCollector;
-use crate::eval::code::{Code, Effect, EvalEnv, EvalMode, Frame, Impl};
+use crate::eval::code::{
+    Code, Effect, EvalEnv, EvalMode, Frame, Impl, QueryStep,
+};
 use crate::eval::comparator::comparator_for;
 use crate::eval::frame::FrameDef;
 use crate::eval::order::Order;
@@ -1077,6 +1079,25 @@ impl<'a> Compiler<'a> {
                 })
                 .collect();
             Code::Tuple(codes)
+        }
+    }
+
+    fn compile_step(&mut self, cx: &Context, step: &Step) -> QueryStep {
+        match &step.kind {
+            StepKind::Scan(pat, expr, _cond) => {
+                let pat_code = self.compile_pat(cx, pat);
+                let expr_code = self.compile_expr(cx, None, expr);
+                QueryStep::JoinIn(pat_code, expr_code)
+            }
+            StepKind::Where(expr) => {
+                let expr_code = self.compile_expr(cx, None, expr);
+                QueryStep::Where(expr_code)
+            }
+            StepKind::Yield(expr) => {
+                let expr_code = self.compile_expr(cx, None, expr);
+                QueryStep::Yield(expr_code)
+            }
+            _ => todo!("compile_step: {:?}", step.kind),
         }
     }
 
