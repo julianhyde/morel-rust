@@ -26,10 +26,11 @@ use crate::compile::type_env::{
 use crate::compile::types;
 use crate::compile::types::Label;
 use crate::compile::types::{PrimitiveType, Subst, Type, TypeVariable};
+use crate::shell::error::Error;
 use crate::syntax::ast::{
     Decl, DeclKind, Expr, ExprKind, FunBind, LabeledExpr, LiteralKind, Match,
-    MorelNode, Pat, PatField, PatKind, Span, Statement, StatementKind,
-    Type as AstType, TypeField, TypeKind, TypeScheme, ValBind,
+    MorelNode, Pat, PatField, PatKind, Span, Statement, StatementKind, Step,
+    StepKind, Type as AstType, TypeField, TypeKind, TypeScheme, ValBind,
 };
 use crate::unify::unifier::{
     Action, NullTracer, Op, Sequence, Substitution, Term, Unifier, Var,
@@ -109,6 +110,29 @@ impl Typed for ValBind {
 impl Typed for Pat {
     fn get_type(&self, type_map: &TypeMap) -> Option<Box<Type>> {
         type_map.get_type(self.id?)
+    }
+}
+
+struct Triple {
+    root_env: Rc<dyn TypeEnv>,
+    env: Rc<dyn TypeEnv>,
+    v: Rc<Var>,
+    c: Option<Rc<Var>>,
+}
+
+impl Triple {
+    fn new(
+        root_env: Rc<dyn TypeEnv>,
+        env: Rc<dyn TypeEnv>,
+        v: Rc<Var>,
+        c: Option<Rc<Var>>,
+    ) -> Self {
+        Triple {
+            root_env,
+            env,
+            v,
+            c,
+        }
     }
 }
 
@@ -304,12 +328,12 @@ impl TypeResolver {
         &mut self,
         env: &dyn TypeEnv,
         statement: &Statement,
-    ) -> Resolved {
+    ) -> Result<Resolved, Error> {
         self.terms.clear();
 
         let decl = ensure_decl(statement);
         let mut term_map = Vec::new();
-        let decl2 = self.deduce_decl_type(env, &decl, &mut term_map);
+        let decl2 = self.deduce_decl_type(env, &decl, &mut term_map)?;
 
         // Create term pairs for unification
         let term_pairs: Vec<(Term, Term)> = self
@@ -364,12 +388,12 @@ impl TypeResolver {
         let mut bindings = Vec::new();
         Self::collect_bindings_from_decl(&decl2, &type_map, &mut bindings);
 
-        Resolved {
+        Ok(Resolved {
             decl: decl2,
             type_map,
             bindings,
             base_line,
-        }
+        })
     }
 
     /// Collects bindings from a declaration.
@@ -479,13 +503,13 @@ impl TypeResolver {
         env: &dyn TypeEnv,
         decl: &Decl,
         term_map: &mut Vec<(String, Term)>,
-    ) -> Decl {
+    ) -> Result<Decl, Error> {
         match &decl.kind {
             DeclKind::Val(rec, inst, val_binds) => {
                 let x = &self.deduce_val_decl_type(
                     env, *rec, *inst, val_binds, term_map,
-                );
-                self.reg_decl(&x, &decl.span, decl.id)
+                )?;
+                Ok(self.reg_decl(&x, &decl.span, decl.id))
             }
             DeclKind::Fun(fun_binds) => {
                 let val_decl = self.convert_fun_to_val(env, fun_binds);
@@ -498,7 +522,7 @@ impl TypeResolver {
                 // declaration unchanged.
                 // TODO: Implement proper signature type checking once
                 // structures are added.
-                decl.clone()
+                Ok(decl.clone())
             }
             _ => todo!("{:?}", decl.kind),
         }
@@ -661,7 +685,7 @@ impl TypeResolver {
         inst: bool,
         val_binds: &[ValBind],
         term_map: &mut Vec<(String, Term)>,
-    ) -> DeclKind {
+    ) -> Result<DeclKind, Error> {
         let mut env_holder = env.builder();
         let mut map0 = Vec::new();
 
@@ -688,11 +712,11 @@ impl TypeResolver {
         for (val_bind, v_supplier) in map0 {
             let var = v_supplier.get_or_init(|| self.variable()).clone();
             let val_bind2 =
-                self.deduce_val_bind_type(&*env2, &val_bind, term_map, &var);
+                self.deduce_val_bind_type(&*env2, &val_bind, term_map, &var)?;
             val_binds2.push(val_bind2);
         }
 
-        DeclKind::Val(rec, inst, val_binds2)
+        Ok(DeclKind::Val(rec, inst, val_binds2))
     }
 
     /// Converts a type AST node to a type term.
@@ -737,42 +761,42 @@ impl TypeResolver {
         env: &dyn TypeEnv,
         expr: &Expr,
         v: &'a Rc<Var>,
-    ) -> Expr {
-        match &expr.kind {
+    ) -> Result<Expr, Error> {
+        Ok(match &expr.kind {
             // lint: sort until '#}' where '##ExprKind::'
             ExprKind::AndAlso(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op andalso", left, right, v);
+                    self.deduce_call2_type(env, "op andalso", left, right, v)?;
                 let x = ExprKind::AndAlso(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Annotated(e, t) => {
-                let e2 = self.deduce_expr_type(env, e, v);
+                let e2 = self.deduce_expr_type(env, e, v)?;
                 let t2 = self.deduce_type_type(env, &t, v);
                 let x = ExprKind::Annotated(Box::new(e2), Box::new(t2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Append(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op @", left, right, v);
+                    self.deduce_call2_type(env, "op @", left, right, v)?;
                 let x = ExprKind::Append(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Apply(left, right) => {
                 let (left2, right2) =
-                    self.deduce_apply_type(env, &left, &right, v);
+                    self.deduce_apply_type(env, &left, &right, v)?;
                 let apply2 = ExprKind::Apply(Box::new(left2), Box::new(right2));
                 self.reg_expr(&apply2, &expr.span, expr.id, v)
             }
             ExprKind::Caret(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op ^", left, right, v);
+                    self.deduce_call2_type(env, "op ^", left, right, v)?;
                 let x = ExprKind::Caret(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Case(e, match_list) => {
                 let v_e = self.unifier.variable();
-                let e2 = self.deduce_expr_type(env, e, &v_e);
+                let e2 = self.deduce_expr_type(env, e, &v_e)?;
                 let mut label_names = BTreeSet::new();
 
                 if let Some(sequence) = self.variable_to_sequence(&v_e)
@@ -787,33 +811,38 @@ impl TypeResolver {
                     &mut label_names,
                     &v_e,
                     v,
-                );
+                )?;
 
                 let x = ExprKind::Case(Box::new(e2), match_list2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Cons(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op ::", left, right, v);
+                    self.deduce_call2_type(env, "op ::", left, right, v)?;
                 let x = ExprKind::Cons(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Div(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op div", left, right, v);
+                    self.deduce_call2_type(env, "op div", left, right, v)?;
                 let x = ExprKind::Div(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Divide(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op /", left, right, v);
+                    self.deduce_call2_type(env, "op /", left, right, v)?;
                 let x = ExprKind::Divide(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Equal(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op =", left, right, v);
+                    self.deduce_call2_type(env, "op =", left, right, v)?;
                 let x = ExprKind::Equal(Box::new(left2), Box::new(right2));
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::Exists(steps) => {
+                let steps2 = self.deduce_query_type(env, expr, steps, v)?;
+                let x = ExprKind::Exists(steps2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Fn(matches) => {
@@ -824,23 +853,33 @@ impl TypeResolver {
                     matches2.push(
                         self.deduce_match_type(
                             env, match_, &v_param, &v_result,
-                        ),
+                        )?,
                     );
                 }
                 self.fn_term(&v_param, &v_result, v);
                 let fn2 = &ExprKind::Fn(matches2);
                 self.reg_expr(fn2, &expr.span, expr.id, v)
             }
+            ExprKind::Forall(steps) => {
+                let steps2 = self.deduce_query_type(env, expr, steps, v)?;
+                let x = ExprKind::Forall(steps2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::From(steps) => {
+                let steps2 = self.deduce_query_type(env, expr, steps, v)?;
+                let x = ExprKind::From(steps2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
             ExprKind::GreaterThan(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op >", left, right, v);
+                    self.deduce_call2_type(env, "op >", left, right, v)?;
                 let x =
                     ExprKind::GreaterThan(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::GreaterThanOrEqual(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op >=", left, right, v);
+                    self.deduce_call2_type(env, "op >=", left, right, v)?;
                 let x = ExprKind::GreaterThanOrEqual(
                     Box::new(left2),
                     Box::new(right2),
@@ -868,26 +907,26 @@ impl TypeResolver {
             }
             ExprKind::If(a0, a1, a2) => {
                 let (a02, a12, a22) =
-                    self.deduce_call3_type(env, "op if", a0, a1, a2, v);
+                    self.deduce_call3_type(env, "op if", a0, a1, a2, v)?;
                 let x =
                     ExprKind::If(Box::new(a02), Box::new(a12), Box::new(a22));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Implies(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op implies", left, right, v);
+                    self.deduce_call2_type(env, "op implies", left, right, v)?;
                 let x = ExprKind::Implies(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::LessThan(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op <", left, right, v);
+                    self.deduce_call2_type(env, "op <", left, right, v)?;
                 let x = ExprKind::LessThan(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::LessThanOrEqual(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op <=", left, right, v);
+                    self.deduce_call2_type(env, "op <=", left, right, v)?;
                 let x = ExprKind::LessThanOrEqual(
                     Box::new(left2),
                     Box::new(right2),
@@ -898,11 +937,12 @@ impl TypeResolver {
                 let mut term_map = Vec::new();
                 let mut decl_list2 = Vec::new();
                 for decl in decl_list {
-                    let decl2 = self.deduce_decl_type(env, decl, &mut term_map);
+                    let decl2 =
+                        self.deduce_decl_type(env, decl, &mut term_map)?;
                     decl_list2.push(decl2);
                 }
                 let env2 = env.bind_all(term_map.as_ref());
-                let expr2 = self.deduce_expr_type(&*env2, expr, v);
+                let expr2 = self.deduce_expr_type(&*env2, expr, v)?;
                 let x = ExprKind::Let(decl_list2, Box::new(expr2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
@@ -917,10 +957,10 @@ impl TypeResolver {
                         env,
                         expr_list.first().unwrap(),
                         &v_element,
-                    ));
+                    )?);
                     for expr in expr_list.iter().skip(1) {
                         let v2 = self.variable();
-                        expr_list2.push(self.deduce_expr_type(env, expr, &v2));
+                        expr_list2.push(self.deduce_expr_type(env, expr, &v2)?);
                         self.equiv(&Term::Variable(v2), &v_element.clone());
                     }
                     ExprKind::List(expr_list2)
@@ -935,24 +975,25 @@ impl TypeResolver {
             }
             ExprKind::Minus(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op -", left, right, v);
+                    self.deduce_call2_type(env, "op -", left, right, v)?;
                 let x = ExprKind::Minus(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Mod(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op mod", left, right, v);
+                    self.deduce_call2_type(env, "op mod", left, right, v)?;
                 let x = ExprKind::Mod(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Negate(e) => {
-                let e2 = self.deduce_call1_type(env, "op ~", e, &expr.span, v);
+                let e2 =
+                    self.deduce_call1_type(env, "op ~", e, &expr.span, v)?;
                 let x = ExprKind::Negate(Box::new(e2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::NotEqual(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op <>", left, right, v);
+                    self.deduce_call2_type(env, "op <>", left, right, v)?;
                 let x = ExprKind::NotEqual(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
@@ -971,25 +1012,25 @@ impl TypeResolver {
             }
             ExprKind::OrElse(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op orelse", left, right, v);
+                    self.deduce_call2_type(env, "op orelse", left, right, v)?;
                 let x = ExprKind::OrElse(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Plus(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op +", left, right, v);
+                    self.deduce_call2_type(env, "op +", left, right, v)?;
                 let x = ExprKind::Plus(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Record(with_expr, labeled_expr_list) => {
                 let labeled_expr_list2 =
-                    self.deduce_record_type(env, labeled_expr_list, v);
+                    self.deduce_record_type(env, labeled_expr_list, v)?;
                 let x = ExprKind::Record(with_expr.clone(), labeled_expr_list2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Times(left, right) => {
                 let (left2, right2) =
-                    self.deduce_call2_type(env, "op *", left, right, v);
+                    self.deduce_call2_type(env, "op *", left, right, v)?;
                 let x = ExprKind::Times(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
@@ -998,8 +1039,7 @@ impl TypeResolver {
                 let mut expr_list2 = Vec::new();
                 for e in expr_list {
                     let v2 = self.variable();
-                    let e2 = self.deduce_expr_type(env, e, &v2);
-                    expr_list2.push(e2);
+                    expr_list2.push(self.deduce_expr_type(env, e, &v2)?);
                     terms.push(Term::Variable(v2));
                 }
                 self.tuple_term(&terms, v);
@@ -1011,6 +1051,246 @@ impl TypeResolver {
                 )
             }
             _ => todo!("{:?}", expr.kind),
+        })
+    }
+
+    /// Deduces the type of a query (from expression).
+    fn deduce_query_type(
+        &mut self,
+        env: &dyn TypeEnv,
+        query: &Expr,
+        steps: &[Step],
+        v: &Rc<Var>,
+    ) -> Result<Vec<Step>, Error> {
+        let mut field_vars = Vec::new();
+        let mut steps2 = Vec::new();
+
+        // An empty "from" is "unit list". Ordered.
+        let v11 = self.variable();
+        let c11 = self.variable();
+        self.record_term(&BTreeMap::new(), &v11);
+        self.list_term(Term::Variable(v11.clone()), &c11);
+        // Create an Rc<dyn TypeEnv> from the borrowed env
+        let env_rc = env.bind_all(&[]);
+        let mut p = Triple::new(env_rc.clone(), env_rc.clone(), v11, Some(c11));
+
+        for (i, step) in steps.iter().enumerate() {
+            let last_step = i == steps.len() - 1;
+
+            // Validate step placement before processing
+            match step.kind {
+                StepKind::Compute(_)
+                | StepKind::Into(_)
+                | StepKind::Require(_) => {
+                    match (&step.kind, &query.kind) {
+                        (StepKind::Require(_), ExprKind::Forall(_)) => Ok(()),
+                        (StepKind::Compute(_), ExprKind::From(_)) => Ok(()),
+                        (StepKind::Into(_), ExprKind::From(_)) => Ok(()),
+                        _ => {
+                            let message = format!(
+                                "'{}' step must not occur in '{}'",
+                                step.kind.clause(),
+                                query.kind.clause()
+                            );
+                            Err(Error::Compile(message, step.span.clone()))
+                        }
+                    }?;
+
+                    if !last_step {
+                        let message = format!(
+                            "'{}' step must be last in '{}'",
+                            step.kind.clause(),
+                            query.kind.clause()
+                        );
+                        return Err(Error::Compile(
+                            message,
+                            steps[i + 1].span.clone(),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+
+            let p_next = self.deduce_step_type(
+                env,
+                &step,
+                &p,
+                &mut field_vars,
+                &mut steps2,
+            )?;
+            p = p_next;
+        }
+
+        // "forall" query must have "require" as the last step.
+        if matches!(query.kind, ExprKind::Forall(_)) {
+            if steps.is_empty() {
+                return missing_format(&query, &query.span);
+            }
+            if let Some(step) = steps.last()
+                && !matches!(step.kind, StepKind::Require(_))
+            {
+                return missing_format(&query, &step.span);
+            }
+        }
+
+        // The result is a list of the element type, or bool for exists/forall,
+        // or a singleton for compute/into.
+        if matches!(query.kind, ExprKind::Exists(_) | ExprKind::Forall(_)) {
+            self.primitive_term(&PrimitiveType::Bool, &v);
+        } else if matches!(
+            steps.last().map(|s| &s.kind),
+            Some(StepKind::Compute(_)) | Some(StepKind::Into(_))
+        ) {
+            self.equiv(&Term::Variable(p.v), v);
+        } else {
+            self.equiv(&Term::Variable(p.c.unwrap()), v);
+        };
+
+        Ok(steps2)
+    }
+
+    /// Deduces the type of a single step in a query.
+    fn deduce_step_type(
+        &mut self,
+        env: &dyn TypeEnv,
+        step: &Step,
+        p: &Triple,
+        field_vars: &mut Vec<(String, Rc<Var>)>,
+        steps2: &mut Vec<Step>,
+    ) -> Result<Triple, Error> {
+        match &step.kind {
+            StepKind::Scan(pat, expr, condition) => self.deduce_scan_step_type(
+                p, pat, expr, condition, &step.span, field_vars, steps2,
+            ),
+            StepKind::Where(expr) => {
+                let v5 = self.unifier.variable();
+                let filter2 = self.deduce_expr_type(env, expr, &v5)?;
+                self.primitive_term(&PrimitiveType::Bool, &v5);
+                steps2.push(
+                    StepKind::Where(Box::new(filter2)).spanned(&expr.span),
+                );
+                Ok(Triple::new(
+                    p.root_env.clone(),
+                    p.env.clone(),
+                    p.v.clone(),
+                    p.c.clone(),
+                ))
+            }
+            StepKind::Yield(expr) => {
+                self.deduce_yield_step_type(p, expr, &step.span, steps2)
+            }
+            _ => {
+                todo!("Step type deduction not implemented for {:?}", step.kind)
+            }
+        }
+    }
+
+    /// Deduces the type of a Scan step (e.g., "i in [1, 2, 3]").
+    fn deduce_scan_step_type(
+        &mut self,
+        triple: &Triple,
+        pat: &Pat,
+        expr: &Expr,
+        condition: &Option<Box<Expr>>,
+        span: &Span,
+        field_vars: &mut Vec<(String, Rc<Var>)>,
+        steps: &mut Vec<Step>,
+    ) -> Result<Triple, Error> {
+        // Deduce the type of the expression being iterated over
+        let v0 = self.variable();
+        let c0 = self.variable();
+
+        self.list_term(Term::Variable(v0.clone()), &c0);
+        let expr2 = self.deduce_expr_type(&*triple.env, expr, &c0)?;
+
+        // Deduce the type of the pattern and bind variables.
+        let mut term_map = Vec::new();
+        let pat2 = self.deduce_pat_type(&*triple.env, pat, &mut term_map, &v0);
+
+        // Build a new environment with pattern bindings.
+        let mut env_builder = triple.env.builder();
+        for (name, term) in &term_map {
+            env_builder.push(name.clone(), term.clone());
+            let v = self.term_to_variable(term);
+            self.reg_expr(&ExprKind::Identifier(name.clone()), span, None, &v);
+            field_vars.push((name.clone(), v));
+        }
+        let env4 = env_builder.build();
+
+        // Determine collection type - simplified for now, just use list.
+        // TODO: Implement full collection type logic from Java
+        // (is_list_or_bag_matching_input, is_list_if_both_are_lists,
+        // may_be_bag_or_list)
+        let v = self.field_var(field_vars, true);
+        let c = self.unifier.variable();
+        self.list_term(Term::Variable(v.clone()), &c);
+
+        // Handle optional condition
+        let condition2 = if let Some(cond) = condition {
+            let v5 = self.variable();
+            let condition2 = self.deduce_expr_type(&*env4, cond, &v5)?;
+            self.primitive_term(&PrimitiveType::Bool, &v5);
+            Some(Box::new(condition2))
+        } else {
+            None
+        };
+
+        let step = StepKind::Scan(Box::new(pat2), Box::new(expr2), condition2);
+        steps.push(step.spanned(span));
+
+        Ok(Triple::new(triple.root_env.clone(), env4, v, Some(c)))
+    }
+
+    /// Deduces the type of a Yield step (e.g., "yield i + 4").
+    fn deduce_yield_step_type(
+        &mut self,
+        p: &Triple,
+        expr: &Expr,
+        span: &Span,
+        steps2: &mut Vec<Step>,
+    ) -> Result<Triple, Error> {
+        // The yield expression determines the new element type
+        let v6 = self.variable();
+        let expr2 = self.deduce_expr_type(&*p.env, expr, &v6)?;
+
+        let step2 = Step {
+            kind: StepKind::Yield(Box::new(expr2)),
+            span: span.clone(),
+        };
+        steps2.push(step2);
+
+        // Output is ordered iff input is ordered. Yield behaves like a
+        // 'map' function
+        // TODO: Implement full isListOrBagMatchingInput logic from Java
+        let c6 = self.variable();
+        self.list_term(Term::Variable(v6.clone()), &c6);
+
+        // For now, use simple environment - TODO: handle record fields properly
+        let env = p.env.builder().build();
+
+        Ok(Triple::new(p.root_env.clone(), env, v6, Some(c6)))
+    }
+
+    fn field_var(
+        &mut self,
+        field_vars: &[(String, Rc<Var>)],
+        atom: bool,
+    ) -> Rc<Var> {
+        if field_vars.is_empty() {
+            let v = self.variable();
+            self.primitive_term(&PrimitiveType::Unit, &v).clone()
+        } else if field_vars.len() == 1 && atom {
+            field_vars[0].1.clone()
+        } else {
+            let mut map: BTreeMap<Label, Term> = BTreeMap::new();
+            field_vars.iter().for_each(|fv| {
+                map.insert(
+                    Label::String(fv.0.clone()),
+                    Term::Variable(fv.1.clone()),
+                );
+            });
+            let v = self.variable();
+            self.record_term(&map, &v).clone()
         }
     }
 
@@ -1020,9 +1300,9 @@ impl TypeResolver {
         labeled_expr: &LabeledExpr,
         label_terms: &mut BTreeMap<Label, Term>,
         labeled_expr_list: &mut Vec<LabeledExpr>,
-    ) {
+    ) -> Result<(), Error> {
         let v2 = self.variable();
-        let e2 = self.deduce_expr_type(env, &labeled_expr.expr, &v2);
+        let e2 = self.deduce_expr_type(env, &labeled_expr.expr, &v2)?;
         if let Some(label_name) = &labeled_expr.label {
             let label = Label::from(&label_name.name);
             label_terms.insert(label, Term::Variable(v2));
@@ -1036,6 +1316,7 @@ impl TypeResolver {
             label: labeled_expr.label.clone(),
             expr: e2,
         });
+        Ok(())
     }
 
     fn deduce_match_list_type(
@@ -1045,7 +1326,7 @@ impl TypeResolver {
         label_names: &mut BTreeSet<String>,
         arg_variable: &Rc<Var>,
         result_variable: &Rc<Var>,
-    ) -> Vec<Match> {
+    ) -> Result<Vec<Match>, Error> {
         // Collect label names from RecordPat patterns
         for match_ in match_list {
             if let PatKind::Record(fields, _) = &match_.pat.kind {
@@ -1075,12 +1356,12 @@ impl TypeResolver {
                     &*env2,
                     &match_.expr,
                     result_variable,
-                );
+                )?;
 
-                Match {
+                Ok(Match {
                     pat: pat2,
                     expr: exp2,
-                }
+                })
             })
             .collect()
     }
@@ -1091,7 +1372,7 @@ impl TypeResolver {
         fun: &Expr,
         arg: &Expr,
         v_result: &Rc<Var>,
-    ) -> (Expr, Expr) {
+    ) -> Result<(Expr, Expr), Error> {
         let v_fn = self.variable();
         let v_arg = self.variable();
         self.fn_term(&v_arg, v_result, &v_fn);
@@ -1108,7 +1389,7 @@ impl TypeResolver {
             self.fn_term(&v_rec, &v_field, &v_arg);
             self.reg_expr(&arg.kind, &arg.span, arg.id, &v_arg)
         } else {
-            self.deduce_expr_type(env, arg, &v_arg)
+            self.deduce_expr_type(env, arg, &v_arg)?
         };
 
         let fun2 = if let ExprKind::RecordSelector(name) = &fun.kind {
@@ -1119,7 +1400,7 @@ impl TypeResolver {
             let span = fun.span.union(&arg.span);
             self.deduce_record_selector_type(env, name, &span, &v_arg, v_result)
         } else {
-            self.deduce_apply_fn_type(env, fun, &v_fn, &v_arg, v_result)
+            self.deduce_apply_fn_type(env, fun, &v_fn, &v_arg, v_result)?
         };
 
         /*
@@ -1131,7 +1412,7 @@ impl TypeResolver {
         }
          */
 
-        (fun2, arg2)
+        Ok((fun2, arg2))
     }
 
     /// Deduces the datatype of a function being applied to an argument. If the
@@ -1153,7 +1434,7 @@ impl TypeResolver {
         v_fun: &Rc<Var>,
         _v_arg: &Rc<Var>,
         _v: &Rc<Var>,
-    ) -> Expr {
+    ) -> Result<Expr, Error> {
         self.deduce_expr_type(env, fun, v_fun)
     }
 
@@ -1216,7 +1497,7 @@ impl TypeResolver {
         env: &dyn TypeEnv,
         labeled_expr_list: &Vec<LabeledExpr>,
         v: &Rc<Var>,
-    ) -> Vec<LabeledExpr> {
+    ) -> Result<Vec<LabeledExpr>, Error> {
         // First, create a copy of expressions and their labels,
         // sorted into the order that they will appear in the record
         // type.
@@ -1240,7 +1521,7 @@ impl TypeResolver {
         let mut labeled_expr_list2 = Vec::new();
         for (label, labeled_expr) in &label_expr_map {
             let v2 = self.variable();
-            let e2 = self.deduce_expr_type(env, &labeled_expr.expr, &v2);
+            let e2 = self.deduce_expr_type(env, &labeled_expr.expr, &v2)?;
             labeled_expr_list2.push(LabeledExpr {
                 expr: e2,
                 ..labeled_expr.clone()
@@ -1248,7 +1529,7 @@ impl TypeResolver {
             label_terms.insert(label.clone(), Term::Variable(v2));
         }
         self.record_term(&label_terms, v);
-        labeled_expr_list2
+        Ok(labeled_expr_list2)
     }
 
     fn deduce_call1_type(
@@ -1258,10 +1539,10 @@ impl TypeResolver {
         arg: &Expr,
         span: &Span,
         v: &Rc<Var>,
-    ) -> Expr {
+    ) -> Result<Expr, Error> {
         let fun = ExprKind::Identifier(op.to_string()).spanned(&span);
-        let (_fun, arg2) = self.deduce_apply_type(env, &fun, &arg, &v);
-        arg2
+        let (_fun, arg2) = self.deduce_apply_type(env, &fun, &arg, &v)?;
+        Ok(arg2)
     }
 
     fn deduce_call2_type(
@@ -1271,15 +1552,15 @@ impl TypeResolver {
         left: &Expr,
         right: &Expr,
         v: &Rc<Var>,
-    ) -> (Expr, Expr) {
+    ) -> Result<(Expr, Expr), Error> {
         let fun = ExprKind::Identifier(op.to_string()).spanned(&left.span);
         let arg = ExprKind::Tuple(vec![left.clone(), right.clone()])
             .spanned(&left.span);
-        let (_fun, arg) = self.deduce_apply_type(env, &fun, &arg, &v);
+        let (_fun, arg) = self.deduce_apply_type(env, &fun, &arg, &v)?;
         if let ExprKind::Tuple(args) = arg.kind
             && args.len() == 2
         {
-            (args.first().unwrap().clone(), args.get(1).unwrap().clone())
+            Ok((args.first().unwrap().clone(), args.get(1).unwrap().clone()))
         } else {
             panic!("{:?}", left.kind)
         }
@@ -1293,22 +1574,22 @@ impl TypeResolver {
         a1: &Expr,
         a2: &Expr,
         v: &Rc<Var>,
-    ) -> (Expr, Expr, Expr) {
+    ) -> Result<(Expr, Expr, Expr), Error> {
         let fun =
             Box::new(ExprKind::Identifier(op.to_string()).spanned(&a0.span));
         let arg = Box::new(
             ExprKind::Tuple(vec![a0.clone(), a1.clone(), a2.clone()])
                 .spanned(&a0.span),
         );
-        let (_fun, arg) = self.deduce_apply_type(env, &fun, &arg, &v);
+        let (_fun, arg) = self.deduce_apply_type(env, &fun, &arg, &v)?;
         if let ExprKind::Tuple(args) = arg.kind
             && args.len() == 3
         {
-            (
+            Ok((
                 args.first().unwrap().clone(),
                 args.get(1).unwrap().clone(),
                 args.get(2).unwrap().clone(),
-            )
+            ))
         } else {
             panic!("{:?}", op)
         }
@@ -1358,17 +1639,17 @@ impl TypeResolver {
         match_: &Match,
         v_param: &Rc<Var>,
         v_result: &Rc<Var>,
-    ) -> Match {
+    ) -> Result<Match, Error> {
         let mut term_map = Vec::new();
         let pat = match_.pat.clone();
         let pat2 = self.deduce_pat_type(env, &pat, &mut term_map, &v_param);
         let env2 = env.bind_all(&term_map);
         let expr = match_.expr.clone();
-        let expr2 = self.deduce_expr_type(&*env2, &expr, &v_result);
-        Match {
+        let expr2 = self.deduce_expr_type(&*env2, &expr, &v_result)?;
+        Ok(Match {
             pat: pat2,
             expr: expr2,
-        }
+        })
     }
 
     /// Converts a type to a unification term.
@@ -1788,14 +2069,14 @@ impl TypeResolver {
         val_bind: &ValBind,
         term_map: &mut Vec<(String, Term)>,
         v: &Rc<Var>,
-    ) -> ValBind {
+    ) -> Result<ValBind, Error> {
         let pat = self.deduce_pat_type(env, &val_bind.pat, term_map, &v);
-        let expr = self.deduce_expr_type(env, &val_bind.expr, &v);
-        ValBind {
+        let expr = self.deduce_expr_type(env, &val_bind.expr, &v)?;
+        Ok(ValBind {
             pat,
             expr,
             ..val_bind.clone()
-        }
+        })
     }
 
     fn literal_type(literal_kind: &LiteralKind) -> PrimitiveType {
@@ -2235,6 +2516,17 @@ struct Warning {
 
 const W_INCONSISTENT_PARAMETERS: &str = "parameter or result \
 constraints of clauses don't agree [tycon mismatch]";
+
+fn missing_format<T>(query: &Expr, span: &Span) -> Result<T, Error> {
+    let zero = ExprKind::Ordinal.spanned(&query.span);
+    let require = StepKind::Require(Box::new(zero));
+    let message = format!(
+        "last step of '{}' must be '{}'",
+        query.kind.clause(),
+        require.clause()
+    );
+    Err(Error::Compile(message, span.clone()))
+}
 
 #[cfg(test)]
 mod tests {

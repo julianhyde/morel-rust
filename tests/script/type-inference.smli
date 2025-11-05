@@ -269,4 +269,19 @@ end;
 :t Bag.concat [bag [1, 2], bag.nil];
 > val it : int bag
 
+(*) Queries
+:t from i in [1, 2];
+> val it : int list
+
+:t from r in [(1,"a"), (2,"b")];
+> val it : (int * string) list
+
+:t from i in [1, 2, 3],
+  j in [5, 6];
+> val it : {i:int, j:int} list
+
+:t from r in [{i=1, b=true}, {i=2, b=false}, {i=3, b=true}],
+  j in [5, 6];
+> val it : {j:int, r:{b:bool, i:int}} list
+
 (*) End type-inference.smli
