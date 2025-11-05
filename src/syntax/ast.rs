@@ -167,6 +167,24 @@ impl Expr {
             _ => panic!("expected expression"),
         }
     }
+
+    /// Returns the implicit label for this expression, if one can be
+    /// derived. Returns Some for identifiers, record selectors, and a few
+    /// other special cases; None otherwise.
+    pub fn implicit_label_opt(&self) -> Option<String> {
+        match &self.kind {
+            // lint: sort until '#}' where '##ExprKind::'
+            ExprKind::Aggregate(left, _) => left.implicit_label_opt(),
+            ExprKind::Apply(left, _) => match &left.kind {
+                ExprKind::RecordSelector(name) => Some(name.clone()),
+                _ => None,
+            },
+            ExprKind::Current => Some("current".to_string()),
+            ExprKind::Identifier(name) => Some(name.clone()),
+            ExprKind::Ordinal => Some("ordinal".to_string()),
+            _ => None,
+        }
+    }
 }
 
 impl Display for Expr {
@@ -237,6 +255,17 @@ pub enum ExprKind<SubExpr> {
 }
 
 impl ExprKind<Expr> {
+    pub(crate) fn clause(&self) -> &str {
+        match self {
+            // lint: sort until '#}' where '##ExprKind::'
+            ExprKind::Current => "current",
+            ExprKind::Exists(_) => "exists",
+            ExprKind::Forall(_) => "forall",
+            ExprKind::From(_) => "from",
+            _ => todo!("clause for {:?}", self),
+        }
+    }
+
     pub fn spanned(&self, span: &Span) -> Expr {
         Expr {
             kind: self.clone(),
@@ -499,11 +528,21 @@ pub enum StepKind {
     Compute(Box<Expr>),
     Distinct,
     Into(Box<Expr>),
-    Join(Box<Pat>),
-    JoinEq(Box<Pat>, Box<Expr>, Option<Box<Expr>>),
-    JoinIn(Box<Pat>, Box<Expr>, Option<Box<Expr>>),
+
+    /// A scan (e.g. "e in emps", "e") or scan-and-join (e.g. "left join d in
+    /// depts on e.deptno = d.deptno") in a `from` expression.
+    ///
+    /// `Scan(p, e, Some(c))` represents `join p in e on c`;
+    /// `Scan(p, e, None)` represents `join p in e` or `from p in e`.
+    Scan(Box<Pat>, Box<Expr>, Option<Box<Expr>>),
+
+    /// `ScanEq(p, e)` represents `join p = e`.
+    ScanEq(Box<Pat>, Box<Expr>),
+
+    /// `ScanExtent(p)` represents `join p` or `from p`.
+    ScanExtent(Box<Pat>),
+
     Except(bool, Vec<Expr>),
-    From,
     Group(Box<Expr>, Option<Box<Expr>>),
     Intersect(bool, Vec<Expr>),
     Order(Box<Expr>),
@@ -518,6 +557,31 @@ pub enum StepKind {
 }
 
 impl StepKind {
+    /// Returns the name of the clause. For use in error messages.
+    pub(crate) fn clause(&self) -> &'static str {
+        match self {
+            // lint: sort until '#}'
+            StepKind::Compute(_) => "compute",
+            StepKind::Distinct => "distinct",
+            StepKind::Except(_, _) => "except",
+            StepKind::Group(_, _) => "group",
+            StepKind::Intersect(_, _) => "intersect",
+            StepKind::Into(_) => "into",
+            StepKind::Order(_) => "order",
+            StepKind::Require(_) => "require",
+            StepKind::Scan(_, _, _) => "scan",
+            StepKind::ScanEq(_, _) => "join",
+            StepKind::ScanExtent(_) => "join",
+            StepKind::Skip(_) => "skip",
+            StepKind::Take(_) => "take",
+            StepKind::Through(_, _) => "through",
+            StepKind::Union(_, _) => "union",
+            StepKind::Unorder => "unorder",
+            StepKind::Where(_) => "where",
+            StepKind::Yield(_) => "yield",
+        }
+    }
+
     pub fn spanned(&self, span: &Span) -> Step {
         Step {
             kind: self.clone(),
@@ -586,6 +650,16 @@ impl Pat {
                 pats.iter().for_each(|p| p.for_each_id_pat(consumer))
             }
             _ => todo!("{}", self.kind),
+        }
+    }
+
+    /// Returns the implicit label for this pattern, if one can be derived.
+    /// Returns Some for identifiers and annotated patterns; None otherwise.
+    pub fn implicit_label_opt(&self) -> Option<String> {
+        match &self.kind {
+            PatKind::Identifier(name) => Some(name.clone()),
+            PatKind::Annotated(pat, _type) => pat.implicit_label_opt(),
+            _ => None,
         }
     }
 }

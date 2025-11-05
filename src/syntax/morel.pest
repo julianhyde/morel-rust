@@ -296,7 +296,7 @@ scan1 = { scan1_eq | scan1_in | pat }
 scan1_eq = { pat ~ "=" ~ expr }
 scan1_in = { pat ~ _in ~ expr }
 scan = { scan_eq | scan_in | pat }
-scan_eq = { pat ~ "=" ~ expr ~ (_on ~ expr)? }
+scan_eq = { pat ~ "=" ~ expr }
 scan_in = { pat ~ _in ~ expr ~ (_on ~ expr)? }
 join = { _join ~ scan ~ ("," ~ scan)* }
 
