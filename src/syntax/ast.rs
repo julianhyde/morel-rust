@@ -233,6 +233,18 @@ pub enum ExprKind<SubExpr> {
 }
 
 impl ExprKind<Expr> {
+    pub(crate) fn clause(&self) -> &str {
+        match self {
+            // lint: sort until '#}'
+            ExprKind::From(_) => "from",
+            ExprKind::Forall(_) => "forall",
+            ExprKind::Exists(_) => "exists",
+            _ => {
+                todo!("clause for {:?}", self)
+            }
+        }
+    }
+
     pub fn spanned(&self, span: &Span) -> Expr {
         Expr {
             kind: self.clone(),
@@ -496,7 +508,10 @@ pub enum StepKind {
     Into(Box<Expr>),
     Join(Box<Pat>),
     JoinEq(Box<Pat>, Box<Expr>, Option<Box<Expr>>),
-    JoinIn(Box<Pat>, Box<Expr>, Option<Box<Expr>>),
+
+    /// A scan (e.g. "e in emps", "e") or scan-and-join (e.g. "left join d in
+    /// depts on e.deptno = d.deptno") in a `from` expression.
+    Scan(Box<Pat>, Box<Expr>, Option<Box<Expr>>),
     Except(bool, Vec<Expr>),
     From,
     Group(Box<Expr>, Option<Box<Expr>>),
@@ -510,6 +525,34 @@ pub enum StepKind {
     Unorder,
     Where(Box<Expr>),
     Yield(Box<Expr>),
+}
+
+impl StepKind {
+    /// Returns the name of the clause. For use in error messages.
+    pub(crate) fn clause(&self) -> &'static str {
+        match self {
+            // lint: sort until '#}'
+            StepKind::Compute(_) => "compute",
+            StepKind::Distinct => "distinct",
+            StepKind::Into(_) => "into",
+            StepKind::Join(_) => "join",
+            StepKind::JoinEq(_, _, _) => "join",
+            StepKind::Scan(_, _, _) => "scan",
+            StepKind::Except(_, _) => "except",
+            StepKind::From => "from",
+            StepKind::Group(_, _) => "group",
+            StepKind::Intersect(_, _) => "intersect",
+            StepKind::Order(_) => "order",
+            StepKind::Require(_) => "require",
+            StepKind::Skip(_) => "skip",
+            StepKind::Take(_) => "take",
+            StepKind::Through(_, _) => "through",
+            StepKind::Union(_, _) => "union",
+            StepKind::Unorder => "unorder",
+            StepKind::Where(_) => "where",
+            StepKind::Yield(_) => "yield",
+        }
+    }
 }
 
 impl StepKind {

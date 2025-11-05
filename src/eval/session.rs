@@ -105,7 +105,10 @@ impl Session {
     }
 
     /// Deduces a statement's type. The statement is represented by an AST node.
-    pub fn deduce_type_inner(&mut self, node: &Statement) -> Resolved {
+    pub fn deduce_type_inner(
+        &mut self,
+        node: &Statement,
+    ) -> Result<Resolved, Error> {
         let mut type_resolver = TypeResolver::new();
         let empty_type_env = EmptyTypeEnv {};
         let type_env = FunTypeEnv {

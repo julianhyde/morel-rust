@@ -55,6 +55,11 @@ fn dummy() {
 }
 
 #[test]
+fn dummy2() {
+    run_script("tests/script/dummy2.smli");
+}
+
+#[test]
 fn file() {
     run_script("tests/script/file.smli");
 }
