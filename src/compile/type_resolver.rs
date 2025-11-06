@@ -113,6 +113,7 @@ impl Typed for Pat {
     }
 }
 
+#[derive(Clone)]
 struct Triple {
     root_env: Rc<dyn TypeEnv>,
     env: Rc<dyn TypeEnv>,
@@ -1153,22 +1154,26 @@ impl TypeResolver {
         steps2: &mut Vec<Step>,
     ) -> Result<Triple, Error> {
         match &step.kind {
+            // lint: sort until '#}' where '##StepKind::'
+            StepKind::Require(expr) => {
+                let v = self.unifier.variable();
+                let expr2 = self.deduce_expr_type(&*p.env, expr, &v)?;
+                self.primitive_term(&PrimitiveType::Bool, &v);
+                steps2.push(
+                    StepKind::Require(Box::new(expr2)).spanned(&expr.span),
+                );
+                Ok(p.clone())
+            }
             StepKind::Scan(pat, expr, condition) => self.deduce_scan_step_type(
                 p, pat, expr, condition, &step.span, field_vars, steps2,
             ),
             StepKind::Where(expr) => {
-                let v5 = self.unifier.variable();
-                let filter2 = self.deduce_expr_type(&*p.env, expr, &v5)?;
-                self.primitive_term(&PrimitiveType::Bool, &v5);
-                steps2.push(
-                    StepKind::Where(Box::new(filter2)).spanned(&expr.span),
-                );
-                Ok(Triple::new(
-                    p.root_env.clone(),
-                    p.env.clone(),
-                    p.v.clone(),
-                    p.c.clone(),
-                ))
+                let v = self.unifier.variable();
+                let expr2 = self.deduce_expr_type(&*p.env, expr, &v)?;
+                self.primitive_term(&PrimitiveType::Bool, &v);
+                steps2
+                    .push(StepKind::Where(Box::new(expr2)).spanned(&expr.span));
+                Ok(p.clone())
             }
             StepKind::Yield(expr) => {
                 self.deduce_yield_step_type(p, expr, &step.span, steps2)
