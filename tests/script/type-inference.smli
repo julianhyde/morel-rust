@@ -301,6 +301,12 @@ end;
   where i > 1;
 > val it : int list
 
+(* TODO
+:t from i in [1, 2, 3]
+  where i;
+> unification failed: conflict: bool != int
+*)
+
 :t from i in [1, 2, 3]
   where i > 1
   yield i + 4;
@@ -320,6 +326,45 @@ end;
     s in [String.substring ("abc", i, 1)]
   yield {i, s, c = String.sub (s, i)};
 > val it : {c:char, i:int, s:string} list
+
+:t from i in [1, 2, 3]
+  yield {i, j = i + 1, k = i + 2}
+  yield {m = k + 1, j};
+> val it : {j:int, m:int} list
+
+:t from i in [1, 2, 3]
+  yield i mod 2
+  distinct;
+> val it : int list
+
+:t from i in [1, 2, 3]
+  order i;
+> val it : int list
+
+:t from i in [1, 2, 3]
+  order DESC i;
+> val it : int list
+
+:t from i in [1, 2, 3]
+  yield {i, c = String.sub ("abc", i)}
+  order (String.sub ("abc", i), DESC i)
+  yield c;
+> val it : char list
+
+:t from i in [1, 2, 3]
+  take 2;
+> val it : int list
+
+:t from i in [1, 2, 3]
+  skip 1;
+> val it : int list
+
+:t fn (x, y) =>
+  from i in ["peter", "paul", "mary"]
+    order DESC i
+    skip x
+    take y;
+> val it : int * int -> string list
 
 :t exists i in [1, 2, 3]
   where i > 1;

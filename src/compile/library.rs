@@ -254,6 +254,9 @@ pub enum BuiltInFunction {
     CharToString,
     #[strum(props(p = "Char", name = "toUpper", type = "char -> char"))]
     CharToUpper,
+    #[strum(props(p = "Relational", name = "DESC", global = true))]
+    #[strum(props(type = "forall 1 'a -> 'a descending", constructor = true))]
+    DescendingDesc,
     #[strum(props(p = "Either", name = "app"))]
     #[strum(props(
         type = "forall 2 ('a -> unit) * ('b -> unit) -> ('a,'b) either -> unit"
@@ -1003,6 +1006,8 @@ pub enum BuiltInRecord {
     Option,
     #[strum(props(name = "Real"))]
     Real,
+    #[strum(props(name = "Relational"))]
+    Relational,
     #[strum(props(name = "String"))]
     String,
     #[strum(props(name = "Sys"))]

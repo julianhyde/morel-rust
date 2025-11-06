@@ -4165,10 +4165,22 @@ List.map (fn x => (x, Real.toString x))
   see the technical report by Gay[CITE]. *)
 (*) TODO
 
+(* Relational -------------------------------------------------- *)
+Relational;
+> val it = {DESC=fn} : {DESC:'a -> 'a descending}
+
+(* Descending:
+     datatype descending = DESC of 'a
+*)
+DESC;
+> val it = fn : 'a -> 'a descending
+DESC "a";
+> val it = DESC "a" : string descending
+DESC (DESC "a");
+> val it = DESC DESC "a" : string descending descending
+
 set("mode", "validate");
 > val it = () : unit
-
-(* Relational -------------------------------------------------- *)
 
 Relational.count (bag [1, 2, 3]);
 > val it = 3 : int

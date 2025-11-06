@@ -240,6 +240,7 @@ impl ExprKind<Expr> {
     pub(crate) fn clause(&self) -> &str {
         match self {
             // lint: sort until '#}' where '##ExprKind::'
+            ExprKind::Current => "current",
             ExprKind::Exists(_) => "exists",
             ExprKind::Forall(_) => "forall",
             ExprKind::From(_) => "from",

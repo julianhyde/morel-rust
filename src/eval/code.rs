@@ -1277,6 +1277,7 @@ pub enum Eager1 {
     CharToLower,
     CharToString,
     CharToUpper,
+    DescendingDesc,
     EitherAsLeft,
     EitherAsRight,
     EitherInl,
@@ -1388,6 +1389,7 @@ impl Eager1 {
             CharToLower => Val::Char(Char::to_lower(a0.expect_char())),
             CharToString => Val::String(Char::to_string(a0.expect_char())),
             CharToUpper => Val::Char(Char::to_upper(a0.expect_char())),
+            DescendingDesc => a0,
             EitherAsLeft => Either::as_left(&a0),
             EitherAsRight => Either::as_right(&a0),
             EitherInl => Val::Inl(Box::new(a0)),
@@ -2533,6 +2535,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::CharToLower.implements(&mut b, CharToLower);
     Eager1::CharToString.implements(&mut b, CharToString);
     Eager1::CharToUpper.implements(&mut b, CharToUpper);
+    Eager1::DescendingDesc.implements(&mut b, DescendingDesc);
     EagerF2::EitherApp.implements(&mut b, EitherApp);
     EagerF2::EitherAppLeft.implements(&mut b, EitherAppLeft);
     EagerF2::EitherAppRight.implements(&mut b, EitherAppRight);

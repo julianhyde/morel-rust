@@ -16,7 +16,6 @@
 // License.
 
 #![allow(clippy::ptr_arg)]
-#![allow(clippy::needless_lifetimes)]
 #![allow(clippy::needless_borrow)]
 #![allow(clippy::collapsible_if)]
 
@@ -178,7 +177,7 @@ impl<'a> TermToTypeConverter<'a> {
                     let type_ = self.term_type(&sequence.terms[0]);
                     Box::new(Type::List(type_))
                 }
-                "option" => {
+                "option" | "descending" => {
                     assert_eq!(sequence.terms.len(), 1);
                     let args = vec![*self.term_type(&sequence.terms[0])];
                     Box::new(Type::Data(sequence.op.name.clone(), args))
@@ -757,11 +756,11 @@ impl TypeResolver {
     /// Deduces an expression's type.
     /// Associates the type with variable `v` and returns the modified
     /// expression.
-    fn deduce_expr_type<'a>(
+    fn deduce_expr_type(
         &mut self,
         env: &dyn TypeEnv,
         expr: &Expr,
-        v: &'a Rc<Var>,
+        v: &Rc<Var>,
     ) -> Result<Expr, Error> {
         Ok(match &expr.kind {
             // lint: sort until '#}' where '##ExprKind::'
@@ -1155,6 +1154,17 @@ impl TypeResolver {
     ) -> Result<Triple, Error> {
         match &step.kind {
             // lint: sort until '#}' where '##StepKind::'
+            StepKind::Distinct => {
+                steps2.push(step.clone());
+                Ok(p.clone())
+            }
+            StepKind::Order(expr) => {
+                let v = self.unifier.variable();
+                let expr2 = self.deduce_expr_type(&*p.env, expr, &v)?;
+                steps2
+                    .push(StepKind::Order(Box::new(expr2)).spanned(&expr.span));
+                Ok(p.clone())
+            }
             StepKind::Require(expr) => {
                 let v = self.unifier.variable();
                 let expr2 = self.deduce_expr_type(&*p.env, expr, &v)?;
@@ -1167,6 +1177,22 @@ impl TypeResolver {
             StepKind::Scan(pat, expr, condition) => self.deduce_scan_step_type(
                 p, pat, expr, condition, &step.span, field_vars, steps2,
             ),
+            StepKind::Skip(expr) => {
+                let v = self.unifier.variable();
+                let expr2 = self.deduce_expr_type(&*p.env, expr, &v)?;
+                self.primitive_term(&PrimitiveType::Int, &v);
+                steps2
+                    .push(StepKind::Skip(Box::new(expr2)).spanned(&expr.span));
+                Ok(p.clone())
+            }
+            StepKind::Take(expr) => {
+                let v = self.unifier.variable();
+                let expr2 = self.deduce_expr_type(&*p.env, expr, &v)?;
+                self.primitive_term(&PrimitiveType::Int, &v);
+                steps2
+                    .push(StepKind::Take(Box::new(expr2)).spanned(&expr.span));
+                Ok(p.clone())
+            }
             StepKind::Where(expr) => {
                 let v = self.unifier.variable();
                 let expr2 = self.deduce_expr_type(&*p.env, expr, &v)?;
@@ -1175,9 +1201,9 @@ impl TypeResolver {
                     .push(StepKind::Where(Box::new(expr2)).spanned(&expr.span));
                 Ok(p.clone())
             }
-            StepKind::Yield(expr) => {
-                self.deduce_yield_step_type(p, expr, &step.span, steps2)
-            }
+            StepKind::Yield(expr) => self.deduce_yield_step_type(
+                p, expr, &step.span, field_vars, steps2,
+            ),
             _ => {
                 todo!("Step type deduction not implemented for {:?}", step.kind)
             }
@@ -1246,26 +1272,67 @@ impl TypeResolver {
         p: &Triple,
         expr: &Expr,
         span: &Span,
+        field_vars: &mut Vec<(String, Rc<Var>)>,
         steps2: &mut Vec<Step>,
     ) -> Result<Triple, Error> {
         // The yield expression determines the new element type
         let v6 = self.variable();
         let expr2 = self.deduce_expr_type(&*p.env, expr, &v6)?;
 
-        let step2 = Step {
-            kind: StepKind::Yield(Box::new(expr2)),
-            span: span.clone(),
-        };
-        steps2.push(step2);
+        let step = StepKind::Yield(Box::new(expr2.clone()));
+        steps2.push(step.spanned(span));
 
         // Output is ordered iff input is ordered. Yield behaves like a
-        // 'map' function
-        // TODO: Implement full isListOrBagMatchingInput logic from Java
+        // 'map' function with these overloaded forms:
+        //  * map: 'a -> 'b -> 'a list -> 'b list
+        //  * map: 'a -> 'b -> 'a bag -> 'b bag
         let c6 = self.variable();
         self.list_term(Term::Variable(v6.clone()), &c6);
 
-        // For now, use simple environment - TODO: handle record fields properly
-        let env = p.env.builder().build();
+        let mut envs = p.env.builder();
+        if let ExprKind::Record(with, labeled_exprs) = expr2.kind {
+            let mut v = None;
+            if let Some(with) = with
+                && let Some(id) = with.id
+            {
+                v = self.node_var_map.get(&id);
+            }
+            if let None = v
+                && let Some(id) = expr2.id
+            {
+                v = self.node_var_map.get(&id);
+            }
+            if let Some(v) = v
+                && let Some(vt) = self.terms.iter().find(|vt| vt.0 == *v)
+                && let Term::Sequence(seq) = &vt.1
+            {
+                // Clone the terms to avoid holding immutable borrow of self
+                let seq_terms = seq.terms.clone();
+                field_vars.clear();
+                for (labeled_expr, term) in zip(labeled_exprs, seq_terms.iter())
+                {
+                    if let Some(label) = labeled_expr.get_label() {
+                        field_vars.push((
+                            label.clone(),
+                            self.term_to_variable(&term),
+                        ));
+                        envs.push(label, term.clone());
+                    } else {
+                        return Err(Error::Compile(
+                            "cannot derive label for expression".to_string(),
+                            expr.span.clone(),
+                        ));
+                    }
+                }
+            }
+        } else {
+            let label = implicit_expr_label_opt(expr)
+                .unwrap_or_else(|| ExprKind::Current.clause().to_string());
+            envs.push(label.clone(), Term::Variable(v6.clone()));
+            field_vars.clear();
+            field_vars.push((label, v6.clone()));
+        }
+        let env = envs.build();
 
         Ok(Triple::new(p.root_env.clone(), env, v6, Some(c6)))
     }
@@ -1502,12 +1569,8 @@ impl TypeResolver {
         // type.
         let mut label_expr_map: BTreeMap<Label, LabeledExpr> = BTreeMap::new();
         for labeled_expr in labeled_expr_list {
-            let label = if let Some(label_name) = &labeled_expr.label {
-                Label::from(&label_name.name)
-            } else if let Some(label_name) =
-                implicit_expr_label_opt(&labeled_expr.expr)
-            {
-                Label::from(&label_name)
+            let label = if let Some(name) = labeled_expr.get_label() {
+                Label::from(name)
             } else {
                 // Field has no label, so generate a temporary name.
                 // FIXME The temporary name might overlap with later
@@ -1736,11 +1799,11 @@ impl TypeResolver {
         }
     }
 
-    pub(crate) fn type_term<'a>(
+    pub(crate) fn type_term(
         &mut self,
         type_: &Type,
         subst: &Subst,
-        v: &'a Rc<Var>,
+        v: &Rc<Var>,
     ) {
         match type_ {
             // lint: sort until '#}' where '##Type::'
@@ -2461,6 +2524,21 @@ impl<'a> TypeToTermConverter<'a> {
             }
             _ => todo!("{:?}", type_node.kind),
         }
+    }
+}
+
+impl LabeledExpr {
+    /// Returns an explicit or implicit label, or None if no label can
+    /// be derived. For example, the fields of the record
+    /// ```sml
+    /// {a = 1, b, c + 2}
+    /// ```
+    /// have explicit label `a`, implicit label `b`, and no label.
+    pub fn get_label(&self) -> Option<String> {
+        self.label
+            .as_ref()
+            .map(|label| label.name.clone())
+            .or_else(|| implicit_expr_label_opt(&self.expr))
     }
 }
 
