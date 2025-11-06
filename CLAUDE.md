@@ -14,6 +14,8 @@ The query translation pipeline converts high-level relational syntax into execut
 
 ## Phase 1: FromBuilder Translation
 
+**Status**: 🚧 In Progress (Foundation Complete)
+
 **Java Source**: `/Users/jhyde/dev/morel.2/src/main/java/net/hydromatic/morel/ast/FromBuilder.java` (586 lines)
 
 **Test Source**: `/Users/jhyde/dev/morel.2/src/test/java/net/hydromatic/morel/FromBuilderTest.java`
@@ -34,17 +36,31 @@ FromBuilder constructs and optimizes `Core.From` expressions by:
 - Index tracking for conditional step removal
 
 ### Translation Strategy
-1. Create `src/compile/from_builder.rs`
-2. Translate FromBuilder class to struct with builder pattern
-3. Use `Vec<FromStep>` for steps collection
-4. Use `Option<usize>` for remove-if-last/not-last indices
-5. Write unit tests based on FromBuilderTest.java
+1. ✅ Add foundational types to `src/compile/core.rs`
+2. 🚧 Create `src/compile/from_builder.rs`
+3. ⏳ Translate FromBuilder class to struct with builder pattern
+4. ⏳ Use `Vec<Step>` for steps collection
+5. ⏳ Use `Option<usize>` for remove-if-last/not-last indices
+6. ⏳ Write unit tests based on FromBuilderTest.java
 
 ### Rust Design Decisions
 - Builder methods return `&mut Self` for chaining
-- Use `Result<Core, Error>` for build methods
+- Use `Result<Expr, Error>` for build methods
 - `clear()` method for builder reuse
 - Type system integration via `TypeSystem` reference
+
+### Progress Log
+
+#### 2025-01-06: Foundation Complete (Commit 1777a8d)
+- ✅ Added `Binding` struct to `src/compile/core.rs`
+  - Tracks pattern bindings with `Id` and `Type`
+  - Simplified from Java (no value/expression fields yet)
+- ✅ Added `StepEnv` struct to `src/compile/core.rs`
+  - Tracks bindings, atom flag, ordered flag at each query step
+  - Methods: `empty()`, `new()`, `with_ordered()`, `with_bindings()`
+- ✅ Extended `Step` to include `env: StepEnv` field
+- ✅ Fixed compilation errors in `inliner.rs` and `resolver.rs`
+- 🎯 Next: Create `from_builder.rs` module with FromBuilder struct
 
 ## Phase 2: FromResolver Translation
 
