@@ -2238,6 +2238,10 @@ impl TypeResolver {
         for labeled_expr in labeled_expr_list {
             let label = if let Some(name) = labeled_expr.get_label() {
                 Label::from(name)
+            } else if let Some(label_name) =
+                labeled_expr.expr.implicit_label_opt()
+            {
+                Label::from(&label_name)
             } else {
                 // Field has no label, so generate a temporary name.
                 // FIXME The temporary name might overlap with later

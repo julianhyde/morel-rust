@@ -1145,7 +1145,20 @@ forall d in [{a=1,b=true}];
 :t from i in [1, 2, 3] into (fn x => List.length x + 1);
 > val it : int
 
-(*) Queries
+(*) Record ------------------------------------------------
+:t {a=1, b="x"};
+> val it : {a:int, b:string}
+:t {c=[1], b="x"};
+> val it : {b:string, c:int list}
+
+:t let
+  val i = 2
+in
+  {c = String.sub("abc", i), i}
+end;
+> val it : {c:char, i:int}
+
+(*) Query -------------------------------------------------
 :t from i in [1, 2];
 > val it : int list
 
@@ -1159,5 +1172,29 @@ forall d in [{a=1,b=true}];
 :t from r in [{i=1, b=true}, {i=2, b=false}, {i=3, b=true}],
   j in [5, 6];
 > val it : {j:int, r:{b:bool, i:int}} list
+
+:t from i in [1, 2, 3]
+  where i > 1;
+> val it : int list
+
+:t from i in [1, 2, 3]
+  where i > 1
+  yield i + 4;
+> val it : int list
+
+:t from i in [1, 2, 3]
+  where i > 1
+  yield String.sub ("abc", i);
+> val it : char list
+
+:t from i in [1, 2, 3]
+  where i > 1
+  yield {c = String.sub ("abc", i), i};
+> val it : {c:char, i:int} list
+
+:t from i in [1, 2, 3],
+    s in [String.substring ("abc", i, 1)]
+  yield {i, s, c = String.sub (s, i)};
+> val it : {c:char, i:int, s:string} list
 
 (*) End type-inference.smli
