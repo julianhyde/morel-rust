@@ -351,6 +351,16 @@ end;
   yield c;
 > val it : char list
 
+(* Composite order using record may not have the intended effect,
+   because record fields are sorted alphabetically. Note that data
+   is sorted first by deptno then by name. *)
+(* Claude: TODO make this test pass by copying validateOrder() from TypeResolver.java
+:t from e in [{name="Fred", deptno=10, job="manager"}]
+  order {e.name, e.deptno};
+> stdIn:2.9-2.27 Warning: Sorting on a record whose fields are not in alphabetical order. Sort order may not be what you expect.
+>   raised at: stdIn:2.9-2.27
+*)
+
 :t from i in [1, 2, 3]
   take 2;
 > val it : int list
