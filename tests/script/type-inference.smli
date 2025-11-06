@@ -1267,7 +1267,7 @@ end;
 (*) Join with '='
 :t from e in [{eid=1, dno=10}, {eid=2, dno=20}]
   join x = e.dno + 10;
-> val it : {d:{dname:string, dno:int}, x:int} list
+> val it : {e:{dno:int, eid:int}, x:int} list
 
 (*) Set operations -------------------------------------
 :t from i in [1, 2, 3]
@@ -1318,6 +1318,10 @@ end;
 :t from (i,j) in [(1,2),(3,4)]
   group j compute {n = length elements, two = 2};
 > val it : {j:int, n:int, two:int} list
+
+:t from (i,j) in [(1,2),(3,4)]
+  group j compute {j = length elements};
+> error: Duplicate field name 'j' in group
 
 (*) Compute operation ---------------------------------
 
