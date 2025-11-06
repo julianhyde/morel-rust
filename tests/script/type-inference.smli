@@ -1251,4 +1251,111 @@ end;
   require i mod 2 = 0;
 > val it : bool
 
+(*) Join -----------------------------------------------
+
+(*) Cartesian product
+:t from i in [1, 2]
+  join j in [3, 4];
+> val it : {i:int, j:int} list
+
+(*) Join with 'on'
+:t from e in [{eid=1, dno=10}, {eid=2, dno=20}]
+  join d in [{dno=10, dname="Sales"}, {dno=20, dname="Marketing"}]
+    on e.dno = d.dno;
+> val it : {d:{dname:string, dno:int}, e:{dno:int, eid:int}} list
+
+(*) Join with '='
+:t from e in [{eid=1, dno=10}, {eid=2, dno=20}]
+  join x = e.dno + 10;
+> val it : {d:{dname:string, dno:int}, x:int} list
+
+(*) Set operations -------------------------------------
+:t from i in [1, 2, 3]
+  union [4, 5];
+> val it : int list
+
+:t from i in [1, 2, 3]
+  union [4, 5], [6, 7];
+> val it : int list
+
+:t from i in [1, 2, 3]
+  except [2];
+> val it : int list
+
+:t from i in [1, 2, 3]
+  intersect [2, 3, 4];
+> val it : int list
+
+:t from i in [1, 1, 2]
+  union distinct [2, 3];
+> val it : int list
+
+(*) Group operation -----------------------------------
+:t from i in [1, 2, 3]
+  group i;
+> val it : {i:int} list
+
+:t from i in [1, 2, 2, 3]
+  group i mod 2;
+> val it : int list
+
+:t from i in [1,2]
+  group i + 1 compute {length elements};
+> error: cannot derive label for group expression
+
+:t from i in [1,2]
+  group i compute {length elements};
+> error: cannot derive label for compute expression
+
+:t from i in [1, 2, 2, 3]
+  group i compute {n = List.length elements};
+> val it : {i:int, n:int} list
+
+:t from e in [{deptno=10, sal=1000}, {deptno=20, sal=2000}, {deptno=10, sal=1500}]
+  group e.deptno compute {total = List.foldl (fn (r, acc) => r.sal + acc) 0 elements};
+> val it : {deptno:int, total:int} list
+
+:t from (i,j) in [(1,2),(3,4)]
+  group j compute {n = length elements, two = 2};
+> val it : {j:int, n:int, two:int} list
+
+(*) Compute operation ---------------------------------
+
+:t from i in [1, 2, 3]
+  compute {sum = List.foldl (op +) 0 elements};
+> val it : {sum:int}
+
+:t from i in [1, 2, 3]
+  compute List.length elements;
+> val it : int
+
+(*) Correlated subqueries ----------------------------
+:t from i in [1, 2, 3]
+  where (exists j in [1, 2] where j = i);
+> val it : int list
+
+:t from r in [{a=1, b=2}, {a=2, b=3}]
+  where (exists s in [{x=1}, {x=3}] where s.x = r.a);
+> val it : {a:int, b:int} list
+
+(*) Advanced query steps ------------------------------
+(*) Into step (applies function to entire collection)
+:t from i in [1, 2, 3]
+  into List.length;
+> val it : int
+
+:t from i in [1, 2, 3]
+  into (fn xs => List.foldl (op +) 0 xs);
+> val it : int
+
+(*) Through step (applies table function and scans result)
+:t from i in [1, 2, 3]
+  through j in (fn _ => [4, 5, 6]);
+> val it : int list
+
+(*) Unorder step (converts list to bag)
+:t from i in [1, 2, 3]
+  unorder;
+> val it : int bag
+
 (*) End type-inference.smli

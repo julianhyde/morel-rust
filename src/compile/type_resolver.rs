@@ -1448,7 +1448,7 @@ impl TypeResolver {
         Ok(Triple::new(p.root_env.clone(), env, v6, Some(c6)))
     }
 
-    /// Deduces a set operation step's type (Union/Except/Intersect).
+    /// Deduces the type of a set operation step (Union/Except/Intersect).
     fn deduce_set_step_type(
         &mut self,
         p: &Triple,
@@ -2006,7 +2006,6 @@ impl TypeResolver {
             Some(c_result),
         ))
     }
-
     fn field_var(&mut self, field_vars: &[(String, Var)], atom: bool) -> Var {
         if field_vars.is_empty() {
             let v = self.variable();
