@@ -379,6 +379,9 @@ impl Shell {
             let output = self.deduce_type(&statement);
             return match &output {
                 Ok(s) => Ok(prefix_lines(">", s.as_str())),
+                Err(Error::Compile(msg, _span)) => {
+                    Ok(format!("> error: {}\n", msg))
+                }
                 Err(_) => output,
             };
         }

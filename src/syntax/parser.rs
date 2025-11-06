@@ -681,14 +681,14 @@ impl MorelParser {
         Ok(match_nodes!(input.children();
             [scan1_eq(s)] => s,
             [scan1_in(s)] => s,
-            [pat(p)] => StepKind::Join(Box::new(p)).wrap(input),
+            [pat(p)] => StepKind::ScanExtent(Box::new(p)).wrap(input),
         ))
     }
 
     fn scan1_eq(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
             [pat(p), expr(e)] => {
-                StepKind::JoinEq(Box::new(p), Box::new(e), None).wrap(input)
+                StepKind::ScanEq(Box::new(p), Box::new(e)).wrap(input)
             },
         ))
     }
@@ -705,19 +705,14 @@ impl MorelParser {
         Ok(match_nodes!(input.children();
             [scan_eq(s)] => s,
             [scan_in(s)] => s,
-            [pat(p)] => StepKind::Join(Box::new(p)).wrap(input),
+            [pat(p)] => StepKind::ScanExtent(Box::new(p)).wrap(input),
         ))
     }
 
     fn scan_eq(input: ParseInput) -> ParseResult<Step> {
         Ok(match_nodes!(input.children();
-            [pat(p), expr(e), _on(_), expr(c)] => {
-                StepKind::JoinEq(Box::new(p), Box::new(e), Some(Box::new(c)))
-                    .wrap(input)
-            },
             [pat(p), expr(e)] => {
-                StepKind::JoinEq(Box::new(p), Box::new(e), None)
-                    .wrap(input)
+                StepKind::ScanEq(Box::new(p), Box::new(e)).wrap(input)
             },
         ))
     }
