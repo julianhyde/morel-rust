@@ -1111,13 +1111,8 @@ impl TypeResolver {
                 _ => {}
             }
 
-            let p_next = self.deduce_step_type(
-                env,
-                &step,
-                &p,
-                &mut field_vars,
-                &mut steps2,
-            )?;
+            let p_next =
+                self.deduce_step_type(&step, &p, &mut field_vars, &mut steps2)?;
             p = p_next;
         }
 
@@ -1152,7 +1147,6 @@ impl TypeResolver {
     /// Deduces the type of a single step in a query.
     fn deduce_step_type(
         &mut self,
-        env: &dyn TypeEnv,
         step: &Step,
         p: &Triple,
         field_vars: &mut Vec<(String, Rc<Var>)>,
@@ -1164,7 +1158,7 @@ impl TypeResolver {
             ),
             StepKind::Where(expr) => {
                 let v5 = self.unifier.variable();
-                let filter2 = self.deduce_expr_type(env, expr, &v5)?;
+                let filter2 = self.deduce_expr_type(&*p.env, expr, &v5)?;
                 self.primitive_term(&PrimitiveType::Bool, &v5);
                 steps2.push(
                     StepKind::Where(Box::new(filter2)).spanned(&expr.span),
@@ -1505,11 +1499,14 @@ impl TypeResolver {
         for labeled_expr in labeled_expr_list {
             let label = if let Some(label_name) = &labeled_expr.label {
                 Label::from(&label_name.name)
+            } else if let Some(label_name) =
+                implicit_expr_label_opt(&labeled_expr.expr)
+            {
+                Label::from(&label_name)
             } else {
                 // Field has no label, so generate a temporary name.
                 // FIXME The temporary name might overlap with later
-                // explicit labels, and certain types of expressions
-                // have an implicit label.
+                // explicit labels.
                 let ordinal = label_expr_map.len() + 1;
                 Label::Ordinal(ordinal)
             };
