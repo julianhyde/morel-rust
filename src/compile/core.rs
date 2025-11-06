@@ -183,13 +183,86 @@ impl Display for Match {
     }
 }
 
+/// Binding of a pattern to a type.
+/// Simplified version - in Java this also includes value and other metadata.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Binding {
+    pub id: Id,
+    pub type_: Box<Type>,
+}
+
+impl Binding {
+    pub fn new(id: Id, type_: Box<Type>) -> Self {
+        Binding { id, type_ }
+    }
+
+    pub fn of(pat: &Pat) -> Self {
+        match pat {
+            Pat::Identifier(t, name) => {
+                Binding::new(Id::new(name, 0), t.clone())
+            }
+            _ => panic!("Expected identifier pattern"),
+        }
+    }
+}
+
+/// Environment available at a step in a query.
+/// Tracks the variable bindings, whether the result is an atom (scalar)
+/// vs record, and whether the result is ordered.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StepEnv {
+    pub bindings: Vec<Binding>,
+    pub atom: bool,
+    pub ordered: bool,
+}
+
+impl StepEnv {
+    /// Empty environment - no bindings, not an atom, ordered.
+    pub const fn empty() -> Self {
+        StepEnv {
+            bindings: Vec::new(),
+            atom: false,
+            ordered: true,
+        }
+    }
+
+    pub fn new(bindings: Vec<Binding>, atom: bool, ordered: bool) -> Self {
+        assert!(!atom || bindings.len() == 1, "Atom must have exactly one binding");
+        StepEnv { bindings, atom, ordered }
+    }
+
+    pub fn with_ordered(&self, ordered: bool) -> Self {
+        if ordered == self.ordered {
+            return self.clone();
+        }
+        StepEnv {
+            bindings: self.bindings.clone(),
+            atom: self.atom,
+            ordered,
+        }
+    }
+
+    pub fn with_bindings(&self, bindings: Vec<Binding>) -> Self {
+        StepEnv {
+            bindings,
+            atom: self.atom,
+            ordered: self.ordered,
+        }
+    }
+}
+
 /// Abstract syntax tree (AST) of a step in a query.
 #[derive(Clone, Debug)]
 pub struct Step {
     pub kind: StepKind,
+    pub env: StepEnv,
 }
 
-impl Step {}
+impl Step {
+    pub fn new(kind: StepKind, env: StepEnv) -> Self {
+        Step { kind, env }
+    }
+}
 
 /// Kind of step in a query.
 #[derive(Clone, Debug)]
@@ -216,8 +289,8 @@ pub enum StepKind {
 }
 
 impl StepKind {
-    pub fn spanned(&self) -> Step {
-        Step { kind: self.clone() }
+    pub fn with_env(&self, env: StepEnv) -> Step {
+        Step::new(self.clone(), env)
     }
 }
 

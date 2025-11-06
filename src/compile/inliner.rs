@@ -192,7 +192,10 @@ impl Expr {
             }
             _ => step.kind.clone(), // For other step kinds, just clone
         };
-        Step { kind }
+        Step {
+            kind,
+            env: step.env.clone(),
+        }
     }
 }
 
