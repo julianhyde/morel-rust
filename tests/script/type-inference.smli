@@ -1197,4 +1197,13 @@ end;
   yield {i, s, c = String.sub (s, i)};
 > val it : {c:char, i:int, s:string} list
 
+:t exists i in [1, 2, 3]
+  where i > 1;
+> val it : bool
+
+:t forall i in [1, 2, 3]
+  where i > 2
+  require i mod 2 = 0;
+> val it : bool
+
 (*) End type-inference.smli
