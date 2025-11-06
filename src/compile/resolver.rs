@@ -18,8 +18,8 @@
 use crate::compile::core::{
     DatatypeBind as CoreDatatypeBind, Decl as CoreDecl, Expr as CoreExpr,
     Match as CoreMatch, Pat as CorePat, PatField as CorePatField,
-    Step as CoreStep, StepKind as CoreStepKind, TypeBind as CoreTypeBind,
-    ValBind as CoreValBind,
+    Step as CoreStep, StepEnv, StepKind as CoreStepKind,
+    TypeBind as CoreTypeBind, ValBind as CoreValBind,
 };
 use crate::compile::inliner::Env;
 use crate::compile::library::BuiltInFunction;
@@ -732,7 +732,10 @@ impl<'a> Resolver<'a> {
             _ => todo!("resolve_step: {:?}", step.kind),
         };
 
-        CoreStep { kind }
+        CoreStep {
+            kind,
+            env: StepEnv::empty(),
+        }
     }
 
     /// Converts an AST literal to a core value.
