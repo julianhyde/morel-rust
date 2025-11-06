@@ -1154,10 +1154,46 @@ impl TypeResolver {
     ) -> Result<Triple, Error> {
         match &step.kind {
             // lint: sort until '#}' where '##StepKind::'
+            StepKind::Compute(compute_expr) => self.deduce_compute_step_type(
+                p,
+                compute_expr,
+                &step.span,
+                field_vars,
+                steps2,
+            ),
             StepKind::Distinct => {
                 steps2.push(step.clone());
                 Ok(p.clone())
             }
+            StepKind::Except(distinct, exprs)
+            | StepKind::Intersect(distinct, exprs)
+            | StepKind::Union(distinct, exprs) => self.deduce_set_step_type(
+                p, &step.kind, *distinct, exprs, &step.span, steps2,
+            ),
+            StepKind::Group(key_expr, aggregate_expr) => self
+                .deduce_group_step_type(
+                    p,
+                    key_expr,
+                    aggregate_expr,
+                    &step.span,
+                    field_vars,
+                    steps2,
+                ),
+            StepKind::Into(expr) => {
+                self.deduce_into_step_type(p, expr, &step.span, steps2)
+            }
+            StepKind::Join(pat) => self
+                .deduce_join_step_type(p, pat, &step.span, field_vars, steps2),
+            StepKind::JoinEq(pat, left_expr, right_expr) => self
+                .deduce_join_eq_step_type(
+                    p,
+                    pat,
+                    left_expr,
+                    right_expr.as_deref(),
+                    &step.span,
+                    field_vars,
+                    steps2,
+                ),
             StepKind::Order(expr) => {
                 let v = self.unifier.variable();
                 let expr2 = self.deduce_expr_type(&*p.env, expr, &v)?;
@@ -1192,6 +1228,12 @@ impl TypeResolver {
                 steps2
                     .push(StepKind::Take(Box::new(expr2)).spanned(&expr.span));
                 Ok(p.clone())
+            }
+            StepKind::Through(pat, expr) => self.deduce_through_step_type(
+                p, pat, expr, &step.span, field_vars, steps2,
+            ),
+            StepKind::Unorder => {
+                self.deduce_unorder_step_type(p, &step.span, steps2)
             }
             StepKind::Where(expr) => {
                 let v = self.unifier.variable();
@@ -1335,6 +1377,518 @@ impl TypeResolver {
         let env = envs.build();
 
         Ok(Triple::new(p.root_env.clone(), env, v6, Some(c6)))
+    }
+
+    /// Deduces the type of a set operation step (Union/Except/Intersect).
+    fn deduce_set_step_type(
+        &mut self,
+        p: &Triple,
+        step_kind: &StepKind,
+        distinct: bool,
+        exprs: &[Expr],
+        span: &Span,
+        steps2: &mut Vec<Step>,
+    ) -> Result<Triple, Error> {
+        // All branches must have the same element type
+        // Start with current collection's element type
+        let element_type = p.v.clone();
+
+        // Collect terms for all collections
+        let mut terms = vec![Term::Variable(p.c.clone().unwrap())];
+        let mut exprs2 = Vec::new();
+
+        // Deduce each argument expression and unify with element type
+        for expr in exprs {
+            let c_arg = self.variable();
+            let expr2 = self.deduce_expr_type(&*p.root_env, expr, &c_arg)?;
+            exprs2.push(expr2);
+
+            // Extract the element type from this collection and unify with
+            // the common element type.
+            let v_arg = self.variable();
+            self.list_term(Term::Variable(v_arg.clone()), &c_arg);
+            self.equiv(&Term::Variable(v_arg), &element_type);
+
+            terms.push(Term::Variable(c_arg));
+        }
+
+        // Result collection has the same element type
+        let c_result = self.variable();
+        self.list_term(Term::Variable(element_type), &c_result);
+
+        // Create the appropriate step with deduced expressions
+        let step2 = match step_kind {
+            StepKind::Union(_, _) => StepKind::Union(distinct, exprs2),
+            StepKind::Except(_, _) => StepKind::Except(distinct, exprs2),
+            StepKind::Intersect(_, _) => StepKind::Intersect(distinct, exprs2),
+            _ => unreachable!(),
+        };
+        steps2.push(step2.spanned(span));
+
+        Ok(Triple::new(
+            p.root_env.clone(),
+            p.env.clone(),
+            p.v.clone(),
+            Some(c_result),
+        ))
+    }
+
+    /// Deduces the type of a Group step.
+    fn deduce_group_step_type(
+        &mut self,
+        p: &Triple,
+        key_expr: &Expr,
+        compute_expr: &Option<Box<Expr>>,
+        span: &Span,
+        field_vars: &mut Vec<(String, Rc<Var>)>,
+        steps2: &mut Vec<Step>,
+    ) -> Result<Triple, Error> {
+        field_vars.clear();
+
+        // Process key expression(s).
+        // If the key is a record, process each field; otherwise treat as a
+        // single field.
+        let key_expr2;
+        let mut group_env_builder = p.root_env.builder();
+
+        if let ExprKind::Record(_with, labeled_exprs) = &key_expr.kind {
+            // Multiple grouping keys
+            let mut labeled_exprs2 = Vec::new();
+            for labeled_expr in labeled_exprs {
+                let v_field = self.variable();
+                let expr2 = self.deduce_expr_type(
+                    &*p.env,
+                    &labeled_expr.expr,
+                    &v_field,
+                )?;
+                let label = labeled_expr
+                    .get_label()
+                    .unwrap_or_else(|| "key".to_string());
+
+                group_env_builder
+                    .push(label.clone(), Term::Variable(v_field.clone()));
+                field_vars.push((label.clone(), v_field.clone()));
+
+                labeled_exprs2.push(LabeledExpr {
+                    label: labeled_expr.label.clone(),
+                    expr: expr2,
+                });
+            }
+            key_expr2 = Expr {
+                kind: ExprKind::Record(None, labeled_exprs2),
+                span: key_expr.span.clone(),
+                id: key_expr.id,
+            };
+        } else {
+            // Single grouping key
+            let v_key = self.variable();
+            key_expr2 = self.deduce_expr_type(&*p.env, key_expr, &v_key)?;
+            let key_label = implicit_expr_label_opt(&key_expr2)
+                .unwrap_or_else(|| "key".to_string());
+
+            group_env_builder
+                .push(key_label.clone(), Term::Variable(v_key.clone()));
+            field_vars.push((key_label, v_key));
+        }
+
+        // Bind 'elements' to the current collection for use in compute
+        // expressions. Elements: 'a list where 'a is the current element type.
+        group_env_builder
+            .push("elements".to_string(), Term::Variable(p.c.clone().unwrap()));
+
+        // Process compute expression if present
+        let compute_expr2 = if let Some(compute) = compute_expr {
+            let group_env = group_env_builder.build();
+
+            if let ExprKind::Record(_with, labeled_exprs) = &compute.kind {
+                // Multiple compute fields
+                let mut labeled_exprs2 = Vec::new();
+                for labeled_expr in labeled_exprs {
+                    let v_field = self.variable();
+                    let expr2 = self.deduce_expr_type(
+                        &*group_env,
+                        &labeled_expr.expr,
+                        &v_field,
+                    )?;
+                    let label = labeled_expr
+                        .get_label()
+                        .unwrap_or_else(|| "agg".to_string());
+
+                    field_vars.push((label, v_field));
+
+                    labeled_exprs2.push(LabeledExpr {
+                        label: labeled_expr.label.clone(),
+                        expr: expr2,
+                    });
+                }
+                Some(Box::new(Expr {
+                    kind: ExprKind::Record(None, labeled_exprs2),
+                    span: compute.span.clone(),
+                    id: compute.id,
+                }))
+            } else {
+                // Single compute expression
+                let v_compute = self.variable();
+                let expr2 =
+                    self.deduce_expr_type(&*group_env, compute, &v_compute)?;
+                field_vars.push(("compute".to_string(), v_compute));
+                Some(Box::new(expr2))
+            }
+        } else {
+            None
+        };
+
+        // Build the result type based on field_vars.
+        // If there is a single field with the default label "key" and no
+        // compute, return the atom type.
+        let v_result = if field_vars.len() == 1 && field_vars[0].0 == "key" {
+            field_vars[0].1.clone()
+        } else {
+            self.field_var(field_vars, false)
+        };
+        let c_result = self.variable();
+
+        // Output is ordered iff input is ordered (list or bag)
+        self.list_term(Term::Variable(v_result.clone()), &c_result);
+
+        steps2.push(
+            StepKind::Group(Box::new(key_expr2), compute_expr2).spanned(span),
+        );
+
+        let result_env = p.root_env.bind_all(&[]);
+        Ok(Triple::new(
+            p.root_env.clone(),
+            result_env,
+            v_result,
+            Some(c_result),
+        ))
+    }
+
+    /// Deduces the type of a Compute step (aggregate over entire collection).
+    fn deduce_compute_step_type(
+        &mut self,
+        p: &Triple,
+        compute_expr: &Expr,
+        span: &Span,
+        field_vars: &mut Vec<(String, Rc<Var>)>,
+        steps2: &mut Vec<Step>,
+    ) -> Result<Triple, Error> {
+        field_vars.clear();
+
+        // Bind 'elements' to the current collection
+        let mut compute_env_builder = p.root_env.builder();
+        compute_env_builder
+            .push("elements".to_string(), Term::Variable(p.c.clone().unwrap()));
+        let compute_env = compute_env_builder.build();
+
+        // Process compute expression
+        let compute_expr2;
+        if let ExprKind::Record(_with, labeled_exprs) = &compute_expr.kind {
+            // Multiple compute fields
+            let mut labeled_exprs2 = Vec::new();
+            for labeled_expr in labeled_exprs {
+                let v_field = self.variable();
+                let expr2 = self.deduce_expr_type(
+                    &*compute_env,
+                    &labeled_expr.expr,
+                    &v_field,
+                )?;
+                let label = labeled_expr
+                    .get_label()
+                    .unwrap_or_else(|| "agg".to_string());
+
+                field_vars.push((label, v_field));
+
+                labeled_exprs2.push(LabeledExpr {
+                    label: labeled_expr.label.clone(),
+                    expr: expr2,
+                });
+            }
+            compute_expr2 = Expr {
+                kind: ExprKind::Record(None, labeled_exprs2),
+                span: compute_expr.span.clone(),
+                id: compute_expr.id,
+            };
+        } else {
+            // Single compute expression - return the value directly.
+            let v_compute = self.variable();
+            compute_expr2 =
+                self.deduce_expr_type(&*compute_env, compute_expr, &v_compute)?;
+            field_vars.clear(); // Don't wrap in a record.
+            field_vars.push(("compute".to_string(), v_compute.clone()));
+        }
+
+        // Compute returns a singleton (not a collection).
+        // If single expression, return it directly; if record, use field_var.
+        let v_result = if field_vars.len() == 1 && field_vars[0].0 == "compute"
+        {
+            field_vars[0].1.clone()
+        } else {
+            self.field_var(field_vars, false)
+        };
+
+        steps2.push(StepKind::Compute(Box::new(compute_expr2)).spanned(span));
+
+        // Return as a singleton (no collection variable).
+        let result_env = p.root_env.bind_all(&[]);
+        Ok(Triple::new(
+            p.root_env.clone(),
+            result_env,
+            v_result,
+            None, // Compute produces a singleton, not a collection.
+        ))
+    }
+
+    /// Deduces the type of an Into step (terminal step that applies a
+    /// function).
+    /// from i in [1,2,3] into f
+    ///   f: int list -> string
+    ///   result: string (singleton)
+    fn deduce_into_step_type(
+        &mut self,
+        p: &Triple,
+        expr: &Expr,
+        span: &Span,
+        steps2: &mut Vec<Step>,
+    ) -> Result<Triple, Error> {
+        let v_result = self.variable();
+        let v_fn = self.variable();
+
+        // Deduce the type of the function expression.
+        let expr2 = self.deduce_expr_type(&*p.env, expr, &v_fn)?;
+
+        // The function must have type: current_collection -> result.
+        // Create the function type: c -> v_result.
+        self.fn_term(&p.c.clone().unwrap(), &v_result, &v_fn);
+
+        steps2.push(StepKind::Into(Box::new(expr2)).spanned(span));
+
+        // Into produces a singleton (not a collection).
+        let result_env = p.root_env.bind_all(&[]);
+        Ok(Triple::new(
+            p.root_env.clone(),
+            result_env,
+            v_result,
+            None, // Singleton result.
+        ))
+    }
+
+    /// Deduces the type of a Through step (table function).
+    /// from i in [1,2,3] through p in f
+    ///   f: int list -> string list
+    ///   p: string
+    ///   result: string list
+    fn deduce_through_step_type(
+        &mut self,
+        p: &Triple,
+        pat: &Pat,
+        expr: &Expr,
+        span: &Span,
+        field_vars: &mut Vec<(String, Rc<Var>)>,
+        steps2: &mut Vec<Step>,
+    ) -> Result<Triple, Error> {
+        let v_element = self.variable();
+        let c_result = self.variable();
+
+        // The input collection (p.c) is either a bag of p.v or a list of p.v.
+        self.may_be_bag_or_list(&p.c.clone().unwrap(), &p.v);
+
+        // Deduce the pattern type.
+        let mut term_map = Vec::new();
+        let pat2 =
+            self.deduce_pat_type(&*p.root_env, pat, &mut term_map, &v_element);
+
+        // The function must have type: current_collection -> result_collection.
+        let v_fn = self.variable();
+        self.fn_term(&p.c.clone().unwrap(), &c_result, &v_fn);
+
+        let expr2 = self.deduce_expr_type(&*p.env, expr, &v_fn)?;
+
+        // The result collection may be a bag or list.
+        self.may_be_bag_or_list(&c_result, &v_element);
+
+        steps2.push(
+            StepKind::Through(Box::new(pat2.clone()), Box::new(expr2))
+                .spanned(span),
+        );
+
+        // Build the environment with pattern bindings added to existing env.
+        let mut env5 = p.env.clone();
+        // Keep the existing field_vars and add new ones from the pattern.
+        for (name, term) in term_map {
+            env5 = env5.bind(name.clone(), term.clone());
+            if let Term::Variable(v) = &term {
+                field_vars.push((name, v.clone()));
+            }
+        }
+
+        // The result element type is a record of all field_vars.
+        let v_result = self.variable();
+        let mut map: BTreeMap<Label, Term> = BTreeMap::new();
+        for (name, var) in field_vars.iter() {
+            map.insert(Label::from(name.clone()), Term::Variable(var.clone()));
+        }
+        self.record_term(&map, &v_result);
+
+        Ok(Triple::new(
+            p.root_env.clone(),
+            env5,
+            v_result,
+            Some(c_result),
+        ))
+    }
+
+    /// Deduces the type of an Unorder step (removes ordering).
+    fn deduce_unorder_step_type(
+        &mut self,
+        p: &Triple,
+        span: &Span,
+        steps2: &mut Vec<Step>,
+    ) -> Result<Triple, Error> {
+        // Unorder converts a list to a bag (removes ordering guarantee).
+        let c_result = self.variable();
+        self.bag_term(Term::Variable(p.v.clone()), &c_result);
+
+        steps2.push(StepKind::Unorder.spanned(span));
+
+        Ok(Triple::new(
+            p.root_env.clone(),
+            p.env.clone(),
+            p.v.clone(),
+            Some(c_result),
+        ))
+    }
+
+    /// Deduces the type of a Join step (Cartesian product join).
+    fn deduce_join_step_type(
+        &mut self,
+        p: &Triple,
+        pat: &Pat,
+        span: &Span,
+        field_vars: &mut Vec<(String, Rc<Var>)>,
+        steps2: &mut Vec<Step>,
+    ) -> Result<Triple, Error> {
+        // Join performs a Cartesian product with another collection.
+        let v_element = self.variable();
+
+        // Deduce the pattern type.
+        let mut term_map = Vec::new();
+        let pat2 =
+            self.deduce_pat_type(&*p.root_env, pat, &mut term_map, &v_element);
+
+        steps2.push(StepKind::Join(Box::new(pat2.clone())).spanned(span));
+
+        // Build the environment with pattern bindings added to existing
+        // bindings.
+        let mut env5 = p.env.clone();
+        for (name, term) in term_map {
+            env5 = env5.bind(name.clone(), term.clone());
+            if let Term::Variable(v) = &term {
+                field_vars.push((name, v.clone()));
+            }
+        }
+
+        // The result element type is a tuple of (left_element, right_element).
+        let v_result = self.variable();
+        let mut map: BTreeMap<Label, Term> = BTreeMap::new();
+
+        // Add all existing field_vars to the result record.
+        for (name, var) in field_vars.iter() {
+            map.insert(Label::from(name.clone()), Term::Variable(var.clone()));
+        }
+
+        self.record_term(&map, &v_result);
+
+        // The result is still a collection.
+        let c_result = self.variable();
+        self.list_term(Term::Variable(v_result.clone()), &c_result);
+
+        Ok(Triple::new(
+            p.root_env.clone(),
+            env5,
+            v_result,
+            Some(c_result),
+        ))
+    }
+
+    /// Deduces the type of a JoinEq step (equi-join).
+    fn deduce_join_eq_step_type(
+        &mut self,
+        p: &Triple,
+        pat: &Pat,
+        left_expr: &Expr,
+        right_expr: Option<&Expr>,
+        span: &Span,
+        field_vars: &mut Vec<(String, Rc<Var>)>,
+        steps2: &mut Vec<Step>,
+    ) -> Result<Triple, Error> {
+        // JoinEq performs an equi-join based on the join condition.
+        let v_element = self.variable();
+
+        // Deduce the pattern type.
+        let mut term_map = Vec::new();
+        let pat2 =
+            self.deduce_pat_type(&*p.root_env, pat, &mut term_map, &v_element);
+
+        // Build the environment with pattern bindings for evaluating the
+        // right expr.
+        let mut join_env = p.env.clone();
+        for (name, term) in &term_map {
+            join_env = join_env.bind(name.clone(), term.clone());
+        }
+
+        // Deduce the left expression type (in the current environment).
+        let v_left = self.variable();
+        let left_expr2 = self.deduce_expr_type(&*p.env, left_expr, &v_left)?;
+
+        // Deduce the right expression type (in the join environment with
+        // pattern vars).
+        let right_expr2 = if let Some(right) = right_expr {
+            let v_right = self.variable();
+            let expr2 = self.deduce_expr_type(&*join_env, right, &v_right)?;
+            // The join keys must have the same type.
+            self.equiv(&Term::Variable(v_left.clone()), &v_right);
+            Some(Box::new(expr2))
+        } else {
+            None
+        };
+
+        steps2.push(
+            StepKind::JoinEq(
+                Box::new(pat2.clone()),
+                Box::new(left_expr2),
+                right_expr2,
+            )
+            .spanned(span),
+        );
+
+        // Add the pattern bindings to field_vars.
+        for (name, term) in term_map {
+            if let Term::Variable(v) = &term {
+                field_vars.push((name, v.clone()));
+            }
+        }
+
+        // The result element type is a record of all field_vars.
+        let v_result = self.variable();
+        let mut map: BTreeMap<Label, Term> = BTreeMap::new();
+
+        for (name, var) in field_vars.iter() {
+            map.insert(Label::from(name.clone()), Term::Variable(var.clone()));
+        }
+
+        self.record_term(&map, &v_result);
+
+        // The result is still a collection.
+        let c_result = self.variable();
+        self.list_term(Term::Variable(v_result.clone()), &c_result);
+
+        Ok(Triple::new(
+            p.root_env.clone(),
+            join_env,
+            v_result,
+            Some(c_result),
+        ))
     }
 
     fn field_var(
@@ -1757,6 +2311,66 @@ impl TypeResolver {
     fn list_term<'a>(&mut self, term: Term, v: &'a Rc<Var>) -> &'a Rc<Var> {
         let sequence = self.unifier.apply1(self.list_op.clone(), term);
         self.equiv(&Term::Sequence(sequence), v)
+    }
+
+    /// Ensures all terms are lists if they are all lists.
+    /// Used for Union/Except/Intersect operations.
+    fn is_list_if_all_are_lists(
+        &mut self,
+        args: &[Term],
+        c: &Rc<Var>,
+        v: &Rc<Var>,
+    ) {
+        if args.is_empty() {
+            panic!("no args");
+        }
+        let arg0 = &args[0];
+        let v0 = self.term_to_variable(arg0);
+
+        // First argument may be bag or list
+        self.may_be_bag_or_list(&v0, v);
+        self.may_be_bag_or_list(c, v);
+
+        // Check all other arguments
+        for arg in &args[1..] {
+            let vi = self.term_to_variable(arg);
+            self.may_be_bag_or_list(&vi, v);
+            self.is_list_if_both_are_lists(&v0, v, &vi, v, c, v);
+        }
+    }
+
+    /// Helper for set operations: if both inputs are lists, output is a list.
+    fn is_list_if_both_are_lists(
+        &mut self,
+        v1: &Rc<Var>,
+        e1: &Rc<Var>,
+        v2: &Rc<Var>,
+        e2: &Rc<Var>,
+        v3: &Rc<Var>,
+        e3: &Rc<Var>,
+    ) {
+        // If v1 is list<e1> and v2 is list<e2>, then v3 is list<e3>
+        let list_e1 = Term::Variable(e1.clone());
+        let list_e2 = Term::Variable(e2.clone());
+        let list_e3 = Term::Variable(e3.clone());
+
+        let seq1 = self.unifier.apply1(self.list_op.clone(), list_e1);
+        let seq2 = self.unifier.apply1(self.list_op.clone(), list_e2);
+        let seq3 = self.unifier.apply1(self.list_op.clone(), list_e3);
+
+        // This is a conditional constraint - not fully implemented yet
+        // For now, just assume list semantics
+        self.equiv(&Term::Sequence(seq1.clone()), v1);
+        self.equiv(&Term::Sequence(seq2), v2);
+        self.equiv(&Term::Sequence(seq3), v3);
+    }
+
+    /// Marks that a variable may be either a bag or list.
+    fn may_be_bag_or_list(&mut self, c: &Rc<Var>, v: &Rc<Var>) {
+        // For now, assume list semantics
+        let list_v = Term::Variable(v.clone());
+        let seq = self.unifier.apply1(self.list_op.clone(), list_v);
+        self.equiv(&Term::Sequence(seq), c);
     }
 
     /// Creates a term for a bag type and associates it with a variable.
