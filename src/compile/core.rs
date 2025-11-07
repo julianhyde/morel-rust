@@ -185,7 +185,7 @@ impl Display for Match {
 
 /// Binding of a pattern to a type.
 /// Simplified version - in Java this also includes value and other metadata.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Binding {
     pub id: Id,
     pub type_: Box<Type>,
@@ -209,7 +209,7 @@ impl Binding {
 /// Environment available at a step in a query.
 /// Tracks the variable bindings, whether the result is an atom (scalar)
 /// vs record, and whether the result is ordered.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct StepEnv {
     pub bindings: Vec<Binding>,
     pub atom: bool,
