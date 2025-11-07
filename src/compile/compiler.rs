@@ -724,15 +724,22 @@ impl<'a> Compiler<'a> {
         // Recursive case: process the first step and build the downstream
         // factory.
         let first_step = &steps[0];
-        let next_factory = self.create_row_sink_factory(
-            cx,
-            &first_step.env,
-            &steps[1..],
-            element_type,
-        );
 
         match &first_step.kind {
+            StepKind::Yield(expr) => {
+                // Yield step: use the yield expression for collection.
+                let yield_code = self.compile_expr(cx, None, expr);
+                RowSinkFactory::new(move || {
+                    Box::new(CollectRowSink::new(yield_code.clone()))
+                })
+            }
             StepKind::JoinIn(pat, expr, _cond) => {
+                let next_factory = self.create_row_sink_factory(
+                    cx,
+                    &first_step.env,
+                    &steps[1..],
+                    element_type,
+                );
                 let pat_code = self.compile_pat(cx, pat);
                 let expr_code = self.compile_expr(cx, None, expr);
                 let condition_code = Code::new_constant(
@@ -750,6 +757,12 @@ impl<'a> Compiler<'a> {
                 })
             }
             StepKind::Where(expr) => {
+                let next_factory = self.create_row_sink_factory(
+                    cx,
+                    &first_step.env,
+                    &steps[1..],
+                    element_type,
+                );
                 let filter_code = self.compile_expr(cx, None, expr);
 
                 RowSinkFactory::new(move || {
@@ -758,11 +771,6 @@ impl<'a> Compiler<'a> {
                         next_factory.create(),
                     ))
                 })
-            }
-            StepKind::Yield(_) => {
-                // Yield is handled by the terminal case via bindings.
-                // Just pass through to the next factory.
-                next_factory
             }
             _ => todo!("create_row_sink_factory: {:?}", first_step.kind),
         }
