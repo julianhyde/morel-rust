@@ -16,7 +16,8 @@
 // License.
 
 use crate::compile::core::{
-    DatatypeBind, Decl, Expr, Match, Pat, Step, StepKind, TypeBind, ValBind,
+    DatatypeBind, Decl, Expr, Match, Pat, Step, StepEnv, StepKind, TypeBind,
+    ValBind,
 };
 use crate::compile::library::BuiltInFunction;
 use crate::compile::pretty::Pretty;
@@ -25,7 +26,7 @@ use crate::compile::type_resolver::TypeMap;
 use crate::compile::types::{PrimitiveType, Type};
 use crate::compile::var_collector::VarCollector;
 use crate::eval::code::{
-    Code, Effect, EvalEnv, EvalMode, Frame, Impl, QueryStep,
+    Code, Effect, EvalEnv, EvalMode, Frame, Impl, RowSinkFactory,
 };
 use crate::eval::frame::FrameDef;
 use crate::eval::order::Order;
@@ -628,12 +629,20 @@ impl<'a> Compiler<'a> {
                     )
                 }
             }
-            Expr::From(_, steps) => {
-                let compiled_steps: Vec<QueryStep> = steps
-                    .iter()
-                    .map(|step| self.compile_step(cx, step))
-                    .collect();
-                Code::From(compiled_steps)
+            Expr::From(element_type, steps) => {
+                // Use row sinks (push-based evaluation) matching Java implementation
+                let step_env = if steps.is_empty() {
+                    StepEnv::empty()
+                } else {
+                    steps.last().unwrap().env.clone()
+                };
+                let factory = self.create_row_sink_factory(
+                    cx,
+                    &step_env,
+                    steps,
+                    element_type,
+                );
+                Code::FromRowSink(factory)
             }
             Expr::Identifier(_, name) => {
                 let slot = cx.frame_def.var_index(name);
@@ -690,22 +699,112 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn compile_step(&mut self, cx: &Context, step: &Step) -> QueryStep {
-        match &step.kind {
+    /// Creates a row sink factory from query steps.
+    /// Matches Java's Compiler.createRowSinkFactory method.
+    fn create_row_sink_factory(
+        &mut self,
+        cx: &Context,
+        step_env: &StepEnv,
+        steps: &[Step],
+        element_type: &Type,
+    ) -> RowSinkFactory {
+        use crate::eval::row_sink::{CollectRowSink, ScanRowSink, WhereRowSink};
+
+        if steps.is_empty() {
+            // Terminal case: create CollectRowSink from bindings
+            let code = self.get_collection_code(cx, step_env, element_type);
+            return RowSinkFactory::new(move || {
+                Box::new(CollectRowSink::new(code.clone()))
+            });
+        }
+
+        // Recursive case: process first step and build downstream factory
+        let first_step = &steps[0];
+        let next_factory = self.create_row_sink_factory(
+            cx,
+            &first_step.env,
+            &steps[1..],
+            element_type,
+        );
+
+        match &first_step.kind {
             StepKind::JoinIn(pat, expr, _cond) => {
                 let pat_code = self.compile_pat(cx, pat);
                 let expr_code = self.compile_expr(cx, None, expr);
-                QueryStep::JoinIn(pat_code, expr_code)
+                let condition_code = Code::new_constant(
+                    &Type::Primitive(PrimitiveType::Bool),
+                    Val::Bool(true),
+                );
+
+                RowSinkFactory::new(move || {
+                    Box::new(ScanRowSink::new(
+                        pat_code.clone(),
+                        expr_code.clone(),
+                        condition_code.clone(),
+                        next_factory.create(),
+                    ))
+                })
             }
             StepKind::Where(expr) => {
-                let expr_code = self.compile_expr(cx, None, expr);
-                QueryStep::Where(expr_code)
+                let filter_code = self.compile_expr(cx, None, expr);
+
+                RowSinkFactory::new(move || {
+                    Box::new(WhereRowSink::new(
+                        filter_code.clone(),
+                        next_factory.create(),
+                    ))
+                })
             }
-            StepKind::Yield(expr) => {
-                let expr_code = self.compile_expr(cx, None, expr);
-                QueryStep::Yield(expr_code)
+            StepKind::Yield(_) => {
+                // Yield is handled by terminal case via bindings
+                // Just pass through to next factory
+                next_factory
             }
-            _ => todo!("compile_step: {:?}", step.kind),
+            _ => todo!("create_row_sink_factory: {:?}", first_step.kind),
+        }
+    }
+
+    /// Gets the code for collecting bound variables.
+    /// Matches Java's logic for creating Codes.get() or Codes.getTuple().
+    fn get_collection_code(
+        &mut self,
+        cx: &Context,
+        step_env: &StepEnv,
+        element_type: &Type,
+    ) -> Code {
+        if step_env.bindings.is_empty() {
+            // No bindings - return unit
+            return Code::new_constant(
+                &Type::Primitive(PrimitiveType::Unit),
+                Val::Unit,
+            );
+        }
+
+        // Collect field names sorted alphabetically (like Java)
+        let mut field_names: Vec<String> = step_env
+            .bindings
+            .iter()
+            .map(|b| b.id.name.clone())
+            .collect();
+        field_names.sort();
+
+        if field_names.len() == 1
+            && step_env.bindings[0].type_.as_ref() == element_type
+        {
+            // Single binding matching element type - just get that variable
+            let name = &field_names[0];
+            let slot = cx.frame_def.var_index(name);
+            Code::new_get_local(&cx.frame_def, slot)
+        } else {
+            // Multiple bindings or type mismatch - create tuple
+            let codes: Vec<Code> = field_names
+                .iter()
+                .map(|name| {
+                    let slot = cx.frame_def.var_index(name);
+                    Code::new_get_local(&cx.frame_def, slot)
+                })
+                .collect();
+            Code::Tuple(codes)
         }
     }
 

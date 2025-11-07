@@ -194,7 +194,8 @@ impl RowSink for WhereRowSink {
 /// Implementation of RowSink for a union step.
 ///
 /// First accepts rows from upstream, then evaluates additional collections
-/// and passes their elements downstream. Supports distinct mode for deduplication.
+/// and passes their elements downstream. Supports distinct mode for
+/// deduplication.
 pub struct UnionRowSink {
     distinct: bool,
     codes: Vec<Code>,
