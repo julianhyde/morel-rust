@@ -30,63 +30,69 @@ use crate::eval::val::Val;
 use crate::shell::error::Error;
 use std::fmt;
 
-/// Checks if a type is a list type.
+/// Checks if the type is a list type.
 fn is_list_type(type_: &Type) -> bool {
     matches!(type_, Type::List(_))
 }
 
 /// Classification of tuple types for yield optimization.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Eq, PartialEq, Debug)]
 enum TupleType {
-    /// Tuple whose right side are the current fields and left side are the same
-    /// as the right, e.g. "{deptno = deptno, dname = dname}".
+    /// A tuple whose right side are the current fields and left side are
+    /// the same as the right, e.g. "{deptno = deptno, dname = dname}".
     Identity,
-    /// Tuple whose right side are the current fields, e.g. "{a = deptno, b = dname}".
+    /// A tuple whose right side are the current fields, e.g.
+    /// "{a = deptno, b = dname}".
     Rename,
-    /// Any other tuple, e.g. "{a = deptno + 1, dname = dname}", "{deptno = deptno}" (too few fields).
+    /// Any other tuple, e.g. "{a = deptno + 1, dname = dname}",
+    /// "{deptno = deptno}" (too few fields).
     Other,
 }
 
-/// Returns whether a tuple is something like "{i = i, j = j}".
+/// Returns whether the tuple is something like "{i = i, j = j}".
 fn is_trivial(tuple: &Expr, env: &StepEnv, env2: Option<&StepEnv>) -> bool {
     tuple_type(tuple, env, env2) == TupleType::Identity
 }
 
 /// Classifies a tuple expression for yield optimization.
 ///
-/// Determines if a tuple is:
+/// Determines if the tuple is:
 /// - Identity: {x = x, y = y} - fields map to themselves
 /// - Rename: {a = x, b = y} - fields are renamed but come from current bindings
 /// - Other: anything else (computed values, missing fields, etc.)
-fn tuple_type(tuple: &Expr, env: &StepEnv, env2: Option<&StepEnv>) -> TupleType {
-    // Extract fields from the tuple
+fn tuple_type(
+    tuple: &Expr,
+    env: &StepEnv,
+    env2: Option<&StepEnv>,
+) -> TupleType {
+    // Extract fields from the tuple.
     let fields = match tuple {
         Expr::Tuple(_, exprs) if !exprs.is_empty() => exprs,
         _ => return TupleType::Other,
     };
 
-    // Tuple must have same number of fields as bindings
+    // The tuple must have the same number of fields as bindings.
     if fields.len() != env.bindings.len() {
         return TupleType::Other;
     }
 
-    // Start assuming identity, downgrade to rename if we find differences
+    // Start assuming identity, downgrade to rename if we find differences.
     let mut identity = match env2 {
         Some(e2) => env.bindings == e2.bindings,
         None => true,
     };
 
-    // Check each field in the tuple
+    // Check each field in the tuple.
     for (field_expr, binding) in fields.iter().zip(&env.bindings) {
         match field_expr {
             Expr::Identifier(_, field_name) => {
-                // Field must reference a binding variable
+                // The field must reference a binding variable.
                 if field_name != &binding.id.name {
                     identity = false;
                 }
             }
             _ => {
-                // Non-identifier expressions make this "Other"
+                // Non-identifier expressions make this "Other".
                 return TupleType::Other;
             }
         }
@@ -148,36 +154,39 @@ impl FromBuilder {
 
     /// Returns the environment available after the most recent step.
     pub fn step_env(&self) -> StepEnv {
-        let ordered = self.steps.last().map(|s| s.env.ordered).unwrap_or(true);
+        let ordered = self
+            .steps
+            .last()
+            .is_none_or(|s| s.env.ordered);
         StepEnv::new(self.bindings.clone(), self.atom, ordered)
     }
 
     /// Adds a step to this builder.
     fn add_step(&mut self, step: Step) -> &mut Self {
         // Check if we should remove the previous step because it's no longer
-        // the last step
-        if let Some(index) = self.remove_if_not_last_index {
-            if index == self.steps.len() - 1 {
-                // The previous step (a trivial yield) is no longer last
-                self.remove_if_not_last_index = None;
-                self.remove_if_last_index = None;
+        // the last step.
+        if let Some(index) = self.remove_if_not_last_index
+            && index == self.steps.len() - 1
+        {
+            // The previous step (a trivial yield) is no longer last.
+            self.remove_if_not_last_index = None;
+            self.remove_if_last_index = None;
 
-                // Check if it's a trivial single-field record yield
-                if let Some(last_step) = self.steps.last() {
-                    if matches!(last_step.kind, StepKind::Yield(_)) {
-                        // TODO: Check if it's actually trivial
-                        // For now, just remove it
-                        self.steps.pop();
-                    }
-                }
+            // Check if it's a trivial single-field record yield.
+            if let Some(last_step) = self.steps.last()
+                && matches!(last_step.kind, StepKind::Yield(_))
+            {
+                // TODO: Check if it's actually trivial.
+                // For now, just remove it.
+                self.steps.pop();
             }
         }
 
-        self.steps.push(step.clone());
-
-        // Update bindings and atom from the new step's environment
+        // Update bindings and atom from the new step's environment.
         self.bindings = step.env.bindings.clone();
         self.atom = step.env.atom;
+
+        self.steps.push(step);
 
         self
     }
@@ -185,9 +194,9 @@ impl FromBuilder {
     /// Adds a "where" (filter) step.
     /// Optimization: Skips "where true" since it has no effect.
     pub fn where_(&mut self, condition: Expr) -> &mut Self {
-        // Check if condition is a boolean literal true
+        // Check if the condition is a boolean literal true.
         if let Expr::Literal(_, Val::Bool(true)) = condition {
-            // Skip "where true"
+            // Skip "where true".
             return self;
         }
 
@@ -199,12 +208,12 @@ impl FromBuilder {
     /// Adds a "skip" step.
     /// Optimization: Skips "skip 0" since it has no effect.
     pub fn skip(&mut self, count: Expr) -> &mut Self {
-        // Check if count is 0
-        if let Expr::Literal(_, Val::Int(n)) = &count {
-            if *n == 0 {
-                // Skip "skip 0"
-                return self;
-            }
+        // Check if the count is 0.
+        if let Expr::Literal(_, Val::Int(n)) = &count
+            && *n == 0
+        {
+            // Skip "skip 0".
+            return self;
         }
 
         let env = self.step_env();
@@ -233,7 +242,8 @@ impl FromBuilder {
         self.add_step(step)
     }
 
-    /// Makes the query unordered. No-op if already unordered.
+    /// Makes the query unordered.
+    /// No-op if already unordered.
     pub fn unorder(&mut self) -> &mut Self {
         let env = self.step_env();
         if !env.ordered {
@@ -247,19 +257,24 @@ impl FromBuilder {
     /// Adds a "yield" step with optimization.
     ///
     /// This method applies several optimizations:
-    /// - Skips trivial yields like "yield x" when x is the only binding and already an atom
+    /// - Skips trivial yields like "yield x" when x is the only binding
+    ///   and already an atom
     /// - Skips non-singleton identity tuples like "yield {x=x, y=y}"
-    /// - Marks singleton identity tuples like "yield {x=x}" as useless-if-not-last
-    ///   (they only change scalar to record, which only matters as last step)
+    /// - Marks singleton identity tuples like "yield {x=x}" as
+    ///   useless-if-not-last (they only change scalar to record, which
+    ///   only matters as last step)
     pub fn yield_(&mut self, exp: Expr) -> &mut Self {
         self.yield_internal(false, None, exp)
     }
 
-    /// Internal yield implementation with full control over optimization flags.
+    /// Internal yield implementation with full control over optimization
+    /// flags.
     ///
     /// # Arguments
-    /// * `useless_if_last` - Whether this yield will be useless if it's the last step
-    /// * `env2` - Desired step environment (for preserving variable ordinals when copying)
+    /// * `useless_if_last` - Whether this yield will be useless if it's
+    ///   the last step
+    /// * `env2` - Desired step environment (for preserving variable
+    ///   ordinals when copying)
     /// * `exp` - Expression to yield
     fn yield_internal(
         &mut self,
@@ -270,7 +285,7 @@ impl FromBuilder {
         let env = self.step_env();
         let mut useless_if_not_last = false;
 
-        // Determine if the expression is an atom (non-record)
+        // Determine if the expression is an atom (non-record).
         let atom = !matches!(exp, Expr::Tuple(_, _));
 
         match &exp {
@@ -278,55 +293,59 @@ impl FromBuilder {
                 let tuple_type = tuple_type(&exp, &env, env2.as_ref());
                 match tuple_type {
                     TupleType::Identity => {
-                        // A trivial record does not rename, so its only purpose is to
-                        // change from a scalar to a record, and even then only when a
-                        // singleton.
+                        // A trivial record does not rename, so its only
+                        // purpose is to change from a scalar to a record,
+                        // and even then only when a singleton.
                         if self.bindings.len() == 1 {
-                            // Singleton record that does not rename, e.g. 'yield {x=x}'.
-                            // It only has meaning as the last step.
+                            // A singleton record that does not rename, e.g.
+                            // 'yield {x=x}'. It only has meaning as the
+                            // last step.
                             useless_if_not_last = true;
-                            // Continue to add the step
+                            // Continue to add the step.
                         } else {
-                            // Non-singleton record that does not rename,
+                            // A non-singleton record that does not rename,
                             // e.g. 'yield {x=x,y=y}'. It is useless.
                             return self;
                         }
                     }
                     TupleType::Rename => {
-                        // Singleton or non-singleton record that renames,
+                        // A singleton or non-singleton record that renames,
                         // e.g. 'yield {y=x}' or 'yield {y=x,z=y}'.
                         // It is always useful, so continue to add the step.
                     }
                     TupleType::Other => {
-                        // Any other tuple (computed values, etc.)
+                        // Any other tuple (computed values, etc.).
                         // Always useful, continue to add the step.
                     }
                 }
             }
             Expr::Identifier(_, name) => {
-                // Check if this is a trivial "yield x" where x is the only binding
+                // Check if this is a trivial "yield x" where x is the
+                // only binding.
                 if self.bindings.len() == 1
                     && self.bindings[0].id.name == *name
-                    // After 'yield {x = something}', 'yield x' may seem trivial, but
-                    // it converts a singleton record to an atom, so don't remove it.
-                    && (self.steps.is_empty() || self.steps.last().unwrap().env.atom)
+                    // After 'yield {x = something}', 'yield x' may seem
+                    // trivial, but it converts a singleton record to an
+                    // atom, so don't remove it.
+                    && (self.steps.is_empty()
+                        || self.steps.last().unwrap().env.atom)
                 {
                     return self;
                 }
             }
             _ => {
-                // Other expressions, continue to add the step
+                // Other expressions, continue to add the step.
             }
         }
 
-        // Create the yield step
+        // Create the yield step.
         let step_env = env2.unwrap_or_else(|| {
             StepEnv::new(self.bindings.clone(), atom, env.ordered)
         });
         let step = Step::new(StepKind::Yield(Box::new(exp)), step_env);
         self.add_step(step);
 
-        // Update removal indices
+        // Update removal indices.
         self.remove_if_not_last_index = if useless_if_not_last {
             Some(self.steps.len() - 1)
         } else {
@@ -344,8 +363,9 @@ impl FromBuilder {
     /// Adds an "except" (set difference) step.
     pub fn except(&mut self, distinct: bool, args: Vec<Expr>) -> &mut Self {
         let env = self.step_env();
-        // Except maintains order only if all arguments are lists
-        let ordered = env.ordered && args.iter().all(|arg| is_list_type(arg.type_().as_ref()));
+        // Except maintains order only if all arguments are lists.
+        let ordered = env.ordered
+            && args.iter().all(|arg| is_list_type(arg.type_().as_ref()));
         let env2 = env.with_ordered(ordered);
         let step = Step::new(StepKind::Except(distinct, args), env2);
         self.add_step(step)
@@ -354,8 +374,9 @@ impl FromBuilder {
     /// Adds an "intersect" (set intersection) step.
     pub fn intersect(&mut self, distinct: bool, args: Vec<Expr>) -> &mut Self {
         let env = self.step_env();
-        // Intersect maintains order only if all arguments are lists
-        let ordered = env.ordered && args.iter().all(|arg| is_list_type(arg.type_().as_ref()));
+        // Intersect maintains order only if all arguments are lists.
+        let ordered = env.ordered
+            && args.iter().all(|arg| is_list_type(arg.type_().as_ref()));
         let env2 = env.with_ordered(ordered);
         let step = Step::new(StepKind::Intersect(distinct, args), env2);
         self.add_step(step)
@@ -364,21 +385,23 @@ impl FromBuilder {
     /// Adds a "union" (set union) step.
     pub fn union(&mut self, distinct: bool, args: Vec<Expr>) -> &mut Self {
         let env = self.step_env();
-        // Union maintains order only if all arguments are lists
-        let ordered = env.ordered && args.iter().all(|arg| is_list_type(arg.type_().as_ref()));
+        // Union maintains order only if all arguments are lists.
+        let ordered = env.ordered
+            && args.iter().all(|arg| is_list_type(arg.type_().as_ref()));
         let env2 = env.with_ordered(ordered);
         let step = Step::new(StepKind::Union(distinct, args), env2);
         self.add_step(step)
     }
 
     /// Adds a "group" step.
-    pub fn group(&mut self, key_expr: Expr, aggregate_expr: Option<Expr>) -> &mut Self {
+    pub fn group(
+        &mut self,
+        key_expr: Expr,
+        aggregate_expr: Option<Expr>,
+    ) -> &mut Self {
         let env = self.step_env();
         let step = Step::new(
-            StepKind::Group(
-                Box::new(key_expr),
-                aggregate_expr.map(Box::new),
-            ),
+            StepKind::Group(Box::new(key_expr), aggregate_expr.map(Box::new)),
             env,
         );
         self.add_step(step)
@@ -398,10 +421,10 @@ impl FromBuilder {
         exp: Expr,
         condition: Option<Expr>,
     ) -> &mut Self {
-        // TODO: Implement the complex nested from inlining logic from Java
-        // For now, just add a simple scan step
+        // TODO: Implement the complex nested from inlining logic from Java.
+        // For now, just add a simple scan step.
 
-        // Update bindings based on the pattern
+        // Update bindings based on the pattern.
         let new_binding = Binding::of(&pat);
         self.bindings.push(new_binding);
         self.atom = self.bindings.len() == 1;
@@ -431,32 +454,30 @@ impl FromBuilder {
     }
 
     fn build_internal(&mut self, simplify: bool) -> Result<Expr, Error> {
-        // Remove last step if flagged
-        if let Some(index) = self.remove_if_last_index {
-            if index == self.steps.len() - 1 {
-                self.steps.pop();
-                self.remove_if_last_index = None;
-            }
+        // Remove the last step if flagged.
+        if let Some(index) = self.remove_if_last_index
+            && index == self.steps.len() - 1
+        {
+            self.steps.pop();
+            self.remove_if_last_index = None;
         }
 
-        // Simplification: "from v in list" -> "list"
-        if simplify && self.steps.len() == 1 {
-            if let StepKind::JoinIn(pat, exp, None) = &self.steps[0].kind {
-                // Check if pattern is a simple identifier
-                if matches!(**pat, Pat::Identifier(_, _)) {
-                    return Ok((**exp).clone());
-                }
-            }
+        // Simplification: "from v in list" -> "list".
+        if simplify && self.steps.len() == 1
+            && let StepKind::JoinIn(pat, exp, None) = &self.steps[0].kind
+            && matches!(**pat, Pat::Identifier(_, _))
+        {
+            return Ok((**exp).clone());
         }
 
-        // Build From expression
+        // Build the From expression.
         let result_type = self.compute_result_type()?;
         Ok(Expr::From(Box::new(result_type), self.steps.clone()))
     }
 
     fn compute_result_type(&self) -> Result<Type, Error> {
-        // TODO: Properly compute the result type based on steps
-        // For now, return a placeholder
+        // TODO: Properly compute the result type based on steps.
+        // For now, return a placeholder.
         Ok(Type::Primitive(crate::compile::types::PrimitiveType::Unit))
     }
 }
@@ -769,16 +790,14 @@ mod tests {
             Val::Bool(true),
         );
 
-        builder
-            .scan(pat, exp)
-            .where_(condition)
-            .distinct()
-            .take(Expr::Literal(
+        builder.scan(pat, exp).where_(condition).distinct().take(
+            Expr::Literal(
                 Box::new(Type::Primitive(
                     crate::compile::types::PrimitiveType::Int,
                 )),
                 Val::Int(5),
-            ));
+            ),
+        );
 
         // Should have scan, (where true skipped), distinct, and take
         assert_eq!(builder.steps.len(), 3);
