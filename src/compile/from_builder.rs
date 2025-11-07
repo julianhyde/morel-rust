@@ -239,7 +239,8 @@ impl FromBuilder {
         if !env.ordered {
             return self;
         }
-        let step = Step::new(StepKind::Unorder, env);
+        let env2 = env.with_ordered(false);
+        let step = Step::new(StepKind::Unorder, env2);
         self.add_step(step)
     }
 
@@ -668,5 +669,130 @@ mod tests {
 
         // Yield should have been skipped
         assert_eq!(builder.steps.len(), initial_len);
+    }
+
+    #[test]
+    fn test_distinct_adds_step() {
+        let mut builder = FromBuilder::new();
+        let initial_len = builder.steps.len();
+        builder.distinct();
+        // Distinct step should be added
+        assert_eq!(builder.steps.len(), initial_len + 1);
+        if let Some(step) = builder.steps.last() {
+            assert!(matches!(step.kind, StepKind::Distinct));
+        }
+    }
+
+    #[test]
+    fn test_order_adds_step() {
+        let mut builder = FromBuilder::new();
+        let expr = Expr::Literal(
+            Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )),
+            Val::Int(1),
+        );
+        let initial_len = builder.steps.len();
+        builder.order(expr);
+        // Order step should be added
+        assert_eq!(builder.steps.len(), initial_len + 1);
+        if let Some(step) = builder.steps.last() {
+            assert!(matches!(step.kind, StepKind::Order(_)));
+        }
+    }
+
+    #[test]
+    fn test_take_adds_step() {
+        let mut builder = FromBuilder::new();
+        let count = Expr::Literal(
+            Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )),
+            Val::Int(10),
+        );
+        let initial_len = builder.steps.len();
+        builder.take(count);
+        // Take step should be added
+        assert_eq!(builder.steps.len(), initial_len + 1);
+        if let Some(step) = builder.steps.last() {
+            assert!(matches!(step.kind, StepKind::Take(_)));
+        }
+    }
+
+    #[test]
+    fn test_unorder_noop_when_already_unordered() {
+        let mut builder = FromBuilder::new();
+        // Add a scan step first (which sets ordered=true by default)
+        let pat = Pat::Identifier(
+            Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )),
+            "x".to_string(),
+        );
+        let exp = Expr::List(
+            Box::new(Type::List(Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )))),
+            vec![],
+        );
+        builder.scan(pat, exp);
+
+        // First unorder should add a step
+        builder.unorder();
+        let len_after_first = builder.steps.len();
+        // Second call should be a no-op since already unordered
+        builder.unorder();
+        assert_eq!(builder.steps.len(), len_after_first);
+    }
+
+    #[test]
+    fn test_method_chaining() {
+        let mut builder = FromBuilder::new();
+
+        // Test that methods can be chained
+        let pat = Pat::Identifier(
+            Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )),
+            "x".to_string(),
+        );
+        let exp = Expr::List(
+            Box::new(Type::List(Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )))),
+            vec![],
+        );
+        let condition = Expr::Literal(
+            Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Bool,
+            )),
+            Val::Bool(true),
+        );
+
+        builder
+            .scan(pat, exp)
+            .where_(condition)
+            .distinct()
+            .take(Expr::Literal(
+                Box::new(Type::Primitive(
+                    crate::compile::types::PrimitiveType::Int,
+                )),
+                Val::Int(5),
+            ));
+
+        // Should have scan, (where true skipped), distinct, and take
+        assert_eq!(builder.steps.len(), 3);
+    }
+
+    #[test]
+    fn test_intersect_added() {
+        let mut builder = FromBuilder::new();
+        let initial_len = builder.steps.len();
+        builder.intersect(true, vec![]);
+        // Intersect step should be added
+        assert_eq!(builder.steps.len(), initial_len + 1);
+        if let Some(step) = builder.steps.last() {
+            assert!(matches!(step.kind, StepKind::Intersect(true, _)));
+        }
     }
 }
