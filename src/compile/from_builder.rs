@@ -30,6 +30,11 @@ use crate::eval::val::Val;
 use crate::shell::error::Error;
 use std::fmt;
 
+/// Checks if a type is a list type.
+fn is_list_type(type_: &Type) -> bool {
+    matches!(type_, Type::List(_))
+}
+
 /// Builds a `From` expression with optimizations.
 ///
 /// This builder accumulates query steps and applies simplification rules
@@ -79,9 +84,7 @@ impl FromBuilder {
 
     /// Returns the environment available after the most recent step.
     pub fn step_env(&self) -> StepEnv {
-        let ordered = self.steps.last()
-            .map(|s| s.env.ordered)
-            .unwrap_or(true);
+        let ordered = self.steps.last().map(|s| s.env.ordered).unwrap_or(true);
         StepEnv::new(self.bindings.clone(), self.atom, ordered)
     }
 
@@ -187,6 +190,83 @@ impl FromBuilder {
         self.add_step(step)
     }
 
+    /// Adds an "except" (set difference) step.
+    pub fn except(&mut self, distinct: bool, args: Vec<Expr>) -> &mut Self {
+        let env = self.step_env();
+        // Except maintains order only if all arguments are lists
+        let ordered = env.ordered && args.iter().all(|arg| is_list_type(arg.type_().as_ref()));
+        let env2 = env.with_ordered(ordered);
+        let step = Step::new(StepKind::Except(distinct, args), env2);
+        self.add_step(step)
+    }
+
+    /// Adds an "intersect" (set intersection) step.
+    pub fn intersect(&mut self, distinct: bool, args: Vec<Expr>) -> &mut Self {
+        let env = self.step_env();
+        // Intersect maintains order only if all arguments are lists
+        let ordered = env.ordered && args.iter().all(|arg| is_list_type(arg.type_().as_ref()));
+        let env2 = env.with_ordered(ordered);
+        let step = Step::new(StepKind::Intersect(distinct, args), env2);
+        self.add_step(step)
+    }
+
+    /// Adds a "union" (set union) step.
+    pub fn union(&mut self, distinct: bool, args: Vec<Expr>) -> &mut Self {
+        let env = self.step_env();
+        // Union maintains order only if all arguments are lists
+        let ordered = env.ordered && args.iter().all(|arg| is_list_type(arg.type_().as_ref()));
+        let env2 = env.with_ordered(ordered);
+        let step = Step::new(StepKind::Union(distinct, args), env2);
+        self.add_step(step)
+    }
+
+    /// Adds a "group" step.
+    pub fn group(&mut self, key_expr: Expr, aggregate_expr: Option<Expr>) -> &mut Self {
+        let env = self.step_env();
+        let step = Step::new(
+            StepKind::Group(
+                Box::new(key_expr),
+                aggregate_expr.map(Box::new),
+            ),
+            env,
+        );
+        self.add_step(step)
+    }
+
+    /// Adds a scan step "from pat in exp".
+    /// This is a simplified version - the Java implementation has complex
+    /// logic for inlining nested froms and handling patterns.
+    pub fn scan(&mut self, pat: Pat, exp: Expr) -> &mut Self {
+        self.scan_with_condition(pat, exp, None)
+    }
+
+    /// Adds a scan step "from pat in exp where condition".
+    pub fn scan_with_condition(
+        &mut self,
+        pat: Pat,
+        exp: Expr,
+        condition: Option<Expr>,
+    ) -> &mut Self {
+        // TODO: Implement the complex nested from inlining logic from Java
+        // For now, just add a simple scan step
+
+        // Update bindings based on the pattern
+        let new_binding = Binding::of(&pat);
+        self.bindings.push(new_binding);
+        self.atom = self.bindings.len() == 1;
+
+        let env = self.step_env();
+        let step = Step::new(
+            StepKind::JoinIn(
+                Box::new(pat),
+                Box::new(exp),
+                condition.map(Box::new),
+            ),
+            env,
+        );
+        self.add_step(step)
+    }
+
     /// Builds the From expression.
     pub fn build(&mut self) -> Result<Expr, Error> {
         self.build_internal(false)
@@ -275,7 +355,9 @@ mod tests {
         let mut builder = FromBuilder::new();
         let initial_len = builder.steps.len();
         builder.where_(Expr::Literal(
-            Box::new(Type::Primitive(crate::compile::types::PrimitiveType::Bool)),
+            Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Bool,
+            )),
             Val::Bool(true),
         ));
         // "where true" should be skipped
@@ -287,10 +369,77 @@ mod tests {
         let mut builder = FromBuilder::new();
         let initial_len = builder.steps.len();
         builder.skip(Expr::Literal(
-            Box::new(Type::Primitive(crate::compile::types::PrimitiveType::Int)),
+            Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )),
             Val::Int(0),
         ));
         // "skip 0" should be skipped
         assert_eq!(builder.steps.len(), initial_len);
+    }
+
+    #[test]
+    fn test_union_added() {
+        let mut builder = FromBuilder::new();
+        let initial_len = builder.steps.len();
+        builder.union(true, vec![]);
+        // Union step should be added
+        assert_eq!(builder.steps.len(), initial_len + 1);
+        if let Some(step) = builder.steps.last() {
+            assert!(matches!(step.kind, StepKind::Union(true, _)));
+        }
+    }
+
+    #[test]
+    fn test_scan_updates_bindings() {
+        use crate::compile::type_env::Id;
+        let mut builder = FromBuilder::new();
+        let pat = Pat::Identifier(
+            Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )),
+            "x".to_string(),
+        );
+        let exp = Expr::List(
+            Box::new(Type::List(Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )))),
+            vec![],
+        );
+        builder.scan(pat, exp);
+        // Should have one binding and atom should be true
+        assert_eq!(builder.bindings.len(), 1);
+        assert!(builder.atom);
+        assert_eq!(builder.bindings[0].id, Id::new("x", 0));
+    }
+
+    #[test]
+    fn test_group_added() {
+        let mut builder = FromBuilder::new();
+        let key_expr = Expr::Literal(
+            Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )),
+            Val::Int(1),
+        );
+        let initial_len = builder.steps.len();
+        builder.group(key_expr, None);
+        // Group step should be added
+        assert_eq!(builder.steps.len(), initial_len + 1);
+        if let Some(step) = builder.steps.last() {
+            assert!(matches!(step.kind, StepKind::Group(_, None)));
+        }
+    }
+
+    #[test]
+    fn test_except_added() {
+        let mut builder = FromBuilder::new();
+        let initial_len = builder.steps.len();
+        builder.except(false, vec![]);
+        // Except step should be added
+        assert_eq!(builder.steps.len(), initial_len + 1);
+        if let Some(step) = builder.steps.last() {
+            assert!(matches!(step.kind, StepKind::Except(false, _)));
+        }
     }
 }
