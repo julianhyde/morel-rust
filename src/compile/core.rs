@@ -227,8 +227,15 @@ impl StepEnv {
     }
 
     pub fn new(bindings: Vec<Binding>, atom: bool, ordered: bool) -> Self {
-        assert!(!atom || bindings.len() == 1, "Atom must have exactly one binding");
-        StepEnv { bindings, atom, ordered }
+        assert!(
+            !atom || bindings.len() == 1,
+            "Atom must have exactly one binding"
+        );
+        StepEnv {
+            bindings,
+            atom,
+            ordered,
+        }
     }
 
     pub fn with_ordered(&self, ordered: bool) -> Self {
