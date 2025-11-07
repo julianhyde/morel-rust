@@ -630,7 +630,8 @@ impl<'a> Compiler<'a> {
                 }
             }
             Expr::From(element_type, steps) => {
-                // Use row sinks (push-based evaluation) matching the Java implementation.
+                // Use row sinks (push-based evaluation) matching the Java
+                // implementation.
                 let step_env = if steps.is_empty() {
                     StepEnv::empty()
                 } else {
@@ -720,7 +721,8 @@ impl<'a> Compiler<'a> {
             });
         }
 
-        // Recursive case: process the first step and build the downstream factory.
+        // Recursive case: process the first step and build the downstream
+        // factory.
         let first_step = &steps[0];
         let next_factory = self.create_row_sink_factory(
             cx,

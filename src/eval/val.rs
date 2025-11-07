@@ -18,9 +18,12 @@
 use crate::compile::library::BuiltInFunction;
 use crate::compile::types::Label;
 use crate::compile::types::Type;
-use crate::eval::code::{Code, Frame as CodeFrame, Impl, LIBRARY, Span};
+use crate::eval::code::{
+    Code, EvalEnv, Frame as CodeFrame, Frame, Impl, LIBRARY, Span,
+};
 use crate::eval::frame::FrameDef;
 use crate::eval::order::Order;
+use crate::eval::real::Real;
 use crate::syntax::parser;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -190,8 +193,8 @@ impl Val {
     /// Handles Val::Code, Val::Closure, and Val::Fn (built-in functions).
     pub(crate) fn apply_f1(
         &self,
-        r: &mut crate::eval::code::EvalEnv,
-        f: &mut crate::eval::code::Frame,
+        r: &mut EvalEnv,
+        f: &mut Frame,
         arg: &Val,
     ) -> Result<Val, crate::shell::main::MorelError> {
         match self {
@@ -274,7 +277,7 @@ impl Display for Val {
             Val::Raw(s) => write!(f, "{}", s),
             Val::Real(r) => {
                 // Use Real.toString to format real values
-                write!(f, "{}", crate::eval::real::Real::to_string(*r))
+                write!(f, "{}", Real::to_string(*r))
             }
             Val::Some(v) => write!(f, "SOME {}", v),
             Val::String(s) => write!(f, "\"{}\"", parser::string_to_string(s)),

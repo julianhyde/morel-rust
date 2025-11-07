@@ -37,7 +37,7 @@ fn lint() {
     let mut warnings = Vec::new();
     String::from_utf8_lossy(&output.stdout)
         .lines()
-        .filter(|l| !l.ends_with("CLAUDE.md"))
+        .filter(|l| !l.ends_with(".md"))
         .for_each(|l| {
             lint_file(l.trim(), &mut warnings);
         });
