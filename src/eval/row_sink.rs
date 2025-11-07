@@ -198,7 +198,7 @@ impl RowSink for WhereRowSink {
 /// deduplication.
 pub struct UnionRowSink {
     distinct: bool,
-    pat_code: Code,
+    slots: Vec<usize>,
     codes: Vec<Code>,
     row_sink: Box<dyn RowSink>,
     seen: Vec<Val>,
@@ -207,13 +207,13 @@ pub struct UnionRowSink {
 impl UnionRowSink {
     pub fn new(
         distinct: bool,
-        pat_code: Code,
+        slots: Vec<usize>,
         codes: Vec<Code>,
         row_sink: Box<dyn RowSink>,
     ) -> Self {
         Self {
             distinct,
-            pat_code,
+            slots,
             codes,
             row_sink,
             seen: Vec::new(),
@@ -273,11 +273,18 @@ impl RowSink for UnionRowSink {
             let items = collection.expect_list();
             for item in items {
                 if self.add(item) {
-                    // Bind the item to the pattern (updates frame).
-                    let matched = self.pat_code.eval_f1(r, f, item)?;
-                    if matched.expect_bool() {
-                        self.row_sink.accept(r, f)?;
+                    // Bind the item directly to frame slots.
+                    if self.slots.len() == 1 {
+                        // Atom case: single binding.
+                        f.vals[self.slots[0]] = item.clone();
+                    } else {
+                        // Tuple case: unpack tuple and bind each component.
+                        let tuple_items = item.expect_list();
+                        for (i, slot) in self.slots.iter().enumerate() {
+                            f.vals[*slot] = tuple_items[i].clone();
+                        }
                     }
+                    self.row_sink.accept(r, f)?;
                 }
             }
         }

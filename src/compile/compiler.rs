@@ -786,44 +786,19 @@ impl<'a> Compiler<'a> {
                     .collect();
                 let distinct = *distinct;
 
-                // Create a pattern code to bind union items to the current bindings.
-                // For "from i in [1,2,3] union [2,3]", we need to bind each item
-                // from [2,3] to the variable i.
-                let pat_code = if step_env.atom && step_env.bindings.len() == 1 {
-                    // Simple case: single binding (atom).
-                    let binding = &step_env.bindings[0];
-                    let pat = Pat::Identifier(
-                        binding.type_.clone(),
-                        binding.id.name.clone(),
-                    );
-                    self.compile_pat(cx, &pat)
-                } else {
-                    // Tuple case: create a tuple pattern from all bindings.
-                    let pats: Vec<Pat> = step_env
-                        .bindings
-                        .iter()
-                        .map(|b| {
-                            Pat::Identifier(
-                                b.type_.clone(),
-                                b.id.name.clone(),
-                            )
-                        })
-                        .collect();
-                    let tuple_type = Box::new(Type::Tuple(
-                        step_env
-                            .bindings
-                            .iter()
-                            .map(|b| b.type_.as_ref().clone())
-                            .collect(),
-                    ));
-                    let pat = Pat::Tuple(tuple_type, pats);
-                    self.compile_pat(cx, &pat)
-                };
+                // Get the slot indices for the bindings that union items should
+                // be assigned to. For "from i in [1,2,3] union [2,3]", we need
+                // to find the slot for variable i.
+                let slots: Vec<usize> = step_env
+                    .bindings
+                    .iter()
+                    .map(|b| cx.frame_def.var_index(&b.id.name))
+                    .collect();
 
                 RowSinkFactory::new(move || {
                     Box::new(UnionRowSink::new(
                         distinct,
-                        pat_code.clone(),
+                        slots.clone(),
                         codes.clone(),
                         next_factory.create(),
                     ))
