@@ -2,6 +2,23 @@
 
 This document outlines the plan for translating Standard ML queries (from/where/yield expressions) into Core representation in the Rust implementation of Morel.
 
+## Quick Testing
+
+Use the `-c` flag to quickly test expressions without entering interactive mode:
+
+```bash
+# Test simple expressions
+cargo run -- -c "1 + 2"
+
+# Test queries
+cargo run -- -c "from i in [1,2,3] where i > 1"
+
+# Test function definitions
+cargo run -- -c "fun double x = x * 2"
+```
+
+The `-c` flag outputs clean results without the interactive "> " prefix, making it ideal for quick testing and scripting.
+
 ## Overview
 
 The query translation pipeline converts high-level relational syntax into executable Core expressions. This involves:
