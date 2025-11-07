@@ -60,7 +60,23 @@ FromBuilder constructs and optimizes `Core.From` expressions by:
   - Methods: `empty()`, `new()`, `with_ordered()`, `with_bindings()`
 - ✅ Extended `Step` to include `env: StepEnv` field
 - ✅ Fixed compilation errors in `inliner.rs` and `resolver.rs`
-- 🎯 Next: Create `from_builder.rs` module with FromBuilder struct
+
+#### 2025-01-06: FromBuilder Core Methods (Commit 7564b40)
+- ✅ Created `src/compile/from_builder.rs` module
+- ✅ Implemented FromBuilder struct with builder pattern
+- ✅ Basic query step methods: where, skip, take, distinct, order, unorder, yield
+- ✅ Optimizations: skip "where true", skip "skip 0"
+- ✅ Build methods: build() and build_simplify()
+- ✅ 4 passing unit tests
+
+#### 2025-01-06: Set Operations and Scan (Commit e4ccf71)
+- ✅ Added set operation methods: union(), except(), intersect()
+  - Correctly handle ordered flag (maintain only when all args are lists)
+- ✅ Added group() method for grouping with optional aggregates
+- ✅ Added scan() and scan_with_condition() for pattern binding
+- ✅ Added is_list_type() helper function
+- ✅ 4 additional comprehensive unit tests (8 total, all passing)
+- 🎯 Next: Add helper methods and implement yield optimization logic
 
 ## Phase 2: FromResolver Translation
 
