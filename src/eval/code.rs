@@ -86,6 +86,42 @@ pub enum Effect {
     UnsetShellProp(String),
 }
 
+/// Factory for creating row sink pipelines.
+/// Wraps a function pointer to allow Clone/PartialEq/Debug on Code enum.
+pub struct RowSinkFactory(
+    Arc<dyn Fn() -> Box<dyn crate::eval::row_sink::RowSink> + Send + Sync>,
+);
+
+impl RowSinkFactory {
+    pub fn new(
+        f: impl Fn() -> Box<dyn crate::eval::row_sink::RowSink> + Send + Sync + 'static,
+    ) -> Self {
+        Self(Arc::new(f))
+    }
+
+    pub fn create(&self) -> Box<dyn crate::eval::row_sink::RowSink> {
+        (self.0)()
+    }
+}
+
+impl Clone for RowSinkFactory {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+impl PartialEq for RowSinkFactory {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for RowSinkFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RowSinkFactory(...)")
+    }
+}
+
 /// Generated code that can be evaluated.
 #[derive(Clone, PartialEq, Debug)]
 pub enum Code {
@@ -141,8 +177,10 @@ pub enum Code {
     /// expression.
     Fn(Arc<FrameDef>, Vec<(Code, Code)>),
 
-    /// `From(steps)` evaluates a query expression with the given steps.
-    From(Vec<QueryStep>),
+    /// `FromRowSink(factory)` evaluates a query using push-based row sinks.
+    /// The factory creates a fresh row sink pipeline for each evaluation.
+    /// This matches the Java implementation: Supplier<RowSink>.
+    FromRowSink(RowSinkFactory),
 
     /// `GetLocal(frame_def, slot)` returns the value of the `slot`th variable
     /// in the current stack frame.
@@ -171,14 +209,6 @@ pub enum Code {
     /// The type must be a record type.
     Nth(Box<Type>, usize),
     Tuple(Vec<Code>),
-}
-
-/// A compiled query step for evaluation.
-#[derive(Clone, PartialEq, Debug)]
-pub enum QueryStep {
-    JoinIn(Code, Code), // pattern, collection
-    Where(Code),        // condition
-    Yield(Code),        // expression
 }
 
 impl Code {
@@ -442,7 +472,7 @@ impl Code {
             }
             Code::CreateClosure(_, _, _) => *mode == EvalMode::EagerF0,
             Code::Fn(_, _) => *mode == EvalMode::EagerV1,
-            Code::From(_) => *mode == EvalMode::EagerF0,
+            Code::FromRowSink(_) => *mode == EvalMode::EagerF0,
             Code::GetLocal(_, _) => *mode == EvalMode::EagerF0,
             Code::Let(_, _) => *mode == EvalMode::Eager0,
             Code::Link(_, _) => todo!("{:?}", self),
@@ -531,9 +561,12 @@ impl Code {
                 // return themselves.
                 Ok(Val::Code(Arc::new(self.clone())))
             }
-            Code::From(steps) => {
-                // Evaluate a query expression
-                Self::eval_from(r, f, steps)
+            Code::FromRowSink(factory) => {
+                // Evaluate a query expression (push-based with row sinks)
+                let mut sink = factory.create();
+                sink.start(r, f)?;
+                sink.accept(r, f)?;
+                sink.result(r, f)
             }
             Code::GetLocal(frame_def, slot) => {
                 debug_assert!(
@@ -738,93 +771,6 @@ impl Code {
             write!(f, "{}", code)?;
         }
         write!(f, "{}", suffix)
-    }
-
-    /// Evaluates a query (from) expression by processing steps sequentially.
-    fn eval_from(
-        r: &mut EvalEnv,
-        f: &mut Frame,
-        steps: &[QueryStep],
-    ) -> Result<Val, MorelError> {
-        // Start with a single empty record
-        let mut results: Vec<Vec<Val>> = vec![vec![]];
-
-        for step in steps {
-            match step {
-                QueryStep::JoinIn(pat_code, coll_code) => {
-                    // Evaluate the collection
-                    let collection = coll_code.eval_f0(r, f)?;
-                    let items = collection.expect_list();
-
-                    let mut new_results = Vec::new();
-                    for current_record in &results {
-                        // Restore frame with current bindings
-                        for (i, val) in current_record.iter().enumerate() {
-                            if i < f.vals.len() {
-                                f.vals[i] = val.clone();
-                            }
-                        }
-
-                        // For each item in the collection, bind and extend the
-                        // record.
-                        for item in items {
-                            // Try to bind the pattern to this item
-                            let matched = pat_code.eval_f1(r, f, item)?;
-                            if matched.expect_bool() {
-                                // Pattern matched - collect the new record
-                                // state.
-                                let mut new_record = current_record.clone();
-                                // Extend with new bindings from the frame.
-                                // (This is simplified - in reality we'd track
-                                // which slots were bound.)
-                                for i in current_record.len()..f.vals.len() {
-                                    new_record.push(f.vals[i].clone());
-                                }
-                                new_results.push(new_record);
-                            }
-                        }
-                    }
-                    results = new_results;
-                }
-                QueryStep::Where(cond_code) => {
-                    let mut filtered_results = Vec::new();
-                    for current_record in &results {
-                        // Restore frame with current bindings
-                        for (i, val) in current_record.iter().enumerate() {
-                            if i < f.vals.len() {
-                                f.vals[i] = val.clone();
-                            }
-                        }
-                        // Evaluate condition
-                        let cond_val = cond_code.eval_f0(r, f)?;
-                        if cond_val.expect_bool() {
-                            filtered_results.push(current_record.clone());
-                        }
-                    }
-                    results = filtered_results;
-                }
-                QueryStep::Yield(yield_code) => {
-                    let mut yielded_results = Vec::new();
-                    for current_record in &results {
-                        // Restore frame with current bindings
-                        for (i, val) in current_record.iter().enumerate() {
-                            if i < f.vals.len() {
-                                f.vals[i] = val.clone();
-                            }
-                        }
-                        // Evaluate yield expression
-                        let result_val = yield_code.eval_f0(r, f)?;
-                        yielded_results.push(result_val);
-                    }
-                    return Ok(Val::List(yielded_results));
-                }
-            }
-        }
-
-        // If no explicit yield, return the records as tuples
-        let final_results: Vec<Val> =
-            results.into_iter().map(Val::List).collect();
-        Ok(Val::List(final_results))
     }
 }
 
