@@ -1409,7 +1409,7 @@ impl Eager1 {
             RelationalNonEmpty => Val::Bool(!a0.expect_list().is_empty()),
             RelationalOnly => Relational::only(a0.expect_list()),
             RelationalSum => {
-                Val::Int(a0.expect_list().iter().map(|v| v.expect_int()).sum())
+                Val::Int(a0.expect_list().iter().map(Val::expect_int).sum())
             }
             StringConcat => {
                 let strings = a0.expect_list();
