@@ -52,7 +52,7 @@ fn main() {
     // Check for help flag
     if args.len() > 1 && (args[1] == "-h" || args[1] == "--help") {
         print_help();
-        exit(0);
+        exit(1);
     }
 
     // Check if we're running script tests
