@@ -35,6 +35,70 @@ fn is_list_type(type_: &Type) -> bool {
     matches!(type_, Type::List(_))
 }
 
+/// Classification of tuple types for yield optimization.
+#[derive(Debug, PartialEq, Eq)]
+enum TupleType {
+    /// Tuple whose right side are the current fields and left side are the same
+    /// as the right, e.g. "{deptno = deptno, dname = dname}".
+    Identity,
+    /// Tuple whose right side are the current fields, e.g. "{a = deptno, b = dname}".
+    Rename,
+    /// Any other tuple, e.g. "{a = deptno + 1, dname = dname}", "{deptno = deptno}" (too few fields).
+    Other,
+}
+
+/// Returns whether a tuple is something like "{i = i, j = j}".
+fn is_trivial(tuple: &Expr, env: &StepEnv, env2: Option<&StepEnv>) -> bool {
+    tuple_type(tuple, env, env2) == TupleType::Identity
+}
+
+/// Classifies a tuple expression for yield optimization.
+///
+/// Determines if a tuple is:
+/// - Identity: {x = x, y = y} - fields map to themselves
+/// - Rename: {a = x, b = y} - fields are renamed but come from current bindings
+/// - Other: anything else (computed values, missing fields, etc.)
+fn tuple_type(tuple: &Expr, env: &StepEnv, env2: Option<&StepEnv>) -> TupleType {
+    // Extract fields from the tuple
+    let fields = match tuple {
+        Expr::Tuple(_, exprs) if !exprs.is_empty() => exprs,
+        _ => return TupleType::Other,
+    };
+
+    // Tuple must have same number of fields as bindings
+    if fields.len() != env.bindings.len() {
+        return TupleType::Other;
+    }
+
+    // Start assuming identity, downgrade to rename if we find differences
+    let mut identity = match env2 {
+        Some(e2) => env.bindings == e2.bindings,
+        None => true,
+    };
+
+    // Check each field in the tuple
+    for (field_expr, binding) in fields.iter().zip(&env.bindings) {
+        match field_expr {
+            Expr::Identifier(_, field_name) => {
+                // Field must reference a binding variable
+                if field_name != &binding.id.name {
+                    identity = false;
+                }
+            }
+            _ => {
+                // Non-identifier expressions make this "Other"
+                return TupleType::Other;
+            }
+        }
+    }
+
+    if identity {
+        TupleType::Identity
+    } else {
+        TupleType::Rename
+    }
+}
+
 /// Builds a `From` expression with optimizations.
 ///
 /// This builder accumulates query steps and applies simplification rules
@@ -179,15 +243,101 @@ impl FromBuilder {
         self.add_step(step)
     }
 
-    /// Adds a "yield" step.
+    /// Adds a "yield" step with optimization.
+    ///
+    /// This method applies several optimizations:
+    /// - Skips trivial yields like "yield x" when x is the only binding and already an atom
+    /// - Skips non-singleton identity tuples like "yield {x=x, y=y}"
+    /// - Marks singleton identity tuples like "yield {x=x}" as useless-if-not-last
+    ///   (they only change scalar to record, which only matters as last step)
     pub fn yield_(&mut self, exp: Expr) -> &mut Self {
-        // Determine if result is an atom
-        let _atom = !matches!(exp, Expr::Tuple(_, _));
-        // TODO: Use atom flag to update step environment
+        self.yield_internal(false, None, exp)
+    }
 
+    /// Internal yield implementation with full control over optimization flags.
+    ///
+    /// # Arguments
+    /// * `useless_if_last` - Whether this yield will be useless if it's the last step
+    /// * `env2` - Desired step environment (for preserving variable ordinals when copying)
+    /// * `exp` - Expression to yield
+    fn yield_internal(
+        &mut self,
+        useless_if_last: bool,
+        env2: Option<StepEnv>,
+        exp: Expr,
+    ) -> &mut Self {
         let env = self.step_env();
-        let step = Step::new(StepKind::Yield(Box::new(exp)), env);
-        self.add_step(step)
+        let mut useless_if_not_last = false;
+
+        // Determine if the expression is an atom (non-record)
+        let atom = !matches!(exp, Expr::Tuple(_, _));
+
+        match &exp {
+            Expr::Tuple(_, _) => {
+                let tuple_type = tuple_type(&exp, &env, env2.as_ref());
+                match tuple_type {
+                    TupleType::Identity => {
+                        // A trivial record does not rename, so its only purpose is to
+                        // change from a scalar to a record, and even then only when a
+                        // singleton.
+                        if self.bindings.len() == 1 {
+                            // Singleton record that does not rename, e.g. 'yield {x=x}'.
+                            // It only has meaning as the last step.
+                            useless_if_not_last = true;
+                            // Continue to add the step
+                        } else {
+                            // Non-singleton record that does not rename,
+                            // e.g. 'yield {x=x,y=y}'. It is useless.
+                            return self;
+                        }
+                    }
+                    TupleType::Rename => {
+                        // Singleton or non-singleton record that renames,
+                        // e.g. 'yield {y=x}' or 'yield {y=x,z=y}'.
+                        // It is always useful, so continue to add the step.
+                    }
+                    TupleType::Other => {
+                        // Any other tuple (computed values, etc.)
+                        // Always useful, continue to add the step.
+                    }
+                }
+            }
+            Expr::Identifier(_, name) => {
+                // Check if this is a trivial "yield x" where x is the only binding
+                if self.bindings.len() == 1
+                    && self.bindings[0].id.name == *name
+                    // After 'yield {x = something}', 'yield x' may seem trivial, but
+                    // it converts a singleton record to an atom, so don't remove it.
+                    && (self.steps.is_empty() || self.steps.last().unwrap().env.atom)
+                {
+                    return self;
+                }
+            }
+            _ => {
+                // Other expressions, continue to add the step
+            }
+        }
+
+        // Create the yield step
+        let step_env = env2.unwrap_or_else(|| {
+            StepEnv::new(self.bindings.clone(), atom, env.ordered)
+        });
+        let step = Step::new(StepKind::Yield(Box::new(exp)), step_env);
+        self.add_step(step);
+
+        // Update removal indices
+        self.remove_if_not_last_index = if useless_if_not_last {
+            Some(self.steps.len() - 1)
+        } else {
+            None
+        };
+        self.remove_if_last_index = if useless_if_last {
+            Some(self.steps.len() - 1)
+        } else {
+            None
+        };
+
+        self
     }
 
     /// Adds an "except" (set difference) step.
@@ -441,5 +591,82 @@ mod tests {
         if let Some(step) = builder.steps.last() {
             assert!(matches!(step.kind, StepKind::Except(false, _)));
         }
+    }
+
+    #[test]
+    fn test_yield_trivial_singleton_skipped() {
+        let mut builder = FromBuilder::new();
+
+        // Add a binding first via scan
+        let pat = Pat::Identifier(
+            Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )),
+            "x".to_string(),
+        );
+        let exp = Expr::List(
+            Box::new(Type::List(Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )))),
+            vec![],
+        );
+        builder.scan(pat, exp);
+
+        // Now try to yield x (should be skipped as trivial)
+        let initial_len = builder.steps.len();
+        builder.yield_(Expr::Identifier(
+            Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )),
+            "x".to_string(),
+        ));
+
+        // Yield should have been skipped
+        assert_eq!(builder.steps.len(), initial_len);
+    }
+
+    #[test]
+    fn test_yield_non_singleton_identity_skipped() {
+        use crate::compile::type_env::Id;
+        let mut builder = FromBuilder::new();
+
+        // Add two bindings
+        builder.bindings.push(Binding::new(
+            Id::new("x", 0),
+            Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )),
+        ));
+        builder.bindings.push(Binding::new(
+            Id::new("y", 0),
+            Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )),
+        ));
+
+        // Yield {x=x, y=y} should be skipped as identity
+        let initial_len = builder.steps.len();
+        builder.yield_(Expr::Tuple(
+            Box::new(Type::Primitive(
+                crate::compile::types::PrimitiveType::Int,
+            )),
+            vec![
+                Expr::Identifier(
+                    Box::new(Type::Primitive(
+                        crate::compile::types::PrimitiveType::Int,
+                    )),
+                    "x".to_string(),
+                ),
+                Expr::Identifier(
+                    Box::new(Type::Primitive(
+                        crate::compile::types::PrimitiveType::Int,
+                    )),
+                    "y".to_string(),
+                ),
+            ],
+        ));
+
+        // Yield should have been skipped
+        assert_eq!(builder.steps.len(), initial_len);
     }
 }
