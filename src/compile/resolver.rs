@@ -753,6 +753,46 @@ impl<'a> Resolver<'a> {
                 let resolved_expr = self.resolve_expr(expr);
                 builder.order(resolved_expr);
             }
+            AstStepKind::Group(key_expr, aggregate_expr) => {
+                // Resolve the group key expression.
+                let resolved_key = self.resolve_expr(key_expr);
+
+                // Resolve the aggregate expression if present.
+                let resolved_aggregate =
+                    aggregate_expr.as_ref().map(|e| self.resolve_expr(e));
+
+                // Add the group step to the builder.
+                builder.group(resolved_key, resolved_aggregate);
+            }
+            AstStepKind::Skip(expr) => {
+                let resolved_expr = self.resolve_expr(expr);
+                builder.skip(resolved_expr);
+            }
+            AstStepKind::Take(expr) => {
+                let resolved_expr = self.resolve_expr(expr);
+                builder.take(resolved_expr);
+            }
+            AstStepKind::Distinct => {
+                builder.distinct();
+            }
+            AstStepKind::Unorder => {
+                builder.unorder();
+            }
+            AstStepKind::Union(distinct, exprs) => {
+                let resolved_exprs: Vec<_> =
+                    exprs.iter().map(|e| self.resolve_expr(e)).collect();
+                builder.union(*distinct, resolved_exprs);
+            }
+            AstStepKind::Except(distinct, exprs) => {
+                let resolved_exprs: Vec<_> =
+                    exprs.iter().map(|e| self.resolve_expr(e)).collect();
+                builder.except(*distinct, resolved_exprs);
+            }
+            AstStepKind::Intersect(distinct, exprs) => {
+                let resolved_exprs: Vec<_> =
+                    exprs.iter().map(|e| self.resolve_expr(e)).collect();
+                builder.intersect(*distinct, resolved_exprs);
+            }
             _ => {
                 // For now, fall back to the old resolve_step for unsupported
                 // step types.
