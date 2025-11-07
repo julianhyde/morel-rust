@@ -49,13 +49,13 @@ fn print_help() {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // Check for help flag
+    // Check for the help flag.
     if args.len() > 1 && (args[1] == "-h" || args[1] == "--help") {
         print_help();
         exit(1);
     }
 
-    // Check if we're running script tests
+    // Check if we're running script tests.
     if args.len() > 1 && args[1] == "test" {
         let test_args = args[2..].to_vec();
         match ScriptTest::main(&test_args) {
@@ -70,7 +70,7 @@ fn main() {
         }
     }
 
-    // Check if we're executing a single command with -c
+    // Check if we're executing a single command with -c.
     if args.len() > 2 && args[1] == "-c" {
         let command = &args[2];
         let mut main = ShellMain::new(&[]);

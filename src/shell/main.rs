@@ -518,7 +518,16 @@ impl Shell {
             .unwrap_or(command.trim_end());
 
         let result = self.process_statement(command_without_semicolon, None)?;
-        write!(output, "{}", result)?;
+
+        // Strip the "> " prefix from each line (process_statement adds it
+        // for interactive mode).
+        let output_str = result
+            .lines()
+            .map(|line| line.strip_prefix("> ").unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        writeln!(output, "{}", output_str)?;
         Ok(())
     }
 
