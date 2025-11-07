@@ -710,7 +710,8 @@ impl<'a> Compiler<'a> {
         element_type: &Type,
     ) -> RowSinkFactory {
         use crate::eval::row_sink::{
-            CollectRowSink, DistinctRowSink, ScanRowSink, UnionRowSink, WhereRowSink,
+            CollectRowSink, DistinctRowSink, ScanRowSink, UnionRowSink,
+            WhereRowSink,
         };
 
         if steps.is_empty() {
@@ -785,8 +786,6 @@ impl<'a> Compiler<'a> {
                     .map(|expr| self.compile_expr(cx, None, expr))
                     .collect();
                 let distinct = *distinct;
-
-                // Union bindings occupy consecutive slots 0..slot_count in the frame.
                 let slot_count = step_env.bindings.len();
 
                 RowSinkFactory::new(move || {
@@ -847,7 +846,8 @@ impl<'a> Compiler<'a> {
         if field_names.len() == 1
             && step_env.bindings[0].type_.as_ref() == element_type
         {
-            // Single binding matching the element type - just get that variable.
+            // Single binding matching the element type - just get that
+            // variable.
             let name = &field_names[0];
             let slot = cx.frame_def.var_index(name);
             Code::new_get_local(&cx.frame_def, slot)

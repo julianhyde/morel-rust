@@ -278,11 +278,11 @@ impl RowSink for UnionRowSink {
                         // Atom case: single binding at slot 0.
                         f.vals[0] = item.clone();
                     } else {
-                        // Tuple case: unpack tuple and bind to slots 0..slot_count.
+                        // Tuple case: unpack tuple and bind to slots
+                        // 0..slot_count.
                         let tuple_items = item.expect_list();
-                        for i in 0..self.slot_count {
-                            f.vals[i] = tuple_items[i].clone();
-                        }
+                        f.vals[..self.slot_count]
+                            .clone_from_slice(&tuple_items[..self.slot_count]);
                     }
                     self.row_sink.accept(r, f)?;
                 }

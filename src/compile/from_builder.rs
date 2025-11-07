@@ -474,8 +474,8 @@ impl FromBuilder {
     }
 
     fn compute_result_type(&self) -> Result<Type, Error> {
-        use std::collections::BTreeMap;
         use crate::compile::types::Label;
+        use std::collections::BTreeMap;
 
         // The element type is the type of each element in the result list.
         // If we have a single binding that matches the atom flag, use its type.
