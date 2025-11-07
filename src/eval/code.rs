@@ -87,14 +87,17 @@ pub enum Effect {
 }
 
 /// Factory for creating row sink pipelines.
-/// Wraps a function pointer to allow Clone/PartialEq/Debug on Code enum.
+/// Wraps a function pointer to allow Clone/PartialEq/Debug on the Code enum.
 pub struct RowSinkFactory(
     Arc<dyn Fn() -> Box<dyn crate::eval::row_sink::RowSink> + Send + Sync>,
 );
 
 impl RowSinkFactory {
     pub fn new(
-        f: impl Fn() -> Box<dyn crate::eval::row_sink::RowSink> + Send + Sync + 'static,
+        f: impl Fn() -> Box<dyn crate::eval::row_sink::RowSink>
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
         Self(Arc::new(f))
     }
@@ -562,7 +565,7 @@ impl Code {
                 Ok(Val::Code(Arc::new(self.clone())))
             }
             Code::FromRowSink(factory) => {
-                // Evaluate a query expression (push-based with row sinks)
+                // Evaluate a query expression (push-based with row sinks).
                 let mut sink = factory.create();
                 sink.start(r, f)?;
                 sink.accept(r, f)?;
@@ -1410,7 +1413,7 @@ impl Eager1 {
             RelationalNonEmpty => Val::Bool(!a0.expect_list().is_empty()),
             RelationalOnly => Relational::only(a0.expect_list()),
             RelationalSum => {
-                Val::Int(a0.expect_list().iter().map(|v| v.expect_int()).sum())
+                Val::Int(a0.expect_list().iter().map(Val::expect_int).sum())
             }
             StringConcat => {
                 let strings = a0.expect_list();

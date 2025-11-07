@@ -630,7 +630,7 @@ impl<'a> Compiler<'a> {
                 }
             }
             Expr::From(element_type, steps) => {
-                // Use row sinks (push-based evaluation) matching Java implementation
+                // Use row sinks (push-based evaluation) matching the Java implementation.
                 let step_env = if steps.is_empty() {
                     StepEnv::empty()
                 } else {
@@ -708,17 +708,19 @@ impl<'a> Compiler<'a> {
         steps: &[Step],
         element_type: &Type,
     ) -> RowSinkFactory {
-        use crate::eval::row_sink::{CollectRowSink, ScanRowSink, WhereRowSink};
+        use crate::eval::row_sink::{
+            CollectRowSink, ScanRowSink, WhereRowSink,
+        };
 
         if steps.is_empty() {
-            // Terminal case: create CollectRowSink from bindings
+            // Terminal case: create a CollectRowSink from bindings.
             let code = self.get_collection_code(cx, step_env, element_type);
             return RowSinkFactory::new(move || {
                 Box::new(CollectRowSink::new(code.clone()))
             });
         }
 
-        // Recursive case: process first step and build downstream factory
+        // Recursive case: process the first step and build the downstream factory.
         let first_step = &steps[0];
         let next_factory = self.create_row_sink_factory(
             cx,
@@ -756,8 +758,8 @@ impl<'a> Compiler<'a> {
                 })
             }
             StepKind::Yield(_) => {
-                // Yield is handled by terminal case via bindings
-                // Just pass through to next factory
+                // Yield is handled by the terminal case via bindings.
+                // Just pass through to the next factory.
                 next_factory
             }
             _ => todo!("create_row_sink_factory: {:?}", first_step.kind),
@@ -773,14 +775,14 @@ impl<'a> Compiler<'a> {
         element_type: &Type,
     ) -> Code {
         if step_env.bindings.is_empty() {
-            // No bindings - return unit
+            // No bindings - return unit.
             return Code::new_constant(
                 &Type::Primitive(PrimitiveType::Unit),
                 Val::Unit,
             );
         }
 
-        // Collect field names sorted alphabetically (like Java)
+        // Collect field names sorted alphabetically (like Java).
         let mut field_names: Vec<String> = step_env
             .bindings
             .iter()
@@ -791,12 +793,12 @@ impl<'a> Compiler<'a> {
         if field_names.len() == 1
             && step_env.bindings[0].type_.as_ref() == element_type
         {
-            // Single binding matching element type - just get that variable
+            // Single binding matching the element type - just get that variable.
             let name = &field_names[0];
             let slot = cx.frame_def.var_index(name);
             Code::new_get_local(&cx.frame_def, slot)
         } else {
-            // Multiple bindings or type mismatch - create tuple
+            // Multiple bindings or type mismatch - create a tuple.
             let codes: Vec<Code> = field_names
                 .iter()
                 .map(|name| {
