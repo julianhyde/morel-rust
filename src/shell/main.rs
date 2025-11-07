@@ -514,7 +514,9 @@ impl Shell {
     ) -> ShellResult<()> {
         // Remove trailing semicolon if present (process_statement
         // expects input without the semicolon).
-        let command_without_semicolon = command.trim_end().strip_suffix(';')
+        let command_without_semicolon = command
+            .trim_end()
+            .strip_suffix(';')
             .unwrap_or(command.trim_end());
 
         let result = self.process_statement(command_without_semicolon, None)?;

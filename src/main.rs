@@ -86,7 +86,11 @@ fn main() {
     }
 
     // Check if we're running a specific file
-    if args.len() > 1 && args[1] != "--" && !args[1].starts_with("--") && args[1] != "-c" {
+    if args.len() > 1
+        && args[1] != "--"
+        && !args[1].starts_with("--")
+        && args[1] != "-c"
+    {
         let file_path = &args[1];
         let shell_args = args[2..].to_vec();
 
