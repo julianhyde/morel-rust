@@ -710,7 +710,7 @@ impl<'a> Compiler<'a> {
         element_type: &Type,
     ) -> RowSinkFactory {
         use crate::eval::row_sink::{
-            CollectRowSink, ScanRowSink, UnionRowSink, WhereRowSink,
+            CollectRowSink, DistinctRowSink, ScanRowSink, UnionRowSink, WhereRowSink,
         };
 
         if steps.is_empty() {
@@ -794,6 +794,24 @@ impl<'a> Compiler<'a> {
                         distinct,
                         slot_count,
                         codes.clone(),
+                        next_factory.create(),
+                    ))
+                })
+            }
+            StepKind::Distinct => {
+                let next_factory = self.create_row_sink_factory(
+                    cx,
+                    &first_step.env,
+                    &steps[1..],
+                    element_type,
+                );
+
+                // Distinct filters duplicate rows based on current bindings.
+                let slot_count = step_env.bindings.len();
+
+                RowSinkFactory::new(move || {
+                    Box::new(DistinctRowSink::new(
+                        slot_count,
                         next_factory.create(),
                     ))
                 })
