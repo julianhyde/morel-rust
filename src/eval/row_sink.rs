@@ -198,6 +198,7 @@ impl RowSink for WhereRowSink {
 /// deduplication.
 pub struct UnionRowSink {
     distinct: bool,
+    pat_code: Code,
     codes: Vec<Code>,
     row_sink: Box<dyn RowSink>,
     seen: Vec<Val>,
@@ -206,11 +207,13 @@ pub struct UnionRowSink {
 impl UnionRowSink {
     pub fn new(
         distinct: bool,
+        pat_code: Code,
         codes: Vec<Code>,
         row_sink: Box<dyn RowSink>,
     ) -> Self {
         Self {
             distinct,
+            pat_code,
             codes,
             row_sink,
             seen: Vec::new(),
@@ -263,16 +266,18 @@ impl RowSink for UnionRowSink {
         r: &mut EvalEnv,
         f: &mut Frame,
     ) -> Result<Val, MorelError> {
-        // Process additional collections from the union
+        // Process additional collections from the union.
         let codes = self.codes.clone();
         for code in &codes {
             let collection = code.eval_f0(r, f)?;
             let items = collection.expect_list();
             for item in items {
                 if self.add(item) {
-                    // TODO: Need to bind element to frame and pass downstream
-                    // This is incomplete for now
-                    self.row_sink.accept(r, f)?;
+                    // Bind the item to the pattern (updates frame).
+                    let matched = self.pat_code.eval_f1(r, f, item)?;
+                    if matched.expect_bool() {
+                        self.row_sink.accept(r, f)?;
+                    }
                 }
             }
         }

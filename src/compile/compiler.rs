@@ -710,7 +710,7 @@ impl<'a> Compiler<'a> {
         element_type: &Type,
     ) -> RowSinkFactory {
         use crate::eval::row_sink::{
-            CollectRowSink, ScanRowSink, WhereRowSink,
+            CollectRowSink, ScanRowSink, UnionRowSink, WhereRowSink,
         };
 
         if steps.is_empty() {
@@ -768,6 +768,63 @@ impl<'a> Compiler<'a> {
                 RowSinkFactory::new(move || {
                     Box::new(WhereRowSink::new(
                         filter_code.clone(),
+                        next_factory.create(),
+                    ))
+                })
+            }
+            StepKind::Union(distinct, exprs) => {
+                let next_factory = self.create_row_sink_factory(
+                    cx,
+                    &first_step.env,
+                    &steps[1..],
+                    element_type,
+                );
+                // Compile each union expression into code.
+                let codes: Vec<Code> = exprs
+                    .iter()
+                    .map(|expr| self.compile_expr(cx, None, expr))
+                    .collect();
+                let distinct = *distinct;
+
+                // Create a pattern code to bind union items to the current bindings.
+                // For "from i in [1,2,3] union [2,3]", we need to bind each item
+                // from [2,3] to the variable i.
+                let pat_code = if step_env.atom && step_env.bindings.len() == 1 {
+                    // Simple case: single binding (atom).
+                    let binding = &step_env.bindings[0];
+                    let pat = Pat::Identifier(
+                        binding.type_.clone(),
+                        binding.id.name.clone(),
+                    );
+                    self.compile_pat(cx, &pat)
+                } else {
+                    // Tuple case: create a tuple pattern from all bindings.
+                    let pats: Vec<Pat> = step_env
+                        .bindings
+                        .iter()
+                        .map(|b| {
+                            Pat::Identifier(
+                                b.type_.clone(),
+                                b.id.name.clone(),
+                            )
+                        })
+                        .collect();
+                    let tuple_type = Box::new(Type::Tuple(
+                        step_env
+                            .bindings
+                            .iter()
+                            .map(|b| b.type_.as_ref().clone())
+                            .collect(),
+                    ));
+                    let pat = Pat::Tuple(tuple_type, pats);
+                    self.compile_pat(cx, &pat)
+                };
+
+                RowSinkFactory::new(move || {
+                    Box::new(UnionRowSink::new(
+                        distinct,
+                        pat_code.clone(),
+                        codes.clone(),
                         next_factory.create(),
                     ))
                 })
