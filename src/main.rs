@@ -44,8 +44,23 @@ fn main() {
         }
     }
 
+    // Check if we're executing a single command with -c
+    if args.len() > 2 && args[1] == "-c" {
+        let command = &args[2];
+        let mut main = ShellMain::new(&[]);
+        match main.run_command(command, stdout()) {
+            Ok(()) => {
+                exit(0);
+            }
+            Err(e) => {
+                eprintln!("Error executing command: {}", e);
+                exit(1);
+            }
+        }
+    }
+
     // Check if we're running a specific file
-    if args.len() > 1 && args[1] != "--" && !args[1].starts_with("--") {
+    if args.len() > 1 && args[1] != "--" && !args[1].starts_with("--") && args[1] != "-c" {
         let file_path = &args[1];
         let shell_args = args[2..].to_vec();
 

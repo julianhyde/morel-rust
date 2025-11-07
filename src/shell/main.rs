@@ -506,6 +506,22 @@ impl Shell {
         self.run(cursor, output)
     }
 
+    /// Executes a single command and writes the output.
+    pub fn run_command<W: Write>(
+        &mut self,
+        command: &str,
+        mut output: W,
+    ) -> ShellResult<()> {
+        // Remove trailing semicolon if present (process_statement
+        // expects input without the semicolon).
+        let command_without_semicolon = command.trim_end().strip_suffix(';')
+            .unwrap_or(command.trim_end());
+
+        let result = self.process_statement(command_without_semicolon, None)?;
+        write!(output, "{}", result)?;
+        Ok(())
+    }
+
     /// Returns the current environment.
     pub fn environment(&self) -> &Environment {
         &self.environment

@@ -22,10 +22,8 @@ from i in [1, 2, 3] yield i;
 from i in [1, 2, 3] where i > 1;
 > val it = [2,3] : int list
 
-(*
-from i in [1, 2, 3] where i > 1 yield i;
-> val it = [1,2,3] : int list
-*)
+from i in [1, 2, 3] where i > 1 yield i - 5;
+> val it = [~3,~2] : int list
 
 set("mode", "validate");
 > val it = () : unit
