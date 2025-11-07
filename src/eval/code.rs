@@ -31,6 +31,7 @@ use crate::eval::option::Opt;
 use crate::eval::order::Order;
 use crate::eval::real::Real;
 use crate::eval::relational::Relational;
+use crate::eval::row_sink::RowSink;
 use crate::eval::session::Session;
 use crate::eval::string::Str;
 use crate::eval::val::Val;
@@ -88,21 +89,16 @@ pub enum Effect {
 
 /// Factory for creating row sink pipelines.
 /// Wraps a function pointer to allow Clone/PartialEq/Debug on the Code enum.
-pub struct RowSinkFactory(
-    Arc<dyn Fn() -> Box<dyn crate::eval::row_sink::RowSink> + Send + Sync>,
-);
+pub struct RowSinkFactory(Arc<dyn Fn() -> Box<dyn RowSink> + Send + Sync>);
 
 impl RowSinkFactory {
     pub fn new(
-        f: impl Fn() -> Box<dyn crate::eval::row_sink::RowSink>
-        + Send
-        + Sync
-        + 'static,
+        f: impl Fn() -> Box<dyn RowSink> + Send + Sync + 'static,
     ) -> Self {
         Self(Arc::new(f))
     }
 
-    pub fn create(&self) -> Box<dyn crate::eval::row_sink::RowSink> {
+    pub fn create(&self) -> Box<dyn RowSink> {
         (self.0)()
     }
 }
@@ -182,7 +178,7 @@ pub enum Code {
 
     /// `FromRowSink(factory)` evaluates a query using push-based row sinks.
     /// The factory creates a fresh row sink pipeline for each evaluation.
-    /// This matches the Java implementation: Supplier<RowSink>.
+    /// This matches the Java implementation, `Supplier<RowSink>`.
     FromRowSink(RowSinkFactory),
 
     /// `GetLocal(frame_def, slot)` returns the value of the `slot`th variable
@@ -1413,7 +1409,7 @@ impl Eager1 {
             RelationalNonEmpty => Val::Bool(!a0.expect_list().is_empty()),
             RelationalOnly => Relational::only(a0.expect_list()),
             RelationalSum => {
-                Val::Int(a0.expect_list().iter().map(Val::expect_int).sum())
+                Val::Int(a0.expect_list().iter().map(|v| v.expect_int()).sum())
             }
             StringConcat => {
                 let strings = a0.expect_list();

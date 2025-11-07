@@ -474,9 +474,25 @@ impl FromBuilder {
     }
 
     fn compute_result_type(&self) -> Result<Type, Error> {
-        // TODO: Properly compute the result type based on steps.
-        // For now, return a placeholder.
-        Ok(Type::Primitive(crate::compile::types::PrimitiveType::Unit))
+        use std::collections::BTreeMap;
+        use crate::compile::types::Label;
+
+        // The element type is the type of each element in the result list.
+        // If we have a single binding that matches the atom flag, use its type.
+        // Otherwise, create a record type from all bindings.
+        let env = self.step_env();
+        if env.bindings.len() == 1 && env.atom {
+            // Single scalar binding - element type is that binding's type.
+            Ok(*env.bindings[0].type_.clone())
+        } else {
+            // Multiple bindings or non-atom - element type is a record.
+            let fields: BTreeMap<Label, Type> = env
+                .bindings
+                .iter()
+                .map(|b| (Label::String(b.id.name.clone()), *b.type_.clone()))
+                .collect();
+            Ok(Type::Record(false, fields))
+        }
     }
 }
 
@@ -501,6 +517,7 @@ impl fmt::Display for FromBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compile::types::PrimitiveType;
 
     #[test]
     fn test_new_builder() {
@@ -525,9 +542,7 @@ mod tests {
         let mut builder = FromBuilder::new();
         let initial_len = builder.steps.len();
         builder.where_(Expr::Literal(
-            Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Bool,
-            )),
+            Box::new(Type::Primitive(PrimitiveType::Bool)),
             Val::Bool(true),
         ));
         // "where true" should be skipped
@@ -539,9 +554,7 @@ mod tests {
         let mut builder = FromBuilder::new();
         let initial_len = builder.steps.len();
         builder.skip(Expr::Literal(
-            Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )),
+            Box::new(Type::Primitive(PrimitiveType::Int)),
             Val::Int(0),
         ));
         // "skip 0" should be skipped
@@ -565,15 +578,11 @@ mod tests {
         use crate::compile::type_env::Id;
         let mut builder = FromBuilder::new();
         let pat = Pat::Identifier(
-            Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )),
+            Box::new(Type::Primitive(PrimitiveType::Int)),
             "x".to_string(),
         );
         let exp = Expr::List(
-            Box::new(Type::List(Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )))),
+            Box::new(Type::List(Box::new(Type::Primitive(PrimitiveType::Int)))),
             vec![],
         );
         builder.scan(pat, exp);
@@ -587,9 +596,7 @@ mod tests {
     fn test_group_added() {
         let mut builder = FromBuilder::new();
         let key_expr = Expr::Literal(
-            Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )),
+            Box::new(Type::Primitive(PrimitiveType::Int)),
             Val::Int(1),
         );
         let initial_len = builder.steps.len();
@@ -619,15 +626,11 @@ mod tests {
 
         // Add a binding first via scan
         let pat = Pat::Identifier(
-            Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )),
+            Box::new(Type::Primitive(PrimitiveType::Int)),
             "x".to_string(),
         );
         let exp = Expr::List(
-            Box::new(Type::List(Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )))),
+            Box::new(Type::List(Box::new(Type::Primitive(PrimitiveType::Int)))),
             vec![],
         );
         builder.scan(pat, exp);
@@ -635,9 +638,7 @@ mod tests {
         // Now try to yield x (should be skipped as trivial)
         let initial_len = builder.steps.len();
         builder.yield_(Expr::Identifier(
-            Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )),
+            Box::new(Type::Primitive(PrimitiveType::Int)),
             "x".to_string(),
         ));
 
@@ -653,34 +654,24 @@ mod tests {
         // Add two bindings
         builder.bindings.push(Binding::new(
             Id::new("x", 0),
-            Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )),
+            Box::new(Type::Primitive(PrimitiveType::Int)),
         ));
         builder.bindings.push(Binding::new(
             Id::new("y", 0),
-            Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )),
+            Box::new(Type::Primitive(PrimitiveType::Int)),
         ));
 
         // Yield {x=x, y=y} should be skipped as identity
         let initial_len = builder.steps.len();
         builder.yield_(Expr::Tuple(
-            Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )),
+            Box::new(Type::Primitive(PrimitiveType::Int)),
             vec![
                 Expr::Identifier(
-                    Box::new(Type::Primitive(
-                        crate::compile::types::PrimitiveType::Int,
-                    )),
+                    Box::new(Type::Primitive(PrimitiveType::Int)),
                     "x".to_string(),
                 ),
                 Expr::Identifier(
-                    Box::new(Type::Primitive(
-                        crate::compile::types::PrimitiveType::Int,
-                    )),
+                    Box::new(Type::Primitive(PrimitiveType::Int)),
                     "y".to_string(),
                 ),
             ],
@@ -706,9 +697,7 @@ mod tests {
     fn test_order_adds_step() {
         let mut builder = FromBuilder::new();
         let expr = Expr::Literal(
-            Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )),
+            Box::new(Type::Primitive(PrimitiveType::Int)),
             Val::Int(1),
         );
         let initial_len = builder.steps.len();
@@ -724,9 +713,7 @@ mod tests {
     fn test_take_adds_step() {
         let mut builder = FromBuilder::new();
         let count = Expr::Literal(
-            Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )),
+            Box::new(Type::Primitive(PrimitiveType::Int)),
             Val::Int(10),
         );
         let initial_len = builder.steps.len();
@@ -743,15 +730,11 @@ mod tests {
         let mut builder = FromBuilder::new();
         // Add a scan step first (which sets ordered=true by default)
         let pat = Pat::Identifier(
-            Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )),
+            Box::new(Type::Primitive(PrimitiveType::Int)),
             "x".to_string(),
         );
         let exp = Expr::List(
-            Box::new(Type::List(Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )))),
+            Box::new(Type::List(Box::new(Type::Primitive(PrimitiveType::Int)))),
             vec![],
         );
         builder.scan(pat, exp);
@@ -770,29 +753,21 @@ mod tests {
 
         // Test that methods can be chained
         let pat = Pat::Identifier(
-            Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )),
+            Box::new(Type::Primitive(PrimitiveType::Int)),
             "x".to_string(),
         );
         let exp = Expr::List(
-            Box::new(Type::List(Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Int,
-            )))),
+            Box::new(Type::List(Box::new(Type::Primitive(PrimitiveType::Int)))),
             vec![],
         );
         let condition = Expr::Literal(
-            Box::new(Type::Primitive(
-                crate::compile::types::PrimitiveType::Bool,
-            )),
+            Box::new(Type::Primitive(PrimitiveType::Bool)),
             Val::Bool(true),
         );
 
         builder.scan(pat, exp).where_(condition).distinct().take(
             Expr::Literal(
-                Box::new(Type::Primitive(
-                    crate::compile::types::PrimitiveType::Int,
-                )),
+                Box::new(Type::Primitive(PrimitiveType::Int)),
                 Val::Int(5),
             ),
         );
