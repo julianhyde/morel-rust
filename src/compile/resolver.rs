@@ -21,6 +21,7 @@ use crate::compile::core::{
     Step as CoreStep, StepEnv, StepKind as CoreStepKind,
     TypeBind as CoreTypeBind, ValBind as CoreValBind,
 };
+use crate::compile::from_builder::FromBuilder;
 use crate::compile::inliner::Env;
 use crate::compile::library::BuiltInFunction;
 use crate::compile::type_resolver::{Resolved, TypeMap, Typed};
@@ -336,10 +337,7 @@ impl<'a> Resolver<'a> {
                 t,
                 steps.iter().map(|s| self.resolve_step(s)).collect(),
             ),
-            ExprKind::From(steps) => CoreExpr::From(
-                t,
-                steps.iter().map(|s| self.resolve_step(s)).collect(),
-            ),
+            ExprKind::From(steps) => self.resolve_from_query(steps),
             ExprKind::GreaterThan(a0, a1) => {
                 match a0.get_type(self.type_map).expect("type").as_ref() {
                     Type::Primitive(PrimitiveType::Int) => {
@@ -710,6 +708,59 @@ impl<'a> Resolver<'a> {
     }
 
     /// Resolves an AST step to a core step.
+    /// Resolves a From query using FromBuilder for optimization.
+    /// This is analogous to the Java FromResolver inner class.
+    fn resolve_from_query(&self, steps: &[AstStep]) -> CoreExpr {
+        let mut builder = FromBuilder::new();
+
+        for step in steps {
+            self.resolve_from_step(&mut builder, step);
+        }
+
+        builder
+            .build_simplify()
+            .expect("Failed to build From expression")
+    }
+
+    /// Resolves a single step in a From query, adding it to the FromBuilder.
+    fn resolve_from_step(&self, builder: &mut FromBuilder, step: &AstStep) {
+        match &step.kind {
+            AstStepKind::Scan(pat, expr, condition) => {
+                // Resolve the pattern and expression.
+                let resolved_pat = self.resolve_pat(pat);
+                let resolved_expr = self.resolve_expr(expr);
+
+                // Resolve the condition if present.
+                let resolved_condition =
+                    condition.as_ref().map(|c| self.resolve_expr(c));
+
+                // Add the scan step to the builder.
+                builder.scan_with_condition(
+                    resolved_pat,
+                    resolved_expr,
+                    resolved_condition,
+                );
+            }
+            AstStepKind::Where(expr) => {
+                let resolved_expr = self.resolve_expr(expr);
+                builder.where_(resolved_expr);
+            }
+            AstStepKind::Yield(expr) => {
+                let resolved_expr = self.resolve_expr(expr);
+                builder.yield_(resolved_expr);
+            }
+            AstStepKind::Order(expr) => {
+                let resolved_expr = self.resolve_expr(expr);
+                builder.order(resolved_expr);
+            }
+            _ => {
+                // For now, fall back to the old resolve_step for unsupported
+                // step types.
+                todo!("resolve_from_step: {:?}", step.kind)
+            }
+        }
+    }
+
     fn resolve_step(&self, step: &AstStep) -> CoreStep {
         let kind = match &step.kind {
             AstStepKind::Scan(pat, expr, condition) => {
