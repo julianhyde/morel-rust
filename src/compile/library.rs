@@ -776,6 +776,30 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Real", name = "unordered"))]
     #[strum(props(type = "real * real -> bool"))]
     RealUnordered,
+    #[strum(props(p = "Relational", name = "compare"))]
+    #[strum(props(type = "forall 1 'a * 'a -> `order`"))]
+    RelationalCompare,
+    #[strum(props(p = "Relational", name = "count", global = true))]
+    #[strum(props(type = "forall 1 'a list -> int"))]
+    RelationalCount,
+    #[strum(props(p = "Relational", name = "empty", global = true))]
+    #[strum(props(type = "forall 1 'a list -> bool"))]
+    RelationalEmpty,
+    #[strum(props(p = "Relational", name = "max", global = true))]
+    #[strum(props(type = "forall 1 'a list -> 'a", throws = "Empty"))]
+    RelationalMax,
+    #[strum(props(p = "Relational", name = "min", global = true))]
+    #[strum(props(type = "forall 1 'a list -> 'a", throws = "Empty"))]
+    RelationalMin,
+    #[strum(props(p = "Relational", name = "nonEmpty", global = true))]
+    #[strum(props(type = "forall 1 'a list -> bool"))]
+    RelationalNonEmpty,
+    #[strum(props(p = "Relational", name = "only", global = true))]
+    #[strum(props(type = "forall 1 'a list -> 'a", throws = "Empty"))]
+    RelationalOnly,
+    #[strum(props(p = "Relational", name = "sum", global = true))]
+    #[strum(props(type = "int list -> int"))]
+    RelationalSum,
     #[strum(props(p = "String", name = "^", alias = "op ^"))]
     #[strum(props(type = "string * string -> string"))]
     StringCaret,
