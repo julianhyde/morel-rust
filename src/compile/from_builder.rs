@@ -154,10 +154,7 @@ impl FromBuilder {
 
     /// Returns the environment available after the most recent step.
     pub fn step_env(&self) -> StepEnv {
-        let ordered = self
-            .steps
-            .last()
-            .is_none_or(|s| s.env.ordered);
+        let ordered = self.steps.last().is_none_or(|s| s.env.ordered);
         StepEnv::new(self.bindings.clone(), self.atom, ordered)
     }
 
@@ -463,7 +460,8 @@ impl FromBuilder {
         }
 
         // Simplification: "from v in list" -> "list".
-        if simplify && self.steps.len() == 1
+        if simplify
+            && self.steps.len() == 1
             && let StepKind::JoinIn(pat, exp, None) = &self.steps[0].kind
             && matches!(**pat, Pat::Identifier(_, _))
         {
