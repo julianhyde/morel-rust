@@ -98,7 +98,7 @@ FromBuilder constructs and optimizes `Core.From` expressions by:
 
 ## Phase 2: FromResolver Translation
 
-**Status**: ⏸️ Blocked - Requires AST infrastructure
+**Status**: ✅ Complete (Basic implementation)
 
 **Java Source**: `/Users/jhyde/dev/morel.2/src/main/java/net/hydromatic/morel/compile/Resolver.java` (FromResolver inner class, ~300 lines)
 
@@ -109,32 +109,49 @@ FromResolver is a visitor that:
 - Converts AST from expressions to Core representations
 - Handles pattern bindings in scan/join steps
 
-### Dependencies & Blockers
-**Blocked by**: Missing or incomplete foundational components:
-1. **AST Query Types** - Need complete Ast::Query, Ast::From, Ast::Scan, Ast::Where, etc.
-2. **Visitor Infrastructure** - Requires visitor pattern for AST traversal
-3. **Environment Management** - Need full Environment/TypeEnv integration
-4. **Pattern Conversion** - Requires toCore(pat) and toCore(expr) implementations
-5. **Type Mapping** - Needs typeMap integration for AST→Core type preservation
+### Implementation Complete
+**Key Insight from User**: The AST infrastructure was already complete! The blocker assessment was incorrect:
+- `ExprKind::From`, `ExprKind::Forall`, `ExprKind::Exists` already existed in ast.rs
+- `AstStepKind` enum already had all step types (Scan, Where, Yield, Order, etc.)
+- `resolve_pat` and `resolve_expr` methods already converted AST→Core
+- Just needed to use FromBuilder for optimization instead of direct step mapping
 
-### Why Skipped
-FromResolver is tightly integrated with:
-- AST node types that may not be fully implemented
-- Type resolution system (TypeResolver)
-- Existing Resolver infrastructure
-- AggregateResolver (Phase 3 dependency)
+### Changes Made (resolver.rs)
+1. Added `FromBuilder` import
+2. Replaced simple From handling with `resolve_from_query()` method
+3. Implemented `resolve_from_step()` to process each step type
+4. Uses FromBuilder's optimization methods
+5. All existing tests pass, including relational queries
 
-Implementing this without complete AST infrastructure would create incomplete/broken code.
+### Supported Step Types
+Currently implemented:
+- ✅ Scan (with optional condition via `scan_with_condition`)
+- ✅ Where
+- ✅ Yield
+- ✅ Order
 
-### Recommended Approach
-1. Complete AST query node definitions first
-2. Implement visitor pattern infrastructure
-3. Build out Environment/binding management
-4. Then implement FromResolver as part of unified resolver system
+Not yet implemented (will todo! if encountered):
+- Group, Compute, Skip, Take, Union, Except, Intersect, Through, etc.
+
+### Code Pattern
+```rust
+fn resolve_from_query(&self, steps: &[AstStep]) -> CoreExpr {
+    let mut builder = FromBuilder::new();
+    for step in steps {
+        self.resolve_from_step(&mut builder, step);
+    }
+    builder.build_simplify().expect("Failed to build From expression")
+}
+```
+
+### Benefits
+- Automatic query optimizations (removing trivial steps, etc.)
+- Cleaner separation between AST→Core conversion and optimization
+- Ready for future step type additions
 
 ## Phase 3: AggregateResolver Translation
 
-**Status**: ⏸️ Blocked - Depends on Phase 2
+**Status**: ⏸️ Deferred - Not yet needed (Phase 2 no longer blocks this)
 
 **Java Source**: `/Users/jhyde/dev/morel.2/src/main/java/net/hydromatic/morel/compile/Resolver.java` (AggregateResolverImpl, plus subclasses)
 
@@ -253,41 +270,44 @@ Pipeline-based execution model for queries:
   - Query optimizations (trivial yields, identity tuples, where true, skip 0)
   - Set operations with proper ordered flag handling
   - Comprehensive unit test coverage
+- ✅ **Phase 2: FromResolver** - Basic implementation complete
+  - Integrated FromBuilder into resolver.rs for From query optimization
+  - Supports Scan, Where, Yield, Order steps
+  - All existing tests pass
 - ✅ **Phase 4: StepEnv** - Completed as part of Phase 1 foundation
 
-### Blocked Phases (Require Foundational Work First)
-- ⏸️ **Phase 2: FromResolver** - Blocked by incomplete AST infrastructure
-- ⏸️ **Phase 3: AggregateResolver** - Blocked by Phase 2
-- ⏸️ **Phase 5: RowSink/Pipeline** - Deferred (lower priority)
+### Deferred Phases
+- ⏸️ **Phase 3: AggregateResolver** - Deferred (not yet needed for basic queries)
+- ⏸️ **Phase 5: RowSink/Pipeline** - Deferred (lower priority optimization)
 
 ### Recommended Next Steps
-To unblock query translation, prioritize foundational work:
+Now that Phases 1-2 are complete:
 
-1. **Complete AST Query Types**
-   - Define Ast::Query, Ast::From, Ast::Scan, Ast::Where, Ast::Yield, etc.
-   - Add Ast::Group, Ast::Compute for aggregation
-   - Implement complete query step AST nodes
+1. **Expand FromResolver Step Support** (As needed)
+   - Add support for additional step types when tests require them:
+     - Group, Compute (for aggregation)
+     - Skip, Take (for pagination)
+     - Union, Except, Intersect (for set operations)
+     - Through (for correlated subqueries)
+   - Each addition is straightforward: call corresponding FromBuilder method
 
-2. **Visitor Pattern Infrastructure**
-   - Create visitor trait for AST traversal
-   - Implement accept methods on AST nodes
+2. **Implement AggregateResolver** (Phase 3)
+   - Only needed when aggregate functions are required
+   - Group-by, count, sum, avg, etc.
+   - Can be added incrementally as tests demand
 
-3. **AST→Core Conversion**
-   - Implement toCore(pat) and toCore(expr) methods
-   - Build type mapping infrastructure
-   - Connect TypeResolver with Core expression generation
+3. **Consider RowSink/Pipeline** (Phase 5) - Optional Optimization
+   - Alternative to eager evaluation
+   - Streaming execution for large datasets
+   - Lower priority than correctness
 
-4. **Then Resume Query Translation**
-   - Implement FromResolver (Phase 2)
-   - Implement AggregateResolver (Phase 3)
-   - Consider RowSink/Pipeline (Phase 5) for optimization
-
-### What's Ready to Use Now
-The **FromBuilder** is production-ready and can be used whenever the AST→Core conversion infrastructure is complete. It provides:
+### What's Working Now
+The **FromBuilder + FromResolver** integration is production-ready:
 - Query construction with method chaining
-- Automatic optimizations
+- Automatic optimizations (trivial step removal, etc.)
 - Type-safe step building
-- Ready for integration with resolver/compiler pipeline
+- Integrated with resolver/compiler pipeline
+- All existing relational query tests pass
 
 ### Rust Design Decisions
 - Trait-based design: `trait RowSink<T>`
