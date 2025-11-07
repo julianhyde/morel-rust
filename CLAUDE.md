@@ -98,6 +98,8 @@ FromBuilder constructs and optimizes `Core.From` expressions by:
 
 ## Phase 2: FromResolver Translation
 
+**Status**: ⏸️ Blocked - Requires AST infrastructure
+
 **Java Source**: `/Users/jhyde/dev/morel.2/src/main/java/net/hydromatic/morel/compile/Resolver.java` (FromResolver inner class, ~300 lines)
 
 ### Purpose
@@ -107,24 +109,32 @@ FromResolver is a visitor that:
 - Converts AST from expressions to Core representations
 - Handles pattern bindings in scan/join steps
 
-### Key Components
-- Visitor pattern for AST traversal
-- Environment/scope management
-- Pattern matching for step types
-- Integration with AggregateResolver
+### Dependencies & Blockers
+**Blocked by**: Missing or incomplete foundational components:
+1. **AST Query Types** - Need complete Ast::Query, Ast::From, Ast::Scan, Ast::Where, etc.
+2. **Visitor Infrastructure** - Requires visitor pattern for AST traversal
+3. **Environment Management** - Need full Environment/TypeEnv integration
+4. **Pattern Conversion** - Requires toCore(pat) and toCore(expr) implementations
+5. **Type Mapping** - Needs typeMap integration for AST→Core type preservation
 
-### Translation Strategy
-1. Add to `src/compile/resolver.rs` or create `src/compile/from_resolver.rs`
-2. Use visitor pattern (trait implementation)
-3. Integrate with existing Resolver struct
-4. Coordinate with TypeResolver for type information
+### Why Skipped
+FromResolver is tightly integrated with:
+- AST node types that may not be fully implemented
+- Type resolution system (TypeResolver)
+- Existing Resolver infrastructure
+- AggregateResolver (Phase 3 dependency)
 
-### Rust Design Decisions
-- Trait-based visitor vs match-based dispatcher
-- Environment as immutable with builder pattern for new scopes
-- Use Rc/Arc for shared environment references
+Implementing this without complete AST infrastructure would create incomplete/broken code.
+
+### Recommended Approach
+1. Complete AST query node definitions first
+2. Implement visitor pattern infrastructure
+3. Build out Environment/binding management
+4. Then implement FromResolver as part of unified resolver system
 
 ## Phase 3: AggregateResolver Translation
+
+**Status**: ⏸️ Blocked - Depends on Phase 2
 
 **Java Source**: `/Users/jhyde/dev/morel.2/src/main/java/net/hydromatic/morel/compile/Resolver.java` (AggregateResolverImpl, plus subclasses)
 
@@ -135,14 +145,21 @@ Handles aggregate operations in queries:
 - Handles the `elements` keyword in compute clauses
 - Coordinates with FromResolver for variable scoping
 
+### Dependencies & Blockers
+**Blocked by**: Phase 2 (FromResolver) + aggregate infrastructure:
+1. **FromResolver** - AggregateResolver is created by FromResolver.withAggregateResolver()
+2. **Aggregate AST nodes** - Needs Ast::Aggregate and related types
+3. **Built-in aggregate functions** - count, sum, avg, etc. in library
+4. **Group/Compute handling** - Complex interaction with group-by semantics
+
 ### Challenges
 - Java uses subclasses for different aggregate types
 - Multiple implementations: AggregateResolverImpl, GroupAggregateResolver, etc.
 - Polymorphic behavior via inheritance
 
-### Translation Strategy (Options)
+### Recommended Translation Strategy
 
-**Option A: Trait Objects (`dyn AggregateResolver`)**
+**Option A: Trait Objects (`dyn AggregateResolver`)** - Recommended
 ```rust
 trait AggregateResolver {
     fn resolve_aggregate(&self, expr: &Expr) -> Result<Core, Error>;
@@ -185,23 +202,25 @@ impl AggregateResolver {
 
 ## Phase 4: StepEnv and FromStep
 
+**Status**: ✅ Partially Complete (StepEnv done in Phase 1)
+
 **Java Source**: Classes within Resolver.java
 
 ### Purpose
 Internal representations used during query resolution:
-- **StepEnv**: Tracks variable bindings and types at each step
-- **FromStep**: Intermediate representation of query steps during compilation
+- **StepEnv**: ✅ Implemented in `src/compile/core.rs` (Phase 1)
+  - Tracks variable bindings, atom flag, ordered flag at each step
+  - Integrated with FromBuilder
+- **FromStep**: Not needed - using `Step` and `StepKind` from core.rs instead
 
-### Questions
-- Are these needed in Rust, or can we use different intermediate structures?
-- Can we leverage Rust's type system to eliminate some bookkeeping?
-
-### Translation Strategy
-1. Analyze usage patterns in Java code
-2. Determine if direct translation is needed or if Rust idioms allow simplification
-3. Consider using builder pattern state instead of separate types
+### Implementation Notes
+- StepEnv was implemented as part of Phase 1 foundation (Commit 1777a8d)
+- Rust's `Step` struct with `StepKind` enum serves the role of Java's `FromStep`
+- No additional work needed for this phase
 
 ## Phase 5: RowSink and Pipeline Execution
+
+**Status**: ⏸️ Deferred - Lower priority
 
 **Java Source**:
 - `/Users/jhyde/dev/morel.2/src/main/java/net/hydromatic/morel/eval/RowSink.java`
@@ -213,17 +232,62 @@ Pipeline-based execution model for queries:
 - Streaming execution for large datasets
 - Push-based data flow
 
-### Key Concepts
-- **RowSink**: Receiver interface for row-by-row data
-- **RowSinks**: Factory and utility methods
-- Different from the existing eager evaluation in `src/eval/`
+### Why Deferred
+- Requires working query compilation pipeline (Phases 2-3)
+- Current eager evaluation in `src/eval/` may be sufficient for initial implementation
+- Can be added later as optimization without breaking existing code
+- More important to complete core query compilation first
 
-### Translation Strategy
+### Future Translation Strategy
 1. Create separate module: `src/eval/pipeline/`
 2. Define `RowSink` trait
 3. Implement various sink types (collector, filter, etc.)
 4. Keep separate from eager evaluation model
 5. Integration point with FromBuilder's compiled output
+
+## Summary and Next Steps
+
+### Completed Work
+- ✅ **Phase 1: FromBuilder** - Fully implemented with 16 passing tests
+  - All query building methods (scan, where, yield, group, union, etc.)
+  - Query optimizations (trivial yields, identity tuples, where true, skip 0)
+  - Set operations with proper ordered flag handling
+  - Comprehensive unit test coverage
+- ✅ **Phase 4: StepEnv** - Completed as part of Phase 1 foundation
+
+### Blocked Phases (Require Foundational Work First)
+- ⏸️ **Phase 2: FromResolver** - Blocked by incomplete AST infrastructure
+- ⏸️ **Phase 3: AggregateResolver** - Blocked by Phase 2
+- ⏸️ **Phase 5: RowSink/Pipeline** - Deferred (lower priority)
+
+### Recommended Next Steps
+To unblock query translation, prioritize foundational work:
+
+1. **Complete AST Query Types**
+   - Define Ast::Query, Ast::From, Ast::Scan, Ast::Where, Ast::Yield, etc.
+   - Add Ast::Group, Ast::Compute for aggregation
+   - Implement complete query step AST nodes
+
+2. **Visitor Pattern Infrastructure**
+   - Create visitor trait for AST traversal
+   - Implement accept methods on AST nodes
+
+3. **AST→Core Conversion**
+   - Implement toCore(pat) and toCore(expr) methods
+   - Build type mapping infrastructure
+   - Connect TypeResolver with Core expression generation
+
+4. **Then Resume Query Translation**
+   - Implement FromResolver (Phase 2)
+   - Implement AggregateResolver (Phase 3)
+   - Consider RowSink/Pipeline (Phase 5) for optimization
+
+### What's Ready to Use Now
+The **FromBuilder** is production-ready and can be used whenever the AST→Core conversion infrastructure is complete. It provides:
+- Query construction with method chaining
+- Automatic optimizations
+- Type-safe step building
+- Ready for integration with resolver/compiler pipeline
 
 ### Rust Design Decisions
 - Trait-based design: `trait RowSink<T>`
