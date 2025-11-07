@@ -26,8 +26,34 @@ mod shell;
 mod syntax;
 mod unify;
 
+fn print_help() {
+    println!("morel-rust version {}", env!("CARGO_PKG_VERSION"));
+    println!();
+    println!("Usage: morel [OPTIONS] [FILE] [ARGS...]");
+    println!();
+    println!("Options:");
+    println!("  -h, --help       Print this help message and exit");
+    println!("  -c COMMAND       Execute a single command and exit");
+    println!();
+    println!("Arguments:");
+    println!("  FILE             Run the specified morel script file");
+    println!("  ARGS...          Additional arguments passed to the script");
+    println!();
+    println!("Examples:");
+    println!("  morel                     Start interactive REPL");
+    println!("  morel -c \"1 + 2\"          Execute a single command");
+    println!("  morel script.smli         Run a script file");
+    println!("  morel test [files...]     Run script tests");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+
+    // Check for help flag
+    if args.len() > 1 && (args[1] == "-h" || args[1] == "--help") {
+        print_help();
+        exit(0);
+    }
 
     // Check if we're running script tests
     if args.len() > 1 && args[1] == "test" {
