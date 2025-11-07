@@ -4167,7 +4167,12 @@ List.map (fn x => (x, Real.toString x))
 
 (* Relational -------------------------------------------------- *)
 Relational;
-> val it = {DESC=fn} : {DESC:'a -> 'a descending}
+> val it =
+>   {DESC=fn,compare=fn,count=fn,empty=fn,max=fn,min=fn,nonEmpty=fn,only=fn,
+>    sum=fn}
+>   : {DESC:'a -> 'a descending, compare:'b * 'b -> order, count:'c list -> int,
+>      empty:'d list -> bool, max:'e list -> 'e, min:'f list -> 'f,
+>      nonEmpty:'g list -> bool, only:'h list -> 'h, sum:int list -> int}
 
 (* Descending:
      datatype descending = DESC of 'a
