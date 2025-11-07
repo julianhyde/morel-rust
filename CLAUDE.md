@@ -86,7 +86,15 @@ FromBuilder constructs and optimizes `Core.From` expressions by:
   - Skips non-singleton identity tuples like "yield {x=x, y=y}"
   - Marks singleton identity tuples as useless-if-not-last
 - ✅ 2 additional unit tests for yield optimization (10 total, all passing)
-- 🎯 Next: Translate FromBuilderTest.java tests or move to Phase 2
+
+#### 2025-01-06: Comprehensive Unit Tests (Commit 2f6749a)
+- ✅ Added 6 additional unit tests (16 total, all passing):
+  - distinct, order, take, intersect step addition
+  - unorder idempotency
+  - method chaining
+- ✅ Fixed bug in unorder() method to properly set ordered=false
+- ✅ **Phase 1 Complete** - FromBuilder fully implemented with comprehensive tests
+- 🎯 Next: Move to Phase 2 (FromResolver Translation)
 
 ## Phase 2: FromResolver Translation
 
