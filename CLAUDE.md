@@ -76,7 +76,17 @@ FromBuilder constructs and optimizes `Core.From` expressions by:
 - ✅ Added scan() and scan_with_condition() for pattern binding
 - ✅ Added is_list_type() helper function
 - ✅ 4 additional comprehensive unit tests (8 total, all passing)
-- 🎯 Next: Add helper methods and implement yield optimization logic
+
+#### 2025-01-06: Yield Optimization (Commit da0a8bc)
+- ✅ Added TupleType enum (Identity, Rename, Other) for tuple classification
+- ✅ Implemented tuple_type() helper to analyze tuple expressions
+- ✅ Implemented is_trivial() helper to check for identity mappings
+- ✅ Enhanced yield_() method with comprehensive optimization logic:
+  - Skips trivial singleton yields like "yield x"
+  - Skips non-singleton identity tuples like "yield {x=x, y=y}"
+  - Marks singleton identity tuples as useless-if-not-last
+- ✅ 2 additional unit tests for yield optimization (10 total, all passing)
+- 🎯 Next: Translate FromBuilderTest.java tests or move to Phase 2
 
 ## Phase 2: FromResolver Translation
 
