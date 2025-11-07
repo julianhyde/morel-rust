@@ -786,19 +786,13 @@ impl<'a> Compiler<'a> {
                     .collect();
                 let distinct = *distinct;
 
-                // Get the slot indices for the bindings that union items should
-                // be assigned to. For "from i in [1,2,3] union [2,3]", we need
-                // to find the slot for variable i.
-                let slots: Vec<usize> = step_env
-                    .bindings
-                    .iter()
-                    .map(|b| cx.frame_def.var_index(&b.id.name))
-                    .collect();
+                // Union bindings occupy consecutive slots 0..slot_count in the frame.
+                let slot_count = step_env.bindings.len();
 
                 RowSinkFactory::new(move || {
                     Box::new(UnionRowSink::new(
                         distinct,
-                        slots.clone(),
+                        slot_count,
                         codes.clone(),
                         next_factory.create(),
                     ))
