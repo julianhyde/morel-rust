@@ -438,6 +438,302 @@ impl RowSink for OrderRowSink {
     }
 }
 
+/// Implementation of RowSink for a skip step.
+///
+/// Skips the first N rows and passes the rest downstream.
+pub struct SkipRowSink {
+    skip_code: Code,
+    row_sink: Box<dyn RowSink>,
+    remaining: i32,
+}
+
+impl SkipRowSink {
+    pub fn new(skip_code: Code, row_sink: Box<dyn RowSink>) -> Self {
+        Self {
+            skip_code,
+            row_sink,
+            remaining: 0,
+        }
+    }
+}
+
+impl RowSink for SkipRowSink {
+    fn start(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        // Evaluate the skip count.
+        let skip_val = self.skip_code.eval_f0(r, f)?;
+        self.remaining = skip_val.expect_int();
+        self.row_sink.start(r, f)
+    }
+
+    fn accept(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        if self.remaining > 0 {
+            self.remaining -= 1;
+        } else {
+            self.row_sink.accept(r, f)?;
+        }
+        Ok(())
+    }
+
+    fn result(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<Val, MorelError> {
+        self.row_sink.result(r, f)
+    }
+}
+
+/// Implementation of RowSink for a take step.
+///
+/// Takes the first N rows and ignores the rest.
+pub struct TakeRowSink {
+    take_code: Code,
+    row_sink: Box<dyn RowSink>,
+    remaining: i32,
+}
+
+impl TakeRowSink {
+    pub fn new(take_code: Code, row_sink: Box<dyn RowSink>) -> Self {
+        Self {
+            take_code,
+            row_sink,
+            remaining: 0,
+        }
+    }
+}
+
+impl RowSink for TakeRowSink {
+    fn start(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        // Evaluate the take count.
+        let take_val = self.take_code.eval_f0(r, f)?;
+        self.remaining = take_val.expect_int();
+        self.row_sink.start(r, f)
+    }
+
+    fn accept(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        if self.remaining > 0 {
+            self.remaining -= 1;
+            self.row_sink.accept(r, f)?;
+        }
+        Ok(())
+    }
+
+    fn result(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<Val, MorelError> {
+        self.row_sink.result(r, f)
+    }
+}
+
+/// Implementation of RowSink for an intersect step.
+///
+/// Computes the intersection of the upstream collection with additional
+/// collections.
+pub struct IntersectRowSink {
+    slot_count: usize,
+    codes: Vec<Code>,
+    row_sink: Box<dyn RowSink>,
+    seen: Vec<Val>,
+}
+
+impl IntersectRowSink {
+    pub fn new(
+        slot_count: usize,
+        codes: Vec<Code>,
+        row_sink: Box<dyn RowSink>,
+    ) -> Self {
+        Self {
+            slot_count,
+            codes,
+            row_sink,
+            seen: Vec::new(),
+        }
+    }
+}
+
+impl RowSink for IntersectRowSink {
+    fn start(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        self.seen.clear();
+        self.row_sink.start(r, f)
+    }
+
+    fn accept(
+        &mut self,
+        _r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        // Collect the current row value.
+        let row_val = if self.slot_count == 1 {
+            f.vals[0].clone()
+        } else {
+            Val::List(f.vals[0..self.slot_count].to_vec())
+        };
+        self.seen.push(row_val);
+        Ok(())
+    }
+
+    fn result(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<Val, MorelError> {
+        // For each collection on the right, we need to limit the
+        // multiplicities. For example: [3,2,1,3,2] intersect [2,3,2,4]
+        // should return [3,2,2] (3 once, 2 twice).
+        let codes = self.codes.clone();
+        for code in &codes {
+            let collection = code.eval_f0(r, f)?;
+            let items_slice = collection.expect_list();
+            let mut items = items_slice.to_vec();
+
+            // Filter seen to only include items that appear in the right
+            // collection, respecting multiplicity. We consume from items
+            // as we match.
+            let mut new_seen = Vec::new();
+            for val in &self.seen {
+                // Find and consume one occurrence of val from items.
+                if let Some(pos) = items.iter().position(|item| item == val) {
+                    new_seen.push(val.clone());
+                    items.remove(pos);
+                }
+            }
+            self.seen = new_seen;
+        }
+
+        // Pass the remaining items downstream.
+        for item in &self.seen {
+            if self.slot_count == 1 {
+                f.vals[0] = item.clone();
+            } else {
+                let tuple_items = item.expect_list();
+                f.vals[..self.slot_count]
+                    .clone_from_slice(&tuple_items[..self.slot_count]);
+            }
+            self.row_sink.accept(r, f)?;
+        }
+        self.row_sink.result(r, f)
+    }
+}
+
+/// Implementation of RowSink for an except step.
+///
+/// Removes elements from the upstream collection that appear in additional
+/// collections.
+pub struct ExceptRowSink {
+    slot_count: usize,
+    codes: Vec<Code>,
+    row_sink: Box<dyn RowSink>,
+    seen: Vec<Val>,
+}
+
+impl ExceptRowSink {
+    pub fn new(
+        slot_count: usize,
+        codes: Vec<Code>,
+        row_sink: Box<dyn RowSink>,
+    ) -> Self {
+        Self {
+            slot_count,
+            codes,
+            row_sink,
+            seen: Vec::new(),
+        }
+    }
+}
+
+impl RowSink for ExceptRowSink {
+    fn start(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        self.seen.clear();
+        self.row_sink.start(r, f)
+    }
+
+    fn accept(
+        &mut self,
+        _r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        // Collect the current row value.
+        let row_val = if self.slot_count == 1 {
+            f.vals[0].clone()
+        } else {
+            Val::List(f.vals[0..self.slot_count].to_vec())
+        };
+        self.seen.push(row_val);
+        Ok(())
+    }
+
+    fn result(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<Val, MorelError> {
+        // For except, we need to respect multiplicities. For example:
+        // [1,2,3,4,5,1,5,1,2] except [2,4] should return [1,3,5,1,5,1,2]
+        // (2 appears twice on left, once on right, so output once).
+        let codes = self.codes.clone();
+        for code in &codes {
+            let collection = code.eval_f0(r, f)?;
+            let items_slice = collection.expect_list();
+            let mut items = items_slice.to_vec();
+
+            // Remove items from seen that match items in the except list.
+            // We consume from items as we match to respect multiplicity.
+            let mut new_seen = Vec::new();
+            for val in &self.seen {
+                // Try to find and consume one occurrence from the exclude list.
+                if let Some(pos) = items.iter().position(|item| item == val) {
+                    items.remove(pos);
+                    // Item was in except list, so skip it (don't add to
+                    // new_seen).
+                } else {
+                    // Item was NOT in except list, so keep it.
+                    new_seen.push(val.clone());
+                }
+            }
+            self.seen = new_seen;
+        }
+
+        // Pass the remaining items downstream.
+        for item in &self.seen {
+            if self.slot_count == 1 {
+                f.vals[0] = item.clone();
+            } else {
+                let tuple_items = item.expect_list();
+                f.vals[..self.slot_count]
+                    .clone_from_slice(&tuple_items[..self.slot_count]);
+            }
+            self.row_sink.accept(r, f)?;
+        }
+        self.row_sink.result(r, f)
+    }
+}
+
 /// Implementation of RowSink for a distinct step.
 ///
 /// Filters out duplicate rows, passing only the first occurrence of each

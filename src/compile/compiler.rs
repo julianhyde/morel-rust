@@ -712,8 +712,9 @@ impl<'a> Compiler<'a> {
         element_type: &Type,
     ) -> RowSinkFactory {
         use crate::eval::row_sink::{
-            CollectRowSink, DistinctRowSink, OrderRowSink, ScanRowSink,
-            UnionRowSink, WhereRowSink,
+            CollectRowSink, DistinctRowSink, ExceptRowSink, IntersectRowSink,
+            OrderRowSink, ScanRowSink, SkipRowSink, TakeRowSink, UnionRowSink,
+            WhereRowSink,
         };
 
         if steps.is_empty() {
@@ -855,6 +856,109 @@ impl<'a> Compiler<'a> {
                         order_code.clone(),
                         comparator.clone(),
                         slot_count,
+                        next_factory.create(),
+                    ))
+                })
+            }
+            StepKind::Skip(expr) => {
+                let next_factory = self.create_row_sink_factory(
+                    cx,
+                    &first_step.env,
+                    &steps[1..],
+                    element_type,
+                );
+                let skip_code = self.compile_expr(cx, None, expr);
+                RowSinkFactory::new(move || {
+                    Box::new(SkipRowSink::new(
+                        skip_code.clone(),
+                        next_factory.create(),
+                    ))
+                })
+            }
+            StepKind::Take(expr) => {
+                let next_factory = self.create_row_sink_factory(
+                    cx,
+                    &first_step.env,
+                    &steps[1..],
+                    element_type,
+                );
+                let take_code = self.compile_expr(cx, None, expr);
+                RowSinkFactory::new(move || {
+                    Box::new(TakeRowSink::new(
+                        take_code.clone(),
+                        next_factory.create(),
+                    ))
+                })
+            }
+            StepKind::Intersect(distinct, exprs) => {
+                // If `intersect` has a `distinct` flag, insert a `Distinct`
+                // step after it.
+                let downstream_steps = if *distinct {
+                    // Create a Distinct step and append remaining steps.
+                    let mut new_steps = vec![Step::new(
+                        StepKind::Distinct,
+                        first_step.env.clone(),
+                    )];
+                    new_steps.extend_from_slice(&steps[1..]);
+                    new_steps
+                } else {
+                    steps[1..].to_vec()
+                };
+
+                let next_factory = self.create_row_sink_factory(
+                    cx,
+                    &first_step.env,
+                    &downstream_steps,
+                    element_type,
+                );
+
+                // Compile each intersect expression into code.
+                let codes: Vec<Code> = exprs
+                    .iter()
+                    .map(|expr| self.compile_expr(cx, None, expr))
+                    .collect();
+                let slot_count = step_env.bindings.len();
+
+                RowSinkFactory::new(move || {
+                    Box::new(IntersectRowSink::new(
+                        slot_count,
+                        codes.clone(),
+                        next_factory.create(),
+                    ))
+                })
+            }
+            StepKind::Except(distinct, exprs) => {
+                // If except has distinct flag, insert Distinct step after it.
+                let downstream_steps = if *distinct {
+                    // Create a Distinct step and append remaining steps.
+                    let mut new_steps = vec![Step::new(
+                        StepKind::Distinct,
+                        first_step.env.clone(),
+                    )];
+                    new_steps.extend_from_slice(&steps[1..]);
+                    new_steps
+                } else {
+                    steps[1..].to_vec()
+                };
+
+                let next_factory = self.create_row_sink_factory(
+                    cx,
+                    &first_step.env,
+                    &downstream_steps,
+                    element_type,
+                );
+
+                // Compile each except expression into code.
+                let codes: Vec<Code> = exprs
+                    .iter()
+                    .map(|expr| self.compile_expr(cx, None, expr))
+                    .collect();
+                let slot_count = step_env.bindings.len();
+
+                RowSinkFactory::new(move || {
+                    Box::new(ExceptRowSink::new(
+                        slot_count,
+                        codes.clone(),
                         next_factory.create(),
                     ))
                 })
