@@ -45,6 +45,37 @@
 use crate::eval::code::{Code, EvalEnv, Frame};
 use crate::eval::val::Val;
 use crate::shell::main::MorelError;
+use std::cmp::Ordering;
+
+/// Compares two Val instances for ordering.
+///
+/// This is used by OrderRowSink to sort rows. We implement comparison
+/// for the common comparable types (Int, Real, String, Char, Bool).
+fn compare_vals(a: &Val, b: &Val) -> Ordering {
+    use Val::{Bool, Char, Int, List, Real, String};
+    match (a, b) {
+        (Int(x), Int(y)) => x.cmp(y),
+        (Real(x), Real(y)) => {
+            // f32 doesn't implement Ord, so use partial_cmp.
+            x.partial_cmp(y).unwrap_or(Ordering::Equal)
+        }
+        (String(x), String(y)) => x.cmp(y),
+        (Char(x), Char(y)) => x.cmp(y),
+        (Bool(x), Bool(y)) => x.cmp(y),
+        (List(xs), List(ys)) => {
+            // Lexicographic ordering for lists (tuples).
+            for (x, y) in xs.iter().zip(ys.iter()) {
+                match compare_vals(x, y) {
+                    Ordering::Equal => continue,
+                    other => return other,
+                }
+            }
+            xs.len().cmp(&ys.len())
+        }
+        // For non-comparable types or mixed types, use Equal (stable sort).
+        _ => Ordering::Equal,
+    }
+}
 
 /// Accepts rows produced by a supplier as part of a `from` step.
 ///
@@ -116,18 +147,35 @@ impl RowSink for ScanRowSink {
         r: &mut EvalEnv,
         f: &mut Frame,
     ) -> Result<(), MorelError> {
-        // Evaluate the collection to iterate over
+        // Evaluate the collection to iterate over in the current environment.
+        // This is key for joins: each time accept() is called, we iterate
+        // the collection in the context of the current row from upstream.
+        //
+        // For example, in
+        //   "from e in emps, d in depts where e.deptno = d.deptno":
+        // - The first ScanRowSink iterates over emps, binds each to 'e'.
+        // - For each employee, the second ScanRowSink (downstream)
+        //   evaluates depts (which may reference 'e') and iterates,
+        //   binding each dept to 'd'.
+        // - This creates a nested loop = cross join.
         let collection = self.collection_code.eval_f0(r, f)?;
         let items = collection.expect_list();
 
-        // Iterate over elements
+        // Iterate over elements in the collection.
+        // For each element, we:
+        // 1. Bind it to the pattern (updates frame slots in place).
+        // 2. Evaluate the condition.
+        // 3. If true, pass the current frame state downstream.
         for item in items {
-            // Try to bind the pattern to this item
+            // Try to bind the pattern to this item.
+            // BindSlot will write to f.vals[slot] = item.
             let matched = self.pat_code.eval_f1(r, f, item)?;
             if matched.expect_bool() {
-                // Evaluate condition
+                // Evaluate the condition in the extended environment.
                 let condition = self.condition_code.eval_f0(r, f)?;
                 if condition.expect_bool() {
+                    // Pass this row downstream. The downstream sink will see
+                    // all bindings from upstream plus our new binding.
                     self.row_sink.accept(r, f)?;
                 }
             }
@@ -304,6 +352,112 @@ impl RowSink for CollectRowSink {
         _f: &mut Frame,
     ) -> Result<Val, MorelError> {
         Ok(Val::List(self.list.clone()))
+    }
+}
+
+/// Implementation of RowSink for an order step.
+///
+/// Accumulates all rows during accept(), then sorts them in result()
+/// based on evaluating an order expression, and passes them downstream
+/// in sorted order.
+pub struct OrderRowSink {
+    order_code: Code,
+    slot_count: usize,
+    row_sink: Box<dyn RowSink>,
+    rows: Vec<Val>,
+}
+
+impl OrderRowSink {
+    pub fn new(
+        order_code: Code,
+        slot_count: usize,
+        row_sink: Box<dyn RowSink>,
+    ) -> Self {
+        Self {
+            order_code,
+            slot_count,
+            row_sink,
+            rows: Vec::new(),
+        }
+    }
+}
+
+impl RowSink for OrderRowSink {
+    fn start(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        self.rows.clear();
+        self.row_sink.start(r, f)
+    }
+
+    fn accept(
+        &mut self,
+        _r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        // Accumulate the current row for sorting later.
+        // Extract the current row value from the frame.
+        let row_val = if self.slot_count == 1 {
+            // Atom case: single binding.
+            f.vals[0].clone()
+        } else {
+            // Tuple case: create tuple from slots 0..slot_count.
+            Val::List(f.vals[0..self.slot_count].to_vec())
+        };
+        self.rows.push(row_val);
+        Ok(())
+    }
+
+    fn result(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<Val, MorelError> {
+        // Sort the accumulated rows.
+        // We need to evaluate the order expression for each row and
+        // compare. This is tricky because we need to restore the frame
+        // state for each comparison.
+
+        // Create tuples of (row_val, order_key) for stable sorting.
+        let mut rows_with_keys: Vec<(Val, Val)> = Vec::new();
+
+        for row in &self.rows {
+            // Restore the frame to this row's state.
+            if self.slot_count == 1 {
+                f.vals[0] = row.clone();
+            } else {
+                let items = row.expect_list();
+                f.vals[..self.slot_count]
+                    .clone_from_slice(&items[..self.slot_count]);
+            }
+
+            // Evaluate the order expression for this row.
+            let order_key = self.order_code.eval_f0(r, f)?;
+            rows_with_keys.push((row.clone(), order_key));
+        }
+
+        // Sort by the order keys.
+        rows_with_keys.sort_by(|a, b| {
+            // Compare the order keys (second element of the tuple).
+            compare_vals(&a.1, &b.1)
+        });
+
+        // Pass sorted rows downstream.
+        for (row, _key) in rows_with_keys {
+            // Restore the frame to this row.
+            if self.slot_count == 1 {
+                f.vals[0] = row;
+            } else {
+                let items = row.expect_list();
+                f.vals[..self.slot_count]
+                    .clone_from_slice(&items[..self.slot_count]);
+            }
+            self.row_sink.accept(r, f)?;
+        }
+
+        self.row_sink.result(r, f)
     }
 }
 

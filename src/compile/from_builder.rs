@@ -282,8 +282,17 @@ impl FromBuilder {
         let env = self.step_env();
         let mut useless_if_not_last = false;
 
-        // Determine if the expression is an atom (non-record).
-        let atom = !matches!(exp, Expr::Tuple(_, _));
+        // Determine if the result will be an atom (single scalar value) or
+        // a record. This depends on two factors:
+        // 1. The number of bindings must be exactly 1 for atom.
+        // 2. The yield expression must be non-tuple for atom.
+        //
+        // For example,
+        // - "from x in [1,2] yield x" -> atom=true (1 binding, non-tuple exp);
+        // - "from x in [1,2] yield {x=x}" -> atom=false (1 binding, tuple exp);
+        // - "from x in [1], y in [2] yield {x,y}" -> atom=false (2 bindings).
+        let is_tuple_expr = matches!(exp, Expr::Tuple(_, _));
+        let atom = self.bindings.len() == 1 && !is_tuple_expr;
 
         match &exp {
             Expr::Tuple(_, _) => {

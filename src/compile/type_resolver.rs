@@ -3086,8 +3086,9 @@ impl TypeResolver {
                     })
                     .collect();
 
-                // Check if labels are in alphabetical order, but only if the
-                // spans are in source order (meaning they haven't been
+                // Check if labels are in alphabetical order, but only if
+                // the spans are in source order (meaning they haven't
+                // been
                 // reordered yet).
                 if !labels_with_spans.is_empty() {
                     let label_strs: Vec<&str> = labels_with_spans
@@ -3100,17 +3101,18 @@ impl TypeResolver {
                         labels_with_spans.windows(2).all(|w| w[0].1 <= w[1].1);
 
                     if spans_in_order {
-                        // Only check alphabetical order if fields are still in
+                        // Only check alphabetical order if fields are
+                        // still in
                         // source order.
                         let mut sorted_labels = label_strs.clone();
                         sorted_labels.sort();
 
                         if label_strs != sorted_labels {
-                            let message =
-                                "Sorting on a record whose fields are not in \
-                                 alphabetical order. Sort order may not be \
-                                 what you expect."
-                                    .to_string();
+                            let message = "Sorting on a record whose \
+                                           fields are not in alphabetical \
+                                           order. Sort order may not be \
+                                           what you expect."
+                                .to_string();
                             self.warnings.push(Warning {
                                 span: expr.span.clone(),
                                 message,

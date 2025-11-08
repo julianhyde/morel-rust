@@ -710,8 +710,8 @@ impl<'a> Compiler<'a> {
         element_type: &Type,
     ) -> RowSinkFactory {
         use crate::eval::row_sink::{
-            CollectRowSink, DistinctRowSink, ScanRowSink, UnionRowSink,
-            WhereRowSink,
+            CollectRowSink, DistinctRowSink, OrderRowSink, ScanRowSink,
+            UnionRowSink, WhereRowSink,
         };
 
         if steps.is_empty() {
@@ -734,7 +734,7 @@ impl<'a> Compiler<'a> {
                     Box::new(CollectRowSink::new(yield_code.clone()))
                 })
             }
-            StepKind::JoinIn(pat, expr, _cond) => {
+            StepKind::JoinIn(pat, expr, cond) => {
                 let next_factory = self.create_row_sink_factory(
                     cx,
                     &first_step.env,
@@ -743,10 +743,14 @@ impl<'a> Compiler<'a> {
                 );
                 let pat_code = self.compile_pat(cx, pat);
                 let expr_code = self.compile_expr(cx, None, expr);
-                let condition_code = Code::new_constant(
-                    &Type::Primitive(PrimitiveType::Bool),
-                    Val::Bool(true),
-                );
+                let condition_code = if let Some(condition_expr) = cond {
+                    self.compile_expr(cx, None, condition_expr)
+                } else {
+                    Code::new_constant(
+                        &Type::Primitive(PrimitiveType::Bool),
+                        Val::Bool(true),
+                    )
+                };
 
                 RowSinkFactory::new(move || {
                     Box::new(ScanRowSink::new(
@@ -822,6 +826,26 @@ impl<'a> Compiler<'a> {
 
                 RowSinkFactory::new(move || {
                     Box::new(DistinctRowSink::new(
+                        slot_count,
+                        next_factory.create(),
+                    ))
+                })
+            }
+            StepKind::Order(expr) => {
+                let next_factory = self.create_row_sink_factory(
+                    cx,
+                    &first_step.env,
+                    &steps[1..],
+                    element_type,
+                );
+
+                // Compile the order expression.
+                let order_code = self.compile_expr(cx, None, expr);
+                let slot_count = step_env.bindings.len();
+
+                RowSinkFactory::new(move || {
+                    Box::new(OrderRowSink::new(
+                        order_code.clone(),
                         slot_count,
                         next_factory.create(),
                     ))
