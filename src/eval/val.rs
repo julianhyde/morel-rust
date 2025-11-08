@@ -24,6 +24,7 @@ use crate::eval::code::{
 use crate::eval::frame::FrameDef;
 use crate::eval::order::Order;
 use crate::eval::real::Real;
+use crate::shell::main::MorelError;
 use crate::syntax::parser;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -196,7 +197,7 @@ impl Val {
         r: &mut EvalEnv,
         f: &mut Frame,
         arg: &Val,
-    ) -> Result<Val, crate::shell::main::MorelError> {
+    ) -> Result<Val, MorelError> {
         match self {
             Val::Code(code) => code.eval_f1(r, f, arg),
             Val::Closure(frame_def, matches, bound_vals) => {

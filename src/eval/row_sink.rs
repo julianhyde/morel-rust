@@ -194,42 +194,23 @@ impl RowSink for WhereRowSink {
 /// Implementation of RowSink for a union step.
 ///
 /// First accepts rows from upstream, then evaluates additional collections
-/// and passes their elements downstream. Supports distinct mode for
-/// deduplication.
+/// and passes their elements downstream.
 pub struct UnionRowSink {
-    distinct: bool,
     slot_count: usize,
     codes: Vec<Code>,
     row_sink: Box<dyn RowSink>,
-    seen: Vec<Val>,
 }
 
 impl UnionRowSink {
     pub fn new(
-        distinct: bool,
         slot_count: usize,
         codes: Vec<Code>,
         row_sink: Box<dyn RowSink>,
     ) -> Self {
         Self {
-            distinct,
             slot_count,
             codes,
             row_sink,
-            seen: Vec::new(),
-        }
-    }
-
-    fn add(&mut self, val: &Val) -> bool {
-        if self.distinct {
-            if self.seen.contains(val) {
-                false
-            } else {
-                self.seen.push(val.clone());
-                true
-            }
-        } else {
-            true
         }
     }
 }
@@ -240,7 +221,6 @@ impl RowSink for UnionRowSink {
         r: &mut EvalEnv,
         f: &mut Frame,
     ) -> Result<(), MorelError> {
-        self.seen.clear();
         self.row_sink.start(r, f)
     }
 
@@ -249,16 +229,7 @@ impl RowSink for UnionRowSink {
         r: &mut EvalEnv,
         f: &mut Frame,
     ) -> Result<(), MorelError> {
-        // For union, we need to track the row value to check for duplicates
-        // This is simplified - ideally we'd extract the row value from frame
-        // For now, just pass through
-        if !self.distinct {
-            self.row_sink.accept(r, f)?;
-        } else {
-            // TODO: Extract value from frame to check for duplicates
-            self.row_sink.accept(r, f)?;
-        }
-        Ok(())
+        self.row_sink.accept(r, f)
     }
 
     fn result(
@@ -272,20 +243,18 @@ impl RowSink for UnionRowSink {
             let collection = code.eval_f0(r, f)?;
             let items = collection.expect_list();
             for item in items {
-                if self.add(item) {
-                    // Bind the item directly to frame slots (0..slot_count).
-                    if self.slot_count == 1 {
-                        // Atom case: single binding at slot 0.
-                        f.vals[0] = item.clone();
-                    } else {
-                        // Tuple case: unpack tuple and bind to slots
-                        // 0..slot_count.
-                        let tuple_items = item.expect_list();
-                        f.vals[..self.slot_count]
-                            .clone_from_slice(&tuple_items[..self.slot_count]);
-                    }
-                    self.row_sink.accept(r, f)?;
+                // Bind the item directly to frame slots (0..slot_count).
+                if self.slot_count == 1 {
+                    // Atom case: single binding at slot 0.
+                    f.vals[0] = item.clone();
+                } else {
+                    // Tuple case: unpack tuple and bind to slots
+                    // 0..slot_count.
+                    let tuple_items = item.expect_list();
+                    f.vals[..self.slot_count]
+                        .clone_from_slice(&tuple_items[..self.slot_count]);
                 }
+                self.row_sink.accept(r, f)?;
             }
         }
         self.row_sink.result(r, f)

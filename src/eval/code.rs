@@ -39,7 +39,7 @@ use crate::eval::vector::Vector;
 use crate::shell::main::{MorelError, Shell};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::iter::zip;
 use std::ops::Deref;
 use std::str::FromStr;
@@ -115,8 +115,8 @@ impl PartialEq for RowSinkFactory {
     }
 }
 
-impl std::fmt::Debug for RowSinkFactory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for RowSinkFactory {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "RowSinkFactory(...)")
     }
 }
@@ -761,7 +761,7 @@ impl Code {
         prefix: &str,
         codes: &[Code],
         suffix: &str,
-    ) -> std::fmt::Result {
+    ) -> FmtResult {
         write!(f, "{}", prefix)?;
         for (i, code) in codes.iter().enumerate() {
             if i > 0 {
@@ -786,7 +786,7 @@ fn code_or_span(codes: &[Box<Code>], span: &Span, n: usize) -> Box<Code> {
 }
 
 impl Display for Code {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
             // lint: sort until '#}' where '##Self::'
             Self::ApplyConstant(fn_code, arg_code) => {
@@ -900,7 +900,7 @@ impl Span {
 }
 
 impl Display for Span {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "{}", self.0)
     }
 }

@@ -774,23 +774,35 @@ impl<'a> Compiler<'a> {
                 })
             }
             StepKind::Union(distinct, exprs) => {
+                // If union has distinct flag, insert a Distinct step after it.
+                let downstream_steps = if *distinct {
+                    // Create a Distinct step and append remaining steps.
+                    let mut new_steps = vec![Step::new(
+                        StepKind::Distinct,
+                        first_step.env.clone(),
+                    )];
+                    new_steps.extend_from_slice(&steps[1..]);
+                    new_steps
+                } else {
+                    steps[1..].to_vec()
+                };
+
                 let next_factory = self.create_row_sink_factory(
                     cx,
                     &first_step.env,
-                    &steps[1..],
+                    &downstream_steps,
                     element_type,
                 );
+
                 // Compile each union expression into code.
                 let codes: Vec<Code> = exprs
                     .iter()
                     .map(|expr| self.compile_expr(cx, None, expr))
                     .collect();
-                let distinct = *distinct;
                 let slot_count = step_env.bindings.len();
 
                 RowSinkFactory::new(move || {
                     Box::new(UnionRowSink::new(
-                        distinct,
                         slot_count,
                         codes.clone(),
                         next_factory.create(),
