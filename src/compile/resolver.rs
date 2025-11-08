@@ -372,7 +372,27 @@ impl<'a> Resolver<'a> {
                     _ => todo!("resolve {:?}", a0),
                 }
             }
-            ExprKind::Identifier(name) => CoreExpr::Identifier(t, name.clone()),
+            ExprKind::Identifier(name) => {
+                // Check if this identifier refers to a global built-in
+                // function. Global constructors like DESC need to be
+                // resolved to literals so they can be compiled properly.
+                if let Some(built_in) = crate::compile::library::lookup(name) {
+                    match built_in {
+                        crate::compile::library::BuiltIn::Fn(f) => {
+                            // Convert the global function/constructor to
+                            // a literal.
+                            CoreExpr::Literal(t, Val::Fn(f))
+                        }
+                        crate::compile::library::BuiltIn::Record(_) => {
+                            // Records stay as identifiers.
+                            CoreExpr::Identifier(t, name.clone())
+                        }
+                    }
+                } else {
+                    // This is a regular identifier (local variable).
+                    CoreExpr::Identifier(t, name.clone())
+                }
+            }
             ExprKind::If(cond, then_expr, else_expr) => {
                 // Convert 'if cond then e1 else e2'
                 // to 'case cond of true => e1 | _ => e2'.

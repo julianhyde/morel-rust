@@ -204,6 +204,53 @@ impl Binding {
             _ => panic!("Expected identifier pattern"),
         }
     }
+
+    /// Collect all bindings from a pattern, recursively.
+    /// For tuple patterns like `(i,j)`, this returns multiple bindings.
+    pub fn collect_bindings(pat: &Pat, bindings: &mut Vec<Binding>) {
+        match pat {
+            // lint: sort until '#}' where '##Pat::'
+            Pat::As(t, name, p) => {
+                bindings.push(Binding::new(Id::new(name, 0), t.clone()));
+                Binding::collect_bindings(p, bindings);
+            }
+            Pat::Cons(_, head, tail) => {
+                Binding::collect_bindings(head, bindings);
+                Binding::collect_bindings(tail, bindings);
+            }
+            Pat::Constructor(_, _, None)
+            | Pat::Literal(_, _)
+            | Pat::Wildcard(_) => {
+                // These patterns don't bind any variables.
+            }
+            Pat::Constructor(_, _, Some(p)) => {
+                Binding::collect_bindings(p, bindings);
+            }
+            Pat::Identifier(t, name) => {
+                bindings.push(Binding::new(Id::new(name, 0), t.clone()));
+            }
+            Pat::List(_, pats) => {
+                for p in pats {
+                    Binding::collect_bindings(p, bindings);
+                }
+            }
+            Pat::Record(_, fields, _) => {
+                for field in fields {
+                    match field {
+                        PatField::Labeled(_, p) | PatField::Anonymous(p) => {
+                            Binding::collect_bindings(p, bindings);
+                        }
+                        PatField::Ellipsis => {}
+                    }
+                }
+            }
+            Pat::Tuple(_, pats) => {
+                for p in pats {
+                    Binding::collect_bindings(p, bindings);
+                }
+            }
+        }
+    }
 }
 
 /// Environment available at a step in a query.

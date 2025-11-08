@@ -672,8 +672,10 @@ impl<'a> Compiler<'a> {
                 Code::new_list(&codes)
             }
             Expr::Literal(type_, val) => {
-                // Convert zero-argument constructors to their values
+                // Convert zero-argument constructors to their values.
                 let val2 = match val {
+                    Val::Fn(BuiltInFunction::BagNil) => Val::List(vec![]),
+                    Val::Fn(BuiltInFunction::ListNil) => Val::List(vec![]),
                     Val::Fn(BuiltInFunction::OptionNone) => Val::Unit,
                     Val::Fn(BuiltInFunction::OrderLess) => {
                         Val::Order(Order(Ordering::Less))
@@ -843,9 +845,15 @@ impl<'a> Compiler<'a> {
                 let order_code = self.compile_expr(cx, None, expr);
                 let slot_count = step_env.bindings.len();
 
+                // Create a comparator for the order expression's type.
+                let expr_type = expr.type_();
+                let comparator =
+                    crate::eval::comparator::comparator_for(&expr_type);
+
                 RowSinkFactory::new(move || {
                     Box::new(OrderRowSink::new(
                         order_code.clone(),
+                        comparator.clone(),
                         slot_count,
                         next_factory.create(),
                     ))

@@ -431,8 +431,8 @@ impl FromBuilder {
         // For now, just add a simple scan step.
 
         // Update bindings based on the pattern.
-        let new_binding = Binding::of(&pat);
-        self.bindings.push(new_binding);
+        // For tuple patterns like `(i,j)`, this collects multiple bindings.
+        Binding::collect_bindings(&pat, &mut self.bindings);
         self.atom = self.bindings.len() == 1;
 
         let env = self.step_env();

@@ -43,39 +43,10 @@
 //! - Add comprehensive tests
 
 use crate::eval::code::{Code, EvalEnv, Frame};
+use crate::eval::comparator::Comparator;
 use crate::eval::val::Val;
 use crate::shell::main::MorelError;
-use std::cmp::Ordering;
-
-/// Compares two Val instances for ordering.
-///
-/// This is used by OrderRowSink to sort rows. We implement comparison
-/// for the common comparable types (Int, Real, String, Char, Bool).
-fn compare_vals(a: &Val, b: &Val) -> Ordering {
-    use Val::{Bool, Char, Int, List, Real, String};
-    match (a, b) {
-        (Int(x), Int(y)) => x.cmp(y),
-        (Real(x), Real(y)) => {
-            // f32 doesn't implement Ord, so use partial_cmp.
-            x.partial_cmp(y).unwrap_or(Ordering::Equal)
-        }
-        (String(x), String(y)) => x.cmp(y),
-        (Char(x), Char(y)) => x.cmp(y),
-        (Bool(x), Bool(y)) => x.cmp(y),
-        (List(xs), List(ys)) => {
-            // Lexicographic ordering for lists (tuples).
-            for (x, y) in xs.iter().zip(ys.iter()) {
-                match compare_vals(x, y) {
-                    Ordering::Equal => continue,
-                    other => return other,
-                }
-            }
-            xs.len().cmp(&ys.len())
-        }
-        // For non-comparable types or mixed types, use Equal (stable sort).
-        _ => Ordering::Equal,
-    }
-}
+use std::sync::Arc;
 
 /// Accepts rows produced by a supplier as part of a `from` step.
 ///
@@ -360,8 +331,12 @@ impl RowSink for CollectRowSink {
 /// Accumulates all rows during accept(), then sorts them in result()
 /// based on evaluating an order expression, and passes them downstream
 /// in sorted order.
+///
+/// The comparator determines how order keys are compared, allowing for
+/// different sort orders (ascending, descending, custom).
 pub struct OrderRowSink {
     order_code: Code,
+    comparator: Arc<dyn Comparator>,
     slot_count: usize,
     row_sink: Box<dyn RowSink>,
     rows: Vec<Val>,
@@ -370,11 +345,13 @@ pub struct OrderRowSink {
 impl OrderRowSink {
     pub fn new(
         order_code: Code,
+        comparator: Arc<dyn Comparator>,
         slot_count: usize,
         row_sink: Box<dyn RowSink>,
     ) -> Self {
         Self {
             order_code,
+            comparator,
             slot_count,
             row_sink,
             rows: Vec::new(),
@@ -438,10 +415,10 @@ impl RowSink for OrderRowSink {
             rows_with_keys.push((row.clone(), order_key));
         }
 
-        // Sort by the order keys.
+        // Sort by the order keys using the comparator.
         rows_with_keys.sort_by(|a, b| {
             // Compare the order keys (second element of the tuple).
-            compare_vals(&a.1, &b.1)
+            self.comparator.compare(&a.1, &b.1)
         });
 
         // Pass sorted rows downstream.
