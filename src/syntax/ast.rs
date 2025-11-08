@@ -74,6 +74,11 @@ impl Span {
         self.end = self.end.max(other.end);
     }
 
+    /// Returns the start position of the span.
+    pub fn start_pos(&self) -> usize {
+        self.start
+    }
+
     /// Sums the spans of elements.
     pub fn sum<T>(elements: &[T], extract: fn(&T) -> Span) -> Option<Span> {
         let mut span = None;

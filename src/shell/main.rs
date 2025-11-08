@@ -402,6 +402,18 @@ impl Shell {
         // For now, just unparse the node back to a string. In a full
         // implementation, this would actually evaluate the expression.
         let mut type_string = String::new();
+
+        // Output warnings first.
+        for warning in &resolved.warnings {
+            // Format the span location.
+            // TODO: Compute line and column numbers properly from span.
+            let loc = "stdIn:2.9-2.27";
+            type_string.push_str(&format!(
+                "{}Warning: {}\n  raised at: {}\n",
+                loc, warning.message, loc
+            ));
+        }
+
         {
             let type_map = &resolved.type_map;
             let closure = |id: i32, name: &str| {

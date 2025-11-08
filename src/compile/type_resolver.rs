@@ -51,6 +51,7 @@ pub struct Resolved {
     pub type_map: TypeMap,
     pub bindings: Vec<TypeBinding>,
     pub base_line: usize,
+    pub warnings: Vec<Warning>,
 }
 
 /// Maps AST nodes to their resolved types.
@@ -402,6 +403,7 @@ impl TypeResolver {
             type_map,
             bindings,
             base_line,
+            warnings: self.warnings.clone(),
         })
     }
 
@@ -1190,7 +1192,8 @@ impl TypeResolver {
             StepKind::Order(expr) => {
                 let v = self.unifier.variable();
                 let expr2 = self.deduce_expr_type(&*p.env, expr, &v)?;
-                let step2 = StepKind::Order(Box::new(expr2));
+                let expr3 = self.validate_order(&expr2);
+                let step2 = StepKind::Order(Box::new(expr3));
                 steps2.push(step2.spanned(&step.span));
                 Ok(p.clone())
             }
@@ -2970,6 +2973,88 @@ impl TypeResolver {
         }
     }
 
+    /// Validates an order expression. If it contains a record whose fields are
+    /// not in alphabetical order, emits a warning.
+    fn validate_order(&mut self, expr: &Expr) -> Expr {
+        self.validate_order_rec(expr)
+    }
+
+    /// Recursively validates order expressions, checking for records with
+    /// non-alphabetically ordered fields.
+    fn validate_order_rec(&mut self, expr: &Expr) -> Expr {
+        match &expr.kind {
+            ExprKind::Record(ty, labeled_exprs) => {
+                // Collect labels with their span start positions.
+                let labels_with_spans: Vec<(&str, usize)> = labeled_exprs
+                    .iter()
+                    .filter_map(|le| {
+                        le.label
+                            .as_ref()
+                            .map(|l| (l.name.as_str(), l.span.start_pos()))
+                    })
+                    .collect();
+
+                // Check if labels are in alphabetical order, but only if the
+                // spans are in source order (meaning they haven't been
+                // reordered yet).
+                if !labels_with_spans.is_empty() {
+                    let label_strs: Vec<&str> = labels_with_spans
+                        .iter()
+                        .map(|(name, _)| *name)
+                        .collect();
+
+                    // Check if spans are in increasing order (source order).
+                    let spans_in_order =
+                        labels_with_spans.windows(2).all(|w| w[0].1 <= w[1].1);
+
+                    if spans_in_order {
+                        // Only check alphabetical order if fields are still in
+                        // source order.
+                        let mut sorted_labels = label_strs.clone();
+                        sorted_labels.sort();
+
+                        if label_strs != sorted_labels {
+                            let message =
+                                "Sorting on a record whose fields are not in \
+                                 alphabetical order. Sort order may not be \
+                                 what you expect."
+                                    .to_string();
+                            self.warnings.push(Warning {
+                                span: expr.span.clone(),
+                                message,
+                            });
+                        }
+                    }
+                }
+
+                // Recursively validate the field expressions.
+                let new_labeled_exprs: Vec<LabeledExpr> = labeled_exprs
+                    .iter()
+                    .map(|le| LabeledExpr {
+                        label: le.label.clone(),
+                        expr: self.validate_order_rec(&le.expr),
+                    })
+                    .collect();
+
+                Expr {
+                    kind: ExprKind::Record(ty.clone(), new_labeled_exprs),
+                    span: expr.span.clone(),
+                    id: expr.id,
+                }
+            }
+            ExprKind::Tuple(exprs) => {
+                let new_exprs: Vec<Expr> =
+                    exprs.iter().map(|e| self.validate_order_rec(e)).collect();
+                Expr {
+                    kind: ExprKind::Tuple(new_exprs),
+                    span: expr.span.clone(),
+                    id: expr.id,
+                }
+            }
+            _ => expr.clone(),
+        }
+    }
+
     /// Converts the terms to a string for debugging, with each term-pair on a
     /// separate line. Variables with ordinals (e.g. T0, T1) are sorted before
     /// variables without ordinals (e.g. X, Y).
@@ -3177,12 +3262,10 @@ impl LabeledExpr {
 }
 
 /// Compile-time error or warning.
-#[allow(dead_code)]
-struct Warning {
-    #[allow(dead_code)]
-    span: Span,
-    #[allow(dead_code)]
-    message: String,
+#[derive(Clone, Debug)]
+pub struct Warning {
+    pub span: Span,
+    pub message: String,
 }
 
 const W_INCONSISTENT_PARAMETERS: &str = "parameter or result \
