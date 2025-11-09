@@ -1680,17 +1680,20 @@ impl TypeResolver {
             field_vars.push((key_label, v_key));
         }
 
+        // Save the number of key fields before adding compute fields.
+        let key_field_count = field_vars.len();
+
         // Bind 'elements' to the current collection for use in compute
         // expressions. Elements: 'a list where 'a is the current element type.
         group_env_builder
             .push("elements".to_string(), Term::Variable(p.c.clone().unwrap()));
 
-        // Process compute expression if present
+        // Process the compute expression, if present.
         let compute_expr2 = if let Some(compute) = compute_expr {
             let group_env = group_env_builder.build();
 
             if let ExprKind::Record(_with, labeled_exprs) = &compute.kind {
-                // Multiple compute fields
+                // Multiple compute fields.
                 let mut labeled_exprs2 = Vec::new();
                 for labeled_expr in labeled_exprs {
                     let v_field = self.variable();
@@ -1716,11 +1719,14 @@ impl TypeResolver {
                     id: compute.id,
                 }))
             } else {
-                // Single compute expression
+                // Single compute expression.
                 let v_compute = self.variable();
                 let expr2 =
                     self.deduce_expr_type(&*group_env, compute, &v_compute)?;
-                field_vars.push(("compute".to_string(), v_compute));
+                let label = expr2
+                    .implicit_label_opt()
+                    .unwrap_or_else(|| "compute".to_string());
+                field_vars.push((label, v_compute));
                 Some(Box::new(expr2))
             }
         } else {
@@ -1729,15 +1735,19 @@ impl TypeResolver {
 
         // Build the result type based on field_vars.
         // If there is a single field with the default label "key" and no
-        // compute, return the atom type.
-        let v_result = if field_vars.len() == 1 && field_vars[0].0 == "key" {
+        // compute, return the atom type. Likewise, return the atom type if
+        // there is no key (empty tuple) and a single compute field.
+        let v_result = if field_vars.len() == 1
+            && ((field_vars[0].0 == "key" && compute_expr.is_none())
+                || (key_field_count == 0 && compute_expr.is_some()))
+        {
             field_vars[0].1.clone()
         } else {
             self.field_var(field_vars, false)
         };
         let c_result = self.variable();
 
-        // Output is ordered iff input is ordered (list or bag)
+        // Output is ordered iff input is ordered (list or bag).
         self.list_term(Term::Variable(v_result.clone()), &c_result);
 
         let step2 = StepKind::Group(Box::new(key_expr2), compute_expr2);
