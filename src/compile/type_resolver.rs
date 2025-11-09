@@ -1179,7 +1179,7 @@ impl TypeResolver {
     /// Deduces a single step's type.
     ///
     /// The `Triple` argument `p` represents the element and collection
-    /// types of the input to the step, and the return `Triple` represents
+    /// type of the input to the step, and the return `Triple` represents
     /// the output type.
     fn deduce_step_type(
         &mut self,

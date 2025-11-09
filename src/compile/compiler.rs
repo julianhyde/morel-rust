@@ -28,6 +28,7 @@ use crate::compile::var_collector::VarCollector;
 use crate::eval::code::{
     Code, Effect, EvalEnv, EvalMode, Frame, Impl, RowSinkFactory,
 };
+use crate::eval::comparator::comparator_for;
 use crate::eval::frame::FrameDef;
 use crate::eval::order::Order;
 use crate::eval::session::Session;
@@ -848,8 +849,7 @@ impl<'a> Compiler<'a> {
 
                 // Create a comparator for the order expression's type.
                 let expr_type = expr.type_();
-                let comparator =
-                    crate::eval::comparator::comparator_for(&expr_type);
+                let comparator = comparator_for(&expr_type);
 
                 RowSinkFactory::new(move || {
                     Box::new(OrderRowSink::new(

@@ -23,6 +23,7 @@ use crate::compile::core::{
 };
 use crate::compile::from_builder::FromBuilder;
 use crate::compile::inliner::Env;
+use crate::compile::library;
 use crate::compile::library::BuiltInFunction;
 use crate::compile::type_resolver::{Resolved, TypeMap, Typed};
 use crate::compile::types::{PrimitiveType, Type};
@@ -34,6 +35,7 @@ use crate::syntax::ast::{
     Type as AstType, TypeBind, ValBind,
 };
 use crate::syntax::parser;
+use library::BuiltIn;
 use std::collections::{HashSet, VecDeque};
 
 /// Converts an AST to a Core tree.
@@ -376,14 +378,14 @@ impl<'a> Resolver<'a> {
                 // Check if this identifier refers to a global built-in
                 // function. Global constructors like DESC need to be
                 // resolved to literals so they can be compiled properly.
-                if let Some(built_in) = crate::compile::library::lookup(name) {
+                if let Some(built_in) = library::lookup(name) {
                     match built_in {
-                        crate::compile::library::BuiltIn::Fn(f) => {
+                        BuiltIn::Fn(f) => {
                             // Convert the global function/constructor to
                             // a literal.
                             CoreExpr::Literal(t, Val::Fn(f))
                         }
-                        crate::compile::library::BuiltIn::Record(_) => {
+                        BuiltIn::Record(_) => {
                             // Records stay as identifiers.
                             CoreExpr::Identifier(t, name.clone())
                         }
