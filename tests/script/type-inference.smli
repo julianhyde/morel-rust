@@ -946,6 +946,13 @@ forall d in [{a=1,b=true}];
   join x = e.dno + 10;
 > val it : {e:{dno:int, eid:int}, x:int} list
 
+(*
+:t from e in [{d=20,e="x"},{d=10,e="y"},{d=10,e="z"}]
+  join d in [{d=10,n="a"},{d=30,n="b"}] on e.d = d.d
+  yield {d = d.d, e.e, d.n};
+> val it : {d:int, e:string, n:string} list
+*)
+
 (*) Set operations -------------------------------------
 :t from i in [1, 2, 3]
   union [4, 5];
