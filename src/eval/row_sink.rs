@@ -46,6 +46,7 @@ use crate::eval::code::{Code, EvalEnv, Frame};
 use crate::eval::comparator::Comparator;
 use crate::eval::val::Val;
 use crate::shell::main::MorelError;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Accepts rows produced by a supplier as part of a `from` step.
@@ -805,7 +806,7 @@ pub struct GroupRowSink {
     slot_count: usize,
     key_slot_count: usize,
     row_sink: Box<dyn RowSink>,
-    map: std::collections::HashMap<Val, Vec<Val>>,
+    map: HashMap<Val, Vec<Val>>,
 }
 
 impl GroupRowSink {
@@ -822,7 +823,7 @@ impl GroupRowSink {
             slot_count,
             key_slot_count,
             row_sink,
-            map: std::collections::HashMap::new(),
+            map: HashMap::new(),
         }
     }
 }
