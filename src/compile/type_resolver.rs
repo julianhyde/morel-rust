@@ -1065,7 +1065,9 @@ impl TypeResolver {
         })
     }
 
-    /// Deduces the type of a query (from expression).
+    /// Deduces a query's type.
+    ///
+    /// A query is a `from`, `forall` or `exists` expression.
     fn deduce_query_type(
         &mut self,
         env: &dyn TypeEnv,
@@ -1155,7 +1157,11 @@ impl TypeResolver {
         Ok(steps2)
     }
 
-    /// Deduces the type of a single step in a query.
+    /// Deduces a single step's type.
+    ///
+    /// The `Triple` argument `p` represents the element and collection
+    /// type of the input to the step, and the return `Triple` represents
+    /// the output type.
     fn deduce_step_type(
         &mut self,
         step: &Step,
@@ -1267,8 +1273,13 @@ impl TypeResolver {
         }
     }
 
-    /// Deduces a Scan step's type (e.g., "from i in [1, 2, 3]" or
-    /// "join d in departments on d.deptno = e.deptno").
+    /// Deduces a Scan step's type.
+    ///
+    /// Examples:
+    /// * "from i in [1, 2, 3]";
+    /// * "join d in departments on d.deptno = e.deptno"
+    ///   (has `condition`);
+    /// * "from i in [1, 2, 3], j = i + 1" (has `eq` = true).
     fn deduce_scan_step_type(
         &mut self,
         p: &Triple,
@@ -1313,7 +1324,7 @@ impl TypeResolver {
         let c = self.unifier.variable();
         self.list_term(Term::Variable(v.clone()), &c);
 
-        // Handle optional condition
+        // Handle the condition, if present.
         let condition2 = if let Some(cond) = condition {
             let v5 = self.variable();
             let condition2 = self.deduce_expr_type(&*env4, cond, &v5)?;
@@ -1372,6 +1383,7 @@ impl TypeResolver {
                 // Clone the terms to avoid holding immutable borrow of self
                 let seq_terms = seq.terms.clone();
                 field_vars.clear();
+                assert_eq!(labeled_exprs.len(), seq_terms.len());
                 for (labeled_expr, term) in zip(labeled_exprs, seq_terms.iter())
                 {
                     if let Some(label) = labeled_expr.get_label() {
@@ -1401,7 +1413,7 @@ impl TypeResolver {
         Ok(Triple::new(p.root_env.clone(), env, v6, Some(c6)))
     }
 
-    /// Deduces the type of a set operation step (Union/Except/Intersect).
+    /// Deduces a set operation step's type (Union/Except/Intersect).
     fn deduce_set_step_type(
         &mut self,
         p: &Triple,
@@ -1740,7 +1752,10 @@ impl TypeResolver {
         ))
     }
 
-    /// Deduces the type of a Compute step (aggregate over entire collection).
+    /// Deduces a Compute step's type.
+    ///
+    /// `compute` is similar to `group` but has no key, aggregates over the
+    /// entire collection, and returns a single element (not a collection).
     fn deduce_compute_step_type(
         &mut self,
         p: &Triple,
@@ -1816,11 +1831,15 @@ impl TypeResolver {
         ))
     }
 
-    /// Deduces the type of an Into step (terminal step that applies a
-    /// function).
-    /// `from i in [1,2,3] into f`
-    ///   f: int list -> string
-    ///   result: string (singleton)
+    /// Deduces an Into step's type.
+    ///
+    /// `into` is a terminal step that applies a function. For example
+    ///
+    /// ```sml
+    /// from i in [1,2,3] into f
+    /// ```
+    ///
+    /// If `f`'s type is `int list -> string`, the result type is `string`.
     fn deduce_into_step_type(
         &mut self,
         p: &Triple,
@@ -1851,11 +1870,16 @@ impl TypeResolver {
         ))
     }
 
-    /// Deduces the type of a Through step (table function).
-    /// `from i in [1,2,3] through p in f`
-    ///   f: int list -> string list
-    ///   p: string
-    ///   result: string list
+    /// Deduces a `Through` step's type.
+    ///
+    /// `through` invokes a table function. Consider
+    ///
+    /// ```sml
+    /// from i in [1,2,3] through p in f
+    /// ```
+    ///
+    /// If `f`'s type is `int list -> string list`, and `p`'s type is `string`,
+    /// the result type is `string list`.
     fn deduce_through_step_type(
         &mut self,
         p: &Triple,
@@ -2410,6 +2434,10 @@ impl TypeResolver {
     ) -> &'a Rc<Var> {
         assert!(label_types.keys().is_sorted());
         let label_terms = label_types.values().cloned().collect::<Vec<_>>();
+
+        if label_types.is_empty() {
+            return self.primitive_term(&PrimitiveType::Unit, v);
+        }
 
         if Label::are_contiguous(label_types.keys().cloned())
             && label_types.len() != 1
