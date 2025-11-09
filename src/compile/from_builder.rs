@@ -410,7 +410,16 @@ impl FromBuilder {
             StepKind::Group(Box::new(key_expr), aggregate_expr.map(Box::new)),
             env,
         );
-        self.add_step(step)
+        self.add_step(step);
+
+        // After a group step, bindings change to the group keys
+        // (+ aggregates in Phase 2). The type system will determine the
+        // correct atom flag based on whether labels can be derived, so we
+        // don't modify it here. For Phase 0, we just keep the current
+        // bindings since proper binding extraction from group keys will be
+        // done in Phase 2.
+
+        self
     }
 
     /// Adds a scan step "from pat in exp".

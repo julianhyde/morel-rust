@@ -713,9 +713,9 @@ impl<'a> Compiler<'a> {
         element_type: &Type,
     ) -> RowSinkFactory {
         use crate::eval::row_sink::{
-            CollectRowSink, DistinctRowSink, ExceptRowSink, IntersectRowSink,
-            OrderRowSink, ScanRowSink, SkipRowSink, TakeRowSink, UnionRowSink,
-            WhereRowSink,
+            CollectRowSink, DistinctRowSink, ExceptRowSink, GroupRowSink,
+            IntersectRowSink, OrderRowSink, ScanRowSink, SkipRowSink,
+            TakeRowSink, UnionRowSink, WhereRowSink,
         };
 
         if steps.is_empty() {
@@ -959,6 +959,54 @@ impl<'a> Compiler<'a> {
                     Box::new(ExceptRowSink::new(
                         slot_count,
                         codes.clone(),
+                        next_factory.create(),
+                    ))
+                })
+            }
+            StepKind::Group(key_expr, aggregate_expr) => {
+                // For simple group queries without complex aggregates.
+                // Example: "from i in [1,2,3] group i" or
+                // "from e in emps group e.deptno"
+
+                // The next step processes the grouped results.
+                let next_factory = self.create_row_sink_factory(
+                    cx,
+                    &first_step.env,
+                    &steps[1..],
+                    element_type,
+                );
+
+                // Compile the group key expression.
+                let key_code = self.compile_expr(cx, None, key_expr);
+
+                // Compile aggregate expressions if present.
+                let aggregate_codes: Vec<Code> =
+                    if let Some(agg_expr) = aggregate_expr {
+                        // For now, treat the aggregate expression as a
+                        // single aggregate. In Phase 2, we'll extract
+                        // multiple aggregates from complex expressions.
+                        vec![self.compile_expr(cx, None, agg_expr)]
+                    } else {
+                        vec![]
+                    };
+
+                // Count how many bindings are in the input (before grouping).
+                let slot_count = step_env.bindings.len();
+
+                // Count how many bindings are in the key.
+                // For now, we'll determine this from the key expression type.
+                // A tuple key has multiple fields, a scalar key has one field.
+                let key_slot_count = match key_expr.type_().as_ref() {
+                    Type::Tuple(types) => types.len(),
+                    _ => 1,
+                };
+
+                RowSinkFactory::new(move || {
+                    Box::new(GroupRowSink::new(
+                        key_code.clone(),
+                        aggregate_codes.clone(),
+                        slot_count,
+                        key_slot_count,
                         next_factory.create(),
                     ))
                 })

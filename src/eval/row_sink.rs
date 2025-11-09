@@ -794,3 +794,117 @@ impl RowSink for DistinctRowSink {
         self.row_sink.result(r, f)
     }
 }
+
+/// Implementation of RowSink for a group step.
+///
+/// Accumulates rows by group key, evaluates aggregate functions over each
+/// group, and passes results downstream.
+pub struct GroupRowSink {
+    key_code: Code,
+    aggregate_codes: Vec<Code>,
+    slot_count: usize,
+    key_slot_count: usize,
+    row_sink: Box<dyn RowSink>,
+    map: std::collections::HashMap<Val, Vec<Val>>,
+}
+
+impl GroupRowSink {
+    pub fn new(
+        key_code: Code,
+        aggregate_codes: Vec<Code>,
+        slot_count: usize,
+        key_slot_count: usize,
+        row_sink: Box<dyn RowSink>,
+    ) -> Self {
+        Self {
+            key_code,
+            aggregate_codes,
+            slot_count,
+            key_slot_count,
+            row_sink,
+            map: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl RowSink for GroupRowSink {
+    fn start(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        self.map.clear();
+        self.row_sink.start(r, f)
+    }
+
+    fn accept(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        // Evaluate the group key in the current row context.
+        let key = self.key_code.eval_f0(r, f)?;
+
+        // Extract the current row values from frame slots.
+        let row_val = if self.slot_count == 1 {
+            // Atom case: single binding.
+            f.vals[0].clone()
+        } else {
+            // Tuple case: create tuple from slots 0..slot_count.
+            Val::List(f.vals[0..self.slot_count].to_vec())
+        };
+
+        // Add to the appropriate group.
+        self.map.entry(key).or_default().push(row_val);
+
+        Ok(())
+    }
+
+    fn result(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<Val, MorelError> {
+        // Handle empty input with empty group key: emit one row.
+        // This handles queries like
+        // "from e in [] group {} compute count" → [0]
+        if self.map.is_empty() && self.key_slot_count == 0 {
+            self.map.insert(Val::List(vec![]), vec![]);
+        }
+
+        // For each group, evaluate aggregates and emit.
+        for (key, rows) in &self.map {
+            // 1. Bind group key fields to frame.
+            // The key can be either a scalar (for single-field keys like
+            // "group i") or a tuple (for multi-field keys like
+            // "group {e.deptno, e.job}").
+            if self.key_slot_count == 1 {
+                // Scalar key - bind directly to slot 0.
+                f.vals[0] = key.clone();
+            } else {
+                // Tuple key - extract fields and bind to slots.
+                let key_vals = key.expect_list();
+                for (i, key_val) in key_vals.iter().enumerate() {
+                    if i < self.key_slot_count {
+                        f.vals[i] = key_val.clone();
+                    }
+                }
+            }
+
+            // 2. Evaluate each aggregate over the group's rows.
+            let rows_val = Val::List(rows.clone());
+            for (i, agg_code) in self.aggregate_codes.iter().enumerate() {
+                // Apply aggregate function to the list of rows.
+                // This calls code.eval_f1(r, f, &rows_val) which applies
+                // the aggregate function (e.g., Relational.sum) to the list.
+                let agg_result = agg_code.eval_f1(r, f, &rows_val)?;
+                f.vals[self.key_slot_count + i] = agg_result;
+            }
+
+            // 3. Pass the complete row downstream.
+            self.row_sink.accept(r, f)?;
+        }
+
+        self.row_sink.result(r, f)
+    }
+}
