@@ -1448,7 +1448,7 @@ impl TypeResolver {
         Ok(Triple::new(p.root_env.clone(), env, v6, Some(c6)))
     }
 
-    /// Deduces the type of a set operation step (Union/Except/Intersect).
+    /// Deduces a set operation step's type (Union/Except/Intersect).
     fn deduce_set_step_type(
         &mut self,
         p: &Triple,
