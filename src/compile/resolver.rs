@@ -186,6 +186,11 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// Returns the type map for this resolver.
+    pub fn type_map(&self) -> &TypeMap {
+        self.type_map
+    }
+
     /// Resolves an AST declaration to a core declaration.
     pub(crate) fn resolve_decl(&self, decl: &Decl) -> CoreDecl {
         match &decl.kind {
@@ -775,16 +780,19 @@ impl<'a> Resolver<'a> {
                 let resolved_expr = self.resolve_expr(expr);
                 builder.order(resolved_expr);
             }
-            AstStepKind::Group(key_expr, aggregate_expr) => {
-                // Resolve the group key expression.
+            AstStepKind::Group(key_expr, compute_expr) => {
+                // Resolve the group key expression in current context.
                 let resolved_key = self.resolve_expr(key_expr);
 
-                // Resolve the aggregate expression if present.
-                let resolved_aggregate =
-                    aggregate_expr.as_ref().map(|e| self.resolve_expr(e));
+                // Resolve the compute expression if present.
+                // For now, we only handle simple compute expressions (without
+                // 'over'). TODO: Use AggregateResolver when we add 'over'
+                // support.
+                let resolved_compute =
+                    compute_expr.as_ref().map(|e| self.resolve_expr(e));
 
-                // Add the group step to the builder.
-                builder.group(resolved_key, resolved_aggregate);
+                // Add the group step.
+                builder.group(resolved_key, resolved_compute);
             }
             AstStepKind::Skip(expr) => {
                 let resolved_expr = self.resolve_expr(expr);

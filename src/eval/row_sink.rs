@@ -46,7 +46,7 @@ use crate::eval::code::{Code, EvalEnv, Frame};
 use crate::eval::comparator::Comparator;
 use crate::eval::val::Val;
 use crate::shell::main::MorelError;
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::sync::Arc;
 
 /// Accepts rows produced by a supplier as part of a `from` step.
@@ -806,7 +806,10 @@ pub struct GroupRowSink {
     slot_count: usize,
     key_slot_count: usize,
     row_sink: Box<dyn RowSink>,
-    map: HashMap<Val, Vec<Val>>,
+
+    /// We use IndexMap instead of HashMap because we need to iterate in order
+    /// of insertion.
+    map: IndexMap<Val, Vec<Val>>,
 }
 
 impl GroupRowSink {
@@ -823,7 +826,7 @@ impl GroupRowSink {
             slot_count,
             key_slot_count,
             row_sink,
-            map: HashMap::new(),
+            map: IndexMap::new(),
         }
     }
 }
@@ -895,7 +898,7 @@ impl RowSink for GroupRowSink {
             // 2. Evaluate each aggregate over the group's rows.
             let rows_val = Val::List(rows.clone());
             for (i, agg_code) in self.aggregate_codes.iter().enumerate() {
-                // Apply aggregate function to the list of rows.
+                // Apply an aggregate function to the list of rows.
                 // This calls code.eval_f1(r, f, &rows_val) which applies
                 // the aggregate function (e.g., Relational.sum) to the list.
                 let agg_result = agg_code.eval_f1(r, f, &rows_val)?;

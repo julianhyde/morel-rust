@@ -16,6 +16,7 @@
 // License.
 
 // lint: sort until '^$' erase 'pub '
+pub mod aggregate_resolver;
 pub mod compiler;
 pub mod core;
 pub mod from_builder;

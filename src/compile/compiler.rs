@@ -990,8 +990,10 @@ impl<'a> Compiler<'a> {
                         vec![]
                     };
 
-                // Count how many bindings are in the input (before grouping).
-                let slot_count = step_env.bindings.len();
+                // Count how many bindings are in the OUTPUT (after grouping).
+                // This is the number of slots needed for the grouped row:
+                // key fields + aggregate fields.
+                let slot_count = first_step.env.bindings.len();
 
                 // Count how many bindings are in the key.
                 // For now, we'll determine this from the key expression type.
