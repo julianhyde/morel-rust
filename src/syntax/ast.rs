@@ -46,6 +46,11 @@ impl Span {
         }
     }
 
+    /// Creates an empty span.
+    pub fn empty() -> Self {
+        Self::zero("".into())
+    }
+
     /// Creates a span.
     pub fn make(input: Rc<str>, sp: pest::Span) -> Self {
         Span {
@@ -173,9 +178,17 @@ impl Expr {
         }
     }
 
-    /// Returns the implicit label for this expression, if one can be
-    /// derived. Returns Some for identifiers, record selectors, and a few
-    /// other special cases; None otherwise.
+    /// Creates a trivial expression.
+    ///
+    /// When you just need an expression;
+    /// say, to evaluate [ExprKind::clause].
+    pub(crate) fn empty() -> Box<Expr> {
+        Box::new(ExprKind::Ordinal.spanned(&Span::empty()))
+    }
+
+    /// Returns the implicit label for this expression if one can be
+    /// derived. Returns `Some` for identifiers, record selectors, and a few
+    /// other special cases; `None` otherwise.
     pub fn implicit_label_opt(&self) -> Option<String> {
         match &self.kind {
             // lint: sort until '#}' where '##ExprKind::'
@@ -185,6 +198,7 @@ impl Expr {
                 _ => None,
             },
             ExprKind::Current => Some("current".to_string()),
+            ExprKind::Elements => Some("elements".to_string()),
             ExprKind::Identifier(name) => Some(name.clone()),
             ExprKind::Ordinal => Some("ordinal".to_string()),
             _ => None,
@@ -210,6 +224,7 @@ pub enum ExprKind<SubExpr> {
     RecordSelector(String),
     Current,
     Ordinal,
+    Elements,
 
     // Infix binary operators
     Plus(Box<Expr>, Box<SubExpr>),
@@ -264,6 +279,7 @@ impl ExprKind<Expr> {
         match self {
             // lint: sort until '#}' where '##ExprKind::'
             ExprKind::Current => "current",
+            ExprKind::Elements => "elements",
             ExprKind::Exists(_) => "exists",
             ExprKind::Forall(_) => "forall",
             ExprKind::From(_) => "from",
@@ -343,6 +359,7 @@ impl Display for ExprKind<Expr> {
             ExprKind::Div(a0, a1) => write!(f, "({} div {})", a0, a1),
             ExprKind::Divide(a0, a1) => write!(f, "({} / {})", a0, a1),
             ExprKind::Elem(a0, a1) => write!(f, "({} elem {})", a0, a1),
+            ExprKind::Elements => write!(f, "elements"),
             ExprKind::Equal(a0, a1) => write!(f, "({} = {})", a0, a1),
             ExprKind::Exists(steps) => write!(f, "exists {:?}", steps),
             ExprKind::Fn(arms) => {
@@ -534,16 +551,20 @@ pub enum StepKind {
     Distinct,
     Into(Box<Expr>),
 
-    /// A scan (e.g. "e in emps", "e") or scan-and-join (e.g. "left join d in
+    /// A scan (e.g., "e in emps", "e") or scan-and-join (e.g., "left join d in
     /// depts on e.deptno = d.deptno") in a `from` expression.
     ///
     /// `Scan(p, e, Some(c))` represents `join p in e on c`;
     /// `Scan(p, e, None)` represents `join p in e` or `from p in e`.
     Scan(Box<Pat>, Box<Expr>, Option<Box<Expr>>),
 
+    /// A scan where the pattern is bound to a single expression.
+    ///
     /// `ScanEq(p, e)` represents `join p = e`.
     ScanEq(Box<Pat>, Box<Expr>),
 
+    /// A scan over an extent (collection variable).
+    ///
     /// `ScanExtent(p)` represents `join p` or `from p`.
     ScanExtent(Box<Pat>),
 

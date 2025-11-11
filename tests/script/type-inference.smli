@@ -984,6 +984,10 @@ forall d in [{a=1,b=true}];
 > val it : int list
 
 :t from i in [1, 2, 3]
+  group i compute {elements};
+> val it : {elements:int list, i:int} list
+
+:t from i in [1, 2, 3]
   group i compute {elements, a = "xyz"};
 > val it : {a:string, elements:int list, i:int} list
 
@@ -1014,6 +1018,12 @@ forall d in [{a=1,b=true}];
 :t from i in [1, 2, 3]
   group {} compute elements;
 > val it : int list list
+
+:t elements;
+> error: 'elements' is only valid in a 'compute' clause
+
+:t from i in [1, 2, 3] group elements;
+> error: 'elements' is only valid in a 'compute' clause
 
 (*) Compute operation ---------------------------------
 
