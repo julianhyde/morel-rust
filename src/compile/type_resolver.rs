@@ -35,7 +35,7 @@ use crate::unify::unifier::{
     Action, NullTracer, Op, Sequence, Substitution, Term, Unifier, Var,
 };
 use std::cell::OnceCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::zip;
 use std::rc::Rc;
@@ -136,13 +136,22 @@ impl Triple {
         }
     }
 
+    fn with_env(&self, env: &Rc<dyn TypeEnv>) -> Self {
+        Self::new(
+            self.root_env.clone(),
+            env.clone(),
+            self.v.clone(),
+            self.c.clone(),
+        )
+    }
+
     fn with_c(&self, c: Rc<Var>) -> Self {
-        Triple {
-            root_env: self.root_env.clone(),
-            env: self.env.clone(),
-            v: self.v.clone(),
-            c: Some(c),
-        }
+        Self::new(
+            self.root_env.clone(),
+            self.env.clone(),
+            self.v.clone(),
+            Some(c),
+        )
     }
 }
 
@@ -278,6 +287,9 @@ pub struct TypeResolver {
     unifier: Unifier,
     next_id: i32,
 
+    /// Stack of `compute` clauses.
+    compute_stack: Vec<Triple>,
+
     /// Cached operators for common type-constructors.
     list_op: Rc<Op>,
     bag_op: Rc<Op>,
@@ -310,6 +322,7 @@ impl TypeResolver {
         Self {
             warnings: Vec::new(),
             node_var_map: HashMap::new(),
+            compute_stack: Vec::new(),
             actions: Vec::new(),
             terms: Vec::new(),
             next_id: 0,
@@ -845,6 +858,12 @@ impl TypeResolver {
                 let x = ExprKind::Divide(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
+            ExprKind::Elements => {
+                self.check_in_compute(env, &expr.span)?;
+                let step_env = self.compute_stack.last().unwrap();
+                self.equiv(&Term::Variable(step_env.clone().c.unwrap()), v);
+                self.reg_expr(&expr.kind, &expr.span, expr.id, &v)
+            }
             ExprKind::Equal(left, right) => {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op =", left, right, v)?;
@@ -1160,7 +1179,7 @@ impl TypeResolver {
     /// Deduces a single step's type.
     ///
     /// The `Triple` argument `p` represents the element and collection
-    /// type of the input to the step, and the return `Triple` represents
+    /// types of the input to the step, and the return `Triple` represents
     /// the output type.
     fn deduce_step_type(
         &mut self,
@@ -1467,6 +1486,26 @@ impl TypeResolver {
         ))
     }
 
+    /// Throws if the current expression is not within a `compute` clause.
+    fn check_in_compute(
+        &mut self,
+        env: &dyn TypeEnv,
+        span: &Span,
+    ) -> Result<(), Error> {
+        if env.get(ExprKind::Elements.clause(), self).is_some() {
+            Ok(())
+        } else {
+            Err(Error::Compile(
+                format!(
+                    "'{}' is only valid in a '{}' clause",
+                    ExprKind::Elements.clause(),
+                    StepKind::Compute(Expr::empty()).clause()
+                ),
+                span.clone(),
+            ))
+        }
+    }
+
     /// Validates a Group step. Throws an error if labels cannot be derived
     /// for non-record expressions in group or compute clauses, or if there are
     /// duplicate field names between key and compute.
@@ -1548,14 +1587,12 @@ impl TypeResolver {
         key_expr: &Expr,
         compute_expr: &Option<Box<Expr>>,
     ) -> Result<(), Error> {
-        use std::collections::HashSet;
-
         let mut names = HashSet::new();
 
-        // Collect field names from key expression.
+        // Collect field names from the key expression.
         Self::collect_field_names(key_expr, &mut names);
 
-        // Check field names from compute expression for duplicates.
+        // Check for duplicate field names in the compute expression.
         if let Some(compute) = compute_expr {
             if let ExprKind::Record(_, labeled_exprs) = &compute.kind {
                 for labeled_expr in labeled_exprs {
@@ -1578,10 +1615,7 @@ impl TypeResolver {
     }
 
     /// Collects field names from an expression into the given set.
-    fn collect_field_names(
-        expr: &Expr,
-        names: &mut std::collections::HashSet<String>,
-    ) {
+    fn collect_field_names(expr: &Expr, names: &mut HashSet<String>) {
         match &expr.kind {
             ExprKind::Record(_, labeled_exprs) => {
                 for labeled_expr in labeled_exprs {
@@ -1691,10 +1725,15 @@ impl TypeResolver {
         // Process the compute expression, if present.
         let compute_expr2 = if let Some(compute) = compute_expr {
             let group_env = group_env_builder.build();
+            self.compute_stack.push(p.with_env(&group_env));
 
-            if let ExprKind::Record(_with, labeled_exprs) = &compute.kind {
+            let v_compute = self.variable();
+            let result = if let ExprKind::Record(_with, labeled_exprs) =
+                &compute.kind
+            {
                 // Multiple compute fields.
                 let mut labeled_exprs2 = Vec::new();
+                let start = field_vars.len();
                 for labeled_expr in labeled_exprs {
                     let v_field = self.variable();
                     let expr2 = self.deduce_expr_type(
@@ -1713,14 +1752,23 @@ impl TypeResolver {
                         expr: expr2,
                     });
                 }
-                Some(Box::new(Expr {
-                    kind: ExprKind::Record(None, labeled_exprs2),
-                    span: compute.span.clone(),
-                    id: compute.id,
-                }))
+                let mut map: BTreeMap<Label, Term> = BTreeMap::new();
+                field_vars.iter().skip(start).for_each(|fv| {
+                    map.insert(
+                        Label::String(fv.0.clone()),
+                        Term::Variable(fv.1.clone()),
+                    );
+                });
+                self.record_term(&map, &v_compute);
+                let x = ExprKind::Record(None, labeled_exprs2);
+                Some(Box::new(self.reg_expr(
+                    &x,
+                    &compute.span,
+                    compute.id,
+                    &v_compute,
+                )))
             } else {
                 // Single compute expression.
-                let v_compute = self.variable();
                 let expr2 =
                     self.deduce_expr_type(&*group_env, compute, &v_compute)?;
                 let label = expr2
@@ -1728,7 +1776,10 @@ impl TypeResolver {
                     .unwrap_or_else(|| "compute".to_string());
                 field_vars.push((label, v_compute));
                 Some(Box::new(expr2))
-            }
+            };
+
+            self.compute_stack.pop();
+            result
         } else {
             None
         };
@@ -1781,6 +1832,7 @@ impl TypeResolver {
         compute_env_builder
             .push("elements".to_string(), Term::Variable(p.c.clone().unwrap()));
         let compute_env = compute_env_builder.build();
+        self.compute_stack.push(p.with_env(&compute_env));
 
         // Process compute expression
         let compute_expr2;
@@ -1819,8 +1871,10 @@ impl TypeResolver {
             field_vars.push(("compute".to_string(), v_compute.clone()));
         }
 
-        // Compute returns a singleton (not a collection).
-        // If single expression, return it directly; if record, use field_var.
+        self.compute_stack.pop();
+
+        // Compute returns a singleton (not a collection). If it is a single
+        // expression, return it directly; if record, use field_var.
         let v_result = if field_vars.len() == 1 && field_vars[0].0 == "compute"
         {
             field_vars[0].1.clone()
@@ -3310,8 +3364,7 @@ const W_INCONSISTENT_PARAMETERS: &str = "parameter or result \
 constraints of clauses don't agree [tycon mismatch]";
 
 fn missing_format<T>(query: &Expr, span: &Span) -> Result<T, Error> {
-    let zero = ExprKind::Ordinal.spanned(&query.span);
-    let require = StepKind::Require(Box::new(zero));
+    let require = StepKind::Require(Expr::empty());
     let message = format!(
         "last step of '{}' must be '{}'",
         query.kind.clause(),

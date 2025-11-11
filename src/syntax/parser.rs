@@ -488,6 +488,7 @@ impl MorelParser {
                 ExprKind::RecordSelector(r[1..].to_string()).wrap(input)
             },
             [_current(_)] => ExprKind::Current.wrap(input),
+            [_elements(_)] => ExprKind::Elements.wrap(input),
             [_ordinal(_)] => ExprKind::Ordinal.wrap(input),
             [tuple_expr(e)] => e,
             [list_expr(e)] => e,
@@ -1585,6 +1586,10 @@ impl MorelParser {
     }
 
     fn _else(input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _elements(input: ParseInput) -> ParseResult<()> {
         Ok(())
     }
 
