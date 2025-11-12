@@ -1524,7 +1524,7 @@ mod tests {
         assert_eq!(a1.name, "A1");
         let v0 = u.variable();
         assert_eq!(u.var_name(&v0), "T0");
-        vars.push(v0.clone());
+        vars.push(v0);
 
         // Try to create an operator with the name of an existing variable,
         // get a new name.
@@ -1536,11 +1536,11 @@ mod tests {
         let v1 = u.variable();
         let v1_name = u.var_name(&v1);
         assert_eq!(v1_name, "T1");
-        vars.push(v1.clone());
+        vars.push(v1);
         let v1_string = u.var_name(&v1);
 
         let v2 = u.variable();
-        vars.push(v2.clone());
+        vars.push(v2);
         let v2_string = u.var_name(&v2);
 
         let v1b = u.variable_with_name(&v1_name);
@@ -1552,26 +1552,26 @@ mod tests {
         assert_eq!(u.var_name(&v2a), v2_string);
 
         let v3 = u.variable();
-        vars.push(v3.clone());
+        vars.push(v3);
 
         let v4 = u.variable();
-        vars.push(v4.clone());
+        vars.push(v4);
         let v4_string = u.var_name(&v4);
 
         let v5 = u.variable();
-        vars.push(v5.clone());
+        vars.push(v5);
 
         let v6 = u.variable();
-        vars.push(v6.clone());
+        vars.push(v6);
 
         let v4a = u.variable_with_id(5);
         assert_eq!(u.var_name(&v4a), v4_string);
 
         let v7 = u.variable();
-        vars.push(v7.clone());
+        vars.push(v7);
 
         let v8 = u.variable();
-        vars.push(v8.clone());
+        vars.push(v8);
 
         let var_strings: Vec<_> = vars.iter().map(|v| u.var_name(v)).collect();
         assert_eq!(
