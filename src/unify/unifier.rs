@@ -234,7 +234,7 @@ pub struct Op {
 #[derive(Clone, PartialEq, Debug)]
 pub struct Sequence {
     pub op: Rc<Op>,
-    pub terms: Vec<Term>,
+    pub terms: Rc<[Term]>,
 }
 
 impl Sequence {
@@ -246,22 +246,31 @@ impl Sequence {
             .collect();
         Sequence {
             op: self.op.clone(),
-            terms,
+            terms: Rc::from(terms),
         }
     }
 
     fn sub(&self, map: &BTreeMap<Rc<Var>, Term>) -> Self {
         if self.terms.is_empty() {
-            return self.clone();
+            // Cheap clone - just increments Rc refcount.
+            return Self {
+                op: self.op.clone(),
+                terms: self.terms.clone(),
+            };
         }
         let new_terms: Vec<Term> =
             self.terms.iter().map(|t| t.apply(map)).collect();
-        if self.terms == new_terms {
-            return self.clone();
+        // Check if anything actually changed.
+        if self.terms.iter().zip(&new_terms).all(|(a, b)| a == b) {
+            // Nothing changed, return cheap clone.
+            return Self {
+                op: self.op.clone(),
+                terms: self.terms.clone(),
+            };
         }
         Sequence {
             op: self.op.clone(),
-            terms: new_terms,
+            terms: Rc::from(new_terms),
         }
     }
 }
@@ -390,7 +399,7 @@ impl Substitution {
                 }
             }
             Term::Sequence(seq) => {
-                for sub_term in &seq.terms {
+                for sub_term in seq.terms.iter() {
                     self.check_cycle_in_term(sub_term, active)?;
                 }
                 Ok(())
@@ -970,7 +979,7 @@ impl Unifier {
         assert!(op.arity.is_none_or(|x| { x == terms.len() }));
         Sequence {
             op,
-            terms: terms.to_vec(),
+            terms: Rc::from(terms),
         }
     }
 
@@ -999,7 +1008,7 @@ impl Unifier {
     pub fn atom(&self, op: Rc<Op>) -> Sequence {
         Sequence {
             op,
-            terms: Vec::new(),
+            terms: Rc::from([]),
         }
     }
 
