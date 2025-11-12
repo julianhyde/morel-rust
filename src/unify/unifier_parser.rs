@@ -224,14 +224,8 @@ pub fn generate_program(
     for p in term_pairs {
         s.push_str(&format!(
             "{} = {}\n",
-            unifier::TermDisplay {
-                term: &p.0,
-                unifier
-            },
-            unifier::TermDisplay {
-                term: &p.1,
-                unifier
-            }
+            unifier.term_string(&p.0),
+            unifier.term_string(&p.1),
         ));
     }
     s

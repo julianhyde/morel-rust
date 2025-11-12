@@ -188,24 +188,10 @@ impl Display for TermDisplay<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self.term {
             Term::Variable(var) => {
-                write!(
-                    f,
-                    "{}",
-                    VarDisplay {
-                        var,
-                        unifier: self.unifier
-                    }
-                )
+                write!(f, "{}", self.unifier.var_name(var))
             }
             Term::Sequence(seq) => {
-                write!(
-                    f,
-                    "{}",
-                    SequenceDisplay {
-                        seq,
-                        unifier: self.unifier
-                    }
-                )
+                write!(f, "{}", self.unifier.sequence_string(seq))
             }
         }
     }
@@ -227,14 +213,7 @@ impl Display for SequenceDisplay<'_> {
                 if i > 0 {
                     write!(f, ", ")?;
                 }
-                write!(
-                    f,
-                    "{}",
-                    TermDisplay {
-                        term,
-                        unifier: self.unifier
-                    }
-                )?;
+                write!(f, "{}", self.unifier.term_string(term))?;
             }
             write!(f, ")")
         }
@@ -260,23 +239,9 @@ impl Display for SubstitutionDisplay<'_> {
                 f.write_str(", ")?;
             }
             first = false;
-            write!(
-                f,
-                "{}",
-                TermDisplay {
-                    term,
-                    unifier: self.unifier
-                }
-            )?;
+            write!(f, "{}", self.unifier.term_string(term))?;
             f.write_char('/')?;
-            write!(
-                f,
-                "{}",
-                VarDisplay {
-                    var,
-                    unifier: self.unifier
-                }
-            )?;
+            write!(f, "{}", self.unifier.var_name(var))?;
         }
         f.write_char(']')
     }
@@ -1070,6 +1035,11 @@ impl Unifier {
         .to_string()
     }
 
+    /// Formats a sequence as a string.
+    pub fn sequence_string(&self, seq: &Sequence) -> String {
+        SequenceDisplay { seq, unifier: self }.to_string()
+    }
+
     /// Formats a substitution as a string.
     pub fn substitution_string(&self, substitution: &Substitution) -> String {
         SubstitutionDisplay {
@@ -1183,14 +1153,8 @@ impl Unifier {
                     tracer.on_conflict(&left, &right);
                     let reason = format!(
                         "conflict: {} != {}",
-                        SequenceDisplay {
-                            seq: &left,
-                            unifier: self
-                        },
-                        SequenceDisplay {
-                            seq: &right,
-                            unifier: self
-                        }
+                        self.sequence_string(&left),
+                        self.sequence_string(&right)
                     );
                     return Err(UnificationFailure { reason });
                 }
@@ -1281,14 +1245,7 @@ impl Unifier {
                     substitutions: substitutions.clone(),
                 }
                 .resolve();
-                println!(
-                    "After: {}\n{}",
-                    work,
-                    SubstitutionDisplay {
-                        substitution: &sub,
-                        unifier: self
-                    }
-                );
+                println!("After: {}\n{}", work, self.substitution_string(&sub));
             }
             return Ok(Substitution { substitutions });
         }
@@ -1517,11 +1474,7 @@ impl UnifierTest {
             self.unifier
                 .unify(term_pairs, &NullTracer, &term_actions_vec);
         let substitution = result.unwrap().resolve();
-        let actual = SubstitutionDisplay {
-            substitution: &substitution,
-            unifier: &self.unifier,
-        }
-        .to_string();
+        let actual = self.unifier.substitution_string(&substitution);
         assert_eq!(actual, expected);
     }
 
@@ -1645,26 +1598,12 @@ mod tests {
         let f_a = t.f(a.clone());
         let g_b = t.g(b);
         let e1 = t.p(f_a, g_b, y.clone());
-        assert_eq!(
-            TermDisplay {
-                term: &e1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "p(f(a), g(b), Y)"
-        );
+        assert_eq!(t.unifier.term_string(&e1), "p(f(a), g(b), Y)");
         let d = t.atom("d");
         let c = t.atom("c");
         let g_d = t.g(d);
         let e2 = t.p(z.clone(), g_d, c);
-        assert_eq!(
-            TermDisplay {
-                term: &e2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "p(Z, g(d), c)"
-        );
+        assert_eq!(t.unifier.term_string(&e2), "p(Z, g(d), c)");
         t.assert_that_cannot_unify(e1, e2);
     }
 
@@ -1684,14 +1623,7 @@ mod tests {
         let mut map: ImHashMap<Rc<Var>, Term> = ImHashMap::new();
         map.insert(z_v, f_a_y);
         let sub = t.unifier.substitution(&map);
-        assert_eq!(
-            SubstitutionDisplay {
-                substitution: &sub,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "[f(a, Y)/Z]"
-        );
+        assert_eq!(t.unifier.substitution_string(&sub), "[f(a, Y)/Z]");
     }
 
     #[test]
@@ -1705,25 +1637,11 @@ mod tests {
         let b = t.atom("b");
         let g_b = t.g(b);
         let e1 = t.p(f_a, g_b, y.clone());
-        assert_eq!(
-            TermDisplay {
-                term: &e1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "p(f(a), g(b), Y)"
-        );
+        assert_eq!(t.unifier.term_string(&e1), "p(f(a), g(b), Y)");
         let c = t.atom("c");
         let g_w = t.g(w.clone());
         let e2 = t.p(z.clone(), g_w, c);
-        assert_eq!(
-            TermDisplay {
-                term: &e2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "p(Z, g(W), c)"
-        );
+        assert_eq!(t.unifier.term_string(&e2), "p(Z, g(W), c)");
         t.assert_that_unify(e1, e2, "[b/W, c/Y, f(a)/Z]");
     }
 
@@ -1738,24 +1656,10 @@ mod tests {
         let f_b = t.f(b);
         let f_f_b = t.f(f_b);
         let e1 = t.h(f_f_b, x.clone());
-        assert_eq!(
-            TermDisplay {
-                term: &e1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "h(f(f(b)), X)"
-        );
+        assert_eq!(t.unifier.term_string(&e1), "h(f(f(b)), X)");
         let f_y = t.f(y.clone());
         let e2 = t.h(f_y, x.clone());
-        assert_eq!(
-            TermDisplay {
-                term: &e2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "h(f(Y), X)"
-        );
+        assert_eq!(t.unifier.term_string(&e2), "h(f(Y), X)");
         t.assert_that_unify(e1, e2, "[f(b)/Y]");
     }
 
@@ -1793,24 +1697,10 @@ mod tests {
         let y = t.var("Y");
         let a = t.atom("a");
         let e1 = t.h(x.clone(), a);
-        assert_eq!(
-            TermDisplay {
-                term: &e1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "h(X, a)"
-        );
+        assert_eq!(t.unifier.term_string(&e1), "h(X, a)");
         let b = t.atom("b");
         let e2 = t.h(b, y.clone());
-        assert_eq!(
-            TermDisplay {
-                term: &e2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "h(b, Y)"
-        );
+        assert_eq!(t.unifier.term_string(&e2), "h(b, Y)");
         t.assert_that_unify(e1, e2, "[b/X, a/Y]");
     }
 
@@ -1822,23 +1712,9 @@ mod tests {
         let a2 = t.atom("a");
         let b = t.atom("b");
         let e1 = t.f2(a1, x.clone());
-        assert_eq!(
-            TermDisplay {
-                term: &e1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "f(a, X)"
-        );
+        assert_eq!(t.unifier.term_string(&e1), "f(a, X)");
         let e2 = t.f2(a2, b);
-        assert_eq!(
-            TermDisplay {
-                term: &e2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "f(a, b)"
-        );
+        assert_eq!(t.unifier.term_string(&e2), "f(a, b)");
         t.assert_that_unify(e1, e2, "[b/X]");
     }
 
@@ -1859,23 +1735,9 @@ mod tests {
         let y = t.var("Y");
         let g_x = t.g(x.clone());
         let e1 = t.f2(g_x, x.clone()); // f with arity 2
-        assert_eq!(
-            TermDisplay {
-                term: &e1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "f(g(X), X)"
-        );
+        assert_eq!(t.unifier.term_string(&e1), "f(g(X), X)");
         let e2 = t.f(y.clone()); // f with arity 1
-        assert_eq!(
-            TermDisplay {
-                term: &e2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "f(Y)"
-        );
+        assert_eq!(t.unifier.term_string(&e2), "f(Y)");
         t.assert_that_cannot_unify(e1, e2);
     }
 
@@ -1898,23 +1760,9 @@ mod tests {
         let g_x = t.g(x.clone());
         let a = t.atom("a");
         let e1 = t.f2(g_x, x.clone());
-        assert_eq!(
-            TermDisplay {
-                term: &e1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "f(g(X), X)"
-        );
+        assert_eq!(t.unifier.term_string(&e1), "f(g(X), X)");
         let e2 = t.f2(y.clone(), a);
-        assert_eq!(
-            TermDisplay {
-                term: &e2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "f(Y, a)"
-        );
+        assert_eq!(t.unifier.term_string(&e2), "f(Y, a)");
         t.assert_that_unify(e1, e2, "[a/X, g(a)/Y]");
     }
 
@@ -1926,23 +1774,9 @@ mod tests {
         let bob = t.atom("bob");
         let tom = t.atom("tom");
         let e1 = t.father2(x.clone(), y.clone());
-        assert_eq!(
-            TermDisplay {
-                term: &e1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "father(X, Y)"
-        );
+        assert_eq!(t.unifier.term_string(&e1), "father(X, Y)");
         let e2 = t.father2(bob, tom);
-        assert_eq!(
-            TermDisplay {
-                term: &e2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "father(bob, tom)"
-        );
+        assert_eq!(t.unifier.term_string(&e2), "father(bob, tom)");
         t.assert_that_unify(e1, e2, "[bob/X, tom/Y]");
     }
 
@@ -1956,21 +1790,13 @@ mod tests {
         let father_x = t.father(x.clone());
         let e1 = t.parents(x.clone(), father_x, mother_bill);
         assert_eq!(
-            TermDisplay {
-                term: &e1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
+            t.unifier.term_string(&e1),
             "parents(X, father(X), mother(bill))"
         );
         let father_bill = t.father(bill.clone());
         let e2 = t.parents(bill, father_bill, y.clone());
         assert_eq!(
-            TermDisplay {
-                term: &e2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
+            t.unifier.term_string(&e2),
             "parents(bill, father(bill), Y)"
         );
         t.assert_that_unify(e1, e2, "[bill/X, mother(bill)/Y]");
@@ -1986,23 +1812,12 @@ mod tests {
         let parent_parent_x = t.parent(parent_x);
         let e1 = t.grand_parent(x.clone(), parent_parent_x);
         assert_eq!(
-            TermDisplay {
-                term: &e1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
+            t.unifier.term_string(&e1),
             "grand_parent(X, parent(parent(X)))"
         );
         let parent_y = t.parent(y.clone());
         let e2 = t.grand_parent(john, parent_y);
-        assert_eq!(
-            TermDisplay {
-                term: &e2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "grand_parent(john, parent(Y))"
-        );
+        assert_eq!(t.unifier.term_string(&e2), "grand_parent(john, parent(Y))");
         t.assert_that_unify(e1, e2, "[john/X, parent(john)/Y]");
     }
 
@@ -2015,23 +1830,9 @@ mod tests {
         let g_x = t.g(x.clone());
         let f_a = t.f(a);
         let e1 = t.h(f_a, g_x.clone());
-        assert_eq!(
-            TermDisplay {
-                term: &e1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "h(f(a), g(X))"
-        );
+        assert_eq!(t.unifier.term_string(&e1), "h(f(a), g(X))");
         let e2 = t.h(y.clone(), y.clone());
-        assert_eq!(
-            TermDisplay {
-                term: &e2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "h(Y, Y)"
-        );
+        assert_eq!(t.unifier.term_string(&e2), "h(Y, Y)");
         t.assert_that_cannot_unify(e1, e2);
     }
 
@@ -2045,24 +1846,10 @@ mod tests {
         let g_z = t.g(z.clone());
         let f_g_z = t.f(g_z);
         let e1 = t.p(a.clone(), x.clone(), f_g_z);
-        assert_eq!(
-            TermDisplay {
-                term: &e1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "p(a, X, f(g(Z)))"
-        );
+        assert_eq!(t.unifier.term_string(&e1), "p(a, X, f(g(Z)))");
         let f_y = t.f(y.clone());
         let e2 = t.p(z.clone(), f_y.clone(), f_y);
-        assert_eq!(
-            TermDisplay {
-                term: &e2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "p(Z, f(Y), f(Y))"
-        );
+        assert_eq!(t.unifier.term_string(&e2), "p(Z, f(Y), f(Y))");
         t.assert_that_unify(e1, e2, "[f(g(a))/X, g(a)/Y, a/Z]");
     }
 
@@ -2073,24 +1860,10 @@ mod tests {
             let x = t.var("X");
             let y = t.var("Y");
             let e1 = t.h(x.clone(), x.clone());
-            assert_eq!(
-                TermDisplay {
-                    term: &e1,
-                    unifier: &t.unifier,
-                }
-                .to_string(),
-                "h(X, X)"
-            );
+            assert_eq!(t.unifier.term_string(&e1), "h(X, X)");
             let f_y = t.f(y.clone());
             let e2 = t.h(y.clone(), f_y);
-            assert_eq!(
-                TermDisplay {
-                    term: &e2,
-                    unifier: &t.unifier,
-                }
-                .to_string(),
-                "h(Y, f(Y))"
-            );
+            assert_eq!(t.unifier.term_string(&e2), "h(Y, f(Y))");
             if occurs {
                 t.assert_that_cannot_unify(e1, e2);
             } else {
@@ -2105,24 +1878,10 @@ mod tests {
         let w = t.var("W");
         let x = t.var("X");
         let e1 = t.part(w.clone(), x.clone()).as_term();
-        assert_eq!(
-            TermDisplay {
-                term: &e1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "part(W, X)"
-        );
+        assert_eq!(t.unifier.term_string(&e1), "part(W, X)");
         let f_w_x = t.f2(w.clone(), x.clone());
         let e2 = t.connected(f_w_x, w.clone());
-        assert_eq!(
-            TermDisplay {
-                term: &e2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "connected(f(W, X), W)"
-        );
+        assert_eq!(t.unifier.term_string(&e2), "connected(f(W, X), W)");
         t.assert_that_cannot_unify(e1, e2);
     }
 
@@ -2135,27 +1894,13 @@ mod tests {
         let f_x = t.f(x.clone());
         let a = t.atom("a");
         let e1 = t.p(f_x, a.clone(), y.clone());
-        assert_eq!(
-            TermDisplay {
-                term: &e1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "p(f(X), a, Y)"
-        );
+        assert_eq!(t.unifier.term_string(&e1), "p(f(X), a, Y)");
         let bill = t.atom("bill");
         let f_bill = t.f(bill);
         let b = t.atom("b");
         let g_b = t.g(b);
         let e2 = t.p(f_bill, z.clone(), g_b);
-        assert_eq!(
-            TermDisplay {
-                term: &e2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "p(f(bill), Z, g(b))"
-        );
+        assert_eq!(t.unifier.term_string(&e2), "p(f(bill), Z, g(b))");
         t.assert_that_unify(e1, e2, "[bill/X, g(b)/Y, a/Z]");
     }
 
@@ -2185,46 +1930,11 @@ mod tests {
         let a_7_6 = t.arrow(t7.clone(), t6.clone());
         let a_8_7_6 = t.arrow(t8.clone(), a_7_6);
         let a_9_7 = t.arrow(t9.clone(), t7.clone());
-        assert_eq!(
-            TermDisplay {
-                term: &a_1_2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "->(T1, T2)"
-        );
-        assert_eq!(
-            TermDisplay {
-                term: &a_3_4,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "->(T3, T4)"
-        );
-        assert_eq!(
-            TermDisplay {
-                term: &a_5_6,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "->(T5, T6)"
-        );
-        assert_eq!(
-            TermDisplay {
-                term: &a_8_7_6,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "->(T8, ->(T7, T6))"
-        );
-        assert_eq!(
-            TermDisplay {
-                term: &a_9_7,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "->(T9, T7)"
-        );
+        assert_eq!(t.unifier.term_string(&a_1_2), "->(T1, T2)");
+        assert_eq!(t.unifier.term_string(&a_3_4), "->(T3, T4)");
+        assert_eq!(t.unifier.term_string(&a_5_6), "->(T5, T6)");
+        assert_eq!(t.unifier.term_string(&a_8_7_6), "->(T8, ->(T7, T6))");
+        assert_eq!(t.unifier.term_string(&a_9_7), "->(T9, T7)");
 
         let term_pairs = vec![
             (t0.clone(), a_1_2.clone()),
@@ -2248,14 +1958,7 @@ mod tests {
         match result {
             Ok(substitution) => {
                 let resolved = substitution.resolve();
-                assert_eq!(
-                    SubstitutionDisplay {
-                        substitution: &resolved,
-                        unifier: &t.unifier,
-                    }
-                    .to_string(),
-                    expected
-                );
+                assert_eq!(t.unifier.substitution_string(&resolved), expected);
             }
             Err(err) => panic!("Unification failed: {}", err.reason),
         }
@@ -2312,14 +2015,7 @@ mod tests {
         match result {
             Ok(substitution) => {
                 let resolved = substitution.resolve();
-                assert_eq!(
-                    SubstitutionDisplay {
-                        substitution: &resolved,
-                        unifier: &t.unifier,
-                    }
-                    .to_string(),
-                    expected
-                );
+                assert_eq!(t.unifier.substitution_string(&resolved), expected);
             }
             Err(err) => panic!("Unification failed: {}", err.reason),
         }
@@ -2383,11 +2079,7 @@ mod tests {
             fn(tuple(int, int), int)/T19, \
             fn(tuple(int, int), int)/T0]";
         assert_eq!(
-            SubstitutionDisplay {
-                substitution: &substitutions.resolve(),
-                unifier: task.unifier(),
-            }
-            .to_string(),
+            task.unifier().substitution_string(&substitutions.resolve()),
             expected
         );
     }
@@ -2438,11 +2130,9 @@ tuple(bool, list(int), list(int))/T18, \
 T0/T22, \
 fn(tuple(bool, list(int), list(int)), T0)/T17]";
         assert_eq!(
-            SubstitutionDisplay {
-                substitution: &substitution.resolve(),
-                unifier: unifier_task.unifier(),
-            }
-            .to_string(),
+            unifier_task
+                .unifier()
+                .substitution_string(&substitution.resolve()),
             expected
         );
     }
@@ -2454,30 +2144,9 @@ fn(tuple(bool, list(int), list(int)), T0)/T17]";
         let b = t.atom("b");
         let a = t.atom("a");
         let pairs = t.term_pairs(&[b.clone(), x.clone(), a.clone(), x.clone()]);
-        assert_eq!(
-            TermDisplay {
-                term: &b,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "b"
-        );
-        assert_eq!(
-            TermDisplay {
-                term: &a,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "a"
-        );
-        assert_eq!(
-            TermDisplay {
-                term: &x,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "X"
-        );
+        assert_eq!(t.unifier.term_string(&b), "b");
+        assert_eq!(t.unifier.term_string(&a), "a");
+        assert_eq!(t.unifier.term_string(&x), "X");
         t.assert_that_cannot_unify_pairs(&pairs);
     }
 
@@ -2496,38 +2165,10 @@ fn(tuple(bool, list(int), list(int)), T0)/T17]";
             b.clone(),
             x.clone(),
         ]);
-        assert_eq!(
-            TermDisplay {
-                term: &a1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "a"
-        );
-        assert_eq!(
-            TermDisplay {
-                term: &a2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "a"
-        );
-        assert_eq!(
-            TermDisplay {
-                term: &b,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "b"
-        );
-        assert_eq!(
-            TermDisplay {
-                term: &x,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "X"
-        );
+        assert_eq!(t.unifier.term_string(&a1), "a");
+        assert_eq!(t.unifier.term_string(&a2), "a");
+        assert_eq!(t.unifier.term_string(&b), "b");
+        assert_eq!(t.unifier.term_string(&x), "X");
         t.assert_that_cannot_unify_pairs(&pairs);
     }
 
@@ -2539,30 +2180,9 @@ fn(tuple(bool, list(int), list(int)), T0)/T17]";
         let a2 = t.atom("a");
         let pairs =
             t.term_pairs(&[a1.clone(), x.clone(), a2.clone(), x.clone()]);
-        assert_eq!(
-            TermDisplay {
-                term: &a1,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "a"
-        );
-        assert_eq!(
-            TermDisplay {
-                term: &a2,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "a"
-        );
-        assert_eq!(
-            TermDisplay {
-                term: &x,
-                unifier: &t.unifier,
-            }
-            .to_string(),
-            "X"
-        );
+        assert_eq!(t.unifier.term_string(&a1), "a");
+        assert_eq!(t.unifier.term_string(&a2), "a");
+        assert_eq!(t.unifier.term_string(&x), "X");
         t.assert_that_unify_pairs(&pairs, "[a/X]");
     }
 
@@ -2655,11 +2275,7 @@ string = T0
             int/T7, \
             string/T0]";
         assert_eq!(
-            SubstitutionDisplay {
-                substitution: &x.resolve(),
-                unifier: unifier_task.unifier(),
-            }
-            .to_string(),
+            unifier_task.unifier().substitution_string(&x.resolve()),
             expected
         );
     }
