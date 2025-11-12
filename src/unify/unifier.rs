@@ -24,10 +24,10 @@
 #![allow(clippy::collapsible_if)]
 
 use crate::unify;
-use im::HashSet;
+use im::{HashSet, OrdMap};
 use std::cell::RefCell;
 use std::cmp::{PartialEq, max};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Debug, Display, Formatter, Write};
 use std::iter::zip;
 use std::rc::Rc;
@@ -37,7 +37,7 @@ use std::time::Instant;
 trait TermLike {
     fn apply1(&self, variable: &Rc<Var>, term: &Term) -> Term;
     #[allow(dead_code)]
-    fn apply(&self, map: &BTreeMap<Rc<Var>, Term>) -> Term;
+    fn apply(&self, map: &OrdMap<Rc<Var>, Term>) -> Term;
     fn as_term(&self) -> Term;
 }
 
@@ -89,7 +89,7 @@ impl Term {
     }
 
     /// Applies a substitution to this term.
-    fn apply(&self, map: &BTreeMap<Rc<Var>, Term>) -> Term {
+    fn apply(&self, map: &OrdMap<Rc<Var>, Term>) -> Term {
         match self {
             Term::Variable(v) => v.apply(map),
             Term::Sequence(seq) => seq.apply(map),
@@ -123,7 +123,7 @@ impl TermLike for Term {
         }
     }
 
-    fn apply(&self, map: &BTreeMap<Rc<Var>, Term>) -> Term {
+    fn apply(&self, map: &OrdMap<Rc<Var>, Term>) -> Term {
         match self {
             Term::Variable(v) => v.apply(&map),
             Term::Sequence(seq) => seq.apply(&map),
@@ -199,7 +199,7 @@ impl TermLike for Rc<Var> {
         }
     }
 
-    fn apply(&self, map: &BTreeMap<Rc<Var>, Term>) -> Term {
+    fn apply(&self, map: &OrdMap<Rc<Var>, Term>) -> Term {
         map.get(self).cloned().unwrap_or_else(|| self.as_term())
     }
 
@@ -250,7 +250,7 @@ impl Sequence {
         }
     }
 
-    fn sub(&self, map: &BTreeMap<Rc<Var>, Term>) -> Self {
+    fn sub(&self, map: &OrdMap<Rc<Var>, Term>) -> Self {
         if self.terms.is_empty() {
             // Cheap clone - just increments Rc refcount.
             return Self {
@@ -280,7 +280,7 @@ impl TermLike for Sequence {
         Term::Sequence(self.sub1(variable, term))
     }
 
-    fn apply(&self, map: &BTreeMap<Rc<Var>, Term>) -> Term {
+    fn apply(&self, map: &OrdMap<Rc<Var>, Term>) -> Term {
         Term::Sequence(self.sub(&map))
     }
 
@@ -318,26 +318,25 @@ impl<'a> Display for Sequence {
 /// Substitution.
 #[derive(Clone, Debug)]
 pub struct Substitution {
-    pub substitutions: BTreeMap<Rc<Var>, Term>,
+    pub substitutions: OrdMap<Rc<Var>, Term>,
 }
 
 impl Substitution {
-    fn from_result(p0: &HashMap<Rc<Var>, Term>) -> Self {
-        let mut map = BTreeMap::new();
-        p0.iter().for_each(|(k, v)| {
-            map.insert(k.clone(), v.clone());
-        });
-        Substitution { substitutions: map }
+    fn from_result(p0: &OrdMap<Rc<Var>, Term>) -> Self {
+        Substitution {
+            substitutions: p0.clone(),
+        }
     }
 
     fn resolve(&self) -> Self {
         if self.has_cycles() {
             return self.clone();
         }
-        let mut new_substitutions = BTreeMap::new();
-        for (key, value) in &self.substitutions {
-            new_substitutions.insert(key.clone(), self.resolve_term(value));
-        }
+        let new_substitutions: OrdMap<Rc<Var>, Term> = self
+            .substitutions
+            .iter()
+            .map(|(key, value)| (key.clone(), self.resolve_term(value)))
+            .collect();
         Substitution {
             substitutions: new_substitutions,
         }
@@ -595,7 +594,7 @@ struct Work<'a> {
     seq_seq_queue: Rc<RefCell<VecDeque<(Sequence, Sequence)>>>,
     var_any_queue: Rc<RefCell<VecDeque<(Rc<Var>, Term)>>>,
     constraint_queue: VecDeque<MutableConstraint>,
-    result: HashMap<Rc<Var>, Term>,
+    result: OrdMap<Rc<Var>, Term>,
 }
 
 impl Display for Work<'_> {
@@ -627,7 +626,7 @@ impl<'a> Work<'a> {
             var_any_queue: Rc::new(RefCell::new(VecDeque::new())),
             seq_seq_queue: Rc::new(RefCell::new(VecDeque::new())),
             constraint_queue: VecDeque::new(),
-            result: HashMap::new(),
+            result: OrdMap::new(),
         };
         term_pairs
             .iter()
@@ -1015,7 +1014,7 @@ impl Unifier {
     /// Creates a substitution from a variable to a term.
     fn substitution(
         &self,
-        substitutions: &BTreeMap<Rc<Var>, Term>,
+        substitutions: &OrdMap<Rc<Var>, Term>,
     ) -> Substitution {
         Substitution {
             substitutions: substitutions.clone(),
@@ -1161,10 +1160,7 @@ impl Unifier {
                 );
                 println!("Result: {}", work);
             }
-            let mut substitutions = BTreeMap::new();
-            work.result.iter().for_each(|(var, term)| {
-                substitutions.insert(var.clone(), term.clone());
-            });
+            let substitutions = work.result.clone();
             if false {
                 println!(
                     "After: {}\n{}",
@@ -1543,7 +1539,7 @@ mod tests {
             }
             Term::Variable(v) => v,
         };
-        let mut map: BTreeMap<Rc<Var>, Term> = BTreeMap::new();
+        let mut map: OrdMap<Rc<Var>, Term> = OrdMap::new();
         map.insert(z_v, f_a_y);
         let sub = t.unifier.substitution(&map);
         assert_eq!(sub.to_string(), "[f(a, Y)/Z]");
