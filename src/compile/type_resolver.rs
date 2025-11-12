@@ -162,7 +162,7 @@ impl<'a> TermToTypeConverter<'a> {
         match term {
             Term::Sequence(sequence) => {
                 let op_name =
-                    &self.type_map.op_defs[sequence.op.id as usize].name;
+                    &self.type_map.op_defs[sequence.op.0 as usize].name;
                 match op_name.as_str() {
                     // lint: sort until '#}' where '##["]'
                     "bag" => {
@@ -213,7 +213,7 @@ impl<'a> TermToTypeConverter<'a> {
                         Box::new(Type::Tuple(types))
                     }
                     s if s.starts_with("record") => {
-                        let labels = TypeResolver::field_list_with_op_defs(
+                        let labels = TypeResolver::field_list(
                             &self.type_map.op_defs,
                             sequence,
                         )
@@ -831,7 +831,8 @@ impl TypeResolver {
                 let mut label_names = BTreeSet::new();
 
                 if let Some(sequence) = self.variable_to_sequence(&v_e)
-                    && let Some(field_list) = self.field_list(&sequence)
+                    && let Some(field_list) =
+                        Self::field_list(&self.unifier.op_defs, &sequence)
                 {
                     label_names.extend(field_list);
                 }
@@ -2197,10 +2198,7 @@ impl TypeResolver {
                 // (selector is "#b") we can deduce that v_field is "real".
                 if let Term::Sequence(sequence) = term
                     && let Some(field_list) =
-                        TypeResolver::field_list_with_op_defs(
-                            &self.op_defs,
-                            sequence,
-                        )
+                        TypeResolver::field_list(&self.op_defs, sequence)
                     && let Some(i) =
                         field_list.iter().position(|f| *f == self.field_name)
                 {
@@ -2726,17 +2724,11 @@ impl TypeResolver {
 
     /// Inverse of [TypeResolver::record_label_from_set]. Extracts field names
     /// from a sequence.
-    fn field_list(&self, sequence: &Sequence) -> Option<Vec<String>> {
-        Self::field_list_with_op_defs(&self.unifier.op_defs, sequence)
-    }
-
-    /// Inverse of [TypeResolver::record_label_from_set]. Extracts field names
-    /// from a sequence. Static version that takes op_defs.
-    fn field_list_with_op_defs(
+    fn field_list(
         op_defs: &[OpDef],
         sequence: &Sequence,
     ) -> Option<Vec<String>> {
-        let op_name = &op_defs[sequence.op.id as usize].name;
+        let op_name = &op_defs[sequence.op.0 as usize].name;
         match op_name.as_str() {
             "record" => Some(Vec::new()),
             "tuple" => {

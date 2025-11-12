@@ -283,18 +283,9 @@ impl FromTerm for Var {
 
 /// A lightweight reference to an operator.
 ///
-/// Its id is unique within a Unifier,
-/// and disjoint from Var id values.
+/// Its id is unique within a Unifier.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct Op {
-    pub id: i32,
-}
-
-impl Op {
-    pub fn new(id: i32) -> Self {
-        Self { id }
-    }
-}
+pub struct Op(pub i32);
 
 /// A registered operator definition.
 ///
@@ -976,7 +967,7 @@ impl Unifier {
         if let Some(op) = self.op_by_name.get(name) {
             *op
         } else {
-            let id = Op::new(self.op_defs.len() as i32);
+            let id = Op(self.op_defs.len() as i32);
             let op_def = OpDef {
                 name: name.to_string(),
                 arity,
@@ -990,7 +981,7 @@ impl Unifier {
 
     fn op_unique(&mut self, prefix: &str, arity: Option<usize>) -> Op {
         let name = self.new_name(prefix, 0);
-        let id = Op::new(self.op_defs.len() as i32);
+        let id = Op(self.op_defs.len() as i32);
         let op_def = OpDef {
             name: name.clone(),
             arity,
@@ -1073,17 +1064,17 @@ impl Unifier {
 
     /// Gets the name for an operator.
     pub fn op_name(&self, op: &Op) -> &str {
-        &self.op_defs[op.id as usize].name
+        &self.op_defs[op.0 as usize].name
     }
 
     /// Gets the arity for an operator.
     pub fn op_arity(&self, op: &Op) -> Option<usize> {
-        self.op_defs[op.id as usize].arity
+        self.op_defs[op.0 as usize].arity
     }
 
     /// Gets the definition for an operator.
     pub fn op_def(&self, op: &Op) -> &OpDef {
-        &self.op_defs[op.id as usize]
+        &self.op_defs[op.0 as usize]
     }
 
     /// Formats a term as a string.
