@@ -317,39 +317,63 @@ pub struct Sequence {
 }
 
 impl Sequence {
-    fn sub1(&self, variable: &Var, term: &Term) -> Sequence {
-        let terms: Vec<Term> = self
-            .terms
-            .iter()
-            .map(|t| t.apply1(variable, term))
-            .collect();
-        Sequence {
+    fn sub1(&self, variable: &Var, term: &Term) -> Self {
+        // Find the index of the first change.
+        for (i, t) in self.terms.iter().enumerate() {
+            let new_term = t.apply1(variable, term);
+            if &new_term != t {
+                // Build a new list with the unchanged prefix, the changed
+                // term, and the rest of the terms.
+                let mut new_terms = Vec::with_capacity(self.terms.len());
+                new_terms.extend_from_slice(&self.terms[..i]);
+                new_terms.push(new_term);
+
+                // Apply substitution to the rest
+                for t in &self.terms[i + 1..] {
+                    new_terms.push(t.apply1(variable, term));
+                }
+
+                return Self {
+                    op: self.op,
+                    terms: Rc::from(new_terms),
+                };
+            }
+        }
+
+        // Nothing changed. Return an inexpensive clone.
+        Self {
             op: self.op,
-            terms: Rc::from(terms),
+            terms: Rc::clone(&self.terms),
         }
     }
 
     fn sub(&self, map: &ImHashMap<Var, Term>) -> Self {
-        if self.terms.is_empty() {
-            // Cheap clone - just increments Rc refcount.
-            return Self {
-                op: self.op,
-                terms: self.terms.clone(),
-            };
+        // Find the index of the first change.
+        for (i, t) in self.terms.iter().enumerate() {
+            let new_term = t.apply(map);
+            if &new_term != t {
+                // Build a new list with the unchanged prefix, the changed
+                // term, and the rest of the terms.
+                let mut new_terms = Vec::with_capacity(self.terms.len());
+                new_terms.extend_from_slice(&self.terms[..i]);
+                new_terms.push(new_term);
+
+                // Apply substitution to the rest
+                for t in &self.terms[i + 1..] {
+                    new_terms.push(t.apply(map));
+                }
+
+                return Self {
+                    op: self.op,
+                    terms: Rc::from(new_terms),
+                };
+            }
         }
-        let new_terms: Vec<Term> =
-            self.terms.iter().map(|t| t.apply(map)).collect();
-        // Check if anything actually changed.
-        if self.terms.iter().zip(&new_terms).all(|(a, b)| a == b) {
-            // Nothing changed, return an inexpensive clone.
-            return Self {
-                op: self.op,
-                terms: self.terms.clone(),
-            };
-        }
-        Sequence {
+
+        // Nothing changed. Return an inexpensive clone.
+        Self {
             op: self.op,
-            terms: Rc::from(new_terms),
+            terms: Rc::clone(&self.terms),
         }
     }
 }
@@ -640,6 +664,7 @@ pub struct Unifier {
     /// Auto-generated names (T0, T1, etc.) are not stored here.
     custom_var_names: HashMap<i32, String>,
     occurs: bool,
+    empty_terms: Rc<[Term]>,
 }
 
 /// Workspace for Unification.
@@ -942,6 +967,7 @@ impl Unifier {
             var_list: Vec::new(),
             op_defs: Rc::new(Vec::new()),
             custom_var_names: HashMap::new(),
+            empty_terms: Rc::new([]),
         }
     }
 
@@ -1119,7 +1145,7 @@ impl Unifier {
     pub fn atom(&self, op: Op) -> Sequence {
         Sequence {
             op,
-            terms: Rc::from([]),
+            terms: Rc::clone(&self.empty_terms),
         }
     }
 
