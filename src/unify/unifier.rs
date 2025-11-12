@@ -1566,52 +1566,26 @@ mod tests {
         let v1_name = u.var_name(&v1);
         assert_eq!(v1_name, "T1");
         vars.push(v1.clone());
-        let v1_string = VarDisplay {
-            var: &v1,
-            unifier: &u,
-        }
-        .to_string();
+        let v1_string = u.var_name(&v1);
 
         let v2 = u.variable();
         vars.push(v2.clone());
-        let v2_string = VarDisplay {
-            var: &v2,
-            unifier: &u,
-        }
-        .to_string();
+        let v2_string = u.var_name(&v2);
 
         let v1b = u.variable_with_name(&v1_name);
         assert_eq!(u.var_name(&v1b), v1_name);
         let v1c = u.variable_with_id(2);
-        assert_eq!(
-            VarDisplay {
-                var: &v1c,
-                unifier: &u
-            }
-            .to_string(),
-            v1_string
-        );
+        assert_eq!(u.var_name(&v1c), v1_string);
 
         let v2a = u.variable_with_id(3);
-        assert_eq!(
-            VarDisplay {
-                var: &v2a,
-                unifier: &u
-            }
-            .to_string(),
-            v2_string
-        );
+        assert_eq!(u.var_name(&v2a), v2_string);
 
         let v3 = u.variable();
         vars.push(v3.clone());
 
         let v4 = u.variable();
         vars.push(v4.clone());
-        let v4_string = VarDisplay {
-            var: &v4,
-            unifier: &u,
-        }
-        .to_string();
+        let v4_string = u.var_name(&v4);
 
         let v5 = u.variable();
         vars.push(v5.clone());
@@ -1620,14 +1594,7 @@ mod tests {
         vars.push(v6.clone());
 
         let v4a = u.variable_with_id(5);
-        assert_eq!(
-            VarDisplay {
-                var: &v4a,
-                unifier: &u,
-            }
-            .to_string(),
-            v4_string
-        );
+        assert_eq!(u.var_name(&v4a), v4_string);
 
         let v7 = u.variable();
         vars.push(v7.clone());
@@ -1635,16 +1602,7 @@ mod tests {
         let v8 = u.variable();
         vars.push(v8.clone());
 
-        let var_strings: Vec<_> = vars
-            .iter()
-            .map(|v| {
-                VarDisplay {
-                    var: v,
-                    unifier: &u,
-                }
-                .to_string()
-            })
-            .collect();
+        let var_strings: Vec<_> = vars.iter().map(|v| u.var_name(v)).collect();
         assert_eq!(
             format!("{:?}", var_strings),
             "[\"T0\", \"T1\", \"T2\", \"T4\", \"T5\", \"T6\", \"T7\", \"T8\", \
@@ -1652,11 +1610,7 @@ mod tests {
         );
         let v9 = u.variable();
         assert_eq!(
-            VarDisplay {
-                var: &v9,
-                unifier: &u,
-            }
-            .to_string(),
+            u.var_name(&v9),
             "T10",
             "v9 is ordinal 10, named T10 (variables use ordinals, \
              don't avoid operator names)"
