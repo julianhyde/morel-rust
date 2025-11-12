@@ -1061,6 +1061,24 @@ impl Unifier {
         }
     }
 
+    /// Formats a term as a string.
+    pub fn term_string(&self, term: &Term) -> String {
+        TermDisplay {
+            term,
+            unifier: self,
+        }
+        .to_string()
+    }
+
+    /// Formats a substitution as a string.
+    pub fn substitution_string(&self, substitution: &Substitution) -> String {
+        SubstitutionDisplay {
+            substitution,
+            unifier: self,
+        }
+        .to_string()
+    }
+
     /// Creates a Sequence.
     #[allow(clippy::needless_pass_by_value)]
     pub fn apply(&self, op: Rc<Op>, terms: &[Term]) -> Sequence {

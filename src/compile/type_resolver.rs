@@ -32,7 +32,7 @@ use crate::syntax::ast::{
     StepKind, Type as AstType, TypeField, TypeKind, TypeScheme, ValBind,
 };
 use crate::unify::unifier::{
-    Action, NullTracer, Op, Sequence, Substitution, Term, TermDisplay, Unifier, Var,
+    Action, NullTracer, Op, Sequence, Substitution, Term, Unifier, Var,
 };
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -3165,10 +3165,7 @@ impl TypeResolver {
                 format!(
                     "{} = {}\n",
                     self.unifier.var_name(var),
-                    TermDisplay {
-                        term,
-                        unifier: &self.unifier
-                    }
+                    self.unifier.term_string(term)
                 )
             })
             .collect()
