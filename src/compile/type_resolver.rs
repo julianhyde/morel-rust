@@ -32,7 +32,8 @@ use crate::syntax::ast::{
     StepKind, Type as AstType, TypeField, TypeKind, TypeScheme, ValBind,
 };
 use crate::unify::unifier::{
-    Action, NullTracer, Op, Sequence, Substitution, Term, Unifier, Var,
+    Action, NullTracer, Op, Sequence, Substitution, Term, TermDisplay, Unifier,
+    Var, VarDisplay,
 };
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -3154,11 +3155,26 @@ impl TypeResolver {
     pub fn terms_to_string(&self) -> String {
         let mut pairs: Vec<_> = self.terms.iter().collect();
         pairs.sort_by(|(v0, _), (v1, _)| {
-            v1.id.cmp(&v0.id).then(v0.name.cmp(&v1.name))
+            // Sort by ID first, then by name for deterministic output.
+            v1.id.cmp(&v0.id).then_with(|| {
+                self.unifier.var_name(v0).cmp(&self.unifier.var_name(v1))
+            })
         });
         pairs
             .into_iter()
-            .map(|(var, term)| format!("{} = {}\n", var, term))
+            .map(|(var, term)| {
+                format!(
+                    "{} = {}\n",
+                    VarDisplay {
+                        var,
+                        unifier: &self.unifier
+                    },
+                    TermDisplay {
+                        term,
+                        unifier: &self.unifier
+                    }
+                )
+            })
             .collect()
     }
 }
