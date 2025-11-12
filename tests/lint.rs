@@ -383,13 +383,14 @@ impl FileType {
     fn for_file(file_name: &str) -> Self {
         let suffix = file_name.split('.').next_back();
         if let Some(suffix) = suffix
-            && let Some(format) = SUFFIX_MAP.get(suffix) {
-                return FileType {
-                    header: Some(format.header()),
-                    text: true,
-                    max_line_length: format.max_line_length,
-                };
-            }
+            && let Some(format) = SUFFIX_MAP.get(suffix)
+        {
+            return FileType {
+                header: Some(format.header()),
+                text: true,
+                max_line_length: format.max_line_length,
+            };
+        }
         FileType {
             header: None,
             text: TYPE_MAP.contains(suffix.unwrap()),

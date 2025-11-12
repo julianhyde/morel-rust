@@ -32,7 +32,7 @@ use crate::syntax::ast::{
     StepKind, Type as AstType, TypeField, TypeKind, TypeScheme, ValBind,
 };
 use crate::unify::unifier::{
-    Action, NullTracer, Op, Sequence, Substitution, Term, Unifier, Var,
+    Action, NullTracer, Op, OpDef, Sequence, Substitution, Term, Unifier, Var,
 };
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -61,13 +61,19 @@ pub struct TypeMap {
     pub node_var_map: HashMap<i32, Var>,
     // Maps from unifier variables to terms.
     pub var_term_map: HashMap<Var, Term>,
+    // Reference to operator definitions for looking up operator names.
+    pub op_defs: Rc<Vec<OpDef>>,
 }
 
 impl TypeMap {
-    pub fn new(node_var_map: &HashMap<i32, Var>) -> Self {
+    pub fn new(
+        node_var_map: &HashMap<i32, Var>,
+        op_defs: Rc<Vec<OpDef>>,
+    ) -> Self {
         Self {
             node_var_map: node_var_map.clone(),
             var_term_map: HashMap::new(),
+            op_defs,
         }
     }
 
@@ -137,21 +143,11 @@ impl Triple {
     }
 
     fn with_env(&self, env: &Rc<dyn TypeEnv>) -> Self {
-        Self::new(
-            self.root_env.clone(),
-            env.clone(),
-            self.v,
-            self.c,
-        )
+        Self::new(self.root_env.clone(), env.clone(), self.v, self.c)
     }
 
     fn with_c(&self, c: Var) -> Self {
-        Self::new(
-            self.root_env.clone(),
-            self.env.clone(),
-            self.v,
-            Some(c),
-        )
+        Self::new(self.root_env.clone(), self.env.clone(), self.v, Some(c))
     }
 }
 
@@ -164,71 +160,82 @@ impl<'a> TermToTypeConverter<'a> {
     /// Converts a term to a type.
     fn term_type(&mut self, term: &Term) -> Box<Type> {
         match term {
-            Term::Sequence(sequence) => match sequence.op.name.as_str() {
-                // lint: sort until '#}' where '##["]'
-                "bag" => {
-                    assert_eq!(sequence.terms.len(), 1);
-                    let type_ = self.term_type(&sequence.terms[0]);
-                    Box::new(Type::Bag(type_))
-                }
-                "bool" | "char" | "int" | "real" | "string" | "unit" => {
-                    let primitive_type =
-                        PrimitiveType::parse_name(&sequence.op.name).unwrap();
-                    Box::new(Type::Primitive(primitive_type))
-                }
-                "either" => {
-                    assert_eq!(sequence.terms.len(), 2);
-                    let arg1 = *self.term_type(&sequence.terms[0]);
-                    let arg2 = *self.term_type(&sequence.terms[1]);
-                    Box::new(Type::Data(
-                        sequence.op.name.clone(),
-                        vec![arg1, arg2],
-                    ))
-                }
-                "fn" => {
-                    assert_eq!(sequence.terms.len(), 2);
-                    let param_type = self.term_type(&sequence.terms[0]);
-                    let result_type = self.term_type(&sequence.terms[1]);
-                    Box::new(Type::Fn(param_type, result_type))
-                }
-                "list" => {
-                    assert_eq!(sequence.terms.len(), 1);
-                    let type_ = self.term_type(&sequence.terms[0]);
-                    Box::new(Type::List(type_))
-                }
-                "option" | "descending" => {
-                    assert_eq!(sequence.terms.len(), 1);
-                    let args = vec![*self.term_type(&sequence.terms[0])];
-                    Box::new(Type::Data(sequence.op.name.clone(), args))
-                }
-                "order" => {
-                    assert_eq!(sequence.terms.len(), 0);
-                    Box::new(Type::Data(sequence.op.name.clone(), vec![]))
-                }
-                "tuple" => {
-                    let types = sequence
-                        .terms
-                        .iter()
-                        .map(|t| *(self.term_type(t)))
-                        .collect();
-                    Box::new(Type::Tuple(types))
-                }
-                s if s.starts_with("record") => {
-                    let labels = TypeResolver::field_list(sequence).unwrap();
-                    let mut fields = BTreeMap::<Label, Type>::new();
-                    for (label, term) in zip(labels, sequence.terms.iter()) {
-                        fields
-                            .insert(Label::from(label), *self.term_type(term));
+            Term::Sequence(sequence) => {
+                let op_name =
+                    &self.type_map.op_defs[sequence.op.id as usize].name;
+                match op_name.as_str() {
+                    // lint: sort until '#}' where '##["]'
+                    "bag" => {
+                        assert_eq!(sequence.terms.len(), 1);
+                        let type_ = self.term_type(&sequence.terms[0]);
+                        Box::new(Type::Bag(type_))
                     }
-                    Box::new(Type::Record(false, fields))
+                    "bool" | "char" | "int" | "real" | "string" | "unit" => {
+                        let primitive_type =
+                            PrimitiveType::parse_name(op_name).unwrap();
+                        Box::new(Type::Primitive(primitive_type))
+                    }
+                    "either" => {
+                        assert_eq!(sequence.terms.len(), 2);
+                        let arg1 = *self.term_type(&sequence.terms[0]);
+                        let arg2 = *self.term_type(&sequence.terms[1]);
+                        Box::new(Type::Data(
+                            op_name.to_string(),
+                            vec![arg1, arg2],
+                        ))
+                    }
+                    "fn" => {
+                        assert_eq!(sequence.terms.len(), 2);
+                        let param_type = self.term_type(&sequence.terms[0]);
+                        let result_type = self.term_type(&sequence.terms[1]);
+                        Box::new(Type::Fn(param_type, result_type))
+                    }
+                    "list" => {
+                        assert_eq!(sequence.terms.len(), 1);
+                        let type_ = self.term_type(&sequence.terms[0]);
+                        Box::new(Type::List(type_))
+                    }
+                    "option" | "descending" => {
+                        assert_eq!(sequence.terms.len(), 1);
+                        let args = vec![*self.term_type(&sequence.terms[0])];
+                        Box::new(Type::Data(op_name.to_string(), args))
+                    }
+                    "order" => {
+                        assert_eq!(sequence.terms.len(), 0);
+                        Box::new(Type::Data(op_name.to_string(), vec![]))
+                    }
+                    "tuple" => {
+                        let types = sequence
+                            .terms
+                            .iter()
+                            .map(|t| *(self.term_type(t)))
+                            .collect();
+                        Box::new(Type::Tuple(types))
+                    }
+                    s if s.starts_with("record") => {
+                        let labels = TypeResolver::field_list_with_op_defs(
+                            &self.type_map.op_defs,
+                            sequence,
+                        )
+                        .unwrap();
+                        let mut fields = BTreeMap::<Label, Type>::new();
+                        for (label, term) in zip(labels, sequence.terms.iter())
+                        {
+                            fields.insert(
+                                Label::from(label),
+                                *self.term_type(term),
+                            );
+                        }
+                        Box::new(Type::Record(false, fields))
+                    }
+                    "vector" => {
+                        assert_eq!(sequence.terms.len(), 1);
+                        let args = vec![*self.term_type(&sequence.terms[0])];
+                        Box::new(Type::Data(op_name.to_string(), args))
+                    }
+                    _ => todo!("{:?}", term),
                 }
-                "vector" => {
-                    assert_eq!(sequence.terms.len(), 1);
-                    let args = vec![*self.term_type(&sequence.terms[0])];
-                    Box::new(Type::Data(sequence.op.name.clone(), args))
-                }
-                _ => todo!("{:?}", term),
-            },
+            }
             Term::Variable(v) => {
                 if let Some(term) = self.type_map.var_term_map.get(v) {
                     self.term_type(term)
@@ -291,13 +298,13 @@ pub struct TypeResolver {
     compute_stack: Vec<Triple>,
 
     /// Cached operators for common type-constructors.
-    list_op: Rc<Op>,
-    bag_op: Rc<Op>,
-    tuple_op: Rc<Op>,
-    arg_op: Rc<Op>,
-    overload_op: Rc<Op>,
-    record_op: Rc<Op>,
-    fn_op: Rc<Op>,
+    list_op: Op,
+    bag_op: Op,
+    tuple_op: Op,
+    arg_op: Op,
+    overload_op: Op,
+    record_op: Op,
+    fn_op: Op,
     actions: Vec<(Var, Rc<dyn Action>)>,
 }
 
@@ -391,7 +398,8 @@ impl TypeResolver {
         };
 
         // Create a map with the results of unification.
-        let mut type_map = TypeMap::new(&self.node_var_map);
+        let mut type_map =
+            TypeMap::new(&self.node_var_map, Rc::clone(&self.unifier.op_defs));
         for (v, term) in substitution.substitutions {
             type_map.var_term_map.insert(v, term);
         }
@@ -722,8 +730,7 @@ impl TypeResolver {
         for (val_bind, v_pat_supplier) in &map0 {
             if rec {
                 if let PatKind::Identifier(name) = &val_bind.pat.kind {
-                    let var =
-                        *v_pat_supplier.get_or_init(|| self.variable());
+                    let var = *v_pat_supplier.get_or_init(|| self.variable());
                     env_holder.push(name.clone(), Term::Variable(var));
                 }
             }
@@ -824,7 +831,7 @@ impl TypeResolver {
                 let mut label_names = BTreeSet::new();
 
                 if let Some(sequence) = self.variable_to_sequence(&v_e)
-                    && let Some(field_list) = Self::field_list(&sequence)
+                    && let Some(field_list) = self.field_list(&sequence)
                 {
                     label_names.extend(field_list);
                 }
@@ -2008,10 +2015,7 @@ impl TypeResolver {
         } else {
             let mut map: BTreeMap<Label, Term> = BTreeMap::new();
             field_vars.iter().for_each(|fv| {
-                map.insert(
-                    Label::String(fv.0.clone()),
-                    Term::Variable(fv.1),
-                );
+                map.insert(Label::String(fv.0.clone()), Term::Variable(fv.1));
             });
             let v = self.variable();
             *self.record_term(&map, &v)
@@ -2177,6 +2181,7 @@ impl TypeResolver {
         struct ActionImpl {
             field_name: String,
             v_field: Var,
+            op_defs: Rc<Vec<OpDef>>,
         }
         impl Action for ActionImpl {
             fn accept(
@@ -2191,7 +2196,11 @@ impl TypeResolver {
                 // If, say, v_rec is "{a: int, b: real}" and field_name = "b"
                 // (selector is "#b") we can deduce that v_field is "real".
                 if let Term::Sequence(sequence) = term
-                    && let Some(field_list) = TypeResolver::field_list(sequence)
+                    && let Some(field_list) =
+                        TypeResolver::field_list_with_op_defs(
+                            &self.op_defs,
+                            sequence,
+                        )
                     && let Some(i) =
                         field_list.iter().position(|f| *f == self.field_name)
                 {
@@ -2208,6 +2217,7 @@ impl TypeResolver {
             Rc::new(ActionImpl {
                 field_name: field_name.to_string(),
                 v_field: *v_field,
+                op_defs: self.unifier.op_defs.clone(),
             }),
         ));
 
@@ -2407,7 +2417,7 @@ impl TypeResolver {
         v: &'a Var,
     ) -> &'a Var {
         let sequence = self.unifier.apply2(
-            self.fn_op.clone(),
+            self.fn_op,
             Term::Variable(*param_type),
             Term::Variable(*result_type),
         );
@@ -2416,7 +2426,7 @@ impl TypeResolver {
 
     /// Creates a term for a list type and associates it with a variable.
     fn list_term<'a>(&mut self, term: Term, v: &'a Var) -> &'a Var {
-        let sequence = self.unifier.apply1(self.list_op.clone(), term);
+        let sequence = self.unifier.apply1(self.list_op, term);
         self.equiv(&Term::Sequence(sequence), v)
     }
 
@@ -2456,9 +2466,9 @@ impl TypeResolver {
         let list_e2 = Term::Variable(*e2);
         let list_e3 = Term::Variable(*e3);
 
-        let seq1 = self.unifier.apply1(self.list_op.clone(), list_e1);
-        let seq2 = self.unifier.apply1(self.list_op.clone(), list_e2);
-        let seq3 = self.unifier.apply1(self.list_op.clone(), list_e3);
+        let seq1 = self.unifier.apply1(self.list_op, list_e1);
+        let seq2 = self.unifier.apply1(self.list_op, list_e2);
+        let seq3 = self.unifier.apply1(self.list_op, list_e3);
 
         // This is a conditional constraint - not fully implemented yet
         // For now, just assume list semantics
@@ -2471,13 +2481,13 @@ impl TypeResolver {
     fn may_be_bag_or_list(&mut self, c: &Var, v: &Var) {
         // For now, assume list semantics
         let list_v = Term::Variable(*v);
-        let seq = self.unifier.apply1(self.list_op.clone(), list_v);
+        let seq = self.unifier.apply1(self.list_op, list_v);
         self.equiv(&Term::Sequence(seq), c);
     }
 
     /// Creates a term for a bag type and associates it with a variable.
     fn bag_term<'a>(&mut self, term: Term, v: &'a Var) -> &'a Var {
-        let sequence = self.unifier.apply1(self.bag_op.clone(), term);
+        let sequence = self.unifier.apply1(self.bag_op, term);
         self.equiv(&Term::Sequence(sequence), v)
     }
 
@@ -2510,7 +2520,7 @@ impl TypeResolver {
         if types.is_empty() {
             self.primitive_term(&PrimitiveType::Unit, v)
         } else {
-            let sequence = self.unifier.apply(self.tuple_op.clone(), types);
+            let sequence = self.unifier.apply(self.tuple_op, types);
             self.equiv(&Term::Sequence(sequence), v)
         }
     }
@@ -2716,8 +2726,18 @@ impl TypeResolver {
 
     /// Inverse of [TypeResolver::record_label_from_set]. Extracts field names
     /// from a sequence.
-    fn field_list(sequence: &Sequence) -> Option<Vec<String>> {
-        match sequence.op.name.as_str() {
+    fn field_list(&self, sequence: &Sequence) -> Option<Vec<String>> {
+        Self::field_list_with_op_defs(&self.unifier.op_defs, sequence)
+    }
+
+    /// Inverse of [TypeResolver::record_label_from_set]. Extracts field names
+    /// from a sequence. Static version that takes op_defs.
+    fn field_list_with_op_defs(
+        op_defs: &[OpDef],
+        sequence: &Sequence,
+    ) -> Option<Vec<String>> {
+        let op_name = &op_defs[sequence.op.id as usize].name;
+        match op_name.as_str() {
             "record" => Some(Vec::new()),
             "tuple" => {
                 let size = sequence.terms.len();

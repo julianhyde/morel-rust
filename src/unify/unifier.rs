@@ -205,10 +205,11 @@ pub struct SequenceDisplay<'a> {
 
 impl Display for SequenceDisplay<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let op_name = self.unifier.op_name(&self.seq.op);
         if self.seq.terms.is_empty() {
-            write!(f, "{}", self.seq.op.name)
+            write!(f, "{}", op_name)
         } else {
-            write!(f, "{}(", self.seq.op.name)?;
+            write!(f, "{}(", op_name)?;
             for (i, term) in self.seq.terms.iter().enumerate() {
                 if i > 0 {
                     write!(f, ", ")?;
@@ -280,23 +281,38 @@ impl FromTerm for Var {
     }
 }
 
-/// A registered operator.
+/// A lightweight reference to an operator.
+///
+/// Its id is unique within a Unifier,
+/// and disjoint from Var id values.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct Op {
+    pub id: i32,
+}
+
+impl Op {
+    pub fn new(id: i32) -> Self {
+        Self { id }
+    }
+}
+
+/// A registered operator definition.
 ///
 /// It is the name of an atom (e.g. `a()`) or a sequence
 /// (e.g. `p(a, q(b, c))`).
 ///
 /// Its id is unique within a Unifier.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Op {
+pub struct OpDef {
     pub name: String,
-    arity: Option<usize>,
-    id: i32,
+    pub arity: Option<usize>,
+    pub id: Op,
 }
 
 /// A Sequence is an operator with a list of terms.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Sequence {
-    pub op: Rc<Op>,
+    pub op: Op,
     pub terms: Rc<[Term]>,
 }
 
@@ -308,7 +324,7 @@ impl Sequence {
             .map(|t| t.apply1(variable, term))
             .collect();
         Sequence {
-            op: self.op.clone(),
+            op: self.op,
             terms: Rc::from(terms),
         }
     }
@@ -317,7 +333,7 @@ impl Sequence {
         if self.terms.is_empty() {
             // Cheap clone - just increments Rc refcount.
             return Self {
-                op: self.op.clone(),
+                op: self.op,
                 terms: self.terms.clone(),
             };
         }
@@ -325,14 +341,14 @@ impl Sequence {
             self.terms.iter().map(|t| t.apply(map)).collect();
         // Check if anything actually changed.
         if self.terms.iter().zip(&new_terms).all(|(a, b)| a == b) {
-            // Nothing changed, return cheap clone.
+            // Nothing changed, return an inexpensive clone.
             return Self {
-                op: self.op.clone(),
+                op: self.op,
                 terms: self.terms.clone(),
             };
         }
         Sequence {
-            op: self.op.clone(),
+            op: self.op,
             terms: Rc::from(new_terms),
         }
     }
@@ -606,7 +622,7 @@ struct MutableConstraint {
 /// Unifier.
 ///
 /// Implements the Martelli-Montanari unification algorithm.
-#[derive(Clone)]
+#[derive(Debug)]
 pub struct Unifier {
     /// Assists with the generation of unique names by recording the lowest
     /// ordinal, for a given prefix, for which a name has not yet been
@@ -617,9 +633,9 @@ pub struct Unifier {
     /// indicating that the next call to `name("T")` should generate `T2`.
     name_map: HashMap<String, usize>,
     var_by_name: HashMap<String, Var>,
-    op_by_name: HashMap<String, Rc<Op>>,
+    op_by_name: HashMap<String, Op>,
     var_list: Vec<Var>,
-    op_list: Vec<Rc<Op>>,
+    pub op_defs: Rc<Vec<OpDef>>,
     /// Maps variable ID to custom name for user-named variables only.
     /// Auto-generated names (T0, T1, etc.) are not stored here.
     custom_var_names: HashMap<i32, String>,
@@ -922,38 +938,39 @@ impl Unifier {
             var_by_name: HashMap::new(),
             op_by_name: HashMap::new(),
             var_list: Vec::new(),
-            op_list: Vec::new(),
+            op_defs: Rc::new(Vec::new()),
             custom_var_names: HashMap::new(),
         }
     }
 
     /// Looks up or creates a new operator with the given name.
-    pub fn op(&mut self, name: &str, arity: Option<usize>) -> Rc<Op> {
-        if let Some(index) = self.op_by_name.get(name) {
-            index.clone()
+    pub fn op(&mut self, name: &str, arity: Option<usize>) -> Op {
+        if let Some(op) = self.op_by_name.get(name) {
+            *op
         } else {
-            let id = self.name_map.entry(name.to_string()).or_insert(0);
-            let op = Rc::new(Op {
+            let id = Op::new(self.op_defs.len() as i32);
+            let op_def = OpDef {
                 name: name.to_string(),
                 arity,
-                id: *id as i32,
-            });
-            self.op_list.push(op.clone());
-            self.op_by_name.insert(name.to_string(), op.clone());
-            op
+                id,
+            };
+            Rc::make_mut(&mut self.op_defs).push(op_def);
+            self.op_by_name.insert(name.to_string(), id);
+            id
         }
     }
 
-    fn op_unique(&mut self, prefix: &str, arity: Option<usize>) -> Rc<Op> {
+    fn op_unique(&mut self, prefix: &str, arity: Option<usize>) -> Op {
         let name = self.new_name(prefix, 0);
-        let op = Rc::new(Op {
-            name: name.to_string(),
+        let id = Op::new(self.op_defs.len() as i32);
+        let op_def = OpDef {
+            name: name.clone(),
             arity,
-            id: self.op_list.len() as i32,
-        });
-        self.op_list.push(op.clone());
-        self.op_by_name.insert(name.to_string(), op.clone());
-        op
+            id,
+        };
+        Rc::make_mut(&mut self.op_defs).push(op_def);
+        self.op_by_name.insert(name, id);
+        id
     }
 
     fn new_name(&mut self, prefix: &str, ordinal: usize) -> String {
@@ -1026,6 +1043,21 @@ impl Unifier {
         }
     }
 
+    /// Gets the name for an operator.
+    pub fn op_name(&self, op: &Op) -> &str {
+        &self.op_defs[op.id as usize].name
+    }
+
+    /// Gets the arity for an operator.
+    pub fn op_arity(&self, op: &Op) -> Option<usize> {
+        self.op_defs[op.id as usize].arity
+    }
+
+    /// Gets the definition for an operator.
+    pub fn op_def(&self, op: &Op) -> &OpDef {
+        &self.op_defs[op.id as usize]
+    }
+
     /// Formats a term as a string.
     pub fn term_string(&self, term: &Term) -> String {
         TermDisplay {
@@ -1051,8 +1083,9 @@ impl Unifier {
 
     /// Creates a Sequence.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn apply(&self, op: Rc<Op>, terms: &[Term]) -> Sequence {
-        assert!(op.arity.is_none_or(|x| { x == terms.len() }));
+    pub fn apply(&self, op: Op, terms: &[Term]) -> Sequence {
+        let arity = self.op_arity(&op);
+        assert!(arity.is_none_or(|x| { x == terms.len() }));
         Sequence {
             op,
             terms: Rc::from(terms),
@@ -1060,19 +1093,19 @@ impl Unifier {
     }
 
     /// Creates a Sequence with one operand.
-    pub fn apply1(&self, op: Rc<Op>, term0: Term) -> Sequence {
+    pub fn apply1(&self, op: Op, term0: Term) -> Sequence {
         self.apply(op, &[term0])
     }
 
     /// Creates a Sequence with two operands.
-    pub fn apply2(&self, op: Rc<Op>, term0: Term, term1: Term) -> Sequence {
+    pub fn apply2(&self, op: Op, term0: Term, term1: Term) -> Sequence {
         self.apply(op, &[term0, term1])
     }
 
     /// Creates a Sequence with three operands.
     pub fn apply3(
         &self,
-        op: Rc<Op>,
+        op: Op,
         term0: Term,
         term1: Term,
         term2: Term,
@@ -1081,7 +1114,7 @@ impl Unifier {
     }
 
     /// Creates an Atom (a Sequence with zero operands).
-    pub fn atom(&self, op: Rc<Op>) -> Sequence {
+    pub fn atom(&self, op: Op) -> Sequence {
         Sequence {
             op,
             terms: Rc::from([]),
@@ -1353,20 +1386,11 @@ pub trait Action {
 }
 
 /// Test for Unifier.
-#[derive(Clone)]
 pub struct UnifierTest {
     unifier: Unifier,
 }
 
 impl UnifierTest {
-    pub fn with_occurs(&self, check_cycle: bool) -> Self {
-        if check_cycle == self.unifier.occurs {
-            self.clone()
-        } else {
-            UnifierTest::new(check_cycle)
-        }
-    }
-
     pub fn var(&mut self, name: &str) -> Term {
         Term::Variable(self.unifier.variable_with_name(name))
     }
@@ -1510,7 +1534,11 @@ mod tests {
     use crate::unify::unifier_parser::UnifierTask;
 
     fn create() -> UnifierTest {
-        UnifierTest::new(false)
+        create_with_occurs(false)
+    }
+
+    fn create_with_occurs(occurs: bool) -> UnifierTest {
+        UnifierTest::new(occurs)
     }
 
     #[test]
@@ -1518,20 +1546,20 @@ mod tests {
         let z = create();
         let mut u = z.unifier;
         let mut vars = vec![];
-        let a0 = u.op_unique("A", Some(0)).clone();
-        assert_eq!(a0.name, "A0");
+        let a0 = u.op_unique("A", Some(0));
+        assert_eq!(u.op_name(&a0), "A0");
         let a1 = u.op_unique("A", Some(0));
-        assert_eq!(a1.name, "A1");
+        assert_eq!(u.op_name(&a1), "A1");
         let v0 = u.variable();
         assert_eq!(u.var_name(&v0), "T0");
         vars.push(v0);
 
         // Try to create an operator with the name of an existing variable,
         // get a new name.
-        let a2 = u.op_unique("T", Some(0)).clone();
-        assert_eq!(a2.name, "T1");
-        let a3 = u.op_unique("T1", Some(0)).clone();
-        assert_eq!(a3.name, "T10");
+        let a2 = u.op_unique("T", Some(0));
+        assert_eq!(u.op_name(&a2), "T1");
+        let a3 = u.op_unique("T1", Some(0));
+        assert_eq!(u.op_name(&a3), "T10");
 
         let v1 = u.variable();
         let v1_name = u.var_name(&v1);
@@ -1856,7 +1884,7 @@ mod tests {
     #[test]
     fn test17() {
         for occurs in [false, true] {
-            let mut t = create().with_occurs(occurs);
+            let mut t = create_with_occurs(occurs);
             let x = t.var("X");
             let y = t.var("Y");
             let e1 = t.h(x.clone(), x.clone());
