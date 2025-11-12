@@ -734,10 +734,10 @@ impl<'a> Work<'a> {
     /// Applies substitution to all queues.
     fn sub_queues(&mut self, variable: &Var, term: &Term) {
         // Process seq_seq_queue
-        let seq_seq_queue = self.seq_seq_queue.clone();
+        let seq_seq_queue = Rc::clone(&self.seq_seq_queue);
         self.process_queue(variable, term, Kind::SeqSeq, &seq_seq_queue);
         // Process var_any_queue
-        let var_any_queue = self.var_any_queue.clone();
+        let var_any_queue = Rc::clone(&self.var_any_queue);
         self.process_queue(variable, term, Kind::VarAny, &var_any_queue);
     }
 
@@ -764,12 +764,14 @@ impl<'a> Work<'a> {
                 if left2 != queue[i].0.as_term()
                     || right2 != queue[i].1.as_term()
                 {
-                    self.tracer.on_substitute(
-                        &queue[i].0.as_term(),
-                        &queue[i].1.as_term(),
-                        &left2.as_term(),
-                        &right2.as_term(),
-                    );
+                    if false {
+                        self.tracer.on_substitute(
+                            &queue[i].0.as_term(),
+                            &queue[i].1.as_term(),
+                            &left2.as_term(),
+                            &right2.as_term(),
+                        );
+                    }
                     let kind2 = Kind::of(&left2.as_term(), &right2.as_term());
 
                     if kind2 == queue_kind {
