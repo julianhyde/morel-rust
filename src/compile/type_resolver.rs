@@ -58,13 +58,13 @@ pub struct Resolved {
 #[derive(Clone, Debug)]
 pub struct TypeMap {
     // Maps from AST node ID to unifier variable.
-    pub node_var_map: HashMap<i32, Rc<Var>>,
+    pub node_var_map: HashMap<i32, Var>,
     // Maps from unifier variables to terms.
-    pub var_term_map: HashMap<Rc<Var>, Term>,
+    pub var_term_map: HashMap<Var, Term>,
 }
 
 impl TypeMap {
-    pub fn new(node_var_map: &HashMap<i32, Rc<Var>>) -> Self {
+    pub fn new(node_var_map: &HashMap<i32, Var>) -> Self {
         Self {
             node_var_map: node_var_map.clone(),
             var_term_map: HashMap::new(),
@@ -117,16 +117,16 @@ impl Typed for Pat {
 struct Triple {
     root_env: Rc<dyn TypeEnv>,
     env: Rc<dyn TypeEnv>,
-    v: Rc<Var>,
-    c: Option<Rc<Var>>,
+    v: Var,
+    c: Option<Var>,
 }
 
 impl Triple {
     fn new(
         root_env: Rc<dyn TypeEnv>,
         env: Rc<dyn TypeEnv>,
-        v: Rc<Var>,
-        c: Option<Rc<Var>>,
+        v: Var,
+        c: Option<Var>,
     ) -> Self {
         Triple {
             root_env,
@@ -145,7 +145,7 @@ impl Triple {
         )
     }
 
-    fn with_c(&self, c: Rc<Var>) -> Self {
+    fn with_c(&self, c: Var) -> Self {
         Self::new(
             self.root_env.clone(),
             self.env.clone(),
@@ -279,11 +279,11 @@ pub struct TypeResolver {
 
     /// Mapping from node ids (patterns and expressions) to the unifier variable
     /// that holds the node's type.
-    node_var_map: HashMap<i32, Rc<Var>>,
+    node_var_map: HashMap<i32, Var>,
 
     /// List of (variable, term) pairs where the term is equivalent to the
     /// variable. Will be the input to the unifier.
-    terms: Vec<(Rc<Var>, Term)>,
+    terms: Vec<(Var, Term)>,
     unifier: Unifier,
     next_id: i32,
 
@@ -298,7 +298,7 @@ pub struct TypeResolver {
     overload_op: Rc<Op>,
     record_op: Rc<Op>,
     fn_op: Rc<Op>,
-    actions: Vec<(Rc<Var>, Rc<dyn Action>)>,
+    actions: Vec<(Var, Rc<dyn Action>)>,
 }
 
 impl Default for TypeResolver {
@@ -362,7 +362,7 @@ impl TypeResolver {
         let term_pairs: Vec<(Term, Term)> = self
             .terms
             .iter()
-            .map(|(var, term)| (term.clone(), Term::Variable(var.clone())))
+            .map(|(var, term)| (term.clone(), Term::Variable(*var)))
             .collect();
 
         let substitution = match self.unifier.unify(
@@ -748,7 +748,7 @@ impl TypeResolver {
         &mut self,
         env: &dyn TypeEnv,
         type_: &AstType,
-        v: &Rc<Var>,
+        v: &Var,
     ) -> AstType {
         let mut converter = TypeToTermConverter {
             type_resolver: self,
@@ -762,7 +762,7 @@ impl TypeResolver {
         &mut self,
         env: &dyn TypeEnv,
         type_scheme: &TypeScheme,
-        v: &Rc<Var>,
+        v: &Var,
     ) -> AstType {
         let mut type_variables = BTreeMap::new();
         for i in 0..type_scheme.var_count {
@@ -784,7 +784,7 @@ impl TypeResolver {
         &mut self,
         env: &dyn TypeEnv,
         expr: &Expr,
-        v: &Rc<Var>,
+        v: &Var,
     ) -> Result<Expr, Error> {
         Ok(match &expr.kind {
             // lint: sort until '#}' where '##ExprKind::'
@@ -1097,7 +1097,7 @@ impl TypeResolver {
         env: &dyn TypeEnv,
         query: &Expr,
         steps: &[Step],
-        v: &Rc<Var>,
+        v: &Var,
     ) -> Result<Vec<Step>, Error> {
         let mut field_vars = Vec::new();
         let mut steps2 = Vec::new();
@@ -1190,7 +1190,7 @@ impl TypeResolver {
         &mut self,
         step: &Step,
         p: &Triple,
-        field_vars: &mut Vec<(String, Rc<Var>)>,
+        field_vars: &mut Vec<(String, Var)>,
         steps2: &mut Vec<Step>,
     ) -> Result<Triple, Error> {
         match &step.kind {
@@ -1312,7 +1312,7 @@ impl TypeResolver {
         expr: Option<&Expr>,
         condition: &Option<Box<Expr>>,
         span: &Span,
-        field_vars: &mut Vec<(String, Rc<Var>)>,
+        field_vars: &mut Vec<(String, Var)>,
         steps: &mut Vec<Step>,
     ) -> Result<Triple, Error> {
         // Deduce the type of the expression being iterated over
@@ -1370,7 +1370,7 @@ impl TypeResolver {
         p: &Triple,
         expr: &Expr,
         span: &Span,
-        field_vars: &mut Vec<(String, Rc<Var>)>,
+        field_vars: &mut Vec<(String, Var)>,
         steps2: &mut Vec<Step>,
     ) -> Result<Triple, Error> {
         // The yield expression determines the new element type
@@ -1672,7 +1672,7 @@ impl TypeResolver {
         key_expr: &Expr,
         compute_expr: Option<&Expr>,
         span: &Span,
-        field_vars: &mut Vec<(String, Rc<Var>)>,
+        field_vars: &mut Vec<(String, Var)>,
         steps2: &mut Vec<Step>,
     ) -> Result<Triple, Error> {
         // Deduce whether the result is an atom, and if not an atom, make sure
@@ -1817,7 +1817,7 @@ impl TypeResolver {
         p: &Triple,
         compute_expr: &Expr,
         span: &Span,
-        field_vars: &mut Vec<(String, Rc<Var>)>,
+        field_vars: &mut Vec<(String, Var)>,
         steps2: &mut Vec<Step>,
     ) -> Result<Triple, Error> {
         field_vars.clear();
@@ -1947,7 +1947,7 @@ impl TypeResolver {
         pat: &Pat,
         expr: &Expr,
         span: &Span,
-        field_vars: &mut Vec<(String, Rc<Var>)>,
+        field_vars: &mut Vec<(String, Var)>,
         steps2: &mut Vec<Step>,
     ) -> Result<Triple, Error> {
         let v_element = self.variable();
@@ -2001,9 +2001,9 @@ impl TypeResolver {
 
     fn field_var(
         &mut self,
-        field_vars: &[(String, Rc<Var>)],
+        field_vars: &[(String, Var)],
         atom: bool,
-    ) -> Rc<Var> {
+    ) -> Var {
         if field_vars.is_empty() {
             let v = self.variable();
             self.primitive_term(&PrimitiveType::Unit, &v).clone()
@@ -2052,8 +2052,8 @@ impl TypeResolver {
         env: &dyn TypeEnv,
         match_list: &[Match],
         label_names: &mut BTreeSet<String>,
-        arg_variable: &Rc<Var>,
-        result_variable: &Rc<Var>,
+        arg_variable: &Var,
+        result_variable: &Var,
     ) -> Result<Vec<Match>, Error> {
         // Collect label names from RecordPat patterns
         for match_ in match_list {
@@ -2099,7 +2099,7 @@ impl TypeResolver {
         env: &dyn TypeEnv,
         fun: &Expr,
         arg: &Expr,
-        v_result: &Rc<Var>,
+        v_result: &Var,
     ) -> Result<(Expr, Expr), Error> {
         let v_fn = self.variable();
         let v_arg = self.variable();
@@ -2159,9 +2159,9 @@ impl TypeResolver {
         &mut self,
         env: &dyn TypeEnv,
         fun: &Expr,
-        v_fun: &Rc<Var>,
-        _v_arg: &Rc<Var>,
-        _v: &Rc<Var>,
+        v_fun: &Var,
+        _v_arg: &Var,
+        _v: &Var,
     ) -> Result<Expr, Error> {
         self.deduce_expr_type(env, fun, v_fun)
     }
@@ -2171,8 +2171,8 @@ impl TypeResolver {
         _env: &dyn TypeEnv,
         field_name: &str,
         span: &Span,
-        v_rec: &Rc<Var>,
-        v_field: &Rc<Var>,
+        v_rec: &Var,
+        v_field: &Var,
     ) -> Expr {
         // Create a function type: record -> field
         let v_fn = self.variable();
@@ -2180,7 +2180,7 @@ impl TypeResolver {
 
         struct ActionImpl {
             field_name: String,
-            v_field: Rc<Var>,
+            v_field: Var,
         }
         impl Action for ActionImpl {
             fn accept(
@@ -2200,7 +2200,7 @@ impl TypeResolver {
                         field_list.iter().position(|f| *f == self.field_name)
                 {
                     let result2 = substitution
-                        .resolve_term(&Term::Variable(self.v_field.clone()));
+                        .resolve_term(&Term::Variable(self.v_field));
                     let term = sequence.terms.get(i).unwrap();
                     let term2 = substitution.resolve_term(term);
                     term_pairs.push((result2, term2));
@@ -2208,10 +2208,10 @@ impl TypeResolver {
             }
         }
         self.actions.push((
-            v_rec.clone(),
+            *v_rec,
             Rc::new(ActionImpl {
                 field_name: field_name.to_string(),
-                v_field: v_field.clone(),
+                v_field: *v_field,
             }),
         ));
 
@@ -2224,8 +2224,8 @@ impl TypeResolver {
         &mut self,
         env: &dyn TypeEnv,
         labeled_expr_list: &Vec<LabeledExpr>,
-        field_vars: &mut Vec<(String, Rc<Var>)>,
-        v: &Rc<Var>,
+        field_vars: &mut Vec<(String, Var)>,
+        v: &Var,
     ) -> Result<Vec<LabeledExpr>, Error> {
         // First, create a copy of expressions and their labels,
         // sorted into the order that they will appear in the record
@@ -2268,7 +2268,7 @@ impl TypeResolver {
         op: &str,
         arg: &Expr,
         span: &Span,
-        v: &Rc<Var>,
+        v: &Var,
     ) -> Result<Expr, Error> {
         let fun = ExprKind::Identifier(op.to_string()).spanned(&span);
         let (_fun, arg2) = self.deduce_apply_type(env, &fun, &arg, &v)?;
@@ -2281,7 +2281,7 @@ impl TypeResolver {
         op: &str,
         left: &Expr,
         right: &Expr,
-        v: &Rc<Var>,
+        v: &Var,
     ) -> Result<(Expr, Expr), Error> {
         let fun = ExprKind::Identifier(op.to_string()).spanned(&left.span);
         let arg = ExprKind::Tuple(vec![left.clone(), right.clone()])
@@ -2303,7 +2303,7 @@ impl TypeResolver {
         a0: &Expr,
         a1: &Expr,
         a2: &Expr,
-        v: &Rc<Var>,
+        v: &Var,
     ) -> Result<(Expr, Expr, Expr), Error> {
         let fun =
             Box::new(ExprKind::Identifier(op.to_string()).spanned(&a0.span));
@@ -2332,7 +2332,7 @@ impl TypeResolver {
         left: &Pat,
         right: &Pat,
         term_map: &mut Vec<(String, Term)>,
-        v: &Rc<Var>,
+        v: &Var,
     ) -> (Pat, Pat) {
         let v_arg0 = self.variable();
         let v_arg1 = self.variable();
@@ -2367,8 +2367,8 @@ impl TypeResolver {
         &mut self,
         env: &dyn TypeEnv,
         match_: &Match,
-        v_param: &Rc<Var>,
-        v_result: &Rc<Var>,
+        v_param: &Var,
+        v_result: &Var,
     ) -> Result<Match, Error> {
         let mut term_map = Vec::new();
         let pat = match_.pat.clone();
@@ -2385,7 +2385,7 @@ impl TypeResolver {
     /// Converts a type to a unification term.
     //
     // Internally, use [Self::type_term], which allows a [Subst].
-    pub fn type_to_term(&mut self, type_: &Type) -> Rc<Var> {
+    pub fn type_to_term(&mut self, type_: &Type) -> Var {
         let v = self.variable();
         self.type_term(type_, &Subst::Empty, &v);
         v.clone()
@@ -2395,8 +2395,8 @@ impl TypeResolver {
     fn primitive_term<'a>(
         &mut self,
         prim_type: &PrimitiveType,
-        v: &'a Rc<Var>,
-    ) -> &'a Rc<Var> {
+        v: &'a Var,
+    ) -> &'a Var {
         let moniker = prim_type.as_str();
         let op = self.unifier.op(moniker, Some(0));
         let sequence = self.unifier.atom(op);
@@ -2406,10 +2406,10 @@ impl TypeResolver {
     /// Creates a term for a function type and associates it with a variable.
     fn fn_term<'a>(
         &mut self,
-        param_type: &Rc<Var>,
-        result_type: &Rc<Var>,
-        v: &'a Rc<Var>,
-    ) -> &'a Rc<Var> {
+        param_type: &Var,
+        result_type: &Var,
+        v: &'a Var,
+    ) -> &'a Var {
         let sequence = self.unifier.apply2(
             self.fn_op.clone(),
             Term::Variable(param_type.clone()),
@@ -2419,7 +2419,7 @@ impl TypeResolver {
     }
 
     /// Creates a term for a list type and associates it with a variable.
-    fn list_term<'a>(&mut self, term: Term, v: &'a Rc<Var>) -> &'a Rc<Var> {
+    fn list_term<'a>(&mut self, term: Term, v: &'a Var) -> &'a Var {
         let sequence = self.unifier.apply1(self.list_op.clone(), term);
         self.equiv(&Term::Sequence(sequence), v)
     }
@@ -2429,8 +2429,8 @@ impl TypeResolver {
     fn is_list_if_all_are_lists(
         &mut self,
         args: &[Term],
-        c: &Rc<Var>,
-        v: &Rc<Var>,
+        c: &Var,
+        v: &Var,
     ) {
         if args.is_empty() {
             panic!("no args");
@@ -2453,12 +2453,12 @@ impl TypeResolver {
     /// Helper for set operations: if both inputs are lists, output is a list.
     fn is_list_if_both_are_lists(
         &mut self,
-        v1: &Rc<Var>,
-        e1: &Rc<Var>,
-        v2: &Rc<Var>,
-        e2: &Rc<Var>,
-        v3: &Rc<Var>,
-        e3: &Rc<Var>,
+        v1: &Var,
+        e1: &Var,
+        v2: &Var,
+        e2: &Var,
+        v3: &Var,
+        e3: &Var,
     ) {
         // If v1 is list<e1> and v2 is list<e2>, then v3 is list<e3>
         let list_e1 = Term::Variable(e1.clone());
@@ -2477,7 +2477,7 @@ impl TypeResolver {
     }
 
     /// Marks that a variable may be either a bag or list.
-    fn may_be_bag_or_list(&mut self, c: &Rc<Var>, v: &Rc<Var>) {
+    fn may_be_bag_or_list(&mut self, c: &Var, v: &Var) {
         // For now, assume list semantics
         let list_v = Term::Variable(v.clone());
         let seq = self.unifier.apply1(self.list_op.clone(), list_v);
@@ -2485,7 +2485,7 @@ impl TypeResolver {
     }
 
     /// Creates a term for a bag type and associates it with a variable.
-    fn bag_term<'a>(&mut self, term: Term, v: &'a Rc<Var>) -> &'a Rc<Var> {
+    fn bag_term<'a>(&mut self, term: Term, v: &'a Var) -> &'a Var {
         let sequence = self.unifier.apply1(self.bag_op.clone(), term);
         self.equiv(&Term::Sequence(sequence), v)
     }
@@ -2494,8 +2494,8 @@ impl TypeResolver {
     fn record_term<'a>(
         &mut self,
         label_types: &BTreeMap<Label, Term>,
-        v: &'a Rc<Var>,
-    ) -> &'a Rc<Var> {
+        v: &'a Var,
+    ) -> &'a Var {
         assert!(label_types.keys().is_sorted());
         let label_terms = label_types.values().cloned().collect::<Vec<_>>();
 
@@ -2518,8 +2518,8 @@ impl TypeResolver {
     fn tuple_term<'a>(
         &mut self,
         types: &[Term],
-        v: &'a Rc<Var>,
-    ) -> &'a Rc<Var> {
+        v: &'a Var,
+    ) -> &'a Var {
         if types.is_empty() {
             self.primitive_term(&PrimitiveType::Unit, v)
         } else {
@@ -2532,7 +2532,7 @@ impl TypeResolver {
         &mut self,
         type_: &Type,
         subst: &Subst,
-        v: &Rc<Var>,
+        v: &Var,
     ) {
         match type_ {
             // lint: sort until '#}' where '##Type::'
@@ -2766,12 +2766,12 @@ impl TypeResolver {
     }
 
     /// Creates a type variable.
-    fn variable(&mut self) -> Rc<Var> {
+    fn variable(&mut self) -> Var {
         self.unifier.variable()
     }
 
     /// Converts a term to a variable.
-    fn term_to_variable(&mut self, term: &Term) -> Rc<Var> {
+    fn term_to_variable(&mut self, term: &Term) -> Var {
         match term {
             Term::Variable(v) => v.clone(),
             Term::Sequence(_) => {
@@ -2782,15 +2782,15 @@ impl TypeResolver {
     }
 
     /// Converts a variable to a sequence.
-    fn variable_to_sequence(&self, _v: &Rc<Var>) -> Option<Sequence> {
+    fn variable_to_sequence(&self, _v: &Var) -> Option<Sequence> {
         None // TODO
     }
 
     /// Declares that a term is equivalent to a variable.
     /// Creates an association between a term and a variable,
     /// declaring that they are equivalent.
-    fn equiv<'a>(&mut self, term: &Term, v: &'a Rc<Var>) -> &'a Rc<Var> {
-        self.terms.push((v.clone(), term.clone()));
+    fn equiv<'a>(&mut self, term: &Term, v: &'a Var) -> &'a Var {
+        self.terms.push((*v, term.clone()));
         &v
     }
 
@@ -2800,10 +2800,10 @@ impl TypeResolver {
         kind: &ExprKind<Expr>,
         span: &Span,
         id: Option<i32>,
-        v: &Rc<Var>,
+        v: &Var,
     ) -> Expr {
         let id2 = id.unwrap_or_else(|| self.next_id());
-        self.node_var_map.insert(id2, v.clone());
+        self.node_var_map.insert(id2, *v);
         Expr {
             kind: kind.clone(),
             span: span.clone(),
@@ -2817,10 +2817,10 @@ impl TypeResolver {
         kind: &PatKind,
         span: &Span,
         id: Option<i32>,
-        v: &Rc<Var>,
+        v: &Var,
     ) -> Pat {
         let id2 = id.unwrap_or_else(|| self.next_id());
-        self.node_var_map.insert(id2, v.clone());
+        self.node_var_map.insert(id2, *v);
         Pat {
             kind: kind.clone(),
             span: span.clone(),
@@ -2848,7 +2848,7 @@ impl TypeResolver {
         &mut self,
         kind: &TypeKind,
         span: &Span,
-        v: &Rc<Var>,
+        v: &Var,
     ) -> AstType {
         AstType {
             kind: kind.clone(),
@@ -2862,7 +2862,7 @@ impl TypeResolver {
         env: &dyn TypeEnv,
         val_bind: &ValBind,
         term_map: &mut Vec<(String, Term)>,
-        v: &Rc<Var>,
+        v: &Var,
     ) -> Result<ValBind, Error> {
         let pat = self.deduce_pat_type(env, &val_bind.pat, term_map, &v);
         let expr = self.deduce_expr_type(env, &val_bind.expr, &v)?;
@@ -2891,7 +2891,7 @@ impl TypeResolver {
         env: &dyn TypeEnv,
         pat: &Pat,
         term_map: &mut Vec<(String, Term)>,
-        v: &Rc<Var>,
+        v: &Var,
     ) -> Pat {
         match &pat.kind {
             // lint: sort until '#}' where '##PatKind::[^ ]* =>'
@@ -3173,7 +3173,7 @@ impl TypeResolver {
 }
 
 impl TypeSchemeResolver for TypeResolver {
-    fn deduce_type_scheme(&mut self, type_scheme: &TypeScheme) -> Rc<Var> {
+    fn deduce_type_scheme(&mut self, type_scheme: &TypeScheme) -> Var {
         let env = EmptyTypeEnv;
         let v = self.variable();
         self.deduce_type_scheme(&env, &type_scheme, &v);
@@ -3228,7 +3228,7 @@ impl<'a> TypeToTermConverter<'a> {
     fn type_scheme_term(
         &mut self,
         type_scheme: &TypeScheme,
-        v: &Rc<Var>,
+        v: &Var,
     ) -> AstType {
         let mut subst = Subst::Empty;
         for i in 0..type_scheme.var_count {
@@ -3245,7 +3245,7 @@ impl<'a> TypeToTermConverter<'a> {
         &mut self,
         type_node: &AstType,
         subst: &Subst,
-        v: &Rc<Var>,
+        v: &Var,
     ) -> AstType {
         match &type_node.kind {
             // lint: sort until '#}' where '##TypeKind::'

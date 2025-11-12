@@ -35,14 +35,14 @@ use std::time::Instant;
 
 /// Trait for things that behave like terms.
 trait TermLike {
-    fn apply1(&self, variable: &Rc<Var>, term: &Term) -> Term;
+    fn apply1(&self, variable: &Var, term: &Term) -> Term;
     #[allow(dead_code)]
-    fn apply(&self, map: &ImHashMap<Rc<Var>, Term>) -> Term;
+    fn apply(&self, map: &ImHashMap<Var, Term>) -> Term;
     fn as_term(&self) -> Term;
 }
 
 /// Trait for things that can be created from a [Term].
-/// Implementations include [Sequence], [Rc]`<Var>`.
+/// Implementations include [Sequence], [Var].
 trait FromTerm {
     fn from_term(term: &Term) -> Self;
 }
@@ -60,7 +60,7 @@ trait FromTerm {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Term {
     Sequence(Sequence),
-    Variable(Rc<Var>),
+    Variable(Var),
 }
 
 impl Term {
@@ -71,7 +71,7 @@ impl Term {
         }
     }
 
-    fn expect_variable(&self) -> &Rc<Var> {
+    fn expect_variable(&self) -> &Var {
         match self {
             Term::Variable(v) => v,
             _ => panic!("Expected Variable, got {:?}", self),
@@ -79,7 +79,7 @@ impl Term {
     }
 
     /// Returns whether this term references a given variable.
-    fn contains(&self, var: &Rc<Var>) -> bool {
+    fn contains(&self, var: &Var) -> bool {
         match self {
             Term::Variable(v) => v == var,
             Term::Sequence(seq) => {
@@ -89,7 +89,7 @@ impl Term {
     }
 
     /// Applies a substitution to this term.
-    fn apply(&self, map: &ImHashMap<Rc<Var>, Term>) -> Term {
+    fn apply(&self, map: &ImHashMap<Var, Term>) -> Term {
         match self {
             Term::Variable(v) => v.apply(map),
             Term::Sequence(seq) => seq.apply(map),
@@ -97,7 +97,7 @@ impl Term {
     }
 
     /// Applies a single variable-to-term substitution to this term.
-    fn apply1(&self, variable: &Rc<Var>, term: &Term) -> Term {
+    fn apply1(&self, variable: &Var, term: &Term) -> Term {
         match self {
             Term::Variable(v) => v.apply1(variable, term),
             Term::Sequence(seq) => seq.apply1(variable, term),
@@ -116,14 +116,14 @@ impl Term {
 }
 
 impl TermLike for Term {
-    fn apply1(&self, variable: &Rc<Var>, term: &Term) -> Term {
+    fn apply1(&self, variable: &Var, term: &Term) -> Term {
         match self {
             Term::Variable(v) => v.apply1(variable, term),
             Term::Sequence(seq) => seq.apply1(variable, term),
         }
     }
 
-    fn apply(&self, map: &ImHashMap<Rc<Var>, Term>) -> Term {
+    fn apply(&self, map: &ImHashMap<Var, Term>) -> Term {
         match self {
             Term::Variable(v) => v.apply(&map),
             Term::Sequence(seq) => seq.apply(&map),
@@ -253,8 +253,8 @@ impl Var {
     }
 }
 
-impl TermLike for Rc<Var> {
-    fn apply1(&self, variable: &Rc<Var>, term: &Term) -> Term {
+impl TermLike for Var {
+    fn apply1(&self, variable: &Var, term: &Term) -> Term {
         if self == variable {
             term.clone()
         } else {
@@ -262,19 +262,19 @@ impl TermLike for Rc<Var> {
         }
     }
 
-    fn apply(&self, map: &ImHashMap<Rc<Var>, Term>) -> Term {
+    fn apply(&self, map: &ImHashMap<Var, Term>) -> Term {
         map.get(self).cloned().unwrap_or_else(|| self.as_term())
     }
 
     fn as_term(&self) -> Term {
-        Term::Variable(self.clone())
+        Term::Variable(*self)
     }
 }
 
-impl FromTerm for Rc<Var> {
+impl FromTerm for Var {
     fn from_term(term: &Term) -> Self {
         match term {
-            Term::Variable(var) => var.clone(),
+            Term::Variable(var) => *var,
             _ => panic!("Expected Variable, got {:?}", term),
         }
     }
@@ -301,7 +301,7 @@ pub struct Sequence {
 }
 
 impl Sequence {
-    fn sub1(&self, variable: &Rc<Var>, term: &Term) -> Sequence {
+    fn sub1(&self, variable: &Var, term: &Term) -> Sequence {
         let terms: Vec<Term> = self
             .terms
             .iter()
@@ -313,7 +313,7 @@ impl Sequence {
         }
     }
 
-    fn sub(&self, map: &ImHashMap<Rc<Var>, Term>) -> Self {
+    fn sub(&self, map: &ImHashMap<Var, Term>) -> Self {
         if self.terms.is_empty() {
             // Cheap clone - just increments Rc refcount.
             return Self {
@@ -339,11 +339,11 @@ impl Sequence {
 }
 
 impl TermLike for Sequence {
-    fn apply1(&self, variable: &Rc<Var>, term: &Term) -> Term {
+    fn apply1(&self, variable: &Var, term: &Term) -> Term {
         Term::Sequence(self.sub1(variable, term))
     }
 
-    fn apply(&self, map: &ImHashMap<Rc<Var>, Term>) -> Term {
+    fn apply(&self, map: &ImHashMap<Var, Term>) -> Term {
         Term::Sequence(self.sub(&map))
     }
 
@@ -368,11 +368,11 @@ impl FromTerm for Sequence {
 /// Substitution.
 #[derive(Clone, Debug)]
 pub struct Substitution {
-    pub substitutions: ImHashMap<Rc<Var>, Term>,
+    pub substitutions: ImHashMap<Var, Term>,
 }
 
 impl Substitution {
-    fn from_result(p0: &ImHashMap<Rc<Var>, Term>) -> Self {
+    fn from_result(p0: &ImHashMap<Var, Term>) -> Self {
         Substitution {
             substitutions: p0.clone(),
         }
@@ -382,10 +382,10 @@ impl Substitution {
         if self.has_cycles() {
             return self.clone();
         }
-        let new_substitutions: ImHashMap<Rc<Var>, Term> = self
+        let new_substitutions: ImHashMap<Var, Term> = self
             .substitutions
             .iter()
-            .map(|(key, value)| (key.clone(), self.resolve_term(value)))
+            .map(|(key, value)| (*key, self.resolve_term(value)))
             .collect();
         Substitution {
             substitutions: new_substitutions,
@@ -616,9 +616,9 @@ pub struct Unifier {
     /// generated "T0" and "T1", then the map will contain `"T", 2)`,
     /// indicating that the next call to `name("T")` should generate `T2`.
     name_map: HashMap<String, usize>,
-    var_by_name: HashMap<String, Rc<Var>>,
+    var_by_name: HashMap<String, Var>,
     op_by_name: HashMap<String, Rc<Op>>,
-    var_list: Vec<Rc<Var>>,
+    var_list: Vec<Var>,
     op_list: Vec<Rc<Op>>,
     /// Maps variable ID to custom name for user-named variables only.
     /// Auto-generated names (T0, T1, etc.) are not stored here.
@@ -630,9 +630,9 @@ pub struct Unifier {
 struct Work<'a> {
     tracer: &'a dyn Tracer,
     seq_seq_queue: Rc<RefCell<VecDeque<(Sequence, Sequence)>>>,
-    var_any_queue: Rc<RefCell<VecDeque<(Rc<Var>, Term)>>>,
+    var_any_queue: Rc<RefCell<VecDeque<(Var, Term)>>>,
     constraint_queue: VecDeque<MutableConstraint>,
-    result: ImHashMap<Rc<Var>, Term>,
+    result: ImHashMap<Var, Term>,
 }
 
 impl Display for Work<'_> {
@@ -693,7 +693,7 @@ impl<'a> Work<'a> {
                 self.var_any_queue
                     .borrow()
                     .iter()
-                    .map(|(v, t)| (Term::Variable(v.clone()), t.clone())),
+                    .map(|(v, t)| (Term::Variable(*v), t.clone())),
             )
             .collect()
     }
@@ -701,7 +701,7 @@ impl<'a> Work<'a> {
     /// Applies a mapping to all term pairs in a list, modifying them in place.
     fn substitute_list(
         &mut self,
-        variable: &Rc<Var>,
+        variable: &Var,
         term: &Term,
     ) -> Option<UnificationFailure> {
         // We need to work with the queues separately to avoid borrowing issues
@@ -716,7 +716,7 @@ impl<'a> Work<'a> {
     }
 
     /// Applies substitution to all queues.
-    fn sub_queues(&mut self, variable: &Rc<Var>, term: &Term) {
+    fn sub_queues(&mut self, variable: &Var, term: &Term) {
         // Process seq_seq_queue
         let seq_seq_queue = self.seq_seq_queue.clone();
         self.process_queue(variable, term, Kind::SeqSeq, &seq_seq_queue);
@@ -731,7 +731,7 @@ impl<'a> Work<'a> {
         R: TermLike + PartialEq + FromTerm,
     >(
         &mut self,
-        variable: &Rc<Var>,
+        variable: &Var,
         term: &Term,
         queue_kind: Kind,
         queue_ref: &Rc<RefCell<VecDeque<(L, R)>>>,
@@ -800,7 +800,7 @@ impl<'a> Work<'a> {
     /// Applies substitution to constraints.
     fn sub_constraint(
         &mut self,
-        variable: &Rc<Var>,
+        variable: &Var,
         term: &Term,
     ) -> Option<UnificationFailure> {
         let mut i = 0;
@@ -881,7 +881,7 @@ impl<'a> Work<'a> {
                 }
             }
             Kind::VarAny => {
-                let v: Rc<Var> = FromTerm::from_term(&left);
+                let v: Var = FromTerm::from_term(&left);
                 self.var_any_queue.borrow_mut().push_back((v, right));
             }
             Kind::Delete => {
@@ -975,29 +975,29 @@ impl Unifier {
     /// The first variable is at position 0, is named "T0", and has id -1.
     /// The second variable is at position 1, is named "T1", and has id -2.
     /// And so forth.
-    pub fn variable(&mut self) -> Rc<Var> {
+    pub fn variable(&mut self) -> Var {
         let ordinal = self.var_list.len();
         let name = self.new_name("T", ordinal);
         let id = -(ordinal as i32 + 1);
-        let var = Rc::new(Var { id });
-        self.var_list.push(var.clone());
+        let var = Var { id };
+        self.var_list.push(var);
         self.name_map.insert(name.to_string(), 1);
-        self.var_by_name.insert(name, var.clone());
+        self.var_by_name.insert(name, var);
         var
     }
 
     /// Creates a variable with a given name, or returns the existing variable
     /// with that name.
-    pub fn variable_with_name(&mut self, name: &str) -> Rc<Var> {
+    pub fn variable_with_name(&mut self, name: &str) -> Var {
         if let Some(var) = self.var_by_name.get(name) {
-            var.clone()
+            *var
         } else {
             let ordinal = self.var_list.len();
             let id = -(ordinal as i32 + 1);
-            let var = Rc::new(Var { id });
-            self.var_list.push(var.clone());
+            let var = Var { id };
+            self.var_list.push(var);
             self.name_map.insert(name.to_string(), 1);
-            self.var_by_name.insert(name.to_string(), var.clone());
+            self.var_by_name.insert(name.to_string(), var);
 
             // Store custom name if it's not the auto-generated "T{ordinal}".
             let auto_name = format!("T{}", ordinal);
@@ -1009,7 +1009,7 @@ impl Unifier {
         }
     }
 
-    fn variable_with_id(&mut self, id: usize) -> Rc<Var> {
+    fn variable_with_id(&mut self, id: usize) -> Var {
         let name = format!("T{}", id);
         self.variable_with_name(&name)
     }
@@ -1091,7 +1091,7 @@ impl Unifier {
     /// Creates a substitution from a variable to a term.
     fn substitution(
         &self,
-        substitutions: &ImHashMap<Rc<Var>, Term>,
+        substitutions: &ImHashMap<Var, Term>,
     ) -> Substitution {
         Substitution {
             substitutions: substitutions.clone(),
@@ -1102,10 +1102,10 @@ impl Unifier {
         &self,
         term_pairs: &[(Term, Term)],
         _tracer: &dyn Tracer,
-        term_action_list: &[(Rc<Var>, Rc<dyn Action>)],
+        term_action_list: &[(Var, Rc<dyn Action>)],
     ) -> Result<Substitution, UnificationFailure> {
         let tracer = &NullTracer; // switch to PrintTracer for debugging
-        let term_actions: HashMap<Rc<Var>, Rc<dyn Action>> =
+        let term_actions: HashMap<Var, Rc<dyn Action>> =
             term_action_list.iter().cloned().collect();
         if false {
             // Uncomment this section to generate a unit test.
@@ -1188,7 +1188,7 @@ impl Unifier {
                     }
                 }
 
-                if term == Term::Variable(variable.clone()) {
+                if term == Term::Variable(variable) {
                     // We already knew that 'pair.left' and 'pair.right' were
                     // equivalent.
                     continue;
@@ -1196,7 +1196,7 @@ impl Unifier {
 
                 tracer.on_variable(&variable, &term);
                 if let Some(prior_term) =
-                    work.result.insert(variable.clone(), term.clone())
+                    work.result.insert(variable, term.clone())
                 {
                     if prior_term != term {
                         work.add(prior_term, term.clone());
@@ -1253,16 +1253,16 @@ impl Unifier {
 
     fn act(
         &self,
-        variable: &Rc<Var>,
+        variable: &Var,
         term: &Term,
         work: &mut Work,
         substitution: &Substitution,
-        term_actions: &HashMap<Rc<Var>, Rc<dyn Action>>,
-        active: &mut HashSet<Rc<Var>>,
+        term_actions: &HashMap<Var, Rc<dyn Action>>,
+        active: &mut HashSet<Var>,
     ) {
         // To prevent infinite recursion, this method is a no-op if the variable
         // is already in the working set.
-        if active.insert(variable.clone()).is_none() {
+        if active.insert(*variable).is_none() {
             self.act2(variable, term, work, substitution, term_actions, active);
 
             // Remove the variable from the working set.
@@ -1272,12 +1272,12 @@ impl Unifier {
 
     fn act2(
         &self,
-        variable: &Rc<Var>,
+        variable: &Var,
         term: &Term,
         work: &mut Work,
         substitution: &Substitution,
-        term_actions: &HashMap<Rc<Var>, Rc<dyn Action>>,
-        active: &mut HashSet<Rc<Var>>,
+        term_actions: &HashMap<Var, Rc<dyn Action>>,
+        active: &mut HashSet<Var>,
     ) {
         if let Some(action) = term_actions.get(variable) {
             let mut to_add = Vec::new();
@@ -1311,7 +1311,7 @@ impl Unifier {
             {
                 self.act(
                     v,
-                    &Term::Variable(variable.clone()),
+                    &Term::Variable(*variable),
                     work,
                     substitution,
                     term_actions,
@@ -1468,7 +1468,7 @@ impl UnifierTest {
         expected: &str,
     ) {
         let term_actions = HashMap::new();
-        let term_actions_vec: Vec<(Rc<Var>, Rc<dyn Action>)> =
+        let term_actions_vec: Vec<(Var, Rc<dyn Action>)> =
             term_actions.into_iter().collect();
         let result =
             self.unifier
@@ -1620,7 +1620,7 @@ mod tests {
             }
             Term::Variable(v) => v,
         };
-        let mut map: ImHashMap<Rc<Var>, Term> = ImHashMap::new();
+        let mut map: ImHashMap<Var, Term> = ImHashMap::new();
         map.insert(z_v, f_a_y);
         let sub = t.unifier.substitution(&map);
         assert_eq!(t.unifier.substitution_string(&sub), "[f(a, Y)/Z]");
