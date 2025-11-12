@@ -24,7 +24,7 @@
 #![allow(clippy::collapsible_if)]
 
 use crate::unify;
-use im::{HashSet, OrdMap};
+use im::{HashMap as ImHashMap, HashSet};
 use std::cell::RefCell;
 use std::cmp::{PartialEq, max};
 use std::collections::{HashMap, VecDeque};
@@ -37,7 +37,7 @@ use std::time::Instant;
 trait TermLike {
     fn apply1(&self, variable: &Rc<Var>, term: &Term) -> Term;
     #[allow(dead_code)]
-    fn apply(&self, map: &OrdMap<Rc<Var>, Term>) -> Term;
+    fn apply(&self, map: &ImHashMap<Rc<Var>, Term>) -> Term;
     fn as_term(&self) -> Term;
 }
 
@@ -89,7 +89,7 @@ impl Term {
     }
 
     /// Applies a substitution to this term.
-    fn apply(&self, map: &OrdMap<Rc<Var>, Term>) -> Term {
+    fn apply(&self, map: &ImHashMap<Rc<Var>, Term>) -> Term {
         match self {
             Term::Variable(v) => v.apply(map),
             Term::Sequence(seq) => seq.apply(map),
@@ -123,7 +123,7 @@ impl TermLike for Term {
         }
     }
 
-    fn apply(&self, map: &OrdMap<Rc<Var>, Term>) -> Term {
+    fn apply(&self, map: &ImHashMap<Rc<Var>, Term>) -> Term {
         match self {
             Term::Variable(v) => v.apply(&map),
             Term::Sequence(seq) => seq.apply(&map),
@@ -199,7 +199,7 @@ impl TermLike for Rc<Var> {
         }
     }
 
-    fn apply(&self, map: &OrdMap<Rc<Var>, Term>) -> Term {
+    fn apply(&self, map: &ImHashMap<Rc<Var>, Term>) -> Term {
         map.get(self).cloned().unwrap_or_else(|| self.as_term())
     }
 
@@ -250,7 +250,7 @@ impl Sequence {
         }
     }
 
-    fn sub(&self, map: &OrdMap<Rc<Var>, Term>) -> Self {
+    fn sub(&self, map: &ImHashMap<Rc<Var>, Term>) -> Self {
         if self.terms.is_empty() {
             // Cheap clone - just increments Rc refcount.
             return Self {
@@ -280,7 +280,7 @@ impl TermLike for Sequence {
         Term::Sequence(self.sub1(variable, term))
     }
 
-    fn apply(&self, map: &OrdMap<Rc<Var>, Term>) -> Term {
+    fn apply(&self, map: &ImHashMap<Rc<Var>, Term>) -> Term {
         Term::Sequence(self.sub(&map))
     }
 
@@ -318,11 +318,11 @@ impl<'a> Display for Sequence {
 /// Substitution.
 #[derive(Clone, Debug)]
 pub struct Substitution {
-    pub substitutions: OrdMap<Rc<Var>, Term>,
+    pub substitutions: ImHashMap<Rc<Var>, Term>,
 }
 
 impl Substitution {
-    fn from_result(p0: &OrdMap<Rc<Var>, Term>) -> Self {
+    fn from_result(p0: &ImHashMap<Rc<Var>, Term>) -> Self {
         Substitution {
             substitutions: p0.clone(),
         }
@@ -332,7 +332,7 @@ impl Substitution {
         if self.has_cycles() {
             return self.clone();
         }
-        let new_substitutions: OrdMap<Rc<Var>, Term> = self
+        let new_substitutions: ImHashMap<Rc<Var>, Term> = self
             .substitutions
             .iter()
             .map(|(key, value)| (key.clone(), self.resolve_term(value)))
@@ -412,7 +412,10 @@ impl Display for Substitution {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         let mut first = true;
         f.write_char('[')?;
-        for (var, term) in &self.substitutions {
+        // Sort by variable for deterministic output (uses Var::Ord).
+        let mut entries: Vec<_> = self.substitutions.iter().collect();
+        entries.sort_by(|(var1, _), (var2, _)| var1.cmp(var2));
+        for (var, term) in entries {
             if !first {
                 f.write_str(", ")?;
             }
@@ -594,7 +597,7 @@ struct Work<'a> {
     seq_seq_queue: Rc<RefCell<VecDeque<(Sequence, Sequence)>>>,
     var_any_queue: Rc<RefCell<VecDeque<(Rc<Var>, Term)>>>,
     constraint_queue: VecDeque<MutableConstraint>,
-    result: OrdMap<Rc<Var>, Term>,
+    result: ImHashMap<Rc<Var>, Term>,
 }
 
 impl Display for Work<'_> {
@@ -626,7 +629,7 @@ impl<'a> Work<'a> {
             var_any_queue: Rc::new(RefCell::new(VecDeque::new())),
             seq_seq_queue: Rc::new(RefCell::new(VecDeque::new())),
             constraint_queue: VecDeque::new(),
-            result: OrdMap::new(),
+            result: ImHashMap::new(),
         };
         term_pairs
             .iter()
@@ -1014,7 +1017,7 @@ impl Unifier {
     /// Creates a substitution from a variable to a term.
     fn substitution(
         &self,
-        substitutions: &OrdMap<Rc<Var>, Term>,
+        substitutions: &ImHashMap<Rc<Var>, Term>,
     ) -> Substitution {
         Substitution {
             substitutions: substitutions.clone(),
@@ -1539,7 +1542,7 @@ mod tests {
             }
             Term::Variable(v) => v,
         };
-        let mut map: OrdMap<Rc<Var>, Term> = OrdMap::new();
+        let mut map: ImHashMap<Rc<Var>, Term> = ImHashMap::new();
         map.insert(z_v, f_a_y);
         let sub = t.unifier.substitution(&map);
         assert_eq!(sub.to_string(), "[f(a, Y)/Z]");
