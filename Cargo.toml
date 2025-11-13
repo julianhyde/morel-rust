@@ -20,6 +20,9 @@ name = "morel"
 version = "0.2.0"
 authors = ["Julian Hyde <jhyde@apache.org>"]
 edition = "2024"
+description = "A functional query language, implemented in Rust"
+repository = "https://github.com/hydromatic/morel-rust"
+license = "Apache-2.0"
 
 # Crate types:
 #  * "cdylib" generates portable dynamic code when building the library.
