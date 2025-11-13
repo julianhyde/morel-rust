@@ -21,12 +21,12 @@ version = "0.2.0"
 authors = ["Julian Hyde <jhyde@apache.org>"]
 edition = "2024"
 
-# Generate portable dynamic code when building the library.
-# This is necessary for compiling WebAssembly modules.
-# We could also add an `rlib` option
-# if we ever want to release the library as a Rust crate as well.
+# Crate types:
+#  * "cdylib" generates portable dynamic code when building the library.
+#    This is necessary for compiling WebAssembly modules.
+#  * "rlib" allows us to release the library as a Rust crate.
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib","rlib"]
 
 [[bin]]
 name = "main"
