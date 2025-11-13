@@ -34,7 +34,7 @@ cargo install wasm-pack
 To build the Wasm module:
 
 ```bash
-wasm-pack build --target web
+wasm-pack build --target web --out-dir web/pkg
 ```
 
 The resulting module can be found under `target/wasm32-unknown-unknown/`.
@@ -49,7 +49,8 @@ If you just open the demo as a `file://` URI,
 you'll probably get a CORS error when it tries to load the module.
 
 ```bash
-python -m http.server 8000
+$ cd web
+$ python -m http.server 8000
 ```
 
 Then, navigate to http://127.0.0.1:8000/web/demo.html in your browser.
