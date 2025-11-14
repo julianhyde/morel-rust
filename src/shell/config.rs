@@ -128,7 +128,9 @@ impl Configurable for Config {
                     prop.default_value()
                 }
             }
-            _ => todo!("set {}", prop.name()),
+            // For read-only properties (Banner, ProductName, ProductVersion, etc.),
+            // return the default value.
+            _ => prop.default_value(),
         }
     }
 }
