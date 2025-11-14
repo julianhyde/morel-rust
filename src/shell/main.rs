@@ -35,7 +35,7 @@ use crate::eval::val::Val;
 use crate::shell::ShellResult;
 use crate::shell::config::Config;
 use crate::shell::error::Error;
-use crate::shell::prop::Mode;
+use crate::shell::prop::{create_banner, Mode};
 use crate::shell::utils::prefix_lines;
 use crate::syntax::ast::Statement;
 use crate::syntax::parser;
@@ -212,7 +212,7 @@ impl Shell {
         let mut writer = BufWriter::new(output);
 
         if self.config.banner.unwrap() {
-            writeln!(writer, "{}", Self::banner().as_str())?;
+            writeln!(writer, "{}", create_banner().as_str())?;
             writer.flush()?;
         }
 
@@ -292,10 +292,6 @@ impl Shell {
 
             writer.flush()?;
         }
-    }
-
-    fn banner() -> String {
-        crate::shell::prop::create_banner()
     }
 
     /// Processes a single statement.
