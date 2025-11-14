@@ -1084,7 +1084,10 @@ impl Eager0 {
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum EagerF0 {
     // lint: sort until '#}'
+    SysClearEnv,
+    SysEnv,
     SysPlan,
+    SysShowAll,
 }
 
 impl EagerF0 {
@@ -1094,6 +1097,16 @@ impl EagerF0 {
 
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
+            SysClearEnv => {
+                // TODO: Reset the session environment to the initial state.
+                // This requires clearing type_env and type_bindings in Session.
+                todo!("SysClearEnv not yet implemented")
+            }
+            SysEnv => {
+                // TODO: Return a list of (name, type) pairs for all variables in the environment.
+                // This requires iterating over Session.type_bindings and formatting as a list.
+                todo!("SysEnv not yet implemented")
+            }
             SysPlan => {
                 let s = if let Some(c) = r.session.code.as_ref() {
                     if let Code::Fn(_, matches) = c.deref()
@@ -1107,6 +1120,11 @@ impl EagerF0 {
                     "".to_string()
                 };
                 Val::String(s)
+            }
+            SysShowAll => {
+                // TODO: Return a list of (property_name, SOME value | NONE) pairs.
+                // This requires iterating over Prop::all() and getting values from session.config.
+                todo!("SysShowAll not yet implemented")
             }
         }
     }
@@ -1128,6 +1146,7 @@ impl EagerF0 {
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum EagerF1 {
     // lint: sort until '#}'
+    SysShow,
     SysUnset,
 }
 
@@ -1151,6 +1170,12 @@ impl EagerF1 {
 
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
+            SysShow => {
+                // TODO: Return SOME(value) or NONE for the given property.
+                // This requires looking up the property in session.config and converting to a string.
+                let _prop = a0.expect_string();
+                todo!("SysShow not yet implemented")
+            }
             SysUnset => {
                 let prop = a0.expect_string();
                 r.emit_effect(Effect::UnsetShellProp(prop));
@@ -2679,8 +2704,12 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     EagerF4::StringSubstring.implements(&mut b, StringSubstring);
     EagerF2::StringTokens.implements(&mut b, StringTokens);
     EagerF2::StringTranslate.implements(&mut b, StringTranslate);
+    EagerF0::SysClearEnv.implements(&mut b, SysClearEnv);
+    EagerF0::SysEnv.implements(&mut b, SysEnv);
     EagerF0::SysPlan.implements(&mut b, SysPlan);
     EagerF2::SysSet.implements(&mut b, SysSet);
+    EagerF1::SysShow.implements(&mut b, SysShow);
+    EagerF0::SysShowAll.implements(&mut b, SysShowAll);
     EagerF1::SysUnset.implements(&mut b, SysUnset);
     Eager1::Vector.implements(&mut b, Vector);
     EagerF2::VectorAll.implements(&mut b, VectorAll);
