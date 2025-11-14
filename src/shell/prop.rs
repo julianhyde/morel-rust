@@ -242,8 +242,31 @@ macro_rules! define_props {
 }
 
 /// Creates the banner string for the Morel shell.
-fn create_banner() -> String {
-    format!("morel-rust version {}", env!("CARGO_PKG_VERSION"))
+pub fn create_banner() -> String {
+    let morel_version = env!("CARGO_PKG_VERSION");
+
+    // Get Rust compiler version
+    let rust_version = rustc_version::version()
+        .map_or_else(|_| "unknown".to_string(), |v| v.to_string());
+
+    // Check if running under WASM
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Get wasm-bindgen version from environment
+        let wasm_core = env!("CARGO_PKG_VERSION_MAJOR");
+        format!(
+            "morel-rust version {} (rust version {}, wasm32 core {}.0)",
+            morel_version, rust_version, wasm_core
+        )
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        format!(
+            "morel-rust version {} (rust version {})",
+            morel_version, rust_version
+        )
+    }
 }
 
 define_props! {

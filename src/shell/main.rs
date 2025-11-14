@@ -39,7 +39,6 @@ use crate::shell::prop::Mode;
 use crate::shell::utils::prefix_lines;
 use crate::syntax::ast::Statement;
 use crate::syntax::parser;
-use rustc_version::version;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug, Display, Formatter};
@@ -296,12 +295,7 @@ impl Shell {
     }
 
     fn banner() -> String {
-        let rustc_version = version().unwrap();
-        format!(
-            "morel-rust version {} (rust version {})",
-            env!("CARGO_PKG_VERSION"),
-            rustc_version.to_string()
-        )
+        crate::shell::prop::create_banner()
     }
 
     /// Processes a single statement.

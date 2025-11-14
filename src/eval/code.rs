@@ -1085,6 +1085,7 @@ impl Eager0 {
 /// Function implementation that takes no arguments and an evaluation
 /// environment.
 #[derive(Copy, Clone, PartialEq, Debug)]
+#[allow(clippy::enum_variant_names)]
 pub enum EagerF0 {
     // lint: sort until '#}'
     SysClearEnv,
