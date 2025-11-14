@@ -2308,9 +2308,7 @@ impl Eager3 {
     // Passing Val by value is OK because it is small.
     #[allow(clippy::needless_pass_by_value)]
     fn apply(&self, _a0: Val, _a1: Val, _a2: Val) -> Val {
-        match &self {
-            _ => panic!("Not implemented"),
-        }
+        panic!("Not implemented")
     }
 
     fn implements(&self, b: &mut LibBuilder, f: BuiltInFunction) {

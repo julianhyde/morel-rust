@@ -186,7 +186,7 @@ impl Type {
                     if i > 0 {
                         write!(f, " ")?;
                     }
-                    write!(f, "'{}", ('a' as u8 + i as u8) as char)?;
+                    write!(f, "'{}", (b'a' + i as u8) as char)?;
                 }
                 write!(f, ". ")?;
                 ty.describe(f, 0, 0)

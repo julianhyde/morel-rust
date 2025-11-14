@@ -80,15 +80,23 @@ impl PropVal {
         }
     }
 
-    /// Convert the property value to a string for display.
-    pub fn to_string(&self) -> String {
+}
+
+impl std::fmt::Display for PropVal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PropVal::Bool(b) => b.to_string(),
-            PropVal::Int(i) => i.to_string(),
-            PropVal::Mode(m) => format!("{:?}", m).to_uppercase(),
-            PropVal::Output(o) => format!("{:?}", o).to_uppercase(),
-            PropVal::PathBuf(p) => p.to_string_lossy().to_string(),
-            PropVal::String(s) => s.to_string(),
+            PropVal::Bool(b) => write!(f, "{}", b),
+            PropVal::Int(i) => write!(f, "{}", i),
+            PropVal::Mode(m) => {
+                let s = format!("{:?}", m).to_uppercase();
+                write!(f, "{}", s)
+            }
+            PropVal::Output(o) => {
+                let s = format!("{:?}", o).to_uppercase();
+                write!(f, "{}", s)
+            }
+            PropVal::PathBuf(p) => write!(f, "{}", p.to_string_lossy()),
+            PropVal::String(s) => write!(f, "{}", s),
         }
     }
 }
