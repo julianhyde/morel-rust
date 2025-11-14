@@ -134,9 +134,7 @@ impl List {
                 }
                 hd_list
                     .iter()
-                    .filter(|v| {
-                        !tl_sets.iter().any(|set| set.contains(v))
-                    })
+                    .filter(|v| !tl_sets.iter().any(|set| set.contains(v)))
                     .cloned()
                     .collect()
             }
@@ -266,9 +264,7 @@ impl List {
                 }
                 hd_list
                     .iter()
-                    .filter(|v| {
-                        tl_sets.iter().all(|set| set.contains(v))
-                    })
+                    .filter(|v| tl_sets.iter().all(|set| set.contains(v)))
                     .cloned()
                     .collect()
             }
