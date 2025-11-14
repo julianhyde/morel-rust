@@ -430,7 +430,7 @@ impl Op {
 
     /// The list operator has a low precedence. An example is `(int, string)`
     /// that appears before the type application `(int, string) tree`.
-    pub const LIST: Op = Op::new(16, 17, "(", ", ", ")", true);
+    pub const LIST: Op = Op::new(16, 17, "(", ",", ")", true);
 
     /// The function arrow "->" is right-associative and has a lower precedence
     /// than the tuple constructor "*".
