@@ -1103,8 +1103,9 @@ impl EagerF0 {
                 todo!("SysClearEnv not yet implemented")
             }
             SysEnv => {
-                // TODO: Return a list of (name, type) pairs for all variables in the environment.
-                // This requires iterating over Session.type_bindings and formatting as a list.
+                // TODO: Return a list of (name, type) pairs for all
+                // variables in the environment. This requires iterating over
+                // Session.type_bindings and formatting as a list.
                 todo!("SysEnv not yet implemented")
             }
             SysPlan => {
@@ -1122,8 +1123,9 @@ impl EagerF0 {
                 Val::String(s)
             }
             SysShowAll => {
-                // TODO: Return a list of (property_name, SOME value | NONE) pairs.
-                // This requires iterating over Prop::all() and getting values from session.config.
+                // TODO: Return a list of (property_name, SOME value | NONE)
+                // pairs. This requires iterating over Prop::all() and getting
+                // values from session.config.
                 todo!("SysShowAll not yet implemented")
             }
         }
@@ -1172,7 +1174,8 @@ impl EagerF1 {
             // lint: sort until '#}' where '##[A-Z]'
             SysShow => {
                 // TODO: Return SOME(value) or NONE for the given property.
-                // This requires looking up the property in session.config and converting to a string.
+                // This requires looking up the property in session.config and
+                // converting to a string.
                 let _prop = a0.expect_string();
                 todo!("SysShow not yet implemented")
             }

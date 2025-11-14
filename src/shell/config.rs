@@ -54,9 +54,6 @@ impl Configurable for Config {
     fn set(&mut self, prop: Prop, val: &PropVal) {
         match (prop, val) {
             // lint: sort until '#}' where '##\(Prop::'
-            (Prop::ShowBanner, PropVal::Bool(b)) => {
-                self.banner = Some(*b);
-            }
             (Prop::LineWidth, PropVal::Int(i)) => {
                 self.line_width = Some(*i);
             }
@@ -69,6 +66,9 @@ impl Configurable for Config {
             (Prop::PrintLength, PropVal::Int(i)) => {
                 self.print_length = Some(*i);
             }
+            (Prop::ShowBanner, PropVal::Bool(b)) => {
+                self.banner = Some(*b);
+            }
             (Prop::StringDepth, PropVal::Int(i)) => {
                 self.string_depth = Some(*i);
             }
@@ -79,13 +79,6 @@ impl Configurable for Config {
     fn get(&self, prop: Prop) -> PropVal {
         match prop {
             // lint: sort until '#}' where '##Prop::'
-            Prop::ShowBanner => {
-                if let Some(b) = self.banner {
-                    PropVal::Bool(b)
-                } else {
-                    prop.default_value()
-                }
-            }
             Prop::Echo => {
                 if let Some(b) = self.echo {
                     PropVal::Bool(b)
@@ -117,6 +110,13 @@ impl Configurable for Config {
             Prop::PrintLength => {
                 if let Some(i) = self.print_length {
                     PropVal::Int(i)
+                } else {
+                    prop.default_value()
+                }
+            }
+            Prop::ShowBanner => {
+                if let Some(b) = self.banner {
+                    PropVal::Bool(b)
                 } else {
                     prop.default_value()
                 }

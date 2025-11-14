@@ -229,9 +229,9 @@ fn create_banner() -> String {
 define_props! {
     // lint: sort until '#}' where '##[A-Za-z]+'
     Banner => {
-        doc: "String property 'banner' is the startup banner message displayed when \
-              launching the Morel shell. This property is read-only and should not \
-              be modified via Sys.set.",
+        doc: "String property 'banner' is the startup banner message \
+              displayed when launching the Morel shell. This property is \
+              read-only and should not be modified via Sys.set.",
         camel_name: "banner",
         default: Some(PropVal::String(Rc::new(create_banner()))),
         required: true,
@@ -345,18 +345,22 @@ define_props! {
     },
 
     ProductName => {
-        doc: "String property 'productName' is the name of the Morel product. \
-              This property is read-only and should not be modified via Sys.set.",
+        doc: "String property 'productName' is the name of the Morel \
+              product. This property is read-only and should not be \
+              modified via Sys.set.",
         camel_name: "productName",
         default: Some(PropVal::String(Rc::new("morel-rust".to_string()))),
         required: true,
     },
 
     ProductVersion => {
-        doc: "String property 'productVersion' is the current version of Morel. \
-              This property is read-only and should not be modified via Sys.set.",
+        doc: "String property 'productVersion' is the current version of \
+              Morel. This property is read-only and should not be modified \
+              via Sys.set.",
         camel_name: "productVersion",
-        default: Some(PropVal::String(Rc::new(env!("CARGO_PKG_VERSION").to_string()))),
+        default: Some(PropVal::String(Rc::new(
+            env!("CARGO_PKG_VERSION").to_string()
+        ))),
         required: true,
     },
 
@@ -379,8 +383,8 @@ define_props! {
     },
 
     ShowBanner => {
-        doc: "Boolean property 'showBanner' controls whether to print the banner \
-              at the start of the shell. Default is true.",
+        doc: "Boolean property 'showBanner' controls whether to print the \
+              banner at the start of the shell. Default is true.",
         camel_name: "showBanner",
         default: Some(PropVal::Bool(true)),
         required: true,
