@@ -4533,6 +4533,8 @@ Vector.collate Relational.compare (Vector.fromList [1,2,3], Vector.fromList [1,2
 > val it = LESS : order
 
 (* Sys --------------------------------------------------------- *)
+set("mode", "evaluate");
+> val it = () : unit
 
 (*) val env : unit -> string list
 Sys.env;
@@ -4734,8 +4736,6 @@ env ();
 >   : (string * string) list
 
 (*) val plan : unit -> string
-set("mode", "evaluate");
-> val it = () : unit
 Sys.plan;
 > val it = fn : unit -> string
 1 + 2;

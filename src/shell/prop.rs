@@ -79,6 +79,18 @@ impl PropVal {
             _ => todo!("wrong type"),
         }
     }
+
+    /// Convert the property value to a string for display.
+    pub fn to_string(&self) -> String {
+        match self {
+            PropVal::Bool(b) => b.to_string(),
+            PropVal::Int(i) => i.to_string(),
+            PropVal::Mode(m) => format!("{:?}", m).to_uppercase(),
+            PropVal::Output(o) => format!("{:?}", o).to_uppercase(),
+            PropVal::PathBuf(p) => p.to_string_lossy().to_string(),
+            PropVal::String(s) => s.to_string(),
+        }
+    }
 }
 
 macro_rules! define_props {

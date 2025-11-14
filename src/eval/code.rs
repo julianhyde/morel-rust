@@ -75,6 +75,8 @@ pub enum Effect {
     // lint: sort until '#}' where '##[A-Z]'
     /// Adds a binding to the environment.
     AddBinding(Binding),
+    /// Clears the environment.
+    ClearEnv,
     /// Emits a piece of code.
     EmitCode(Arc<Code>),
     /// Emits an output line.
@@ -1098,15 +1100,43 @@ impl EagerF0 {
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
             SysClearEnv => {
-                // TODO: Reset the session environment to the initial state.
-                // This requires clearing type_env and type_bindings in Session.
-                todo!("SysClearEnv not yet implemented")
+                // Reset the session environment to the initial state.
+                // Emit an effect to clear the environment.
+                r.emit_effect(Effect::ClearEnv);
+                Val::Unit
             }
             SysEnv => {
-                // TODO: Return a list of (name, type) pairs for all
-                // variables in the environment. This requires iterating over
-                // Session.type_bindings and formatting as a list.
-                todo!("SysEnv not yet implemented")
+                // Return a list of (name, type) pairs for all variables in
+                // the environment, including built-in structures.
+                use crate::compile::library::BuiltInRecord;
+                use strum::IntoEnumIterator;
+
+                let mut pairs: Vec<(String, String)> = Vec::new();
+
+                // Add all built-in structures.
+                for record in BuiltInRecord::iter() {
+                    let name = record.name();
+                    if let Some(ty) = record.get_type() {
+                        pairs.push((name.to_string(), format!("{}", ty)));
+                    }
+                }
+
+                // Add user-defined variables from type_bindings.
+                for (name, ty) in &r.session.type_bindings {
+                    pairs.push((name.clone(), format!("{}", ty)));
+                }
+
+                // Sort by name for consistent output.
+                pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
+                // Convert to Val::List of tuples (represented as lists).
+                let vals: Vec<Val> = pairs
+                    .into_iter()
+                    .map(|(name, ty)| {
+                        Val::List(vec![Val::String(name), Val::String(ty)])
+                    })
+                    .collect();
+                Val::List(vals)
             }
             SysPlan => {
                 let s = if let Some(c) = r.session.code.as_ref() {
@@ -1123,10 +1153,23 @@ impl EagerF0 {
                 Val::String(s)
             }
             SysShowAll => {
-                // TODO: Return a list of (property_name, SOME value | NONE)
-                // pairs. This requires iterating over Prop::all() and getting
-                // values from session.config.
-                todo!("SysShowAll not yet implemented")
+                // Return a list of (property_name, SOME value | NONE) pairs.
+                use crate::shell::prop::{Configurable, Prop};
+                let props = Prop::all();
+                let vals: Vec<Val> = props
+                    .iter()
+                    .map(|prop| {
+                        let name = prop.camel_name().to_string();
+                        let value = if prop.is_required() {
+                            let val = r.session.config.get(*prop);
+                            Val::Some(Box::new(Val::String(val.to_string())))
+                        } else {
+                            Val::Unit // NONE is represented as Unit
+                        };
+                        Val::List(vec![Val::String(name), value])
+                    })
+                    .collect();
+                Val::List(vals)
             }
         }
     }
@@ -1173,11 +1216,20 @@ impl EagerF1 {
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
             SysShow => {
-                // TODO: Return SOME(value) or NONE for the given property.
-                // This requires looking up the property in session.config and
-                // converting to a string.
-                let _prop = a0.expect_string();
-                todo!("SysShow not yet implemented")
+                // Return SOME(value) or NONE for the given property.
+                use crate::shell::prop::{Configurable, Prop};
+                let prop_name = a0.expect_string();
+                let result = if let Some(prop) = Prop::lookup(&prop_name) {
+                    if prop.is_required() {
+                        let val = r.session.config.get(prop);
+                        Val::Some(Box::new(Val::String(val.to_string())))
+                    } else {
+                        Val::Unit // NONE is represented as Unit
+                    }
+                } else {
+                    Val::Unit // NONE is represented as Unit
+                };
+                Ok(result)
             }
             SysUnset => {
                 let prop = a0.expect_string();

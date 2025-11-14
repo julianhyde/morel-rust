@@ -708,4 +708,5 @@ and unset using `Sys.unset name`.
 | printLength          | int  | 12      | When printing, the length of lists at which ellipsis begins. |
 | productName          | string | morel-rust | The name of the Morel product. Read-only. |
 | productVersion       | string | x.y.z | The current version of Morel. Read-only. |
-| stringDepth          | int  | 70      | When printing, the length of strings at which ellipsis begins. |
+| showBanner           | bool   | true   | Whether to print the banner at the start of the shell. |
+| stringDepth          | int    | 70     | When printing, the length of strings at which ellipsis begins. |
