@@ -129,7 +129,7 @@ impl List {
             _ => {
                 let hd_list = lists[0].expect_list();
                 let mut tl_sets: Vec<HashSet<&Val>> = Vec::new();
-                for list in lists[1..].iter() {
+                for list in &lists[1..] {
                     tl_sets.push(HashSet::from_iter(list.expect_list()));
                 }
                 hd_list
@@ -259,7 +259,7 @@ impl List {
             _ => {
                 let hd_list = lists[0].expect_list();
                 let mut tl_sets: Vec<HashSet<&Val>> = Vec::new();
-                for list in lists[1..].iter() {
+                for list in &lists[1..] {
                     tl_sets.push(HashSet::from_iter(list.expect_list()));
                 }
                 hd_list
