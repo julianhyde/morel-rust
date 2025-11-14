@@ -37,6 +37,7 @@ use crate::eval::string::Str;
 use crate::eval::val::Val;
 use crate::eval::vector::Vector;
 use crate::shell::main::{MorelError, Shell};
+use crate::shell::prop::{Configurable, Prop};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
@@ -1108,9 +1109,6 @@ impl EagerF0 {
             SysEnv => {
                 // Return a list of (name, type) pairs for all variables in
                 // the environment, including built-in structures.
-                use crate::compile::library::BuiltInRecord;
-                use strum::IntoEnumIterator;
-
                 let mut pairs: Vec<(String, String)> = Vec::new();
 
                 // Add all built-in structures.
@@ -1118,6 +1116,16 @@ impl EagerF0 {
                     let name = record.name();
                     if let Some(ty) = record.get_type() {
                         pairs.push((name.to_string(), format!("{}", ty)));
+                    }
+                }
+
+                // Add constructors
+                for f in BuiltInFunction::iter() {
+                    if f.is_constructor() {
+                        pairs.push((
+                            f.name().to_string(),
+                            format!("{}", f.get_type()),
+                        ));
                     }
                 }
 
@@ -1154,7 +1162,6 @@ impl EagerF0 {
             }
             SysShowAll => {
                 // Return a list of (property_name, SOME value | NONE) pairs.
-                use crate::shell::prop::{Configurable, Prop};
                 let props = Prop::all();
                 let vals: Vec<Val> = props
                     .iter()
@@ -1217,7 +1224,6 @@ impl EagerF1 {
             // lint: sort until '#}' where '##[A-Z]'
             SysShow => {
                 // Return SOME(value) or NONE for the given property.
-                use crate::shell::prop::{Configurable, Prop};
                 let prop_name = a0.expect_string();
                 let result = if let Some(prop) = Prop::lookup(&prop_name) {
                     if prop.is_required() {
@@ -1297,7 +1303,9 @@ pub enum Eager1 {
     IntToString,
     LPUnzip,
     ListConcat,
+    ListExcept,
     ListGetItem,
+    ListIntersect,
     ListLength,
     ListNull,
     ListRev,
@@ -1419,6 +1427,12 @@ impl Eager1 {
             IntToString => Val::String(Int::_to_string(a0.expect_int())),
             LPUnzip => ListPair::unzip(a0.expect_list()),
             ListConcat => Val::List(List::concat(a0.expect_list())),
+            ListExcept => {
+                Val::List(List::except(a0.expect_list()))
+            }
+            ListIntersect => {
+                Val::List(List::intersect(a0.expect_list()))
+            }
             ListGetItem => List::get_item(a0.expect_list()),
             ListLength => Val::Int(List::length(a0.expect_list())),
             ListNull => Val::Bool(List::null(a0.expect_list())),
@@ -1542,8 +1556,6 @@ pub enum Eager2 {
     LPZip,
     ListAt,
     ListCons,
-    ListExcept,
-    ListIntersect,
     ListRevAppend,
     MathAtan2,
     MathPow,
@@ -1659,12 +1671,6 @@ impl Eager2 {
                 Val::List(List::append(a0.expect_list(), a1.expect_list()))
             }
             ListCons => Val::List(List::cons(&a0, a1.expect_list())),
-            ListExcept => {
-                Val::List(List::except(a0.expect_list(), a1.expect_list()))
-            }
-            ListIntersect => {
-                Val::List(List::intersect(a0.expect_list(), a1.expect_list()))
-            }
             ListRevAppend => {
                 Val::List(List::rev_append(a0.expect_list(), a1.expect_list()))
             }
@@ -1756,7 +1762,6 @@ pub enum EagerF2 {
     // lint: sort until '#}'
     BagAll,
     BagApp,
-    BagCollate,
     BagExists,
     BagFilter,
     BagFind,
@@ -1853,12 +1858,6 @@ impl EagerF2 {
             BagApp => {
                 List::app(r, f, &a0, a1.expect_list())?;
                 Ok(Val::Unit)
-            }
-            BagCollate => {
-                let tuple = a1.expect_list();
-                let bag1 = tuple[0].expect_list();
-                let bag2 = tuple[1].expect_list();
-                Ok(Val::Order(List::collate(r, f, &a0, bag1, bag2)?))
             }
             BagExists => {
                 Ok(Val::Bool(List::exists(r, f, &a0, a1.expect_list())?))
@@ -2307,24 +2306,14 @@ impl EagerF4 {
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Eager3 {
     // lint: sort until '#}'
-    BoolIf,
 }
 
 impl Eager3 {
     // Passing Val by value is OK because it is small.
     #[allow(clippy::needless_pass_by_value)]
-    fn apply(&self, a0: Val, a1: Val, a2: Val) -> Val {
-        #[expect(clippy::enum_glob_use)]
-        use crate::eval::code::Eager3::*;
-
+    fn apply(&self, _a0: Val, _a1: Val, _a2: Val) -> Val {
         match &self {
-            BoolIf => {
-                if a0.expect_bool() {
-                    a1
-                } else {
-                    a2
-                }
-            }
+            _ => panic!("Not implemented"),
         }
     }
 
@@ -2339,6 +2328,7 @@ impl Eager3 {
 #[allow(clippy::enum_variant_names)]
 enum Custom {
     // lint: sort until '#}'
+    BoolIf,
     GEq,
     GGe,
     GGt,
@@ -2360,6 +2350,7 @@ impl Custom {
 
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
+            BoolIf => panic!("Not implemented"),
             GEq => Val::Bool(a0 == a1),
             GGe => match (a0, a1) {
                 (Val::Int(x), Val::Int(y)) => Val::Bool(x >= y),
@@ -2477,7 +2468,6 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     EagerF2::BagAll.implements(&mut b, BagAll);
     EagerF2::BagApp.implements(&mut b, BagApp);
     Eager2::BagAt.implements(&mut b, BagAt);
-    EagerF2::BagCollate.implements(&mut b, BagCollate);
     Eager1::BagConcat.implements(&mut b, BagConcat);
     EagerF3::BagDrop.implements(&mut b, BagDrop);
     EagerF2::BagExists.implements(&mut b, BagExists);
@@ -2501,7 +2491,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager2::BoolEq.implements(&mut b, BoolEq);
     Eager0::BoolFalse.implements(&mut b, BoolFalse);
     Eager1::BoolFromString.implements(&mut b, BoolFromString);
-    Eager3::BoolIf.implements(&mut b, BoolIf);
+    Custom::BoolIf.implements(&mut b, BoolIf);
     Eager2::BoolImplies.implements(&mut b, BoolImplies);
     Eager2::BoolNe.implements(&mut b, BoolNe);
     Eager1::BoolNot.implements(&mut b, BoolNot);
@@ -2622,7 +2612,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::ListConcat.implements(&mut b, ListConcat);
     Eager2::ListCons.implements(&mut b, ListCons);
     EagerF3::ListDrop.implements(&mut b, ListDrop);
-    Eager2::ListExcept.implements(&mut b, ListExcept);
+    Eager1::ListExcept.implements(&mut b, ListExcept);
     EagerF2::ListExists.implements(&mut b, ListExists);
     EagerF2::ListFilter.implements(&mut b, ListFilter);
     EagerF2::ListFind.implements(&mut b, ListFind);
@@ -2630,7 +2620,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     EagerF3::ListFoldr.implements(&mut b, ListFoldr);
     Eager1::ListGetItem.implements(&mut b, ListGetItem);
     EagerF2::ListHd.implements(&mut b, ListHd);
-    Eager2::ListIntersect.implements(&mut b, ListIntersect);
+    Eager1::ListIntersect.implements(&mut b, ListIntersect);
     EagerF2::ListLast.implements(&mut b, ListLast);
     Eager1::ListLength.implements(&mut b, ListLength);
     EagerF2::ListMap.implements(&mut b, ListMap);
