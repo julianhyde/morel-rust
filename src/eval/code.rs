@@ -1430,10 +1430,10 @@ impl Eager1 {
             ListExcept => {
                 Val::List(List::except(a0.expect_list()))
             }
+            ListGetItem => List::get_item(a0.expect_list()),
             ListIntersect => {
                 Val::List(List::intersect(a0.expect_list()))
             }
-            ListGetItem => List::get_item(a0.expect_list()),
             ListLength => Val::Int(List::length(a0.expect_list())),
             ListNull => Val::Bool(List::null(a0.expect_list())),
             ListRev => Val::List(List::rev(a0.expect_list())),
