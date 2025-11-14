@@ -252,8 +252,8 @@ impl Configurable for Config {
                     prop.default_value()
                 }
             }
-            // For read-only properties and properties not stored in this Config,
-            // return the default value.
+            // For read-only properties and properties not stored in this
+            // Config, return the default value.
             _ => prop.default_value(),
         }
     }

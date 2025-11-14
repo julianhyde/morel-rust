@@ -15,7 +15,7 @@
 // language governing permissions and limitations under the
 // License.
 
-use std::fmt;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -79,12 +79,12 @@ impl PropVal {
             _ => todo!("wrong type"),
         }
     }
-
 }
 
-impl std::fmt::Display for PropVal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for PropVal {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
+            // lint: sort until '#}' where '#PropVal::'
             PropVal::Bool(b) => write!(f, "{}", b),
             PropVal::Int(i) => write!(f, "{}", i),
             PropVal::Mode(m) => {
@@ -430,8 +430,8 @@ pub enum Output {
     Tabular,
 }
 
-impl fmt::Display for Output {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for Output {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
             Output::Classic => write!(f, "CLASSIC"),
             Output::Tabular => write!(f, "TABULAR"),

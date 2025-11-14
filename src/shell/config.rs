@@ -128,8 +128,8 @@ impl Configurable for Config {
                     prop.default_value()
                 }
             }
-            // For read-only properties (Banner, ProductName, ProductVersion, etc.),
-            // return the default value.
+            // For read-only properties (Banner, ProductName, ProductVersion,
+            // etc.), return the default value.
             _ => prop.default_value(),
         }
     }
