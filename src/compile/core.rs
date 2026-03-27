@@ -75,6 +75,11 @@ pub enum Expr {
     From(Box<Type>, Vec<Step>),
     Exists(Box<Type>, Vec<Step>),
     Forall(Box<Type>, Vec<Step>),
+
+    /// Scalar subquery: wraps a [`crate::rel::Rel`] so it can appear as a
+    /// scalar expression. The `Box<Type>` is the element type of the
+    /// single-column, single-row result.
+    Scalar(Box<Type>, Box<crate::rel::Rel>),
 }
 
 impl Expr {
@@ -102,6 +107,7 @@ impl Expr {
             Expr::Literal(t, _) => t.clone(),
             Expr::Ordinal(t) => t.clone(),
             Expr::RecordSelector(t, _) => t.clone(),
+            Expr::Scalar(t, _) => t.clone(),
             Expr::Tuple(t, _) => t.clone(),
         }
     }
@@ -158,6 +164,9 @@ impl Display for Expr {
             Expr::Literal(_, lit) => write!(f, "{}", lit),
             Expr::Ordinal(_) => write!(f, "ordinal"),
             Expr::RecordSelector(_, name) => write!(f, "#{}", name),
+            Expr::Scalar(_, rel) => {
+                write!(f, "scalar({})", crate::rel::display::explain(rel))
+            }
             Expr::Tuple(_, elems) => {
                 let elems_str = elems
                     .iter()

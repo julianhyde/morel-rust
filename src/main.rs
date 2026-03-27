@@ -22,6 +22,7 @@ use std::process::exit;
 
 mod compile;
 mod eval;
+mod rel;
 mod shell;
 mod syntax;
 mod unify;
