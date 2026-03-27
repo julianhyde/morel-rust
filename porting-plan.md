@@ -35,7 +35,7 @@ which commits the "Done" table covers and which Java features had landed.
 
 | Repo | Branch | Commit | Date |
 |------|--------|--------|------|
-| morel-rust (morel-rust.0) | `main` | `e7ae0f4` | 2026-03-26 |
+| morel-rust (morel-rust.0) | `main` | `cdd547f` | 2026-03-26 |
 | morel-java (morel.0) | `main` | `9ee0581b` | 2026-03-25 |
 
 The morel-java `main` HEAD (`9ee0581b`) corresponds to the release after
@@ -121,7 +121,7 @@ finishes the rest.
 | B1 | #230 | Multi-arm `fn` expressions (`fn p1 => e1 \| p2 => e2`) | AST already has `Fn(Vec<Match>)`. Needs compiler/eval path. |
 | B2 | #285 | Type aliases (`type t = ...`) | Parsed (`DeclKind::Type`). Needs resolver and evaluator. Port `type-alias.smli`. |
 | ~~B3~~ | #249 | `with` operator for records (`{r with f = v}`) | Evaluate mode. Resolver + type_resolver fix. |
-| B4 | #291 | `typeof` operator | Not yet in AST; add parse + type-inference + eval. |
+| ~~B4~~ | #291 | `typeof` operator | TypeKind::Expression was parsed; added TypeToTermConverter handler. |
 | B5 | #306 | Nested block comments (`(* (* ... *) *)`) | Parser-only change. |
 | B6 | #289 | Quoted type names (backtick-quoted identifiers in types) | Parser + type system. |
 | B7 | #247 | Expressions with type annotations should translate correctly | Bug fix in resolver. |
@@ -231,6 +231,7 @@ across several releases (#202, #217, #341, #347).
 | #253 | Set operators (`union`, `intersect`, `except`) as pipeline steps | `e20ae30` | In evaluate-mode tests since before A1 |
 | #288, #304 | `group`/`compute`/`elements` execution | `e20ae30` | `over` syntax needs C1 first |
 | #249 | `with` operator for records (`{r with f = v}`) | `e7ae0f4` | Resolver + type_resolver fix |
+| #291 | `typeof` operator | `cdd547f` | TypeKind::Expression handler in TypeToTermConverter |
 
 ---
 
