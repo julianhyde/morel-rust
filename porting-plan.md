@@ -27,15 +27,13 @@ to morel-rust (morel-rust.0), and the plan for porting remaining features.
 The goal is for each Java commit or issue to correspond to roughly one Rust
 commit, with tests ported alongside the feature.
 
-## High-water marks
+## High-water mark
 
-These are the repository HEAD commits at the time this plan was last updated.
-When you update the plan, record the new HEADs here so future readers know
-which commits the "Done" table covers and which Java features had landed.
+The morel-java commit surveyed when the TODO tables were last updated.
+Features in morel-java after this commit may not yet have TODO rows.
 
 | Repo | Branch | Commit | Date |
 |------|--------|--------|------|
-| morel-rust (morel-rust.0) | `main` | `b9b057e` | 2026-03-27 |
 | morel-java (morel.0) | `main` | `9ee0581b` | 2026-03-25 |
 
 The morel-java `main` HEAD (`9ee0581b`) corresponds to the release after
@@ -50,17 +48,72 @@ Branch `0008-query` has been merged into `main` via cherry-pick (commits
 * **Seq** — Suggested sequence for TODO items. Blank = already done.
 * **Java issue** — GitHub issue number in morel-java.
 * **Description** — What the feature does.
-* **Rust ref** — For done items: short commit hash or Rust PR#. For
-  in-progress items: branch name. For TODO items: blank.
-* **Notes** — Architectural notes, dependencies, or test script to port.
+* **Notes** — Architectural notes, dependencies, test script to port, or
+  Java commit reference.
+
+## Commit message convention
+
+The commit message (one-line summary and description) should generally be
+based on, or even a copy of, the corresponding morel-java commit message,
+adapted as follows:
+
+* Replace a `[MOREL-NNN]` prefix or `(#NNN)` suffix with
+  `(hydromatic/morel#NNN)`.
+* Remove any `Fixes #NNN` line.
+* Keep the `Propagate:` trailer (see below).
+
+For example, a Java commit message:
+
+```
+[MOREL-230] Allow lambda (`fn`) to have multiple branches, similar to `case`
+
+Fixes #230
+```
+
+becomes the Rust commit message:
+
+```
+Allow lambda (`fn`) to have multiple branches, similar to `case`
+  (hydromatic/morel#230)
+
+Propagate: hydromatic/morel#230 commit 3c73f2fe
+```
+
+## `Propagate:` commit trailer
+
+Every morel-rust commit that ports a feature from morel-java should include
+a `Propagate:` trailer in its commit message. The format is:
+
+```
+Propagate: hydromatic/morel#NNN commit XXXXXXXX
+```
+
+where `NNN` is the GitHub issue number in morel-java and `XXXXXXXX` is the
+short hash of the morel-java commit that implemented the feature. The trailer
+may be repeated when one Rust commit covers multiple Java issues or commits.
+
+**Why**: the trailer records the cross-repo provenance in the git history
+itself, so this plan does not need to store the morel-rust commit hash.
+That eliminates the "two-commit dance" (one to implement, one to record the
+hash in the plan). To find which Rust commit ported a given Java feature:
+
+```
+git log --grep "Propagate: hydromatic/morel#NNN"
+```
+
+Entries in the Done table that pre-date this convention (before 2026-03-27)
+carry a legacy `(rust: HASH)` note instead.
 
 ## Keeping this plan up to date
 
-When you add a feature to morel-rust:
+When you add a feature to morel-rust, do it all in **one commit**:
 
-1. Move its row from the **TODO** table to the **Done** table.
-2. Fill in the **Rust ref** column with the short commit hash or PR number.
-3. Update the **High-water marks** table with the new morel-rust HEAD.
+1. Implement the feature and port the tests.
+2. Move the feature's row from the **TODO** table to the **Done** table.
+3. Add a `Propagate:` trailer to the commit message (see above).
+
+No second commit is needed to record the Rust commit hash — the `Propagate:`
+trailer in the commit message IS the record.
 
 When new features land in morel-java:
 
@@ -184,56 +237,59 @@ across several releases (#202, #217, #341, #347).
 
 ## Done: Features already ported
 
-| Java issue | Description | Rust ref | Notes |
-|------------|-------------|----------|-------|
-| — | Parser (full grammar) | `1ae5030` | Pest PEG parser |
-| — | Command-line shell (REPL) | PR #2 | |
-| — | Type unification | PR #6 | |
-| — | Type resolution | PR #7 | |
-| — | Evaluate simple expressions | PR #12 | |
-| — | Morel in the browser via WebAssembly | PR #13 | |
-| #14 (rust) | Type inference for query expressions (basic) | `ac33adc` | |
-| #15 (rust) | Execute query expressions (basic scan/where/yield) | `1b562d9` | |
-| #241 | `exists`, `forall`, `implies` quantification | `fc2f2be` | Short-circuit eval in PR #25 |
-| #171 | `into` clause in queries | `fc2f2be` | `through` still TODO (A7) |
-| — | `General` structure | `e3f3c00` | |
-| — | `Int` structure | `2e520ba` | Java #228 |
-| — | `Bool` structure | `b5ec264` | |
-| — | `String` structure | `8fba653` | Java #279 |
-| — | `Char` structure | `bf29c07` | Java #264 |
-| — | `Real` structure | `d37c6e3` | |
-| — | `Math` structure | `78aee5c` | |
-| — | `Option` structure | `f5a0dd2` | |
-| — | `Order` enum | `93d43bb` | |
-| — | `List` structure | `8010a70` | |
-| #235 | `Bag` structure and `bag` type | `1a49331` | |
-| #295 | `ListPair` structure | `53b815c` | |
-| #302 | `Either` structure | `0c816f4` | |
-| #301 | `Fn` structure | `fde8eb4` | |
-| — | `Vector` structure and `vector` type | `17a42dd` | |
-| — | Exceptions | `ea86d11` | |
-| — | Closures | `8ea5aed` | |
-| — | Pattern matching of `Option` (`SOME`/`NONE`) | `0e4b4f6` | |
-| — | Recursive functions | `c1fd023` | |
-| — | Record type inference | `1a59ca3` | |
-| #311 | `op` keyword (operator sections) | `80efa02` | |
-| #315 | Parse `signature` | `fa5936f` | |
-| — | Standard-library signatures | `8f6657f` | |
-| #310 | Validation mode (`:t` syntax) | `cf7ebcf` | |
-| #300 | `-c` / `--command` flag (run `.smli` scripts) | PR #23 | Java uses `--run`; similar intent |
-| #319 | `productName`, `productVersion`, `banner` properties | `d99f5d1` | |
-| — | `Sys` structure (`plan`, `unset`, `clearEnv`, `showAll`) | `a2cab34` | Java #251, #260 |
-| #24 (rust) | `Relational` structure | `d7e601a` | |
-| #18 (rust) | Tune `Unifier` (persistent data structures) | `86006ae` | |
-| #273, #288 | Type inference for query steps (`group`, `compute`, `elements`, `exists`, `forall`, `distinct`, `order`, `skip`, `take`) | `334a656` | Commits `3d0acec`–`334a656`; fixup `915856d` |
-| — | Warning infrastructure | `d0d9eb4` | |
-| (0.4+) | `distinct`, `order`, `skip`, `take` execution | `e20ae30` | In evaluate-mode tests since before A1 |
-| #253 | Set operators (`union`, `intersect`, `except`) as pipeline steps | `e20ae30` | In evaluate-mode tests since before A1 |
-| #288, #304 | `group`/`compute`/`elements` execution | `e20ae30` | `over` syntax needs C1 first |
-| #249 | `with` operator for records (`{r with f = v}`) | `e7ae0f4` | Resolver + type_resolver fix |
-| #291 | `typeof` operator | `cdd547f` | TypeKind::Expression handler in TypeToTermConverter |
-| #306 | Nested block comments | `2b23914` | Already in pest grammar; added test |
-| #343 | Shared type-variable scope within declarations | `b9b057e` | `decl_type_vars` in TypeResolver; `mustBeList` workaround removed from test scripts |
+Entries marked `(rust: HASH)` pre-date the `Propagate:` trailer convention;
+for later entries use `git log --grep "Propagate: hydromatic/morel#NNN"`.
+
+| Java issue | Description | Notes |
+|------------|-------------|-------|
+| — | Parser (full grammar) | Pest PEG parser (rust: `1ae5030`) |
+| — | Command-line shell (REPL) | rust: PR #2 |
+| — | Type unification | rust: PR #6 |
+| — | Type resolution | rust: PR #7 |
+| — | Evaluate simple expressions | rust: PR #12 |
+| — | Morel in the browser via WebAssembly | rust: PR #13 |
+| #14 (rust) | Type inference for query expressions (basic) | rust: `ac33adc` |
+| #15 (rust) | Execute query expressions (basic scan/where/yield) | rust: `1b562d9` |
+| #241 | `exists`, `forall`, `implies` quantification | Short-circuit eval in PR #25 (rust: `fc2f2be`) |
+| #171 | `into` clause in queries | `through` still TODO (A7) (rust: `fc2f2be`) |
+| — | `General` structure | rust: `e3f3c00` |
+| — | `Int` structure | Java #228 (rust: `2e520ba`) |
+| — | `Bool` structure | rust: `b5ec264` |
+| — | `String` structure | Java #279 (rust: `8fba653`) |
+| — | `Char` structure | Java #264 (rust: `bf29c07`) |
+| — | `Real` structure | rust: `d37c6e3` |
+| — | `Math` structure | rust: `78aee5c` |
+| — | `Option` structure | rust: `f5a0dd2` |
+| — | `Order` enum | rust: `93d43bb` |
+| — | `List` structure | rust: `8010a70` |
+| #235 | `Bag` structure and `bag` type | rust: `1a49331` |
+| #295 | `ListPair` structure | rust: `53b815c` |
+| #302 | `Either` structure | rust: `0c816f4` |
+| #301 | `Fn` structure | rust: `fde8eb4` |
+| — | `Vector` structure and `vector` type | rust: `17a42dd` |
+| — | Exceptions | rust: `ea86d11` |
+| — | Closures | rust: `8ea5aed` |
+| — | Pattern matching of `Option` (`SOME`/`NONE`) | rust: `0e4b4f6` |
+| — | Recursive functions | rust: `c1fd023` |
+| — | Record type inference | rust: `1a59ca3` |
+| #311 | `op` keyword (operator sections) | rust: `80efa02` |
+| #315 | Parse `signature` | rust: `fa5936f` |
+| — | Standard-library signatures | rust: `8f6657f` |
+| #310 | Validation mode (`:t` syntax) | rust: `cf7ebcf` |
+| #300 | `-c` / `--command` flag (run `.smli` scripts) | Java uses `--run`; similar intent (rust: PR #23) |
+| #319 | `productName`, `productVersion`, `banner` properties | rust: `d99f5d1` |
+| — | `Sys` structure (`plan`, `unset`, `clearEnv`, `showAll`) | Java #251, #260 (rust: `a2cab34`) |
+| #24 (rust) | `Relational` structure | rust: `d7e601a` |
+| #18 (rust) | Tune `Unifier` (persistent data structures) | rust: `86006ae` |
+| #273, #288 | Type inference for query steps (`group`, `compute`, `elements`, `exists`, `forall`, `distinct`, `order`, `skip`, `take`) | Commits `3d0acec`–`334a656`; fixup `915856d` |
+| — | Warning infrastructure | rust: `d0d9eb4` |
+| (0.4+) | `distinct`, `order`, `skip`, `take` execution | In evaluate-mode tests since before A1 (rust: `e20ae30`) |
+| #253 | Set operators (`union`, `intersect`, `except`) as pipeline steps | In evaluate-mode tests since before A1 (rust: `e20ae30`) |
+| #288, #304 | `group`/`compute`/`elements` execution | `over` syntax needs C1 first (rust: `e20ae30`) |
+| #249 | `with` operator for records (`{r with f = v}`) | Resolver + type_resolver fix (rust: `e7ae0f4`) |
+| #291 | `typeof` operator | TypeKind::Expression handler in TypeToTermConverter (rust: `cdd547f`) |
+| #306 | Nested block comments | Already in pest grammar; added test (rust: `2b23914`) |
+| #343 | Shared type-variable scope within declarations | `decl_type_vars` in TypeResolver; `mustBeList` workaround removed from test scripts (rust: `b9b057e`) |
 
 ---
 
