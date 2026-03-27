@@ -608,17 +608,17 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 6 — Aggregate
+### Task 6 — Aggregate ✓
 
-- [ ] `GroupKey` type (empty, or list of `Expr` resolved to ordinals).
-- [ ] `group_key(exprs)` builder method.
-- [ ] `AggCallDef` builder type with fluent `.as_()` and `.distinct()`.
-- [ ] `count_star`, `count`, `sum`, `min`, `max`, `avg` builder methods.
-- [ ] `aggregate(group_key, agg_calls)`: projects unused input columns
+- [x] `GroupKey` type (empty, or list of `Expr` resolved to ordinals).
+- [x] `group_key(exprs)` builder method.
+- [x] `AggCallDef` builder type with fluent `.as_()` and `.distinct()`.
+- [x] `count_star`, `count`, `sum`, `min`, `max`, `avg` builder methods.
+- [x] `aggregate(group_key, agg_calls)`: projects unused input columns
       before aggregate (if `BuilderConfig::prune_input`); deduplicates
       identical agg calls (if `BuilderConfig::dedup_agg_calls`); pushes
       `Rel::Aggregate`.
-- [ ] `distinct()`: `aggregate(group_key_all_fields, [])`.
+- [x] `distinct()`: `aggregate(group_key_all_fields, [])`.
 
 **Tests enabled:**
 `testAggregate`, `testAggregate2`, `testAggregate3`, `testAggregate5`,

@@ -40,7 +40,7 @@ use crate::eval::val::Val;
 use crate::rel::schema::Schema;
 use crate::rel::{
     bool_type, int_type, string_type, AggCall, AggFunction, Direction,
-    FieldCollation, NullDirection, Rel,
+    FieldCollation, JoinType, NullDirection, Rel,
 };
 use std::sync::Arc;
 
@@ -142,6 +142,8 @@ impl Default for BuilderConfig {
 struct Frame {
     /// The relational node.
     rel: Rel,
+    /// Optional table alias assigned by [`RelBuilder::as_`].
+    alias: Option<String>,
 }
 
 // -----------------------------------------------------------------------
@@ -200,7 +202,7 @@ impl RelBuilder {
     /// Pushes an arbitrary [`Rel`] node onto the stack and returns
     /// `&mut self` for chaining.
     pub fn push(&mut self, rel: Rel) -> &mut Self {
-        self.stack.push(Frame { rel });
+        self.stack.push(Frame { rel, alias: None });
         self
     }
 
@@ -702,6 +704,165 @@ impl RelBuilder {
             name: None,
             filter: None,
         }
+    }
+
+    // -------------------------------------------------------------------
+    // Join and alias
+    // -------------------------------------------------------------------
+
+    /// Sets an alias on the top-of-stack frame.
+    ///
+    /// The alias can later be used with [`field2`] to disambiguate
+    /// columns when two aliased frames are on the stack.
+    ///
+    /// [`field2`]: RelBuilder::field2
+    pub fn as_(&mut self, alias: impl Into<String>) -> &mut Self {
+        self.stack
+            .last_mut()
+            .expect("RelBuilder stack is empty")
+            .alias = Some(alias.into());
+        self
+    }
+
+    /// Joins the top two frames with the given join type and condition.
+    ///
+    /// Pops the top two frames (right = top, left = second), concatenates
+    /// their row types, and pushes a `Rel::Join`.
+    pub fn join(
+        &mut self,
+        join_type: JoinType,
+        condition: Expr,
+    ) -> &mut Self {
+        let right_frame = self
+            .stack
+            .pop()
+            .expect("RelBuilder stack is empty (right)");
+        let left_frame = self
+            .stack
+            .pop()
+            .expect("RelBuilder stack is empty (left)");
+        let mut row_type = left_frame.rel.row_type().to_vec();
+        row_type.extend_from_slice(right_frame.rel.row_type());
+        let rel = Rel::Join {
+            left: Box::new(left_frame.rel),
+            right: Box::new(right_frame.rel),
+            join_type,
+            condition,
+            row_type,
+        };
+        self.push(rel)
+    }
+
+    /// Joins the top two frames using equality of shared column names.
+    ///
+    /// For each name in `field_names`, an equality condition
+    /// `left.col = right.col` is built. The conditions are ANDed.
+    /// Uses an INNER join unless `join_type` is specified.
+    pub fn join_using(
+        &mut self,
+        join_type: JoinType,
+        field_names: &[&str],
+    ) -> &mut Self {
+        // Peek at the two top frames (don't pop yet).
+        let n = self.stack.len();
+        assert!(n >= 2, "join_using requires at least two frames");
+        let left_rt = self.stack[n - 2].rel.row_type().to_vec();
+        let right_rt = self.stack[n - 1].rel.row_type().to_vec();
+        let left_len = left_rt.len();
+        // Build equality conditions for each shared field.
+        // Use "$N" identifiers to encode absolute ordinals so that
+        // write_expr emits them verbatim and avoids name collisions.
+        let conditions: Vec<Expr> = field_names
+            .iter()
+            .map(|name| {
+                let l_idx = left_rt
+                    .iter()
+                    .position(|(n, _)| n == name)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "join_using: field '{}' not in left",
+                            name
+                        )
+                    });
+                let r_idx = right_rt
+                    .iter()
+                    .position(|(n, _)| n == name)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "join_using: field '{}' not in right",
+                            name
+                        )
+                    });
+                let l_ty = left_rt[l_idx].1.clone();
+                let r_ty = right_rt[r_idx].1.clone();
+                let abs_l = l_idx;
+                let abs_r = left_len + r_idx;
+                let l_expr = Expr::Identifier(
+                    Box::new(l_ty),
+                    format!("${}", abs_l),
+                );
+                let r_expr = Expr::Identifier(
+                    Box::new(r_ty),
+                    format!("${}", abs_r),
+                );
+                binary_op("=", bool_type(), l_expr, r_expr)
+            })
+            .collect();
+        let condition = conditions
+            .into_iter()
+            .reduce(|a, b| binary_op("andalso", bool_type(), a, b))
+            .unwrap_or_else(|| {
+                Expr::Literal(Box::new(bool_type()), Val::Bool(true))
+            });
+        self.join(join_type, condition)
+    }
+
+    /// Returns a field-reference to column `name` in the frame at
+    /// `input_offset` from the top of the stack (0 = top, 1 = second).
+    ///
+    /// When called with two frames on the stack (e.g. before a join),
+    /// this can unambiguously reference a column in either input.
+    /// `input_offset=1` is the left input; `input_offset=0` is the right.
+    ///
+    /// The identifier name is encoded as `"$N"` where N is the absolute
+    /// ordinal in the combined (future) join row type. This lets
+    /// `write_expr` emit `$N` verbatim when the name is unambiguous.
+    pub fn field2(
+        &self,
+        input_offset: usize,
+        name: &str,
+    ) -> Expr {
+        let n = self.stack.len();
+        assert!(
+            input_offset < n,
+            "field2: input_offset {} out of range",
+            input_offset
+        );
+        let frame_idx = n - 1 - input_offset;
+        let row = self.stack[frame_idx].rel.row_type();
+        let col_ord = row
+            .iter()
+            .position(|(col, _)| col == name)
+            .unwrap_or_else(|| {
+                panic!(
+                    "field2: '{}' not found in input {}",
+                    name, input_offset
+                )
+            });
+        let (_, ty) = &row[col_ord];
+        // Compute the absolute ordinal: sum column counts of frames
+        // that appear to the LEFT (i.e. at lower stack indices).
+        // In the join's combined row type, stack[0] is leftmost.
+        let preceding_cols: usize = self.stack[..frame_idx]
+            .iter()
+            .map(|f| f.rel.row_type().len())
+            .sum();
+        let abs_ord = preceding_cols + col_ord;
+        // Encode as "$N" so write_expr emits it verbatim.
+        Expr::Identifier(
+            Box::new(ty.clone()),
+            format!("${}", abs_ord),
+        )
     }
 
     // -------------------------------------------------------------------
@@ -1438,6 +1599,84 @@ mod tests {
         assert_plan!(
             plan,
             "LogicalAggregate(group=[{0, 1, 2}])\n  \
+             LogicalTableScan(table=[[scott, DEPT]])"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Join and alias
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_join() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        b.scan(&["scott", "DEPT"]);
+        // EMP.DEPTNO ($7) = DEPT.DEPTNO ($0 offset by 8 = $8).
+        let lhs = b.field2(1, "DEPTNO"); // EMP.DEPTNO
+        let rhs = b.field2(0, "DEPTNO"); // DEPT.DEPTNO
+        let cond = b.equals(lhs, rhs);
+        b.join(JoinType::Inner, cond);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalJoin(condition=[=($7, $8)], \
+             joinType=[inner])\n  \
+             LogicalTableScan(table=[[scott, EMP]])\n  \
+             LogicalTableScan(table=[[scott, DEPT]])"
+        );
+    }
+
+    #[test]
+    fn test_join_using() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        b.scan(&["scott", "DEPT"]);
+        b.join_using(JoinType::Inner, &["DEPTNO"]);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalJoin(condition=[=($7, $8)], \
+             joinType=[inner])\n  \
+             LogicalTableScan(table=[[scott, EMP]])\n  \
+             LogicalTableScan(table=[[scott, DEPT]])"
+        );
+    }
+
+    #[test]
+    fn test_join_left() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        b.scan(&["scott", "DEPT"]);
+        b.join_using(JoinType::Left, &["DEPTNO"]);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalJoin(condition=[=($7, $8)], \
+             joinType=[left])\n  \
+             LogicalTableScan(table=[[scott, EMP]])\n  \
+             LogicalTableScan(table=[[scott, DEPT]])"
+        );
+    }
+
+    #[test]
+    fn test_alias() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        b.as_("e");
+        b.scan(&["scott", "DEPT"]);
+        b.as_("d");
+        // Use field2 to reference columns from each aliased input.
+        let lhs = b.field2(1, "DEPTNO"); // e.DEPTNO
+        let rhs = b.field2(0, "DEPTNO"); // d.DEPTNO
+        let cond = b.equals(lhs, rhs);
+        b.join(JoinType::Inner, cond);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalJoin(condition=[=($7, $8)], \
+             joinType=[inner])\n  \
+             LogicalTableScan(table=[[scott, EMP]])\n  \
              LogicalTableScan(table=[[scott, DEPT]])"
         );
     }
