@@ -35,7 +35,7 @@ use std::sync::Arc;
 /// The row type is an ordered list of `(column_name, column_type)` pairs.
 /// Column ordinals are the indices into this list, consistent with the
 /// field-reference convention used by [`crate::rel::Rel`] expressions.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct TableEntry {
     /// Qualified name, e.g. `["scott", "EMP"]`.
     pub name: Vec<String>,
