@@ -628,17 +628,17 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 7 — Join and alias
+### Task 7 — Join and alias ✓
 
-- [ ] `as_(alias)`: records alias on the top `Frame`.
-- [ ] `field2(input_ordinal, name)`: resolves a field in a specific input
+- [x] `as_(alias)`: records alias on the top `Frame`.
+- [x] `field2(input_ordinal, name)`: resolves a field in a specific input
       frame, adjusting `Identifier` ordinals for the concatenated output
       row type.
-- [ ] `join(join_type, condition)`: concatenates left and right row
+- [x] `join(join_type, condition)`: concatenates left and right row
       types, pops two frames, pushes `Rel::Join`.
-- [ ] `join_using(join_type, field_names)`: builds equi-join condition
+- [x] `join_using(join_type, field_names)`: builds equi-join condition
       from shared field names.
-- [ ] Multi-input `field` lookup: when two frames are on the stack,
+- [x] Multi-input `field` lookup: when two frames are on the stack,
       `field(name)` searches both left-to-right and adjusts ordinals.
 
 **Tests enabled:**

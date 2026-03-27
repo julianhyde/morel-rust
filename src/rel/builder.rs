@@ -218,6 +218,27 @@ impl RelBuilder {
             .rel
     }
 
+    /// Pops `n` frames from the stack and returns them in bottom-to-top
+    /// order (i.e. the first element was the bottommost of the n frames).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stack has fewer than `n` frames.
+    fn pop_n(&mut self, n: usize, caller: &str) -> Vec<Rel> {
+        assert!(
+            self.stack.len() >= n,
+            "{}: need {} frames, have {}",
+            caller,
+            n,
+            self.stack.len()
+        );
+        let drain_from = self.stack.len() - n;
+        self.stack
+            .drain(drain_from..)
+            .map(|f| f.rel)
+            .collect()
+    }
+
     /// Returns a reference to the top-of-stack node's row type.
     ///
     /// # Panics
@@ -863,6 +884,56 @@ impl RelBuilder {
             Box::new(ty.clone()),
             format!("${}", abs_ord),
         )
+    }
+
+    // -------------------------------------------------------------------
+    // Set operations
+    // -------------------------------------------------------------------
+
+    /// Pops 2 frames and pushes their UNION [ALL].
+    ///
+    /// The two inputs must have the same number of columns. The row type
+    /// is taken from the left (bottom) input.
+    pub fn union(&mut self, all: bool) -> &mut Self {
+        self.union_n(all, 2)
+    }
+
+    /// Pops `n` frames and pushes their UNION [ALL].
+    pub fn union_n(&mut self, all: bool, n: usize) -> &mut Self {
+        let inputs = self.pop_n(n, "union_n");
+        let row_type = inputs[0].row_type().to_vec();
+        self.push(Rel::Union {
+            inputs,
+            all,
+            row_type,
+        })
+    }
+
+    /// Pops 2 frames and pushes their INTERSECT [ALL].
+    pub fn intersect(&mut self, all: bool) -> &mut Self {
+        self.intersect_n(all, 2)
+    }
+
+    /// Pops `n` frames and pushes their INTERSECT [ALL].
+    pub fn intersect_n(&mut self, all: bool, n: usize) -> &mut Self {
+        let inputs = self.pop_n(n, "intersect_n");
+        let row_type = inputs[0].row_type().to_vec();
+        self.push(Rel::Intersect {
+            inputs,
+            all,
+            row_type,
+        })
+    }
+
+    /// Pops 2 frames and pushes their EXCEPT [ALL] (set difference).
+    pub fn minus(&mut self, all: bool) -> &mut Self {
+        let inputs = self.pop_n(2, "minus");
+        let row_type = inputs[0].row_type().to_vec();
+        self.push(Rel::Minus {
+            inputs,
+            all,
+            row_type,
+        })
     }
 
     // -------------------------------------------------------------------
@@ -1677,6 +1748,93 @@ mod tests {
             "LogicalJoin(condition=[=($7, $8)], \
              joinType=[inner])\n  \
              LogicalTableScan(table=[[scott, EMP]])\n  \
+             LogicalTableScan(table=[[scott, DEPT]])"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Set operations
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_union() {
+        let mut b = builder();
+        b.values(
+            &["A", "B"],
+            vec![vec![Val::Int(1), Val::String("x".into())]],
+        );
+        b.values(
+            &["A", "B"],
+            vec![vec![Val::Int(2), Val::String("y".into())]],
+        );
+        b.union(false);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalUnion(all=[false])\n  \
+             LogicalValues(tuples=[[{ 1, 'x' }]])\n  \
+             LogicalValues(tuples=[[{ 2, 'y' }]])"
+        );
+    }
+
+    #[test]
+    fn test_union_all() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        b.scan(&["scott", "EMP"]);
+        b.union(true);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalUnion(all=[true])\n  \
+             LogicalTableScan(table=[[scott, EMP]])\n  \
+             LogicalTableScan(table=[[scott, EMP]])"
+        );
+    }
+
+    #[test]
+    fn test_union_3() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        b.scan(&["scott", "EMP"]);
+        b.scan(&["scott", "EMP"]);
+        b.union_n(false, 3);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalUnion(all=[false])\n  \
+             LogicalTableScan(table=[[scott, EMP]])\n  \
+             LogicalTableScan(table=[[scott, EMP]])\n  \
+             LogicalTableScan(table=[[scott, EMP]])"
+        );
+    }
+
+    #[test]
+    fn test_intersect() {
+        let mut b = builder();
+        b.scan(&["scott", "DEPT"]);
+        b.scan(&["scott", "DEPT"]);
+        b.intersect(false);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalIntersect(all=[false])\n  \
+             LogicalTableScan(table=[[scott, DEPT]])\n  \
+             LogicalTableScan(table=[[scott, DEPT]])"
+        );
+    }
+
+    #[test]
+    fn test_minus() {
+        let mut b = builder();
+        b.scan(&["scott", "DEPT"]);
+        b.scan(&["scott", "DEPT"]);
+        b.minus(false);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalMinus(all=[false])\n  \
+             LogicalTableScan(table=[[scott, DEPT]])\n  \
              LogicalTableScan(table=[[scott, DEPT]])"
         );
     }
