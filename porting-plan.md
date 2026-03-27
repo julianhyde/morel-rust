@@ -35,7 +35,7 @@ which commits the "Done" table covers and which Java features had landed.
 
 | Repo | Branch | Commit | Date |
 |------|--------|--------|------|
-| morel-rust (morel-rust.0) | `main` | `e20ae30` | 2026-03-26 |
+| morel-rust (morel-rust.0) | `main` | `e7ae0f4` | 2026-03-26 |
 | morel-java (morel.0) | `main` | `9ee0581b` | 2026-03-25 |
 
 The morel-java `main` HEAD (`9ee0581b`) corresponds to the release after
@@ -107,10 +107,10 @@ finishes the rest.
 | Seq | Java issue | Description | Notes |
 |-----|------------|-------------|-------|
 | ~~A1~~ | #288, #304 | `group`/`compute`/`elements` execution | `over` syntax requires C1 (operator overloading). |
-| A2 | (0.4+) | `distinct`, `order`, `skip`, `take` execution | Type inference already done. |
-| A3 | #253 | Set operators (`union`, `intersect`, `except`) as pipeline steps | Parsed. Port tests from `relational.smli`. |
+| ~~A2~~ | (0.4+) | `distinct`, `order`, `skip`, `take` execution | Already done (in evaluate-mode tests since before A1). |
+| ~~A3~~ | #253 | Set operators (`union`, `intersect`, `except`) as pipeline steps | Already done (in evaluate-mode tests since before A1). |
 | A4 | #265, #276, #277 | `current` keyword, `ordinal` expression, `unorder` step | Parsed and type-inferred. Needs frame/row-index support. |
-| A5 | #321 | `intersect`/`except` should count occurrences and preserve order | Bug fix on top of A3. |
+| ~~A5~~ | #321 | `intersect`/`except` should count occurrences and preserve order | Already done alongside A3. |
 | A6 | #287 | Degenerate joins (singleton scan with `=`) | Requires resolver fix. |
 | A7 | #171 | `through` clause in queries (already have `into`) | Parsed. Needs compiler/eval. |
 
@@ -120,7 +120,7 @@ finishes the rest.
 |-----|------------|-------------|-------|
 | B1 | #230 | Multi-arm `fn` expressions (`fn p1 => e1 \| p2 => e2`) | AST already has `Fn(Vec<Match>)`. Needs compiler/eval path. |
 | B2 | #285 | Type aliases (`type t = ...`) | Parsed (`DeclKind::Type`). Needs resolver and evaluator. Port `type-alias.smli`. |
-| B3 | #249 | `with` operator for records (`{r with f = v}`) | `Record(Some(base), fields)` in AST. Needs compiler/eval. |
+| ~~B3~~ | #249 | `with` operator for records (`{r with f = v}`) | Evaluate mode. Resolver + type_resolver fix. |
 | B4 | #291 | `typeof` operator | Not yet in AST; add parse + type-inference + eval. |
 | B5 | #306 | Nested block comments (`(* (* ... *) *)`) | Parser-only change. |
 | B6 | #289 | Quoted type names (backtick-quoted identifiers in types) | Parser + type system. |
@@ -227,7 +227,10 @@ across several releases (#202, #217, #341, #347).
 | #18 (rust) | Tune `Unifier` (persistent data structures) | `86006ae` | |
 | #273, #288 | Type inference for query steps (`group`, `compute`, `elements`, `exists`, `forall`, `distinct`, `order`, `skip`, `take`) | `334a656` | Commits `3d0acec`–`334a656`; fixup `915856d` |
 | — | Warning infrastructure | `d0d9eb4` | |
+| (0.4+) | `distinct`, `order`, `skip`, `take` execution | `e20ae30` | In evaluate-mode tests since before A1 |
+| #253 | Set operators (`union`, `intersect`, `except`) as pipeline steps | `e20ae30` | In evaluate-mode tests since before A1 |
 | #288, #304 | `group`/`compute`/`elements` execution | `e20ae30` | `over` syntax needs C1 first |
+| #249 | `with` operator for records (`{r with f = v}`) | `e7ae0f4` | Resolver + type_resolver fix |
 
 ---
 

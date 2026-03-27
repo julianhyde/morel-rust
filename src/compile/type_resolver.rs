@@ -1062,13 +1062,39 @@ impl TypeResolver {
             }
             ExprKind::Record(with_expr, labeled_expr_list) => {
                 let mut field_vars = Vec::new(); // never read
-                let labeled_expr_list2 = self.deduce_record_type(
-                    env,
-                    labeled_expr_list,
-                    &mut field_vars,
-                    v,
-                )?;
-                let x = ExprKind::Record(with_expr.clone(), labeled_expr_list2);
+                let (with_expr2, labeled_expr_list2) =
+                    if let Some(base) = with_expr {
+                        // `{base with f=e, ...}`: the result has the same type
+                        // as the base. Deduce the base into `v` so the result
+                        // type equals the full base type. Deduce the override
+                        // expressions into fresh variables (their types must
+                        // match the corresponding base fields, but we do not
+                        // enforce that here yet).
+                        let base2 = self.deduce_expr_type(env, base, v)?;
+                        let mut overrides = Vec::new();
+                        for labeled_expr in labeled_expr_list {
+                            let v_ov = self.variable();
+                            let e2 = self.deduce_expr_type(
+                                env,
+                                &labeled_expr.expr,
+                                &v_ov,
+                            )?;
+                            overrides.push(LabeledExpr {
+                                expr: e2,
+                                ..labeled_expr.clone()
+                            });
+                        }
+                        (Some(Box::new(base2)), overrides)
+                    } else {
+                        let labeled_expr_list2 = self.deduce_record_type(
+                            env,
+                            labeled_expr_list,
+                            &mut field_vars,
+                            v,
+                        )?;
+                        (None, labeled_expr_list2)
+                    };
+                let x = ExprKind::Record(with_expr2, labeled_expr_list2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Times(left, right) => {

@@ -242,6 +242,20 @@ from e in emps yield {e.deptno, one = 1};
 >   [{deptno=10,one=1},{deptno=20,one=1},{deptno=30,one=1},{deptno=30,one=1}]
 >   : {deptno:int, one:int} list
 
+(*) with operator: override one field
+from e in emps yield {e with deptno = 0};
+> val it =
+>   [{deptno=0,id=100,name="Fred"},{deptno=0,id=101,name="Velma"},
+>    {deptno=0,id=102,name="Shaggy"},{deptno=0,id=103,name="Scooby"}]
+>   : {deptno:int, id:int, name:string} list
+
+(*) with operator: override two fields
+from e in emps yield {e with deptno = e.deptno + 1, name = e.name ^ "!"};
+> val it =
+>   [{deptno=11,id=100,name="Fred!"},{deptno=21,id=101,name="Velma!"},
+>    {deptno=31,id=102,name="Shaggy!"},{deptno=31,id=103,name="Scooby!"}]
+>   : {deptno:int, id:int, name:string} list
+
 set("mode", "validate");
 > val it = () : unit
 
