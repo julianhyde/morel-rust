@@ -35,7 +35,7 @@ which commits the "Done" table covers and which Java features had landed.
 
 | Repo | Branch | Commit | Date |
 |------|--------|--------|------|
-| morel-rust (morel-rust.0) | `main` | `2b23914` | 2026-03-26 |
+| morel-rust (morel-rust.0) | `main` | `HEAD` | 2026-03-27 |
 | morel-java (morel.0) | `main` | `9ee0581b` | 2026-03-25 |
 
 The morel-java `main` HEAD (`9ee0581b`) corresponds to the release after
@@ -123,9 +123,9 @@ finishes the rest.
 | ~~B3~~ | #249 | `with` operator for records (`{r with f = v}`) | Evaluate mode. Resolver + type_resolver fix. |
 | ~~B4~~ | #291 | `typeof` operator | TypeKind::Expression was parsed; added TypeToTermConverter handler. |
 | ~~B5~~ | #306 | Nested block comments (`(* (* ... *) *)`) | Already supported by pest grammar. Fixed grammar bug: `(*)` inside a block comment is now a line comment, matching SML/NJ and morel-java. |
-| B6 | #289 | Quoted type names (backtick-quoted identifiers in types) | Parser + type system. |
-| B7 | #247 | Expressions with type annotations should translate correctly | Bug fix in resolver. |
-| B8 | #343 | Shared type-variable scope within declarations | Type-resolver change; affects polymorphic signatures. |
+| ~~B6~~ | #289 | Quoted type names (backtick-quoted identifiers in types) | Already works; tested in simple.smli lines 364-369. |
+| ~~B7~~ | #247 | Expressions with type annotations should translate correctly | Already works; ExprKind::Annotated passes through in resolver. |
+| B8 | #343 | Shared type-variable scope within declarations | Panic fixed: `TypeMap::get_type` now handles unconstrained canonical type vars (e.g. `fun f (x: 'a) = x`). Shared scope across multiple params with same var name still TODO. |
 
 ### Phase C — Operator overloading
 

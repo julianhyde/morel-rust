@@ -79,14 +79,21 @@ impl TypeMap {
 
     /// Gets the type for an AST node.
     pub fn get_type(&self, id: i32) -> Option<Box<Type>> {
-        if let Some(var) = self.node_var_map.get(&id)
-            && let Some(term) = self.var_term_map.get(var)
-        {
+        if let Some(var) = self.node_var_map.get(&id) {
             let mut c = TermToTypeConverter {
                 type_map: self,
                 var_map: BTreeMap::new(),
             };
-            return Some(c.term_type(term));
+            // If var is not in var_term_map, it is the canonical representative
+            // of an unconstrained equivalence class (e.g., a free type variable
+            // such as 'a in `fun f (x: 'a) = x`). Treat it as Term::Variable
+            // so that term_type returns a Type::Variable for it.
+            let term = self
+                .var_term_map
+                .get(var)
+                .cloned()
+                .unwrap_or(Term::Variable(*var));
+            return Some(c.term_type(&term));
         }
         None
     }
@@ -3368,9 +3375,32 @@ impl<'a> TypeToTermConverter<'a> {
                 )
             }
             TypeKind::Var(name) => {
-                let type_variable = self.type_variables.get(name).unwrap();
-                let term = subst.get(type_variable).unwrap();
-                self.type_resolver.equiv(&term, &v);
+                // Look up the type variable in the pre-populated map. If it
+                // is not there (e.g., a free type variable in a user-written
+                // annotation like `(x: 'a)`), create a fresh unifier variable
+                // for it and cache it so all occurrences of the same name
+                // share the same variable.
+                let v_var = if let Some(type_variable) =
+                    self.type_variables.get(name)
+                    && let Some(Term::Variable(vv)) = subst.get(type_variable)
+                {
+                    vv
+                } else {
+                    // Free type variable — look up or create fresh.
+                    let idx = self.type_variables.len();
+                    let type_var = self
+                        .type_variables
+                        .entry(name.clone())
+                        .or_insert_with(|| Box::new(TypeVariable::new(idx)));
+                    // Check if this variable already has a substitution.
+                    if let Some(Term::Variable(vv)) = subst.get(type_var) {
+                        vv
+                    } else {
+                        // Truly free — allocate a fresh unifier variable.
+                        self.type_resolver.variable()
+                    }
+                };
+                self.type_resolver.equiv(&Term::Variable(v_var), v);
                 TypeKind::Var(name.clone()).spanned(&type_node.span)
             }
             _ => todo!("{:?}", type_node.kind),
