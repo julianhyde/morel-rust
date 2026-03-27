@@ -529,20 +529,20 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 2 — `Rel` nodes and display
+### Task 2 — `Rel` nodes and display ✓
   (`src/rel/mod.rs`, `src/rel/display.rs`)
 
-- [ ] Define `JoinType`, `AggFunction`, `FieldCollation`, `Direction`,
+- [x] Define `JoinType`, `AggFunction`, `FieldCollation`, `Direction`,
       `NullDirection`.
-- [ ] Define `AggCall` struct.
-- [ ] Define `Rel` enum with all variants above.
-- [ ] Implement `row_type(&self) -> &[(String, Type)]` and
+- [x] Define `AggCall` struct.
+- [x] Define `Rel` enum with all variants above.
+- [x] Implement `row_type(&self) -> &[(String, Type)]` and
       `inputs(&self) -> Vec<&Rel>`.
-- [ ] Implement `type_(&self) -> Type` returning
+- [x] Implement `type_(&self) -> Type` returning
       `Type::Bag(Box<row_type_as_record>)`.
-- [ ] Implement `explain(&self) -> String` in `display.rs` producing
+- [x] Implement `explain(&self) -> String` in `display.rs` producing
       Calcite-style indented text.
-- [ ] Implement relational-context display of `core::Expr` (ordinal `$N`
+- [x] Implement relational-context display of `core::Expr` (ordinal `$N`
       for `Identifier`, Calcite operator names for `Apply`, etc.) without
       touching `Expr`'s existing `Display`.
 
