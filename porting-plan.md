@@ -35,7 +35,7 @@ which commits the "Done" table covers and which Java features had landed.
 
 | Repo | Branch | Commit | Date |
 |------|--------|--------|------|
-| morel-rust (morel-rust.0) | `main` | `59e5c45` | 2026-03-27 |
+| morel-rust (morel-rust.0) | `main` | `b9b057e` | 2026-03-27 |
 | morel-java (morel.0) | `main` | `9ee0581b` | 2026-03-25 |
 
 The morel-java `main` HEAD (`9ee0581b`) corresponds to the release after
@@ -233,7 +233,7 @@ across several releases (#202, #217, #341, #347).
 | #249 | `with` operator for records (`{r with f = v}`) | `e7ae0f4` | Resolver + type_resolver fix |
 | #291 | `typeof` operator | `cdd547f` | TypeKind::Expression handler in TypeToTermConverter |
 | #306 | Nested block comments | `2b23914` | Already in pest grammar; added test |
-| #343 | Shared type-variable scope within declarations | pending | `decl_type_vars` in TypeResolver; `mustBeList` workaround removed from test scripts |
+| #343 | Shared type-variable scope within declarations | `b9b057e` | `decl_type_vars` in TypeResolver; `mustBeList` workaround removed from test scripts |
 
 ---
 
