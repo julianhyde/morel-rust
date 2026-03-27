@@ -1644,6 +1644,10 @@ forall d in [{a=1,b=true}];
   group i mod 2;
 > val it : int list
 
+:t from i in [1, 2, 3]
+  group i compute {elements, a = "xyz"};
+> val it : {a:string, elements:int list, i:int} list
+
 :t from i in [1,2]
   group i + 1 compute {length elements};
 > error: cannot derive label for group expression
@@ -1668,6 +1672,10 @@ forall d in [{a=1,b=true}];
   group j compute {j = length elements};
 > error: Duplicate field name 'j' in group
 
+:t from i in [1, 2, 3]
+  group {} compute elements;
+> val it : int list list
+
 (*) Compute operation ---------------------------------
 
 :t from i in [1, 2, 3]
@@ -1677,6 +1685,10 @@ forall d in [{a=1,b=true}];
 :t from i in [1, 2, 3]
   compute List.length elements;
 > val it : int
+
+:t from i in [1, 2, 3]
+  compute {elements, a = "xyz"};
+> val it : {a:string, elements:int list}
 
 (*) Correlated subqueries ----------------------------
 :t from i in [1, 2, 3]
