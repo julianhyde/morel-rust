@@ -176,8 +176,9 @@ fn test_project_identity() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     // Identity project over all 8 columns — should be eliminated.
-    let exprs: Vec<_> =
-        (0..8).map(|i| b.field_ordinal(i)).collect::<Result<Vec<_>, _>>()?;
+    let exprs: Vec<_> = (0..8)
+        .map(|i| b.field_ordinal(i))
+        .collect::<Result<Vec<_>, _>>()?;
     b.project(exprs);
     let plan = b.build()?;
     assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
@@ -190,8 +191,9 @@ fn test_project_identity_with_fields_rename() -> Result<(), RelError> {
     // an identity project; it must be preserved.
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    let exprs: Vec<_> =
-        (0..8).map(|i| b.field_ordinal(i)).collect::<Result<Vec<_>, _>>()?;
+    let exprs: Vec<_> = (0..8)
+        .map(|i| b.field_ordinal(i))
+        .collect::<Result<Vec<_>, _>>()?;
     let names: Vec<String> = vec![
         "EMPNO".into(),
         "NAME".into(), // renamed from ENAME
@@ -497,8 +499,7 @@ fn test_aggregate() -> Result<(), RelError> {
 fn test_aggregate2() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    let gk =
-        b.group_key(vec![b.field("DEPTNO")?, b.field("JOB")?]);
+    let gk = b.group_key(vec![b.field("DEPTNO")?, b.field("JOB")?]);
     let aggs = vec![b.count_star().as_("C"), b.sum("SAL").as_("TOTAL_SAL")];
     b.aggregate(&gk, aggs);
     let plan = b.build()?;
@@ -685,6 +686,82 @@ fn test_filter_no_simplify() -> Result<(), RelError> {
         "}
     );
     Ok(())
+}
+
+// -----------------------------------------------------------------------
+// Values variants (Task 12)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_empty_with_alias() -> Result<(), RelError> {
+    // empty() followed by as_() — alias has no effect on the plan string.
+    let mut b = builder();
+    let row_type = vec![
+        ("A".to_string(), int_type()),
+        ("B".to_string(), bool_type()),
+    ];
+    b.empty(row_type);
+    b.as_("e");
+    let plan = b.build()?;
+    assert_plan!(plan, "LogicalValues(tuples=[[]])");
+    Ok(())
+}
+
+#[test]
+fn test_different_type_values() -> Result<(), RelError> {
+    // Values with int, string, and real columns — types inferred per column.
+    let mut b = builder();
+    b.values(
+        &["I", "S", "R"],
+        vec![vec![
+            Val::Int(1),
+            Val::String("hello".into()),
+            Val::Real(3.14),
+        ]],
+    );
+    let plan = b.build()?;
+    assert_plan!(plan, "LogicalValues(tuples=[[{ 1, 'hello', 3.14 }]])");
+    Ok(())
+}
+
+#[test]
+fn test_values_rename() -> Result<(), RelError> {
+    // values() followed by rename() renames the output columns.
+    let mut b = builder();
+    b.values(&["A", "B"], vec![vec![Val::Int(1), Val::Int(2)]]);
+    b.rename(vec!["X".to_string(), "Y".to_string()]);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(X=[$0], Y=[$1])
+              LogicalValues(tuples=[[{ 1, 2 }]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_values_bad_no_fields() {
+    let mut b = builder();
+    b.values(&[], vec![vec![Val::Int(1), Val::Int(2)]]);
+    assert!(matches!(b.build(), Err(RelError::NoFieldNames)));
+}
+
+#[test]
+fn test_values_bad_no_values() {
+    // A row with zero values when one column name was declared.
+    let mut b = builder();
+    b.values(&["A"], vec![vec![]]);
+    assert!(matches!(b.build(), Err(RelError::RowLengthMismatch { .. })));
+}
+
+#[test]
+fn test_values_bad_odd_multiple() {
+    // A row with 1 value when 2 column names were declared.
+    let mut b = builder();
+    b.values(&["A", "B"], vec![vec![Val::Int(1)]]);
+    assert!(matches!(b.build(), Err(RelError::RowLengthMismatch { .. })));
 }
 
 // -----------------------------------------------------------------------

@@ -705,6 +705,124 @@ handle the new variant everywhere it matters.
 
 ---
 
+### Task 12 — Values validation and variants
+
+- [ ] `values()`: error when field-name count is zero but rows are
+      non-empty (`RelError::NoFieldNames`).
+- [ ] `values()`: error when any row's length differs from the field-name
+      count (`RelError::RowLengthMismatch`).
+- [ ] `empty()` then `as_()`: alias on an empty node.
+- [ ] `values()` with heterogeneous column types (`testDifferentTypeValues`).
+- [ ] `values()` with a renamed column list (`testValuesRename`).
+
+**Tests enabled:**
+`testValuesBadNoFields`, `testValuesBadNoValues`, `testValuesBadOddMultiple`,
+`testEmptyWithAlias`, `testDifferentTypeValues`, `testValuesRename`.
+
+---
+
+### Task 13 — Filter AND/OR constant folding
+
+- [ ] `filter(AND(cond, false))` → `Values([])` (false wins in AND).
+- [ ] `filter(AND(cond, true))` → `filter(cond)` (true is identity in AND).
+- [ ] `filter(AND(cond, cond))` → `filter(cond)` (duplicate removal).
+- [ ] `filter()` on an empty `Values` input stays empty.
+
+**Tests enabled:**
+`testScanFilterAndFalse`, `testScanFilterAndTrue`,
+`testScanFilterDuplicateAnd`, `testFilterEmpty`.
+
+---
+
+### Task 14 — Project variants
+
+- [ ] `testProject2`: project with a computed (non-identity) expression,
+      e.g. `EMPNO + 1`.
+- [ ] `testProjectIdentityWithFieldsRenameFilter`: identity project after
+      a filter; make sure the chain is not dropped.
+- [ ] `testProjectLeadingEdge`: project a strict leading prefix of input
+      columns.
+- [ ] `testProjectMapping`: project that reorders or repeats columns.
+- [ ] `testProjectBloat` / `testProjectBloat2`: outer project has a
+      computed expression → merge is suppressed (only field-ref outer
+      expressions are merged).
+- [ ] `testPermute`: project that permutes all columns.
+
+**Tests enabled:**
+`testProject2`, `testProjectIdentityWithFieldsRenameFilter`,
+`testProjectLeadingEdge`, `testProjectMapping`,
+`testProjectBloat`, `testProjectBloat2`, `testPermute`.
+
+---
+
+### Task 15 — Join/Alias variants
+
+- [ ] `testAlias2`: two tables each aliased; `field2` lookup by alias name.
+- [ ] `testAliasProject`: alias set, then project; alias survives.
+- [ ] `testAliasFilter`: alias set, then filter.
+- [ ] `testAliasAggregate`: alias set, then aggregate.
+- [ ] `testAliasPastTop` / `testAliasPastTop2`: alias set after an
+      operator; checks that alias is accessible above the operator.
+- [ ] `testAliasSort` / `testAliasLimit`: alias survives sort and limit.
+- [ ] `testAliasProjectProject`: alias survives two stacked projects.
+- [ ] `testMultiLevelAlias`: alias redefined at multiple levels.
+
+**Tests enabled:**
+`testAlias2`, `testAliasProject`, `testAliasFilter`, `testAliasAggregate`,
+`testAliasPastTop`, `testAliasPastTop2`, `testAliasSort`, `testAliasLimit`,
+`testAliasProjectProject`, `testMultiLevelAlias`.
+
+---
+
+### Task 16 — Aggregate variants
+
+- [ ] `testAggregate3`: `distinct()` on the output of an aggregate that
+      already groups all output columns — verify it is a no-op.
+- [ ] `testAggregateAndThenProjectNamedField`: aggregate then project a
+      named output field.
+- [ ] `testAggregateEliminatesDuplicateCalls` /
+      `testAggregateEliminatesDuplicateCalls2`: identical agg calls in
+      one `aggregate()` call are deduplicated.
+- [ ] `testAggregateProjectWithAliases`: aggregate with aliased agg calls.
+- [ ] `testAggregateProjectWithExpression`: aggregate output projected
+      through an expression.
+- [ ] `testAggregateProjectPrune`: columns unused after aggregate are
+      pruned from the input.
+- [ ] `testAggregateGroupingSetNotSubsetFails`: error when grouping-set
+      element is not a subset of the group key.
+- [ ] `testAggregateGroupingSetDuplicate`: duplicate entries in a grouping
+      set are deduplicated.
+- [ ] `testAggregateGrouping`: `GROUPING(col)` pseudo-column in output.
+
+**Tests enabled:**
+`testAggregate3`, `testAggregateAndThenProjectNamedField`,
+`testAggregateEliminatesDuplicateCalls`,
+`testAggregateEliminatesDuplicateCalls2`,
+`testAggregateProjectWithAliases`, `testAggregateProjectWithExpression`,
+`testAggregateProjectPrune`, `testAggregateGroupingSetNotSubsetFails`,
+`testAggregateGroupingSetDuplicate`, `testAggregateGrouping`.
+
+---
+
+### Task 17 — Misc and remaining error conditions
+
+- [ ] `testScanValidTableWrongCase`: case-insensitive table name lookup in
+      `MapSchema`.
+- [ ] `testSortOverProjectSort`: outer `sort()` over `Project(Sort(…))`
+      — inner sort subsumed when outer collation dominates.
+- [ ] `testBadType` / `testFieldOnNonStructExpression`: additional
+      `RelError` variants for type mismatches.
+- [ ] `testUnionProjectValues2`: three-way `union_n`.
+- [ ] `testRelBuilderToString`: `Display` / `to_string` on a `RelBuilder`.
+- [ ] `testSimplify`: constant-folding simplifier pass over a built plan.
+
+**Tests enabled:**
+`testScanValidTableWrongCase`, `testSortOverProjectSort`,
+`testBadType`, `testFieldOnNonStructExpression`,
+`testUnionProjectValues2`, `testRelBuilderToString`, `testSimplify`.
+
+---
+
 ## Test coverage target
 
 The table below lists the ~130 tests (out of ~230) that form the 80 %

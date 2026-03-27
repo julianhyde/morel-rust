@@ -59,8 +59,16 @@ pub enum RelError {
     FieldOrdinalOutOfRange { ordinal: usize, len: usize },
     /// A group key expression did not resolve to an input column.
     InvalidGroupKey(String),
+    /// `values()` was called with no field names but non-empty rows.
+    NoFieldNames,
     /// A filter condition did not have boolean type.
     NonBooleanCondition(String),
+    /// A row passed to `values()` has a different length from `names`.
+    RowLengthMismatch {
+        row: usize,
+        expected: usize,
+        got: usize,
+    },
     /// A table name was not found in the schema.
     TableNotFound(Vec<String>),
 }
@@ -82,9 +90,17 @@ impl fmt::Display for RelError {
             RelError::InvalidGroupKey(expr) => {
                 write!(f, "group key expression not in input: {}", expr)
             }
+            RelError::NoFieldNames => {
+                write!(f, "values() called with no field names")
+            }
             RelError::NonBooleanCondition(got) => {
                 write!(f, "filter condition must be boolean, got {}", got)
             }
+            RelError::RowLengthMismatch { row, expected, got } => write!(
+                f,
+                "row {} has {} values but {} field names were given",
+                row, got, expected
+            ),
             RelError::TableNotFound(name) => {
                 write!(f, "table not found: {:?}", name)
             }
@@ -364,7 +380,28 @@ impl RelBuilder {
     ///
     /// `names` is the ordered list of column names; `rows` is a list of
     /// rows, each a list of literal [`Val`] values.
+    ///
+    /// Returns [`RelError::NoFieldNames`] if `names` is empty but `rows`
+    /// is non-empty. Returns [`RelError::RowLengthMismatch`] if any row
+    /// has a different length from `names`.
     pub fn values(&mut self, names: &[&str], rows: Vec<Vec<Val>>) -> &mut Self {
+        if self.error.is_some() {
+            return self;
+        }
+        // Validate: non-empty rows require non-empty names.
+        if names.is_empty() && !rows.is_empty() {
+            return self.set_error(RelError::NoFieldNames);
+        }
+        // Validate: every row must have exactly names.len() values.
+        for (i, row) in rows.iter().enumerate() {
+            if row.len() != names.len() {
+                return self.set_error(RelError::RowLengthMismatch {
+                    row: i,
+                    expected: names.len(),
+                    got: row.len(),
+                });
+            }
+        }
         // Infer column types from the first row. If there are no rows,
         // default every column to `string`.
         let col_types: Vec<Type> = if let Some(first) = rows.first() {
@@ -1307,8 +1344,7 @@ fn try_compose_projects(
         .iter()
         .map(|e| {
             if let Expr::Identifier(_, name) = e {
-                let idx =
-                    inner_row_type.iter().position(|(n, _)| n == name)?;
+                let idx = inner_row_type.iter().position(|(n, _)| n == name)?;
                 Some(inner_exprs[idx].clone())
             } else {
                 None
