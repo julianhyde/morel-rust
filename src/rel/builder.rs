@@ -28,9 +28,9 @@
 //! let schema = Arc::new(scott_schema());
 //! let mut b = RelBuilder::new(schema);
 //! b.scan(&["scott", "EMP"]);
-//! let cond = b.gt(b.field("SAL"), b.literal_int(1000));
+//! let cond = b.gt(b.field("SAL").unwrap(), b.literal_int(1000));
 //! b.filter(cond);
-//! let plan = b.build();
+//! let plan = b.build().unwrap();
 //! ```
 
 use crate::compile::core::Expr;
@@ -42,7 +42,57 @@ use crate::rel::{
     AggCall, AggFunction, Direction, FieldCollation, JoinType, NullDirection,
     Rel, bool_type, int_type, string_type,
 };
+use std::fmt;
 use std::sync::Arc;
+
+// -----------------------------------------------------------------------
+// RelError
+// -----------------------------------------------------------------------
+
+/// Errors produced by [`RelBuilder`] operations.
+#[derive(Debug)]
+pub enum RelError {
+    // lint: sort until '#}' where '##[A-Z]'
+    /// A field name was not found in the current row type.
+    FieldNotFound(String),
+    /// A field ordinal was out of range.
+    FieldOrdinalOutOfRange { ordinal: usize, len: usize },
+    /// A group key expression did not resolve to an input column.
+    InvalidGroupKey(String),
+    /// A filter condition did not have boolean type.
+    NonBooleanCondition(String),
+    /// A table name was not found in the schema.
+    TableNotFound(Vec<String>),
+}
+
+impl fmt::Display for RelError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            // lint: sort until '#}' where '##[A-Z]'
+            RelError::FieldNotFound(name) => {
+                write!(f, "field '{}' not found", name)
+            }
+            RelError::FieldOrdinalOutOfRange { ordinal, len } => {
+                write!(
+                    f,
+                    "field ordinal {} out of range (row has {} columns)",
+                    ordinal, len
+                )
+            }
+            RelError::InvalidGroupKey(expr) => {
+                write!(f, "group key expression not in input: {}", expr)
+            }
+            RelError::NonBooleanCondition(got) => {
+                write!(f, "filter condition must be boolean, got {}", got)
+            }
+            RelError::TableNotFound(name) => {
+                write!(f, "table not found: {:?}", name)
+            }
+        }
+    }
+}
+
+impl std::error::Error for RelError {}
 
 // -----------------------------------------------------------------------
 // SortKey
@@ -171,6 +221,11 @@ pub struct RelBuilder {
     schema: Arc<dyn Schema>,
     config: BuilderConfig,
     stack: Vec<Frame>,
+    /// Sticky error: the first error encountered. Once set, all subsequent
+    /// builder methods short-circuit, and [`build`] returns `Err(…)`.
+    ///
+    /// [`build`]: RelBuilder::build
+    error: Option<RelError>,
 }
 
 impl RelBuilder {
@@ -180,6 +235,7 @@ impl RelBuilder {
             schema,
             config: BuilderConfig::default(),
             stack: Vec::new(),
+            error: None,
         }
     }
 
@@ -189,7 +245,16 @@ impl RelBuilder {
             schema,
             config,
             stack: Vec::new(),
+            error: None,
         }
+    }
+
+    /// Records a sticky error (first error wins) and returns `self`.
+    fn set_error(&mut self, e: RelError) -> &mut Self {
+        if self.error.is_none() {
+            self.error = Some(e);
+        }
+        self
     }
 
     // -------------------------------------------------------------------
@@ -203,13 +268,17 @@ impl RelBuilder {
         self
     }
 
-    /// Pops the top node from the stack and returns it.
+    /// Pops the top node from the stack and returns it, or returns the
+    /// first error encountered during building.
     ///
     /// # Panics
     ///
-    /// Panics if the stack is empty.
-    pub fn build(&mut self) -> Rel {
-        self.stack.pop().expect("RelBuilder stack is empty").rel
+    /// Panics if the stack is empty and there is no pending error.
+    pub fn build(&mut self) -> Result<Rel, RelError> {
+        if let Some(e) = self.error.take() {
+            return Err(e);
+        }
+        Ok(self.stack.pop().expect("RelBuilder stack is empty").rel)
     }
 
     /// Pops `n` frames from the stack and returns them in bottom-to-top
@@ -255,15 +324,21 @@ impl RelBuilder {
     ///
     /// Panics if the table is not found in the schema.
     pub fn scan(&mut self, name: &[&str]) -> &mut Self {
-        let entry = self
-            .schema
-            .table(name)
-            .unwrap_or_else(|| panic!("table not found: {:?}", name));
-        let rel = Rel::TableScan {
-            table_name: entry.name.clone(),
-            row_type: entry.columns.clone(),
-        };
-        self.push(rel)
+        if self.error.is_some() {
+            return self;
+        }
+        let name_vec: Vec<String> =
+            name.iter().map(ToString::to_string).collect();
+        match self.schema.table(name) {
+            None => self.set_error(RelError::TableNotFound(name_vec)),
+            Some(entry) => {
+                let rel = Rel::TableScan {
+                    table_name: entry.name.clone(),
+                    row_type: entry.columns.clone(),
+                };
+                self.push(rel)
+            }
+        }
     }
 
     /// Pushes a zero-row `Values` node with the given row type.
@@ -315,16 +390,25 @@ impl RelBuilder {
     /// and `condition` is the literal `false`, the input is replaced by
     /// an empty `Values` with the same row type.
     pub fn filter(&mut self, condition: Expr) -> &mut Self {
+        if self.error.is_some() {
+            return self;
+        }
+        // Validate that the condition has boolean type.
+        if *condition.type_() != bool_type() {
+            let got = format!("{:?}", condition.type_());
+            return self.set_error(RelError::NonBooleanCondition(got));
+        }
         if self.config.simplify_filter_true && is_true(&condition) {
             return self; // identity
         }
         if self.config.simplify_filter_false && is_false(&condition) {
             let row_type = self.peek_row_type().to_vec();
-            let input = self.build();
+            // build() cannot fail here: error is None and stack is non-empty
+            let input = self.build().expect("filter: empty stack");
             drop(input);
             return self.empty(row_type);
         }
-        let input = Box::new(self.build());
+        let input = Box::new(self.build().expect("filter: empty stack"));
         self.push(Rel::Filter { input, condition })
     }
 
@@ -351,7 +435,7 @@ impl RelBuilder {
         {
             return self;
         }
-        let input = Box::new(self.build());
+        let input = Box::new(self.build().expect("project: empty stack"));
         self.push(Rel::Project {
             input,
             exprs,
@@ -388,7 +472,7 @@ impl RelBuilder {
         {
             return self;
         }
-        let input = Box::new(self.build());
+        let input = Box::new(self.build().expect("project_named: empty stack"));
         self.push(Rel::Project {
             input,
             exprs,
@@ -410,7 +494,7 @@ impl RelBuilder {
         if collation.is_empty() {
             return self;
         }
-        let input = Box::new(self.build());
+        let input = Box::new(self.build().expect("sort: empty stack"));
         self.push(Rel::Sort {
             input,
             collation,
@@ -428,7 +512,7 @@ impl RelBuilder {
         offset: Option<usize>,
         fetch: Option<usize>,
     ) -> &mut Self {
-        let input = Box::new(self.build());
+        let input = Box::new(self.build().expect("limit: empty stack"));
         self.push(Rel::Sort {
             input,
             collation: vec![],
@@ -454,7 +538,7 @@ impl RelBuilder {
         }
         let row_type = self.peek_row_type().to_vec();
         let collation = sort_keys_to_collation(keys, &row_type);
-        let input = Box::new(self.build());
+        let input = Box::new(self.build().expect("sort_limit: empty stack"));
         self.push(Rel::Sort {
             input,
             collation,
@@ -496,7 +580,7 @@ impl RelBuilder {
             .zip(input_row_type.iter())
             .map(|(name, (_, ty))| (name, ty.clone()))
             .collect();
-        let input = Box::new(self.build());
+        let input = Box::new(self.build().expect("rename: empty stack"));
         self.push(Rel::Project {
             input,
             exprs,
@@ -558,19 +642,27 @@ impl RelBuilder {
         group_key: &GroupKey,
         agg_calls: Vec<AggCallDef>,
     ) -> &mut Self {
+        if self.error.is_some() {
+            return self;
+        }
         let input_row_type = self.peek_row_type().to_vec();
-        // Resolve grouping expressions to ordinals.
-        let group_set: Vec<usize> = group_key
-            .exprs
-            .iter()
-            .filter_map(|e| {
-                if let Expr::Identifier(_, name) = e {
+        // Resolve grouping expressions to ordinals; error on any unresolved.
+        let mut group_set: Vec<usize> = Vec::new();
+        for e in &group_key.exprs {
+            if let Expr::Identifier(_, name) = e {
+                if let Some(idx) =
                     input_row_type.iter().position(|(n, _)| n == name)
+                {
+                    group_set.push(idx);
                 } else {
-                    None
+                    return self
+                        .set_error(RelError::InvalidGroupKey(name.clone()));
                 }
-            })
-            .collect();
+            } else {
+                let msg = format!("{:?}", e);
+                return self.set_error(RelError::InvalidGroupKey(msg));
+            }
+        }
         // Build output row type: grouping columns first.
         let mut row_type: Vec<(String, Type)> = group_set
             .iter()
@@ -605,7 +697,7 @@ impl RelBuilder {
             })
             .collect();
         let group_sets = vec![group_set.clone()];
-        let input = Box::new(self.build());
+        let input = Box::new(self.build().expect("aggregate: empty stack"));
         self.push(Rel::Aggregate {
             input,
             group_set,
@@ -746,6 +838,9 @@ impl RelBuilder {
         join_type: JoinType,
         field_names: &[&str],
     ) -> &mut Self {
+        if self.error.is_some() {
+            return self;
+        }
         // Peek at the two top frames (don't pop yet).
         let n = self.stack.len();
         assert!(n >= 2, "join_using requires at least two frames");
@@ -755,30 +850,35 @@ impl RelBuilder {
         // Build equality conditions for each shared field.
         // Use "$N" identifiers to encode absolute ordinals so that
         // write_expr emits them verbatim and avoids name collisions.
-        let conditions: Vec<Expr> = field_names
-            .iter()
-            .map(|name| {
-                let l_idx =
-                    left_rt.iter().position(|(n, _)| n == name).unwrap_or_else(
-                        || panic!("join_using: field '{}' not in left", name),
-                    );
-                let r_idx = right_rt
-                    .iter()
-                    .position(|(n, _)| n == name)
-                    .unwrap_or_else(|| {
-                        panic!("join_using: field '{}' not in right", name)
-                    });
-                let l_ty = left_rt[l_idx].1.clone();
-                let r_ty = right_rt[r_idx].1.clone();
-                let abs_l = l_idx;
-                let abs_r = left_len + r_idx;
-                let l_expr =
-                    Expr::Identifier(Box::new(l_ty), format!("${}", abs_l));
-                let r_expr =
-                    Expr::Identifier(Box::new(r_ty), format!("${}", abs_r));
-                binary_op("=", bool_type(), l_expr, r_expr)
-            })
-            .collect();
+        let mut conditions: Vec<Expr> = Vec::new();
+        for name in field_names {
+            let l_idx = match left_rt.iter().position(|(n, _)| n == name) {
+                Some(i) => i,
+                None => {
+                    return self.set_error(RelError::FieldNotFound(format!(
+                        "{} (left input)",
+                        name
+                    )));
+                }
+            };
+            let r_idx = match right_rt.iter().position(|(n, _)| n == name) {
+                Some(i) => i,
+                None => {
+                    return self.set_error(RelError::FieldNotFound(format!(
+                        "{} (right input)",
+                        name
+                    )));
+                }
+            };
+            let l_ty = left_rt[l_idx].1.clone();
+            let r_ty = right_rt[r_idx].1.clone();
+            let abs_r = left_len + r_idx;
+            let l_expr =
+                Expr::Identifier(Box::new(l_ty), format!("${}", l_idx));
+            let r_expr =
+                Expr::Identifier(Box::new(r_ty), format!("${}", abs_r));
+            conditions.push(binary_op("=", bool_type(), l_expr, r_expr));
+        }
         let condition = conditions
             .into_iter()
             .reduce(|a, b| binary_op("andalso", bool_type(), a, b))
@@ -798,7 +898,15 @@ impl RelBuilder {
     /// The identifier name is encoded as `"$N"` where N is the absolute
     /// ordinal in the combined (future) join row type. This lets
     /// `write_expr` emit `$N` verbatim when the name is unambiguous.
-    pub fn field2(&self, input_offset: usize, name: &str) -> Expr {
+    /// Returns a field-reference to column `name` in the frame at
+    /// `input_offset` from the top of the stack (0 = top, 1 = second).
+    ///
+    /// Returns [`RelError::FieldNotFound`] if the column is absent.
+    pub fn field2(
+        &self,
+        input_offset: usize,
+        name: &str,
+    ) -> Result<Expr, RelError> {
         let n = self.stack.len();
         assert!(
             input_offset < n,
@@ -807,12 +915,10 @@ impl RelBuilder {
         );
         let frame_idx = n - 1 - input_offset;
         let row = self.stack[frame_idx].rel.row_type();
-        let col_ord = row
-            .iter()
-            .position(|(col, _)| col == name)
-            .unwrap_or_else(|| {
-                panic!("field2: '{}' not found in input {}", name, input_offset)
-            });
+        let col_ord = match row.iter().position(|(col, _)| col == name) {
+            Some(i) => i,
+            None => return Err(RelError::FieldNotFound(name.to_string())),
+        };
         let (_, ty) = &row[col_ord];
         // Compute the absolute ordinal: sum column counts of frames
         // that appear to the LEFT (i.e. at lower stack indices).
@@ -823,7 +929,10 @@ impl RelBuilder {
             .sum();
         let abs_ord = preceding_cols + col_ord;
         // Encode as "$N" so write_expr emits it verbatim.
-        Expr::Identifier(Box::new(ty.clone()), format!("${}", abs_ord))
+        Ok(Expr::Identifier(
+            Box::new(ty.clone()),
+            format!("${}", abs_ord),
+        ))
     }
 
     // -------------------------------------------------------------------
@@ -883,34 +992,34 @@ impl RelBuilder {
     /// Returns a field-reference expression for the named column in the
     /// top-of-stack row type.
     ///
-    /// # Panics
-    ///
-    /// Panics if no column with that name exists.
-    pub fn field(&self, name: &str) -> Expr {
+    /// Returns [`RelError::FieldNotFound`] if no column with that name
+    /// exists.
+    pub fn field(&self, name: &str) -> Result<Expr, RelError> {
         let row = self.peek_row_type();
-        let (_, ty) =
-            row.iter().find(|(n, _)| n == name).unwrap_or_else(|| {
-                panic!("field '{}' not found in row type", name)
-            });
-        Expr::Identifier(Box::new(ty.clone()), name.to_string())
+        match row.iter().find(|(n, _)| n == name) {
+            Some((_, ty)) => {
+                Ok(Expr::Identifier(Box::new(ty.clone()), name.to_string()))
+            }
+            None => Err(RelError::FieldNotFound(name.to_string())),
+        }
     }
 
     /// Returns a field-reference expression for the column at `ordinal`
     /// in the top-of-stack row type.
     ///
-    /// # Panics
-    ///
-    /// Panics if the ordinal is out of range.
-    pub fn field_ordinal(&self, ordinal: usize) -> Expr {
+    /// Returns [`RelError::FieldOrdinalOutOfRange`] if the ordinal is out
+    /// of range.
+    pub fn field_ordinal(&self, ordinal: usize) -> Result<Expr, RelError> {
         let row = self.peek_row_type();
-        let (name, ty) = row.get(ordinal).unwrap_or_else(|| {
-            panic!(
-                "field ordinal {} out of range (row has {} columns)",
+        match row.get(ordinal) {
+            Some((name, ty)) => {
+                Ok(Expr::Identifier(Box::new(ty.clone()), name.clone()))
+            }
+            None => Err(RelError::FieldOrdinalOutOfRange {
                 ordinal,
-                row.len()
-            )
-        });
-        Expr::Identifier(Box::new(ty.clone()), name.clone())
+                len: row.len(),
+            }),
+        }
     }
 
     /// Returns a boolean literal expression.
@@ -1021,10 +1130,9 @@ fn agg_return_type(
     row_type: &[(String, Type)],
 ) -> Type {
     match agg {
+        // lint: sort until '#}' where '##[A-Z]'
+        AggFunction::Avg => Type::Primitive(PrimitiveType::Real),
         AggFunction::Count | AggFunction::CountStar => int_type(),
-        AggFunction::Avg => {
-            Type::Primitive(crate::compile::types::PrimitiveType::Real)
-        }
         _ => {
             if let Some(&i) = args.first() {
                 row_type[i].1.clone()
@@ -1126,6 +1234,7 @@ fn is_identity_project(exprs: &[Expr], row_type: &[(String, Type)]) -> bool {
 /// Infers a [`Type`] from a [`Val`].
 fn val_type(v: &Val) -> Type {
     match v {
+        // lint: sort until '#}' where '##[A-Z]'
         Val::Bool(_) => bool_type(),
         Val::Int(_) => int_type(),
         Val::Real(_) => Type::Primitive(PrimitiveType::Real),
@@ -1163,7 +1272,7 @@ mod tests {
     fn test_scan() {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
     }
 
@@ -1171,7 +1280,7 @@ mod tests {
     fn test_scan_qualified_table() {
         let mut b = builder();
         b.scan(&["scott", "DEPT"]);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(plan, "LogicalTableScan(table=[[scott, DEPT]])");
     }
 
@@ -1187,7 +1296,7 @@ mod tests {
             ("B".to_string(), string_type()),
         ];
         b.empty(row_type);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(plan, "LogicalValues(tuples=[[]])");
     }
 
@@ -1201,7 +1310,7 @@ mod tests {
                 vec![Val::Int(2), Val::String("y".into())],
             ],
         );
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(plan, "LogicalValues(tuples=[[{ 1, 'x' }, { 2, 'y' }]])");
     }
 
@@ -1215,7 +1324,7 @@ mod tests {
         b.scan(&["scott", "EMP"]);
         let cond = b.literal_bool(true);
         b.filter(cond);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         // simplification: Filter(true) is eliminated
         assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
     }
@@ -1226,7 +1335,7 @@ mod tests {
         b.scan(&["scott", "EMP"]);
         let cond = b.literal_bool(false);
         b.filter(cond);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         // simplification: Filter(false) → empty Values
         assert_plan!(plan, "LogicalValues(tuples=[[]])");
     }
@@ -1235,11 +1344,11 @@ mod tests {
     fn test_scan_filter_equals() {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
-        let lhs = b.field("DEPTNO");
+        let lhs = b.field("DEPTNO").unwrap();
         let rhs = b.literal_int(20);
         let cond = b.equals(lhs, rhs);
         b.filter(cond);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalFilter(condition=[=($7, 20)])\n  \
@@ -1251,11 +1360,11 @@ mod tests {
     fn test_scan_filter_greater_than() {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
-        let lhs = b.field("SAL");
+        let lhs = b.field("SAL").unwrap();
         let rhs = b.literal_int(1000);
         let cond = b.gt(lhs, rhs);
         b.filter(cond);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalFilter(condition=[>($5, 1000)])\n  \
@@ -1271,9 +1380,9 @@ mod tests {
     fn test_project() {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
-        let exprs = vec![b.field("EMPNO"), b.field("ENAME")];
+        let exprs = vec![b.field("EMPNO").unwrap(), b.field("ENAME").unwrap()];
         b.project(exprs);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalProject(EMPNO=[$0], ENAME=[$1])\n  \
@@ -1286,9 +1395,10 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
         // Identity projection: all columns in order.
-        let exprs: Vec<Expr> = (0..8).map(|i| b.field_ordinal(i)).collect();
+        let exprs: Vec<Expr> =
+            (0..8).map(|i| b.field_ordinal(i).unwrap()).collect();
         b.project(exprs);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         // Simplification: identity project is removed.
         assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
     }
@@ -1297,10 +1407,10 @@ mod tests {
     fn test_project_named() {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
-        let exprs = vec![b.field("EMPNO"), b.field("SAL")];
+        let exprs = vec![b.field("EMPNO").unwrap(), b.field("SAL").unwrap()];
         let names = vec!["employee_no".to_string(), "salary".to_string()];
         b.project_named(exprs, names);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalProject(employee_no=[$0], salary=[$5])\n  \
@@ -1316,13 +1426,13 @@ mod tests {
     fn test_sort() {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
-        let key = b.field("SAL");
+        let key = b.field("SAL").unwrap();
         b.sort(&[SortKey {
             expr: key,
             direction: Direction::Ascending,
             null_direction: NullDirection::Unspecified,
         }]);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalSort(sort0=[$5], dir0=[ASC])\n  \
@@ -1334,9 +1444,9 @@ mod tests {
     fn test_sort_desc() {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
-        let key = b.desc(b.field("SAL"));
+        let key = b.desc(b.field("SAL").unwrap());
         b.sort(&[key]);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalSort(sort0=[$5], dir0=[DESC])\n  \
@@ -1350,7 +1460,7 @@ mod tests {
         b.scan(&["scott", "EMP"]);
         // Empty key list — no Sort node is pushed.
         b.sort(&[]);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
     }
 
@@ -1360,17 +1470,17 @@ mod tests {
         b.scan(&["scott", "EMP"]);
         // Duplicate key: second reference to SAL is dropped.
         let k1 = SortKey {
-            expr: b.field("SAL"),
+            expr: b.field("SAL").unwrap(),
             direction: Direction::Ascending,
             null_direction: NullDirection::Unspecified,
         };
         let k2 = SortKey {
-            expr: b.field("SAL"),
+            expr: b.field("SAL").unwrap(),
             direction: Direction::Descending,
             null_direction: NullDirection::Unspecified,
         };
         b.sort(&[k1, k2]);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalSort(sort0=[$5], dir0=[ASC])\n  \
@@ -1383,7 +1493,7 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
         b.limit(None, Some(10));
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalSort(fetch=[10])\n  \
@@ -1395,9 +1505,9 @@ mod tests {
     fn test_sort_limit() {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
-        let key = b.desc(b.field("SAL"));
+        let key = b.desc(b.field("SAL").unwrap());
         b.sort_limit(Some(5), Some(3), &[key]);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalSort(sort0=[$5], dir0=[DESC], \
@@ -1412,7 +1522,7 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
         b.sort_limit(None, Some(0), &[]);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(plan, "LogicalValues(tuples=[[]])");
     }
 
@@ -1421,7 +1531,7 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
         b.limit(Some(10), Some(5));
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalSort(offset=[10], fetch=[5])\n  \
@@ -1438,7 +1548,7 @@ mod tests {
             "department_name".to_string(),
             "location".to_string(),
         ]);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalProject(department_no=[$0], \
@@ -1457,7 +1567,7 @@ mod tests {
             "DNAME".to_string(),
             "LOC".to_string(),
         ]);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(plan, "LogicalTableScan(table=[[scott, DEPT]])");
     }
 
@@ -1469,10 +1579,10 @@ mod tests {
     fn test_aggregate() {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
-        let gk = b.group_key(vec![b.field("DEPTNO")]);
+        let gk = b.group_key(vec![b.field("DEPTNO").unwrap()]);
         let aggs = vec![b.count_star().as_("C")];
         b.aggregate(&gk, aggs);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalAggregate(group=[{7}], C=[COUNT(*)])\n  \
@@ -1484,10 +1594,13 @@ mod tests {
     fn test_aggregate2() {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
-        let gk = b.group_key(vec![b.field("DEPTNO"), b.field("JOB")]);
+        let gk = b.group_key(vec![
+            b.field("DEPTNO").unwrap(),
+            b.field("JOB").unwrap(),
+        ]);
         let aggs = vec![b.count_star().as_("C"), b.sum("SAL").as_("TOTAL_SAL")];
         b.aggregate(&gk, aggs);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalAggregate(group=[{7, 2}], C=[COUNT(*)], \
@@ -1504,7 +1617,7 @@ mod tests {
         let gk = b.group_key(vec![]);
         let aggs = vec![b.count_star().as_("C")];
         b.aggregate(&gk, aggs);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalAggregate(group=[{}], C=[COUNT(*)])\n  \
@@ -1516,10 +1629,10 @@ mod tests {
     fn test_aggregate_count_distinct() {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
-        let gk = b.group_key(vec![b.field("DEPTNO")]);
+        let gk = b.group_key(vec![b.field("DEPTNO").unwrap()]);
         let aggs = vec![b.count("ENAME").distinct().as_("UNIQUE_EMPS")];
         b.aggregate(&gk, aggs);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalAggregate(group=[{7}], \
@@ -1533,7 +1646,7 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "DEPT"]);
         b.distinct();
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalAggregate(group=[{0, 1, 2}])\n  \
@@ -1551,11 +1664,11 @@ mod tests {
         b.scan(&["scott", "EMP"]);
         b.scan(&["scott", "DEPT"]);
         // EMP.DEPTNO ($7) = DEPT.DEPTNO ($0 offset by 8 = $8).
-        let lhs = b.field2(1, "DEPTNO"); // EMP.DEPTNO
-        let rhs = b.field2(0, "DEPTNO"); // DEPT.DEPTNO
+        let lhs = b.field2(1, "DEPTNO").unwrap(); // EMP.DEPTNO
+        let rhs = b.field2(0, "DEPTNO").unwrap(); // DEPT.DEPTNO
         let cond = b.equals(lhs, rhs);
         b.join(JoinType::Inner, cond);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalJoin(condition=[=($7, $8)], \
@@ -1571,7 +1684,7 @@ mod tests {
         b.scan(&["scott", "EMP"]);
         b.scan(&["scott", "DEPT"]);
         b.join_using(JoinType::Inner, &["DEPTNO"]);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalJoin(condition=[=($7, $8)], \
@@ -1587,7 +1700,7 @@ mod tests {
         b.scan(&["scott", "EMP"]);
         b.scan(&["scott", "DEPT"]);
         b.join_using(JoinType::Left, &["DEPTNO"]);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalJoin(condition=[=($7, $8)], \
@@ -1605,11 +1718,11 @@ mod tests {
         b.scan(&["scott", "DEPT"]);
         b.as_("d");
         // Use field2 to reference columns from each aliased input.
-        let lhs = b.field2(1, "DEPTNO"); // e.DEPTNO
-        let rhs = b.field2(0, "DEPTNO"); // d.DEPTNO
+        let lhs = b.field2(1, "DEPTNO").unwrap(); // e.DEPTNO
+        let rhs = b.field2(0, "DEPTNO").unwrap(); // d.DEPTNO
         let cond = b.equals(lhs, rhs);
         b.join(JoinType::Inner, cond);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalJoin(condition=[=($7, $8)], \
@@ -1635,7 +1748,7 @@ mod tests {
             vec![vec![Val::Int(2), Val::String("y".into())]],
         );
         b.union(false);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalUnion(all=[false])\n  \
@@ -1650,7 +1763,7 @@ mod tests {
         b.scan(&["scott", "EMP"]);
         b.scan(&["scott", "EMP"]);
         b.union(true);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalUnion(all=[true])\n  \
@@ -1666,7 +1779,7 @@ mod tests {
         b.scan(&["scott", "EMP"]);
         b.scan(&["scott", "EMP"]);
         b.union_n(false, 3);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalUnion(all=[false])\n  \
@@ -1682,7 +1795,7 @@ mod tests {
         b.scan(&["scott", "DEPT"]);
         b.scan(&["scott", "DEPT"]);
         b.intersect(false);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalIntersect(all=[false])\n  \
@@ -1697,12 +1810,72 @@ mod tests {
         b.scan(&["scott", "DEPT"]);
         b.scan(&["scott", "DEPT"]);
         b.minus(false);
-        let plan = b.build();
+        let plan = b.build().unwrap();
         assert_plan!(
             plan,
             "LogicalMinus(all=[false])\n  \
              LogicalTableScan(table=[[scott, DEPT]])\n  \
              LogicalTableScan(table=[[scott, DEPT]])"
         );
+    }
+
+    // ---------------------------------------------------------------
+    // Error handling
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_scan_invalid_table() {
+        let mut b = builder();
+        b.scan(&["scott", "NOSUCHtable"]);
+        assert!(matches!(b.build(), Err(RelError::TableNotFound(_))));
+    }
+
+    #[test]
+    fn test_scan_invalid_schema() {
+        let mut b = builder();
+        b.scan(&["noschema", "EMP"]);
+        assert!(matches!(b.build(), Err(RelError::TableNotFound(_))));
+    }
+
+    #[test]
+    fn test_bad_field_name() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        assert!(matches!(
+            b.field("NOSUCHFIELD"),
+            Err(RelError::FieldNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn test_bad_field_ordinal() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        // EMP has 8 columns (ordinals 0–7); ordinal 99 is out of range.
+        assert!(matches!(
+            b.field_ordinal(99),
+            Err(RelError::FieldOrdinalOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn test_filter_non_boolean_condition() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let cond = b.literal_int(1); // int, not bool
+        b.filter(cond);
+        assert!(matches!(b.build(), Err(RelError::NonBooleanCondition(_))));
+    }
+
+    #[test]
+    fn test_aggregate_group_key_out_of_range() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        // "NOSUCHCOL" does not exist in EMP.
+        let bad_expr =
+            Expr::Identifier(Box::new(int_type()), "NOSUCHCOL".to_string());
+        let gk = b.group_key(vec![bad_expr]);
+        b.aggregate(&gk, vec![]);
+        assert!(matches!(b.build(), Err(RelError::InvalidGroupKey(_))));
     }
 }

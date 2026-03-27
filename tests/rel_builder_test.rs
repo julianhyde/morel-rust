@@ -23,7 +23,7 @@
 
 use indoc::indoc;
 use morel::eval::val::Val;
-use morel::rel::builder::{BuilderConfig, RelBuilder, SortKey};
+use morel::rel::builder::{BuilderConfig, RelBuilder, RelError, SortKey};
 use morel::rel::display::explain;
 use morel::rel::schema::scott_schema;
 use morel::rel::{Direction, JoinType, NullDirection, bool_type, int_type};
@@ -51,7 +51,7 @@ macro_rules! assert_plan {
 fn test_scan() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
 }
 
@@ -59,7 +59,7 @@ fn test_scan() {
 fn test_scan_qualified_table() {
     let mut b = builder();
     b.scan(&["scott", "DEPT"]);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(plan, "LogicalTableScan(table=[[scott, DEPT]])");
 }
 
@@ -73,7 +73,7 @@ fn test_scan_filter_true() {
     b.scan(&["scott", "EMP"]);
     let cond = b.literal_bool(true);
     b.filter(cond);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     // Filter(true) is simplified away.
     assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
 }
@@ -84,7 +84,7 @@ fn test_scan_filter_trivially_false() {
     b.scan(&["scott", "EMP"]);
     let cond = b.literal_bool(false);
     b.filter(cond);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     // Filter(false) becomes empty Values.
     assert_plan!(plan, "LogicalValues(tuples=[[]])");
 }
@@ -93,11 +93,11 @@ fn test_scan_filter_trivially_false() {
 fn test_scan_filter_equals() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    let lhs = b.field("DEPTNO");
+    let lhs = b.field("DEPTNO").unwrap();
     let rhs = b.literal_int(20);
     let cond = b.equals(lhs, rhs);
     b.filter(cond);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -111,11 +111,11 @@ fn test_scan_filter_equals() {
 fn test_scan_filter_greater_than() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    let lhs = b.field("SAL");
+    let lhs = b.field("SAL").unwrap();
     let rhs = b.literal_int(1000);
     let cond = b.gt(lhs, rhs);
     b.filter(cond);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -129,11 +129,11 @@ fn test_scan_filter_greater_than() {
 fn test_scan_filter_or() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    let lhs = b.gt(b.field("SAL"), b.literal_int(1000));
-    let rhs = b.equals(b.field("DEPTNO"), b.literal_int(20));
+    let lhs = b.gt(b.field("SAL").unwrap(), b.literal_int(1000));
+    let rhs = b.equals(b.field("DEPTNO").unwrap(), b.literal_int(20));
     let cond = b.or(lhs, rhs);
     b.filter(cond);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -151,9 +151,9 @@ fn test_scan_filter_or() {
 fn test_project() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    let exprs = vec![b.field("EMPNO"), b.field("ENAME")];
+    let exprs = vec![b.field("EMPNO").unwrap(), b.field("ENAME").unwrap()];
     b.project(exprs);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -168,9 +168,9 @@ fn test_project_identity() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     // Identity project over all 8 columns — should be eliminated.
-    let exprs: Vec<_> = (0..8).map(|i| b.field_ordinal(i)).collect();
+    let exprs: Vec<_> = (0..8).map(|i| b.field_ordinal(i).unwrap()).collect();
     b.project(exprs);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
 }
 
@@ -180,7 +180,7 @@ fn test_project_identity_with_fields_rename() {
     // an identity project; it must be preserved.
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    let exprs: Vec<_> = (0..8).map(|i| b.field_ordinal(i)).collect();
+    let exprs: Vec<_> = (0..8).map(|i| b.field_ordinal(i).unwrap()).collect();
     let names: Vec<String> = vec![
         "EMPNO".into(),
         "NAME".into(), // renamed from ENAME
@@ -192,7 +192,7 @@ fn test_project_identity_with_fields_rename() {
         "DEPTNO".into(),
     ];
     b.project_named(exprs, names);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -217,7 +217,7 @@ fn test_values() {
             vec![Val::Int(2), Val::String("y".into())],
         ],
     );
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(plan, "LogicalValues(tuples=[[{ 1, 'x' }, { 2, 'y' }]])");
 }
 
@@ -229,7 +229,7 @@ fn test_empty() {
         ("B".to_string(), bool_type()),
     ];
     b.empty(row_type);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(plan, "LogicalValues(tuples=[[]])");
 }
 
@@ -242,12 +242,12 @@ fn test_sort() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let key = SortKey {
-        expr: b.field("SAL"),
+        expr: b.field("SAL").unwrap(),
         direction: Direction::Ascending,
         null_direction: NullDirection::Unspecified,
     };
     b.sort(&[key]);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -263,7 +263,7 @@ fn test_trivial_sort() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     b.sort(&[]);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
 }
 
@@ -273,17 +273,17 @@ fn test_sort_duplicate() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let k1 = SortKey {
-        expr: b.field("SAL"),
+        expr: b.field("SAL").unwrap(),
         direction: Direction::Ascending,
         null_direction: NullDirection::Unspecified,
     };
     let k2 = SortKey {
-        expr: b.field("SAL"),
+        expr: b.field("SAL").unwrap(),
         direction: Direction::Descending,
         null_direction: NullDirection::Unspecified,
     };
     b.sort(&[k1, k2]);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -298,9 +298,9 @@ fn test_sort_by_expression() {
     // Sort by NULLS LAST.
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    let key = b.nulls_last(b.field("SAL"));
+    let key = b.nulls_last(b.field("SAL").unwrap());
     b.sort(&[key]);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -315,7 +315,7 @@ fn test_limit() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     b.limit(None, Some(10));
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -329,9 +329,9 @@ fn test_limit() {
 fn test_sort_limit() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    let key = b.desc(b.field("SAL"));
+    let key = b.desc(b.field("SAL").unwrap());
     b.sort_limit(Some(5), Some(3), &[key]);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -347,7 +347,7 @@ fn test_sort_limit0() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     b.sort_limit(None, Some(0), &[]);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(plan, "LogicalValues(tuples=[[]])");
 }
 
@@ -356,7 +356,7 @@ fn test_sort_offset_limit() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     b.limit(Some(10), Some(5));
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -379,7 +379,7 @@ fn test_rename() {
         "department_name".to_string(),
         "location".to_string(),
     ]);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -399,7 +399,7 @@ fn test_rename_values() {
         vec![vec![Val::Int(1), Val::String("x".into())]],
     );
     b.rename(vec!["col1".to_string(), "col2".to_string()]);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -414,12 +414,12 @@ fn test_asc_with_default_null_direction() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let key = SortKey {
-        expr: b.field("SAL"),
+        expr: b.field("SAL").unwrap(),
         direction: Direction::Ascending,
         null_direction: NullDirection::Unspecified,
     };
     b.sort(&[key]);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -433,9 +433,9 @@ fn test_asc_with_default_null_direction() {
 fn test_desc_with_default_null_direction() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    let key = b.desc(b.field("SAL"));
+    let key = b.desc(b.field("SAL").unwrap());
     b.sort(&[key]);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -453,10 +453,10 @@ fn test_desc_with_default_null_direction() {
 fn test_aggregate() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    let gk = b.group_key(vec![b.field("DEPTNO")]);
+    let gk = b.group_key(vec![b.field("DEPTNO").unwrap()]);
     let aggs = vec![b.count_star().as_("C")];
     b.aggregate(&gk, aggs);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -470,10 +470,11 @@ fn test_aggregate() {
 fn test_aggregate2() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    let gk = b.group_key(vec![b.field("DEPTNO"), b.field("JOB")]);
+    let gk =
+        b.group_key(vec![b.field("DEPTNO").unwrap(), b.field("JOB").unwrap()]);
     let aggs = vec![b.count_star().as_("C"), b.sum("SAL").as_("TOTAL_SAL")];
     b.aggregate(&gk, aggs);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -491,7 +492,7 @@ fn test_aggregate5() {
     let gk = b.group_key(vec![]);
     let aggs = vec![b.count_star().as_("C"), b.sum("SAL").as_("S")];
     b.aggregate(&gk, aggs);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -506,12 +507,12 @@ fn test_aggregate_filter() {
     // aggregate with a FILTER clause (simulated by pre-filtering).
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    let cond = b.gt(b.field("SAL"), b.literal_int(1000));
+    let cond = b.gt(b.field("SAL").unwrap(), b.literal_int(1000));
     b.filter(cond);
-    let gk = b.group_key(vec![b.field("DEPTNO")]);
+    let gk = b.group_key(vec![b.field("DEPTNO").unwrap()]);
     let aggs = vec![b.count_star().as_("C")];
     b.aggregate(&gk, aggs);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -527,7 +528,7 @@ fn test_distinct() {
     let mut b = builder();
     b.scan(&["scott", "DEPT"]);
     b.distinct();
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -546,13 +547,13 @@ fn test_project_join() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     b.scan(&["scott", "DEPT"]);
-    let lhs = b.field2(1, "DEPTNO");
-    let rhs = b.field2(0, "DEPTNO");
+    let lhs = b.field2(1, "DEPTNO").unwrap();
+    let rhs = b.field2(0, "DEPTNO").unwrap();
     let cond = b.equals(lhs, rhs);
     b.join(JoinType::Inner, cond);
-    let exprs = vec![b.field("ENAME"), b.field("DNAME")];
+    let exprs = vec![b.field("ENAME").unwrap(), b.field("DNAME").unwrap()];
     b.project(exprs);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -571,11 +572,11 @@ fn test_alias() {
     b.as_("e");
     b.scan(&["scott", "DEPT"]);
     b.as_("d");
-    let lhs = b.field2(1, "DEPTNO");
-    let rhs = b.field2(0, "DEPTNO");
+    let lhs = b.field2(1, "DEPTNO").unwrap();
+    let rhs = b.field2(0, "DEPTNO").unwrap();
     let cond = b.equals(lhs, rhs);
     b.join(JoinType::Inner, cond);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -596,7 +597,7 @@ fn test_union_project_values() {
     b.values(&["X", "Y"], vec![vec![Val::Int(1), Val::Int(2)]]);
     b.values(&["X", "Y"], vec![vec![Val::Int(3), Val::Int(4)]]);
     b.union(false);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -614,7 +615,7 @@ fn test_union_alias() {
     b.scan(&["scott", "EMP"]);
     b.scan(&["scott", "EMP"]);
     b.union(true);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -640,7 +641,7 @@ fn test_filter_no_simplify() {
     b.scan(&["scott", "EMP"]);
     let cond = b.literal_bool(true);
     b.filter(cond);
-    let plan = b.build();
+    let plan = b.build().unwrap();
     assert_plan!(
         plan,
         indoc! {"
@@ -648,4 +649,68 @@ fn test_filter_no_simplify() {
               LogicalTableScan(table=[[scott, EMP]])
         "}
     );
+}
+
+// -----------------------------------------------------------------------
+// Error handling (Task 9)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_scan_invalid_table() {
+    let mut b = builder();
+    b.scan(&["scott", "NOSUCHtable"]);
+    assert!(matches!(b.build(), Err(RelError::TableNotFound(_))));
+}
+
+#[test]
+fn test_scan_invalid_schema() {
+    let mut b = builder();
+    b.scan(&["noschema", "EMP"]);
+    assert!(matches!(b.build(), Err(RelError::TableNotFound(_))));
+}
+
+#[test]
+fn test_bad_field_name() {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    assert!(matches!(
+        b.field("NOSUCHFIELD"),
+        Err(RelError::FieldNotFound(_))
+    ));
+}
+
+#[test]
+fn test_bad_field_ordinal() {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    // EMP has 8 columns (ordinals 0–7); ordinal 99 is out of range.
+    assert!(matches!(
+        b.field_ordinal(99),
+        Err(RelError::FieldOrdinalOutOfRange { .. })
+    ));
+}
+
+#[test]
+fn test_filter_non_boolean_condition() {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let cond = b.literal_int(1); // int, not bool
+    b.filter(cond);
+    assert!(matches!(b.build(), Err(RelError::NonBooleanCondition(_))));
+}
+
+#[test]
+fn test_aggregate_group_key_out_of_range() {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    // "NOSUCHCOL" does not exist in EMP.
+    let gk = b.group_key(vec![b.field("NOSUCHCOL").unwrap_or_else(|_| {
+        // Supply a syntactically valid but semantically invalid expr.
+        morel::compile::core::Expr::Identifier(
+            Box::new(int_type()),
+            "NOSUCHCOL".to_string(),
+        )
+    })]);
+    b.aggregate(&gk, vec![]);
+    assert!(matches!(b.build(), Err(RelError::InvalidGroupKey(_))));
 }

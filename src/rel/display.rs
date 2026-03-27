@@ -226,22 +226,7 @@ pub(crate) fn write_expr(
     inputs: &[&[(String, Type)]],
 ) -> fmt::Result {
     match expr {
-        Expr::Literal(_, val) => write_val(f, val),
-        Expr::Identifier(_, name) => {
-            // Resolve field name to a concatenated ordinal.
-            let mut base = 0usize;
-            for input in inputs {
-                for (i, (col, _)) in input.iter().enumerate() {
-                    if col == name {
-                        return write!(f, "${}", base + i);
-                    }
-                }
-                base += input.len();
-            }
-            // Not found in any input — emit as-is (e.g. an operator
-            // name that appeared in a non-function position).
-            write!(f, "{}", name)
-        }
+        // lint: sort until '#}' where '##[A-Z]'
         Expr::Apply(_, func, arg, _) => {
             // Try to match binary op: Apply(Apply(Identifier(op),a),b)
             if let Expr::Apply(_, inner_f, left, _) = func.as_ref()
@@ -267,6 +252,22 @@ pub(crate) fn write_expr(
             write_expr(f, arg, inputs)?;
             write!(f, ")")
         }
+        Expr::Identifier(_, name) => {
+            // Resolve field name to a concatenated ordinal.
+            let mut base = 0usize;
+            for input in inputs {
+                for (i, (col, _)) in input.iter().enumerate() {
+                    if col == name {
+                        return write!(f, "${}", base + i);
+                    }
+                }
+                base += input.len();
+            }
+            // Not found in any input — emit as-is (e.g. an operator
+            // name that appeared in a non-function position).
+            write!(f, "{}", name)
+        }
+        Expr::Literal(_, val) => write_val(f, val),
         // Other Expr variants are not produced by RelBuilder; emit ?
         _ => write!(f, "?"),
     }
@@ -286,12 +287,13 @@ fn write_expr_unary(
 
 fn write_val(f: &mut String, val: &Val) -> fmt::Result {
     match val {
+        // lint: sort until '#}' where '##[A-Z]'
         Val::Bool(b) => write!(f, "{}", b),
+        Val::Char(c) => write!(f, "'{}'", c),
         Val::Int(i) => write!(f, "{}", i),
         Val::Real(r) => write!(f, "{}", r),
         Val::String(s) => write!(f, "'{}'", s),
         Val::Unit => write!(f, "null"),
-        Val::Char(c) => write!(f, "'{}'", c),
         _ => write!(f, "{}", val),
     }
 }
@@ -299,6 +301,7 @@ fn write_val(f: &mut String, val: &Val) -> fmt::Result {
 /// Returns the Calcite display name for a binary operator, or `None`.
 fn binary_op_display(op: &str) -> Option<&'static str> {
     match op {
+        // lint: sort until '#}' where '##"'
         "*" => Some("*"),
         "+" => Some("+"),
         "-" => Some("-"),
@@ -341,6 +344,7 @@ fn write_agg_call(
 
     // Function name.
     let fn_name = match agg.agg {
+        // lint: sort until '#}' where '##[A-Z]'
         AggFunction::Avg => "AVG",
         AggFunction::Count | AggFunction::CountStar => "COUNT",
         AggFunction::Max => "MAX",
