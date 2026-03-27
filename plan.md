@@ -562,23 +562,23 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 4 — `RelBuilder` core: scan, values, filter, project
+### Task 4 — `RelBuilder` core: scan, values, filter, project ✓
   (`src/rel/builder.rs`)
 
-- [ ] Implement `RelBuilder` struct with `Vec<Frame>` stack and
+- [x] Implement `RelBuilder` struct with `Vec<Frame>` stack and
       `BuilderConfig`.
-- [ ] `scan(&[&str])`: looks up the schema, pushes `Rel::TableScan`.
-- [ ] `values(&[&str], &[Val])`: infers row type, pushes `Rel::Values`.
-- [ ] `empty(row_type)`: pushes zero-row `Rel::Values`.
-- [ ] Expression builders: `field`, `field_ordinal`, `literal`, `call`,
+- [x] `scan(&[&str])`: looks up the schema, pushes `Rel::TableScan`.
+- [x] `values(&[&str], &[Val])`: infers row type, pushes `Rel::Values`.
+- [x] `empty(row_type)`: pushes zero-row `Rel::Values`.
+- [x] Expression builders: `field`, `field_ordinal`, `literal`, `call`,
       `equals`, `not_equals`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `not`,
       `is_null`, `is_not_null`.
-- [ ] `filter(condition)`: applies filter-true/false simplifications,
+- [x] `filter(condition)`: applies filter-true/false simplifications,
       pushes `Rel::Filter`.
-- [ ] `project(exprs)` and `project_named(exprs, names)`: applies
+- [x] `project(exprs)` and `project_named(exprs, names)`: applies
       identity-project elimination, pushes `Rel::Project`.
-- [ ] `alias_expr(expr, name)` / `as_(alias)`.
-- [ ] `assert_plan!` test macro.
+- [x] `alias_expr(expr, name)` / `as_(alias)`.
+- [x] `assert_plan!` test macro.
 
 **Tests enabled (from `RelBuilderTest`):**
 `testScan`, `testScanQualifiedTable`, `testScanFilterTrue`,

@@ -38,8 +38,28 @@ use crate::compile::types::{PrimitiveType, Type};
 use crate::eval::code::Span;
 use crate::eval::val::Val;
 use crate::rel::schema::Schema;
-use crate::rel::{bool_type, int_type, string_type, Rel};
+use crate::rel::{
+    bool_type, int_type, string_type, Direction, FieldCollation,
+    NullDirection, Rel,
+};
 use std::sync::Arc;
+
+// -----------------------------------------------------------------------
+// SortKey
+// -----------------------------------------------------------------------
+
+/// A sort key: an expression plus direction and null ordering.
+///
+/// Constructed by [`RelBuilder::desc`], [`RelBuilder::nulls_first`], and
+/// [`RelBuilder::nulls_last`]; consumed by [`RelBuilder::sort`] and
+/// [`RelBuilder::sort_limit`].
+#[derive(Clone, Debug)]
+pub struct SortKey {
+    /// The expression to sort by (must be a field reference).
+    pub expr: Expr,
+    pub direction: Direction,
+    pub null_direction: NullDirection,
+}
 
 // -----------------------------------------------------------------------
 // BuilderConfig
@@ -326,6 +346,148 @@ impl RelBuilder {
     }
 
     // -------------------------------------------------------------------
+    // Sort / limit
+    // -------------------------------------------------------------------
+
+    /// Sorts the top-of-stack node by the given keys.
+    ///
+    /// Duplicate sort keys (same ordinal + direction) are eliminated.
+    /// If `keys` is empty, this is a no-op.
+    pub fn sort(&mut self, keys: &[SortKey]) -> &mut Self {
+        let row_type = self.peek_row_type().to_vec();
+        let collation = sort_keys_to_collation(keys, &row_type);
+        if collation.is_empty() {
+            return self;
+        }
+        let input = Box::new(self.build());
+        self.push(Rel::Sort {
+            input,
+            collation,
+            offset: None,
+            fetch: None,
+        })
+    }
+
+    /// Limits the top-of-stack node to at most `fetch` rows, optionally
+    /// skipping the first `offset` rows.
+    ///
+    /// Implemented as `Rel::Sort` with an empty collation.
+    pub fn limit(
+        &mut self,
+        offset: Option<usize>,
+        fetch: Option<usize>,
+    ) -> &mut Self {
+        let input = Box::new(self.build());
+        self.push(Rel::Sort {
+            input,
+            collation: vec![],
+            offset,
+            fetch,
+        })
+    }
+
+    /// Sorts and optionally limits the top-of-stack node.
+    ///
+    /// If `fetch` is `Some(0)`, produces an empty `Values` (no rows can
+    /// satisfy the limit) regardless of `keys` or `offset`.
+    pub fn sort_limit(
+        &mut self,
+        offset: Option<usize>,
+        fetch: Option<usize>,
+        keys: &[SortKey],
+    ) -> &mut Self {
+        if fetch == Some(0) {
+            let row_type = self.peek_row_type().to_vec();
+            let _ = self.build(); // discard input
+            return self.empty(row_type);
+        }
+        let row_type = self.peek_row_type().to_vec();
+        let collation = sort_keys_to_collation(keys, &row_type);
+        let input = Box::new(self.build());
+        self.push(Rel::Sort {
+            input,
+            collation,
+            offset,
+            fetch,
+        })
+    }
+
+    /// Renames the output columns of the top-of-stack node.
+    ///
+    /// Equivalent to a `Project` that passes all columns through but
+    /// changes their names. If `names` matches the existing column names,
+    /// this is a no-op.
+    pub fn rename(&mut self, names: Vec<String>) -> &mut Self {
+        let input_row_type = self.peek_row_type().to_vec();
+        assert_eq!(
+            names.len(),
+            input_row_type.len(),
+            "rename: expected {} names, got {}",
+            input_row_type.len(),
+            names.len()
+        );
+        // Check if renaming would actually change anything.
+        let unchanged = names
+            .iter()
+            .zip(input_row_type.iter())
+            .all(|(new, (old, _))| new == old);
+        if unchanged {
+            return self;
+        }
+        let exprs: Vec<Expr> = input_row_type
+            .iter()
+            .map(|(name, ty)| {
+                Expr::Identifier(
+                    Box::new(ty.clone()),
+                    name.clone(),
+                )
+            })
+            .collect();
+        let row_type: Vec<(String, Type)> = names
+            .into_iter()
+            .zip(input_row_type.iter())
+            .map(|(name, (_, ty))| (name, ty.clone()))
+            .collect();
+        let input = Box::new(self.build());
+        self.push(Rel::Project {
+            input,
+            exprs,
+            row_type,
+        })
+    }
+
+    // -------------------------------------------------------------------
+    // Sort-key wrappers
+    // -------------------------------------------------------------------
+
+    /// Wraps `expr` as a descending sort key with default null ordering.
+    pub fn desc(&self, expr: Expr) -> SortKey {
+        SortKey {
+            expr,
+            direction: Direction::Descending,
+            null_direction: NullDirection::Unspecified,
+        }
+    }
+
+    /// Wraps `expr` as an ascending sort key with NULLS FIRST.
+    pub fn nulls_first(&self, expr: Expr) -> SortKey {
+        SortKey {
+            expr,
+            direction: Direction::Ascending,
+            null_direction: NullDirection::First,
+        }
+    }
+
+    /// Wraps `expr` as an ascending sort key with NULLS LAST.
+    pub fn nulls_last(&self, expr: Expr) -> SortKey {
+        SortKey {
+            expr,
+            direction: Direction::Ascending,
+            null_direction: NullDirection::Last,
+        }
+    }
+
+    // -------------------------------------------------------------------
     // Expression builders
     // -------------------------------------------------------------------
 
@@ -472,6 +634,31 @@ impl RelBuilder {
 // -----------------------------------------------------------------------
 // Helper functions
 // -----------------------------------------------------------------------
+
+/// Converts `SortKey` list to `Vec<FieldCollation>`, resolving each
+/// expression to a column ordinal in `row_type`. Duplicate keys (same
+/// ordinal) are removed (first occurrence wins).
+fn sort_keys_to_collation(
+    keys: &[SortKey],
+    row_type: &[(String, Type)],
+) -> Vec<FieldCollation> {
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for key in keys {
+        if let Expr::Identifier(_, name) = &key.expr {
+            if let Some(index) = row_type.iter().position(|(n, _)| n == name) {
+                if seen.insert(index) {
+                    result.push(FieldCollation {
+                        index,
+                        direction: key.direction,
+                        null_direction: key.null_direction,
+                    });
+                }
+            }
+        }
+    }
+    result
+}
 
 /// Constructs a curried binary-operator application:
 /// `Apply(ret, Apply(fn_ty, Identifier(op), a), b)`.
@@ -765,6 +952,165 @@ mod tests {
             plan,
             "LogicalProject(employee_no=[$0], salary=[$5])\n  \
              LogicalTableScan(table=[[scott, EMP]])"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Sort / limit
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_sort() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let key = b.field("SAL");
+        b.sort(&[SortKey {
+            expr: key,
+            direction: Direction::Ascending,
+            null_direction: NullDirection::Unspecified,
+        }]);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalSort(sort0=[$5], dir0=[ASC])\n  \
+             LogicalTableScan(table=[[scott, EMP]])"
+        );
+    }
+
+    #[test]
+    fn test_sort_desc() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let key = b.desc(b.field("SAL"));
+        b.sort(&[key]);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalSort(sort0=[$5], dir0=[DESC])\n  \
+             LogicalTableScan(table=[[scott, EMP]])"
+        );
+    }
+
+    #[test]
+    fn test_trivial_sort() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        // Empty key list — no Sort node is pushed.
+        b.sort(&[]);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalTableScan(table=[[scott, EMP]])"
+        );
+    }
+
+    #[test]
+    fn test_sort_duplicate() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        // Duplicate key: second reference to SAL is dropped.
+        let k1 = SortKey {
+            expr: b.field("SAL"),
+            direction: Direction::Ascending,
+            null_direction: NullDirection::Unspecified,
+        };
+        let k2 = SortKey {
+            expr: b.field("SAL"),
+            direction: Direction::Descending,
+            null_direction: NullDirection::Unspecified,
+        };
+        b.sort(&[k1, k2]);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalSort(sort0=[$5], dir0=[ASC])\n  \
+             LogicalTableScan(table=[[scott, EMP]])"
+        );
+    }
+
+    #[test]
+    fn test_limit() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        b.limit(None, Some(10));
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalSort(fetch=[10])\n  \
+             LogicalTableScan(table=[[scott, EMP]])"
+        );
+    }
+
+    #[test]
+    fn test_sort_limit() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let key = b.desc(b.field("SAL"));
+        b.sort_limit(Some(5), Some(3), &[key]);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalSort(sort0=[$5], dir0=[DESC], \
+             offset=[5], fetch=[3])\n  \
+             LogicalTableScan(table=[[scott, EMP]])"
+        );
+    }
+
+    #[test]
+    fn test_sort_limit0() {
+        // fetch=0 → empty Values
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        b.sort_limit(None, Some(0), &[]);
+        let plan = b.build();
+        assert_plan!(plan, "LogicalValues(tuples=[[]])");
+    }
+
+    #[test]
+    fn test_sort_offset_limit() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        b.limit(Some(10), Some(5));
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalSort(offset=[10], fetch=[5])\n  \
+             LogicalTableScan(table=[[scott, EMP]])"
+        );
+    }
+
+    #[test]
+    fn test_rename() {
+        let mut b = builder();
+        b.scan(&["scott", "DEPT"]);
+        b.rename(vec![
+            "department_no".to_string(),
+            "department_name".to_string(),
+            "location".to_string(),
+        ]);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalProject(department_no=[$0], \
+             department_name=[$1], location=[$2])\n  \
+             LogicalTableScan(table=[[scott, DEPT]])"
+        );
+    }
+
+    #[test]
+    fn test_rename_no_change() {
+        // rename with same names → no Project node
+        let mut b = builder();
+        b.scan(&["scott", "DEPT"]);
+        b.rename(vec![
+            "DEPTNO".to_string(),
+            "DNAME".to_string(),
+            "LOC".to_string(),
+        ]);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalTableScan(table=[[scott, DEPT]])"
         );
     }
 }
