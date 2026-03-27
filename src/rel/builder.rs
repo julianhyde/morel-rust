@@ -39,8 +39,8 @@ use crate::eval::code::Span;
 use crate::eval::val::Val;
 use crate::rel::schema::Schema;
 use crate::rel::{
-    bool_type, int_type, string_type, Direction, FieldCollation,
-    NullDirection, Rel,
+    bool_type, int_type, string_type, AggCall, AggFunction, Direction,
+    FieldCollation, NullDirection, Rel,
 };
 use std::sync::Arc;
 
@@ -59,6 +59,51 @@ pub struct SortKey {
     pub expr: Expr,
     pub direction: Direction,
     pub null_direction: NullDirection,
+}
+
+// -----------------------------------------------------------------------
+// GroupKey
+// -----------------------------------------------------------------------
+
+/// Specifies the GROUP BY columns for [`RelBuilder::aggregate`].
+///
+/// Constructed by [`RelBuilder::group_key`].
+#[derive(Clone, Debug)]
+pub struct GroupKey {
+    /// Ordered list of grouping expressions (field references).
+    pub exprs: Vec<Expr>,
+}
+
+// -----------------------------------------------------------------------
+// AggCallDef
+// -----------------------------------------------------------------------
+
+/// A pending aggregate-function call, built by `count_star`, `sum`, etc.
+///
+/// Use `.as_(name)` and `.distinct()` to customise before passing to
+/// [`RelBuilder::aggregate`].
+#[derive(Clone, Debug)]
+pub struct AggCallDef {
+    pub agg: AggFunction,
+    /// Input column names (one per argument to the function).
+    pub arg_names: Vec<String>,
+    pub distinct: bool,
+    pub name: Option<String>,
+    pub filter: Option<Expr>,
+}
+
+impl AggCallDef {
+    /// Sets the output column name.
+    pub fn as_(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Makes the aggregate call DISTINCT.
+    pub fn distinct(mut self) -> Self {
+        self.distinct = true;
+        self
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -488,6 +533,178 @@ impl RelBuilder {
     }
 
     // -------------------------------------------------------------------
+    // Aggregate
+    // -------------------------------------------------------------------
+
+    /// Returns a `GroupKey` for `GROUP BY exprs`.
+    ///
+    /// Each expression must be a field reference to a column in the
+    /// current top-of-stack row type.
+    pub fn group_key(&self, exprs: Vec<Expr>) -> GroupKey {
+        GroupKey { exprs }
+    }
+
+    /// Applies GROUP BY and aggregation to the top-of-stack node.
+    ///
+    /// `group_key` supplies the grouping columns. `agg_calls` supplies
+    /// the aggregate functions. The output row type is: grouping columns
+    /// first (in the order they appear in `group_key`), then aggregate
+    /// results.
+    pub fn aggregate(
+        &mut self,
+        group_key: &GroupKey,
+        agg_calls: Vec<AggCallDef>,
+    ) -> &mut Self {
+        let input_row_type = self.peek_row_type().to_vec();
+        // Resolve grouping expressions to ordinals.
+        let group_set: Vec<usize> = group_key
+            .exprs
+            .iter()
+            .filter_map(|e| {
+                if let Expr::Identifier(_, name) = e {
+                    input_row_type
+                        .iter()
+                        .position(|(n, _)| n == name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        // Build output row type: grouping columns first.
+        let mut row_type: Vec<(String, Type)> = group_set
+            .iter()
+            .map(|&i| input_row_type[i].clone())
+            .collect();
+        // Resolve agg calls.
+        let resolved: Vec<AggCall> = agg_calls
+            .into_iter()
+            .enumerate()
+            .map(|(i, def)| {
+                let args: Vec<usize> = def
+                    .arg_names
+                    .iter()
+                    .filter_map(|name| {
+                        input_row_type
+                            .iter()
+                            .position(|(n, _)| n == name)
+                    })
+                    .collect();
+                let return_type = agg_return_type(
+                    def.agg,
+                    &args,
+                    &input_row_type,
+                );
+                let name = def.name.unwrap_or_else(|| {
+                    format!("${}", group_set.len() + i)
+                });
+                row_type.push((name.clone(), return_type.clone()));
+                AggCall {
+                    agg: def.agg,
+                    args,
+                    distinct: def.distinct,
+                    filter: def.filter,
+                    name: Some(name),
+                    return_type,
+                }
+            })
+            .collect();
+        let group_sets = vec![group_set.clone()];
+        let input = Box::new(self.build());
+        self.push(Rel::Aggregate {
+            input,
+            group_set,
+            group_sets,
+            agg_calls: resolved,
+            row_type,
+        })
+    }
+
+    /// Deduplicates the top-of-stack node (equivalent to
+    /// `GROUP BY` all columns with no aggregates).
+    pub fn distinct(&mut self) -> &mut Self {
+        let row_type = self.peek_row_type().to_vec();
+        let all_exprs: Vec<Expr> = row_type
+            .iter()
+            .map(|(name, ty)| {
+                Expr::Identifier(
+                    Box::new(ty.clone()),
+                    name.clone(),
+                )
+            })
+            .collect();
+        let gk = GroupKey { exprs: all_exprs };
+        self.aggregate(&gk, vec![])
+    }
+
+    // --- agg-call constructors ------------------------------------------
+
+    /// Returns a `COUNT(*)` aggregate call definition.
+    pub fn count_star(&self) -> AggCallDef {
+        AggCallDef {
+            agg: AggFunction::CountStar,
+            arg_names: vec![],
+            distinct: false,
+            name: None,
+            filter: None,
+        }
+    }
+
+    /// Returns a `COUNT(col)` aggregate call definition.
+    pub fn count(&self, col: &str) -> AggCallDef {
+        AggCallDef {
+            agg: AggFunction::Count,
+            arg_names: vec![col.to_string()],
+            distinct: false,
+            name: None,
+            filter: None,
+        }
+    }
+
+    /// Returns a `SUM(col)` aggregate call definition.
+    pub fn sum(&self, col: &str) -> AggCallDef {
+        AggCallDef {
+            agg: AggFunction::Sum,
+            arg_names: vec![col.to_string()],
+            distinct: false,
+            name: None,
+            filter: None,
+        }
+    }
+
+    /// Returns a `MIN(col)` aggregate call definition.
+    pub fn min(&self, col: &str) -> AggCallDef {
+        AggCallDef {
+            agg: AggFunction::Min,
+            arg_names: vec![col.to_string()],
+            distinct: false,
+            name: None,
+            filter: None,
+        }
+    }
+
+    /// Returns a `MAX(col)` aggregate call definition.
+    pub fn max(&self, col: &str) -> AggCallDef {
+        AggCallDef {
+            agg: AggFunction::Max,
+            arg_names: vec![col.to_string()],
+            distinct: false,
+            name: None,
+            filter: None,
+        }
+    }
+
+    /// Returns an `AVG(col)` aggregate call definition.
+    pub fn avg(&self, col: &str) -> AggCallDef {
+        AggCallDef {
+            agg: AggFunction::Avg,
+            arg_names: vec![col.to_string()],
+            distinct: false,
+            name: None,
+            filter: None,
+        }
+    }
+
+    // -------------------------------------------------------------------
     // Expression builders
     // -------------------------------------------------------------------
 
@@ -634,6 +851,30 @@ impl RelBuilder {
 // -----------------------------------------------------------------------
 // Helper functions
 // -----------------------------------------------------------------------
+
+/// Returns the output type of an aggregate function.
+///
+/// `COUNT` and `COUNT(*)` return `int`; `AVG` returns `real`; all other
+/// aggregates return the type of their first argument.
+fn agg_return_type(
+    agg: AggFunction,
+    args: &[usize],
+    row_type: &[(String, Type)],
+) -> Type {
+    match agg {
+        AggFunction::Count | AggFunction::CountStar => int_type(),
+        AggFunction::Avg => {
+            Type::Primitive(crate::compile::types::PrimitiveType::Real)
+        }
+        _ => {
+            if let Some(&i) = args.first() {
+                row_type[i].1.clone()
+            } else {
+                int_type()
+            }
+        }
+    }
+}
 
 /// Converts `SortKey` list to `Vec<FieldCollation>`, resolving each
 /// expression to a column ordinal in `row_type`. Duplicate keys (same
@@ -1111,6 +1352,93 @@ mod tests {
         assert_plan!(
             plan,
             "LogicalTableScan(table=[[scott, DEPT]])"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Aggregate
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_aggregate() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let gk = b.group_key(vec![b.field("DEPTNO")]);
+        let aggs = vec![b.count_star().as_("C")];
+        b.aggregate(&gk, aggs);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalAggregate(group=[{7}], C=[COUNT(*)])\n  \
+             LogicalTableScan(table=[[scott, EMP]])"
+        );
+    }
+
+    #[test]
+    fn test_aggregate2() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let gk = b.group_key(vec![
+            b.field("DEPTNO"),
+            b.field("JOB"),
+        ]);
+        let aggs = vec![
+            b.count_star().as_("C"),
+            b.sum("SAL").as_("TOTAL_SAL"),
+        ];
+        b.aggregate(&gk, aggs);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalAggregate(group=[{7, 2}], C=[COUNT(*)], \
+             TOTAL_SAL=[SUM($5)])\n  \
+             LogicalTableScan(table=[[scott, EMP]])"
+        );
+    }
+
+    #[test]
+    fn test_aggregate_no_group() {
+        // No grouping key → single output row.
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let gk = b.group_key(vec![]);
+        let aggs = vec![b.count_star().as_("C")];
+        b.aggregate(&gk, aggs);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalAggregate(group=[{}], C=[COUNT(*)])\n  \
+             LogicalTableScan(table=[[scott, EMP]])"
+        );
+    }
+
+    #[test]
+    fn test_aggregate_count_distinct() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let gk = b.group_key(vec![b.field("DEPTNO")]);
+        let aggs =
+            vec![b.count("ENAME").distinct().as_("UNIQUE_EMPS")];
+        b.aggregate(&gk, aggs);
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalAggregate(group=[{7}], \
+             UNIQUE_EMPS=[COUNT(DISTINCT $1)])\n  \
+             LogicalTableScan(table=[[scott, EMP]])"
+        );
+    }
+
+    #[test]
+    fn test_distinct() {
+        let mut b = builder();
+        b.scan(&["scott", "DEPT"]);
+        b.distinct();
+        let plan = b.build();
+        assert_plan!(
+            plan,
+            "LogicalAggregate(group=[{0, 1, 2}])\n  \
+             LogicalTableScan(table=[[scott, DEPT]])"
         );
     }
 }

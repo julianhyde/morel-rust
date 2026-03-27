@@ -589,16 +589,16 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 5 — Sort and limit
+### Task 5 — Sort and limit ✓
 
-- [ ] `desc`, `nulls_first`, `nulls_last` wrappers (add marker info to
+- [x] `desc`, `nulls_first`, `nulls_last` wrappers (add marker info to
       `Expr` via `Apply` or a thin `SortKey` wrapper type used only
       within `RelBuilder`).
-- [ ] `sort(exprs)`: deduplicates keys, pushes `Rel::Sort`.
-- [ ] `limit(offset, fetch)`: pushes `Rel::Sort` with empty collation.
-- [ ] `sort_limit(offset, fetch, exprs)`: combined; applies
+- [x] `sort(exprs)`: deduplicates keys, pushes `Rel::Sort`.
+- [x] `limit(offset, fetch)`: pushes `Rel::Sort` with empty collation.
+- [x] `sort_limit(offset, fetch, exprs)`: combined; applies
       `fetch=Some(0)` → empty Values.
-- [ ] `rename(names)`: pushes `Rel::Project` that relabels fields.
+- [x] `rename(names)`: pushes `Rel::Project` that relabels fields.
 
 **Tests enabled:**
 `testSort`, `testTrivialSort`, `testSortDuplicate`,

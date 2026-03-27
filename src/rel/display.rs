@@ -355,21 +355,22 @@ fn write_agg_call(
         AggFunction::Min => "MIN",
         AggFunction::Sum => "SUM",
     };
-    write!(f, "{}", fn_name)?;
-    if agg.distinct {
-        write!(f, " DISTINCT")?;
-    }
-    write!(f, "(")?;
+    write!(f, "{}(", fn_name)?;
+    let _ = row_type; // args are input ordinals, not output
 
-    // Arguments (ordinals → column names from output row type).
-    for (i, &arg) in agg.args.iter().enumerate() {
-        if i > 0 {
-            write!(f, ", ")?;
+    if agg.agg == AggFunction::CountStar {
+        // COUNT(*) — star instead of an argument.
+        write!(f, "*")?;
+    } else {
+        if agg.distinct {
+            write!(f, "DISTINCT ")?;
         }
-        // Ordinals here are into the *input*, not the output.
-        // Display as $N.
-        let _ = row_type; // row_type is the agg output; args are input ordinals
-        write!(f, "${}", arg)?;
+        for (i, &arg) in agg.args.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "${}", arg)?;
+        }
     }
     write!(f, ")]")
 }
