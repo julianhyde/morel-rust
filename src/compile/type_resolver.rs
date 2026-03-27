@@ -313,6 +313,14 @@ pub struct TypeResolver {
     record_op: Op,
     fn_op: Op,
     actions: Vec<(Var, Rc<dyn Action>)>,
+
+    /// Shared scope for explicit type variables within a declaration.
+    ///
+    /// In SML, all occurrences of `'a` in `fun f (x: 'a) (y: 'a) = ...` refer
+    /// to the same type. This map is cleared at the start of each val-bind and
+    /// accumulates the fresh unifier variables allocated for each `'a`-style
+    /// annotation so that repeated occurrences resolve to the same variable.
+    decl_type_vars: BTreeMap<String, Var>,
 }
 
 impl Default for TypeResolver {
@@ -348,6 +356,7 @@ impl TypeResolver {
             overload_op,
             record_op,
             fn_op,
+            decl_type_vars: BTreeMap::new(),
         }
     }
 
@@ -2889,6 +2898,10 @@ impl TypeResolver {
         term_map: &mut Vec<(String, Term)>,
         v: &Var,
     ) -> Result<ValBind, Error> {
+        // Clear the shared explicit type-variable scope for this declaration.
+        // All occurrences of `'a` within one val-bind (e.g., multiple params)
+        // must resolve to the same unifier variable.
+        self.decl_type_vars.clear();
         let pat = self.deduce_pat_type(env, &val_bind.pat, term_map, &v);
         let expr = self.deduce_expr_type(env, &val_bind.expr, &v)?;
         Ok(ValBind {
@@ -3395,9 +3408,20 @@ impl<'a> TypeToTermConverter<'a> {
                     // Check if this variable already has a substitution.
                     if let Some(Term::Variable(vv)) = subst.get(type_var) {
                         vv
+                    } else if let Some(&vv) =
+                        self.type_resolver.decl_type_vars.get(name)
+                    {
+                        // Same name already seen in this declaration — reuse
+                        // the same unifier variable so both params are unified.
+                        vv
                     } else {
-                        // Truly free — allocate a fresh unifier variable.
-                        self.type_resolver.variable()
+                        // Truly free — allocate a fresh unifier variable and
+                        // register it for the declaration scope.
+                        let vv = self.type_resolver.variable();
+                        self.type_resolver
+                            .decl_type_vars
+                            .insert(name.clone(), vv);
+                        vv
                     }
                 };
                 self.type_resolver.equiv(&Term::Variable(v_var), v);

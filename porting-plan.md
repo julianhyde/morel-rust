@@ -125,7 +125,7 @@ finishes the rest.
 | ~~B5~~ | #306 | Nested block comments (`(* (* ... *) *)`) | Already supported by pest grammar. Fixed grammar bug: `(*)` inside a block comment is now a line comment, matching SML/NJ and morel-java. |
 | ~~B6~~ | #289 | Quoted type names (backtick-quoted identifiers in types) | Already works; tested in simple.smli lines 364-369. |
 | ~~B7~~ | #247 | Expressions with type annotations should translate correctly | Already works; ExprKind::Annotated passes through in resolver. |
-| B8 | #343 | Shared type-variable scope within declarations | Panic fixed: `TypeMap::get_type` now handles unconstrained canonical type vars (e.g. `fun f (x: 'a) = x`). Shared scope across multiple params with same var name still TODO. |
+| ~~B8~~ | #343 | Shared type-variable scope within declarations | Done. |
 
 ### Phase C — Operator overloading
 
@@ -233,6 +233,7 @@ across several releases (#202, #217, #341, #347).
 | #249 | `with` operator for records (`{r with f = v}`) | `e7ae0f4` | Resolver + type_resolver fix |
 | #291 | `typeof` operator | `cdd547f` | TypeKind::Expression handler in TypeToTermConverter |
 | #306 | Nested block comments | `2b23914` | Already in pest grammar; added test |
+| #343 | Shared type-variable scope within declarations | pending | `decl_type_vars` in TypeResolver; `mustBeList` workaround removed from test scripts |
 
 ---
 

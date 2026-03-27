@@ -286,6 +286,22 @@ end;
 :t fun choose b (x, y) = if b then x else y;
 > val choose : bool -> 'a * 'a -> 'a
 
+(*) [MOREL-343] Same type var constrains both params to same type
+fun same (x: 'a, y: 'a) = (x, y);
+> val same = fn : 'a * 'a -> 'a * 'a
+
+(*) Same type var across params and result list
+fun foo (x: 'a list, y: 'a) = x @ [y];
+> val foo = fn : 'a list * 'a -> 'a list
+
+(*) Same type var in param and return type
+fun bar (x: 'a) : 'a option = SOME x;
+> val bar = fn : 'a -> 'a option
+
+(*) Type var in val declaration
+val myid: 'a -> 'a list = fn x => [x];
+> val myid = fn : 'a -> 'a list
+
 (*) Record types, including duplicate fields
 :t map #empno [{empno = 10, name = "Shaggy"}];
 > val it : int list
