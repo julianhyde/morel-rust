@@ -172,4 +172,8 @@ it 5;
 (op @) ([1,2],[3,4]);
 > val it = [1,2,3,4] : int list
 
+(*) Nested block comments ([MOREL-306])
+(* outer (* inner *) still outer *) 1 + 2;
+> val it = 3 : int
+
 (*) End misc.smli
