@@ -15,15 +15,11 @@
 // language governing permissions and limitations under the
 // License.
 
-pub mod compile;
-pub mod eval;
-pub mod rel;
-pub mod shell;
-pub mod syntax;
-pub mod unify;
+//! Relational algebra module.
+//!
+//! Provides a [`Rel`] enum of logical relational operators and a
+//! [`builder::RelBuilder`] for constructing query plans, modelled on
+//! Apache Calcite's `RelNode` and `RelBuilder`.
 
-#[cfg(target_arch = "wasm32")]
-pub mod wasm;
-
-#[cfg(target_arch = "wasm32")]
-pub use wasm::MorelShell;
+// lint: sort until '^$' erase 'pub '
+pub mod schema;
