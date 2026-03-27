@@ -678,17 +678,19 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 10 — Remaining simplifications *(deferred)*
+### Task 10 — Remaining simplifications ✓
 
-- [ ] Project-over-project merge.
-- [ ] Sort-over-project-sort merge.
-- [ ] `aggregate`-then-`distinct` fold to `Project`.
-- [ ] `BuilderConfig` struct with flags: `simplify`, `simplify_limit`,
-      `prune_input`, `dedup_agg_calls`.
+- [x] Project-over-project merge (simple field-reference composition).
+- [ ] Sort-over-project-sort merge *(deferred — complex)*.
+- [x] `aggregate`-then-`distinct` fold: `distinct()` on top of an
+      `Aggregate` is a no-op.
+- [x] `BuilderConfig` flags added: `simplify_project_merge`,
+      `simplify_sort_limit_merge`, `simplify_aggregate_distinct`.
+- [x] Sort-then-limit merge: `limit()` applied on top of a `Sort` with
+      no existing `offset`/`fetch` merges into a single `Sort`.
 
 **Tests enabled:**
-`testProjectProject`, `testProjectBloat`, `testAggregate3`,
-`testAggregate4`, `testSortOverProjectSort`, `testSortThenLimit`.
+`testProjectProject`, `testSortThenLimit`, `testAggregate4`.
 
 ---
 

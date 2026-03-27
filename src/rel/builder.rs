@@ -172,6 +172,13 @@ pub struct BuilderConfig {
     pub simplify_filter_false: bool,
     /// Simplify `Project(identity, input)` → `input`.
     pub simplify_project_identity: bool,
+    /// Merge consecutive `Project` nodes into one.
+    pub simplify_project_merge: bool,
+    /// Merge `limit()` applied over a `Sort` into a single `Sort` node.
+    pub simplify_sort_limit_merge: bool,
+    /// Eliminate `distinct()` applied directly to an `Aggregate` node
+    /// (aggregate already produces distinct rows per group key).
+    pub simplify_aggregate_distinct: bool,
 }
 
 impl Default for BuilderConfig {
@@ -180,6 +187,9 @@ impl Default for BuilderConfig {
             simplify_filter_true: true,
             simplify_filter_false: true,
             simplify_project_identity: true,
+            simplify_project_merge: true,
+            simplify_sort_limit_merge: true,
+            simplify_aggregate_distinct: true,
         }
     }
 }
@@ -435,6 +445,30 @@ impl RelBuilder {
         {
             return self;
         }
+        // Project-over-project merge: compose the two projections into one.
+        if self.config.simplify_project_merge {
+            let composed = match self.stack.last().map(|f| &f.rel) {
+                Some(Rel::Project {
+                    exprs: inner_exprs,
+                    row_type: inner_row_type,
+                    ..
+                }) => try_compose_projects(&exprs, inner_exprs, inner_row_type),
+                _ => None,
+            };
+            if let Some(composed_exprs) = composed {
+                let inner_frame = self.stack.pop().unwrap();
+                if let Rel::Project {
+                    input: inner_input, ..
+                } = inner_frame.rel
+                {
+                    return self.push(Rel::Project {
+                        input: inner_input,
+                        exprs: composed_exprs,
+                        row_type,
+                    });
+                }
+            }
+        }
         let input = Box::new(self.build().expect("project: empty stack"));
         self.push(Rel::Project {
             input,
@@ -506,12 +540,40 @@ impl RelBuilder {
     /// Limits the top-of-stack node to at most `fetch` rows, optionally
     /// skipping the first `offset` rows.
     ///
-    /// Implemented as `Rel::Sort` with an empty collation.
+    /// Implemented as `Rel::Sort` with an empty collation. If
+    /// `simplify_sort_limit_merge` is set and the top-of-stack is already
+    /// a `Sort` with no existing `offset` or `fetch`, the two nodes are
+    /// merged into one.
     pub fn limit(
         &mut self,
         offset: Option<usize>,
         fetch: Option<usize>,
     ) -> &mut Self {
+        // Sort-then-limit merge: absorb limit into an existing Sort.
+        if self.config.simplify_sort_limit_merge {
+            let can_merge = matches!(
+                self.stack.last().map(|f| &f.rel),
+                Some(Rel::Sort {
+                    offset: None,
+                    fetch: None,
+                    ..
+                })
+            );
+            if can_merge {
+                let frame = self.stack.pop().unwrap();
+                if let Rel::Sort {
+                    input, collation, ..
+                } = frame.rel
+                {
+                    return self.push(Rel::Sort {
+                        input,
+                        collation,
+                        offset,
+                        fetch,
+                    });
+                }
+            }
+        }
         let input = Box::new(self.build().expect("limit: empty stack"));
         self.push(Rel::Sort {
             input,
@@ -709,7 +771,19 @@ impl RelBuilder {
 
     /// Deduplicates the top-of-stack node (equivalent to
     /// `GROUP BY` all columns with no aggregates).
+    ///
+    /// If `simplify_aggregate_distinct` is set and the top-of-stack node
+    /// is already a `Rel::Aggregate`, the `distinct()` is a no-op because
+    /// every aggregate already produces at most one row per group key.
     pub fn distinct(&mut self) -> &mut Self {
+        if self.config.simplify_aggregate_distinct
+            && matches!(
+                self.stack.last().map(|f| &f.rel),
+                Some(Rel::Aggregate { .. })
+            )
+        {
+            return self;
+        }
         let row_type = self.peek_row_type().to_vec();
         let all_exprs: Vec<Expr> = row_type
             .iter()
@@ -1216,6 +1290,31 @@ fn expr_name(expr: &Expr, row_type: &[(String, Type)]) -> Option<String> {
         .iter()
         .any(|(n, _)| n == name)
         .then(|| name.clone())
+}
+
+/// Tries to compose an outer projection on top of an inner projection.
+///
+/// Returns `Some(composed)` when every outer expression is a simple field
+/// reference (`Identifier`) to one of the inner project's output columns;
+/// the corresponding inner expression is substituted. Returns `None` if
+/// any outer expression is not a simple field reference (e.g. computed).
+fn try_compose_projects(
+    outer_exprs: &[Expr],
+    inner_exprs: &[Expr],
+    inner_row_type: &[(String, Type)],
+) -> Option<Vec<Expr>> {
+    outer_exprs
+        .iter()
+        .map(|e| {
+            if let Expr::Identifier(_, name) = e {
+                let idx =
+                    inner_row_type.iter().position(|(n, _)| n == name)?;
+                Some(inner_exprs[idx].clone())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Returns `true` if `exprs` is the identity projection for `row_type`:

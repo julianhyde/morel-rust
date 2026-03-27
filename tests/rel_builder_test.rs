@@ -688,6 +688,67 @@ fn test_filter_no_simplify() -> Result<(), RelError> {
 }
 
 // -----------------------------------------------------------------------
+// Simplifications (Task 10)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_project_project() -> Result<(), RelError> {
+    // Project over project → merged into a single project.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.project(vec![b.field("EMPNO")?, b.field("ENAME")?]);
+    b.project(vec![b.field("ENAME")?]);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(ENAME=[$1])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_sort_then_limit() -> Result<(), RelError> {
+    // sort() then limit() → merged into a single Sort with collation + fetch.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let key = b.desc(b.field("SAL")?);
+    b.sort(&[key]);
+    b.limit(Some(2), Some(10));
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalSort(sort0=[$5], dir0=[DESC], offset=[2], fetch=[10])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_aggregate4() -> Result<(), RelError> {
+    // distinct() after aggregate() is eliminated (aggregate already
+    // produces at most one row per group key).
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![b.field("DEPTNO")?]);
+    b.aggregate(&gk, vec![b.count_star().as_("C")]);
+    b.distinct();
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalAggregate(group=[{7}], C=[COUNT(*)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------
 // Error handling (Task 9)
 // -----------------------------------------------------------------------
 
