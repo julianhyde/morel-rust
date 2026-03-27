@@ -22,6 +22,7 @@
 //! Apache Calcite's `RelNode` and `RelBuilder`.
 
 // lint: sort until '^$' erase 'pub '
+pub mod builder;
 pub mod display;
 pub mod schema;
 

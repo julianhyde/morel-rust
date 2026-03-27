@@ -550,13 +550,13 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 3 — Add `Expr::Scalar` to `compile::core`
+### Task 3 — Add `Expr::Scalar` to `compile::core` ✓
 
-- [ ] Add `Scalar(Box<Type>, Box<crate::rel::Rel>)` variant to
+- [x] Add `Scalar(Box<Type>, Box<crate::rel::Rel>)` variant to
       `core::Expr`.
-- [ ] Add `Scalar` arms (typically `unreachable!()` for now) to all
+- [x] Add `Scalar` arms (typically `unreachable!()` for now) to all
       existing `match` expressions on `Expr` in `compile/`, `eval/`.
-- [ ] Add `Expr::Scalar` → `"Scalar(…)"` to `core::Expr`'s `Display`.
+- [x] Add `Expr::Scalar` → `"Scalar(…)"` to `core::Expr`'s `Display`.
 
 **Tests enabled:** compile-time confirmation of new variant coverage.
 
