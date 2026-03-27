@@ -21,6 +21,7 @@
 //! Expected plan strings are Calcite-style indented text produced by
 //! [`morel::rel::display::explain`].
 
+use indoc::indoc;
 use morel::eval::val::Val;
 use morel::rel::builder::{BuilderConfig, RelBuilder, SortKey};
 use morel::rel::display::explain;
@@ -99,8 +100,10 @@ fn test_scan_filter_equals() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalFilter(condition=[=($7, 20)])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalFilter(condition=[=($7, 20)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -115,8 +118,10 @@ fn test_scan_filter_greater_than() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalFilter(condition=[>($5, 1000)])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalFilter(condition=[>($5, 1000)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -131,8 +136,10 @@ fn test_scan_filter_or() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalFilter(condition=[OR(>($5, 1000), =($7, 20))])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalFilter(condition=[OR(>($5, 1000), =($7, 20))])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -149,8 +156,10 @@ fn test_project() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalProject(EMPNO=[$0], ENAME=[$1])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalProject(EMPNO=[$0], ENAME=[$1])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -186,10 +195,11 @@ fn test_project_identity_with_fields_rename() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalProject(EMPNO=[$0], NAME=[$1], JOB=[$2], \
-         MGR=[$3], HIREDATE=[$4], SAL=[$5], COMM=[$6], \
-         DEPTNO=[$7])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalProject(EMPNO=[$0], NAME=[$1], JOB=[$2], MGR=[$3], \
+                           HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -240,8 +250,10 @@ fn test_sort() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalSort(sort0=[$5], dir0=[ASC])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalSort(sort0=[$5], dir0=[ASC])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -274,8 +286,10 @@ fn test_sort_duplicate() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalSort(sort0=[$5], dir0=[ASC])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalSort(sort0=[$5], dir0=[ASC])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -289,8 +303,10 @@ fn test_sort_by_expression() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalSort(sort0=[$5], dir0=[ASC-nullsLast])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalSort(sort0=[$5], dir0=[ASC-nullsLast])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -302,8 +318,10 @@ fn test_limit() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalSort(fetch=[10])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalSort(fetch=[10])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -316,9 +334,10 @@ fn test_sort_limit() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalSort(sort0=[$5], dir0=[DESC], offset=[5], \
-         fetch=[3])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalSort(sort0=[$5], dir0=[DESC], offset=[5], fetch=[3])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -340,8 +359,10 @@ fn test_sort_offset_limit() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalSort(offset=[10], fetch=[5])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalSort(offset=[10], fetch=[5])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -361,9 +382,11 @@ fn test_rename() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalProject(department_no=[$0], \
-         department_name=[$1], location=[$2])\n  \
-         LogicalTableScan(table=[[scott, DEPT]])"
+        indoc! {"
+            LogicalProject(department_no=[$0], \
+                           department_name=[$1], location=[$2])
+              LogicalTableScan(table=[[scott, DEPT]])
+        "}
     );
 }
 
@@ -379,8 +402,10 @@ fn test_rename_values() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalProject(col1=[$0], col2=[$1])\n  \
-         LogicalValues(tuples=[[{ 1, 'x' }]])"
+        indoc! {"
+            LogicalProject(col1=[$0], col2=[$1])
+              LogicalValues(tuples=[[{ 1, 'x' }]])
+        "}
     );
 }
 
@@ -397,8 +422,10 @@ fn test_asc_with_default_null_direction() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalSort(sort0=[$5], dir0=[ASC])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalSort(sort0=[$5], dir0=[ASC])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -411,8 +438,10 @@ fn test_desc_with_default_null_direction() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalSort(sort0=[$5], dir0=[DESC])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalSort(sort0=[$5], dir0=[DESC])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -430,8 +459,10 @@ fn test_aggregate() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalAggregate(group=[{7}], C=[COUNT(*)])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalAggregate(group=[{7}], C=[COUNT(*)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -445,9 +476,10 @@ fn test_aggregate2() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalAggregate(group=[{7, 2}], C=[COUNT(*)], \
-         TOTAL_SAL=[SUM($5)])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalAggregate(group=[{7, 2}], C=[COUNT(*)], TOTAL_SAL=[SUM($5)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -462,8 +494,10 @@ fn test_aggregate5() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalAggregate(group=[{}], C=[COUNT(*)], S=[SUM($5)])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalAggregate(group=[{}], C=[COUNT(*)], S=[SUM($5)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -480,9 +514,11 @@ fn test_aggregate_filter() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalAggregate(group=[{7}], C=[COUNT(*)])\n  \
-         LogicalFilter(condition=[>($5, 1000)])\n    \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalAggregate(group=[{7}], C=[COUNT(*)])
+              LogicalFilter(condition=[>($5, 1000)])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -494,8 +530,10 @@ fn test_distinct() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalAggregate(group=[{0, 1, 2}])\n  \
-         LogicalTableScan(table=[[scott, DEPT]])"
+        indoc! {"
+            LogicalAggregate(group=[{0, 1, 2}])
+              LogicalTableScan(table=[[scott, DEPT]])
+        "}
     );
 }
 
@@ -517,10 +555,12 @@ fn test_project_join() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalProject(ENAME=[$1], DNAME=[$9])\n  \
-         LogicalJoin(condition=[=($7, $8)], joinType=[inner])\n    \
-         LogicalTableScan(table=[[scott, EMP]])\n    \
-         LogicalTableScan(table=[[scott, DEPT]])"
+        indoc! {"
+            LogicalProject(ENAME=[$1], DNAME=[$9])
+              LogicalJoin(condition=[=($7, $8)], joinType=[inner])
+                LogicalTableScan(table=[[scott, EMP]])
+                LogicalTableScan(table=[[scott, DEPT]])
+        "}
     );
 }
 
@@ -538,9 +578,11 @@ fn test_alias() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalJoin(condition=[=($7, $8)], joinType=[inner])\n  \
-         LogicalTableScan(table=[[scott, EMP]])\n  \
-         LogicalTableScan(table=[[scott, DEPT]])"
+        indoc! {"
+            LogicalJoin(condition=[=($7, $8)], joinType=[inner])
+              LogicalTableScan(table=[[scott, EMP]])
+              LogicalTableScan(table=[[scott, DEPT]])
+        "}
     );
 }
 
@@ -557,9 +599,11 @@ fn test_union_project_values() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalUnion(all=[false])\n  \
-         LogicalValues(tuples=[[{ 1, 2 }]])\n  \
-         LogicalValues(tuples=[[{ 3, 4 }]])"
+        indoc! {"
+            LogicalUnion(all=[false])
+              LogicalValues(tuples=[[{ 1, 2 }]])
+              LogicalValues(tuples=[[{ 3, 4 }]])
+        "}
     );
 }
 
@@ -573,9 +617,11 @@ fn test_union_alias() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalUnion(all=[true])\n  \
-         LogicalTableScan(table=[[scott, EMP]])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalUnion(all=[true])
+              LogicalTableScan(table=[[scott, EMP]])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
 
@@ -597,7 +643,9 @@ fn test_filter_no_simplify() {
     let plan = b.build();
     assert_plan!(
         plan,
-        "LogicalFilter(condition=[true])\n  \
-         LogicalTableScan(table=[[scott, EMP]])"
+        indoc! {"
+            LogicalFilter(condition=[true])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
     );
 }
