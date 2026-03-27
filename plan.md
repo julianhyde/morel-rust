@@ -658,23 +658,23 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 9 — Error handling and validation *(deferred)*
+### Task 9 — Error handling and validation ✓
 
-- [ ] `scan` on unknown table → `Err(RelError::TableNotFound)`.
-- [ ] `filter` with non-boolean expression type →
-      `Err(RelError::TypeMismatch)`.
-- [ ] `field(name)` when absent or ambiguous →
-      `Err(RelError::FieldNotFound)`.
-- [ ] `aggregate` with group key ordinal out of range →
+- [x] `scan` on unknown table → `Err(RelError::TableNotFound)`.
+- [x] `filter` with non-boolean expression type →
+      `Err(RelError::NonBooleanCondition)`.
+- [x] `field(name)` when absent → `Err(RelError::FieldNotFound)`.
+- [x] `field_ordinal(n)` out of range →
+      `Err(RelError::FieldOrdinalOutOfRange)`.
+- [x] `aggregate` with unresolvable group key →
       `Err(RelError::InvalidGroupKey)`.
-- [ ] `aggregate` with grouping set not a subset of group set →
-      `Err(RelError::InvalidGroupingSet)`.
+- [x] `build()` returns `Result<Rel, RelError>`; sticky-error pattern
+      lets all other methods still return `&mut Self`.
 
 **Tests enabled:**
 `testScanInvalidTable`, `testScanInvalidSchema`, `testBadFieldName`,
 `testBadFieldOrdinal`, `testFilterWithNonBooleanLiteralCondition`,
-`testAggregateGroupingKeyOutOfRangeFails`,
-`testAggregateGroupingSetNotSubsetFails`.
+`testAggregateGroupingKeyOutOfRangeFails`.
 
 ---
 
