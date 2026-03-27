@@ -35,17 +35,15 @@ which commits the "Done" table covers and which Java features had landed.
 
 | Repo | Branch | Commit | Date |
 |------|--------|--------|------|
-| morel-rust (morel-rust.0) | `main` | `d99f5d1` | 2026-03-25 |
+| morel-rust (morel-rust.0) | `main` | `915856d` | 2026-03-26 |
 | morel-java (morel.0) | `main` | `9ee0581b` | 2026-03-25 |
 
 The morel-java `main` HEAD (`9ee0581b`) corresponds to the release after
 **0.8.0** (2025-11-23). The most recent release included in the plan is 0.8.0;
 any Java commits after `9ee0581b` are not yet reflected here.
 
-Branch `0008-query` (diverged from `main` at `86006ae`) contains additional
-work-in-progress: type-inference improvements for `group`/`compute`/`exists`/
-`forall`/`elements` (up to `334a656`), plus warning infrastructure (`d0d9eb4`).
-That work is recorded as TODO items A0 and A-warn below until it is merged.
+Branch `0008-query` has been merged into `main` via cherry-pick (commits
+`3d0acec`–`334a656`). Items A0a and A0b below are now done.
 
 ## How to read this table
 
@@ -97,8 +95,8 @@ These items exist on branch `0008-query` but have not yet been merged to
 
 | Seq | Java issue | Description | Rust ref | Notes |
 |-----|------------|-------------|----------|-------|
-| A0a | #273, #288 | Type inference for query steps: `group`, `compute`, `elements`, `exists`, `forall`, `distinct`, `order`, `skip`, `take` | `0008-query` @ `334a656` | Spread across commits `3d0acec`–`334a656` on that branch |
-| A0b | — | Warning infrastructure | `0008-query` @ `d0d9eb4` | Needed before surfacing type warnings to users |
+| ~~A0a~~ | #273, #288 | Type inference for query steps: `group`, `compute`, `elements`, `exists`, `forall`, `distinct`, `order`, `skip`, `take` | `334a656` | Cherry-picked to main; fixup `915856d` |
+| ~~A0b~~ | — | Warning infrastructure | `d0d9eb4` | Cherry-picked to main |
 
 ### Phase A — Complete query execution (current branch: 0008-query)
 
@@ -227,6 +225,8 @@ across several releases (#202, #217, #341, #347).
 | — | `Sys` structure (`plan`, `unset`, `clearEnv`, `showAll`) | `a2cab34` | Java #251, #260 |
 | #24 (rust) | `Relational` structure | `d7e601a` | |
 | #18 (rust) | Tune `Unifier` (persistent data structures) | `86006ae` | |
+| #273, #288 | Type inference for query steps (`group`, `compute`, `elements`, `exists`, `forall`, `distinct`, `order`, `skip`, `take`) | `334a656` | Commits `3d0acec`–`334a656`; fixup `915856d` |
+| — | Warning infrastructure | `d0d9eb4` | |
 
 ---
 

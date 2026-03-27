@@ -145,13 +145,13 @@ pub enum Code {
     /// expression.
     Fn(Arc<FrameDef>, Vec<(Code, Code)>),
 
+    /// `From(steps)` evaluates a query expression with the given steps.
+    From(Vec<QueryStep>),
+
     /// `FromRowSink(factory)` evaluates a query using push-based row sinks.
     /// The factory creates a fresh row sink pipeline for each evaluation.
     /// This matches the Java implementation, `Supplier<RowSink>`.
     FromRowSink(RowSinkFactory),
-
-    /// `From(steps)` evaluates a query expression with the given steps.
-    From(Vec<QueryStep>),
 
     /// `GetLocal(frame_def, slot)` returns the value of the `slot`th variable
     /// in the current stack frame.
