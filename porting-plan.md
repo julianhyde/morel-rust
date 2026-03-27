@@ -35,7 +35,7 @@ which commits the "Done" table covers and which Java features had landed.
 
 | Repo | Branch | Commit | Date |
 |------|--------|--------|------|
-| morel-rust (morel-rust.0) | `main` | `915856d` | 2026-03-26 |
+| morel-rust (morel-rust.0) | `main` | `e20ae30` | 2026-03-26 |
 | morel-java (morel.0) | `main` | `9ee0581b` | 2026-03-25 |
 
 The morel-java `main` HEAD (`9ee0581b`) corresponds to the release after
@@ -106,7 +106,7 @@ finishes the rest.
 
 | Seq | Java issue | Description | Notes |
 |-----|------------|-------------|-------|
-| A1 | #288, #304 | `group`/`compute` execution; `over` syntax; `elements` collection | Type inference already done. Port `relational.smli` group tests. |
+| ~~A1~~ | #288, #304 | `group`/`compute`/`elements` execution | `over` syntax requires C1 (operator overloading). |
 | A2 | (0.4+) | `distinct`, `order`, `skip`, `take` execution | Type inference already done. |
 | A3 | #253 | Set operators (`union`, `intersect`, `except`) as pipeline steps | Parsed. Port tests from `relational.smli`. |
 | A4 | #265, #276, #277 | `current` keyword, `ordinal` expression, `unorder` step | Parsed and type-inferred. Needs frame/row-index support. |
@@ -227,6 +227,7 @@ across several releases (#202, #217, #341, #347).
 | #18 (rust) | Tune `Unifier` (persistent data structures) | `86006ae` | |
 | #273, #288 | Type inference for query steps (`group`, `compute`, `elements`, `exists`, `forall`, `distinct`, `order`, `skip`, `take`) | `334a656` | Commits `3d0acec`–`334a656`; fixup `915856d` |
 | — | Warning infrastructure | `d0d9eb4` | |
+| #288, #304 | `group`/`compute`/`elements` execution | `e20ae30` | `over` syntax needs C1 first |
 
 ---
 
