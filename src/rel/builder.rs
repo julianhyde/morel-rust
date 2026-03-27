@@ -455,6 +455,13 @@ impl RelBuilder {
             drop(input);
             return self.empty(row_type);
         }
+        // Filter on empty input is always empty.
+        if matches!(
+            self.stack.last().map(|f| &f.rel),
+            Some(Rel::Values { rows, .. }) if rows.is_empty()
+        ) {
+            return self;
+        }
         let input = Box::new(self.build().expect("filter: empty stack"));
         self.push(Rel::Filter { input, condition })
     }
@@ -1199,8 +1206,24 @@ impl RelBuilder {
 
     // --- boolean operators ----------------------------------------------
 
-    /// Returns `a andalso b`.
+    /// Returns `a andalso b`, with constant folding:
+    /// - `AND(_, false)` or `AND(false, _)` → `false`
+    /// - `AND(x, true)` → `x`; `AND(true, x)` → `x`
+    /// - `AND(x, x)` → `x` (structural duplicate)
     pub fn and(&self, a: Expr, b: Expr) -> Expr {
+        if is_false(&a) || is_false(&b) {
+            return Expr::Literal(Box::new(bool_type()), Val::Bool(false));
+        }
+        if is_true(&b) {
+            return a;
+        }
+        if is_true(&a) {
+            return b;
+        }
+        // Structural duplicate: compare debug representations.
+        if format!("{:?}", a) == format!("{:?}", b) {
+            return a;
+        }
         binary_op("andalso", bool_type(), a, b)
     }
 

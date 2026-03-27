@@ -721,12 +721,12 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 13 — Filter AND/OR constant folding
+### Task 13 — Filter AND/OR constant folding ✓
 
-- [ ] `filter(AND(cond, false))` → `Values([])` (false wins in AND).
-- [ ] `filter(AND(cond, true))` → `filter(cond)` (true is identity in AND).
-- [ ] `filter(AND(cond, cond))` → `filter(cond)` (duplicate removal).
-- [ ] `filter()` on an empty `Values` input stays empty.
+- [x] `and(cond, false)` / `and(false, cond)` → `false`.
+- [x] `and(cond, true)` / `and(true, cond)` → `cond`.
+- [x] `and(x, x)` → `x` (structural duplicate via `Debug` comparison).
+- [x] `filter()` on an empty `Values` input is a no-op.
 
 **Tests enabled:**
 `testScanFilterAndFalse`, `testScanFilterAndTrue`,

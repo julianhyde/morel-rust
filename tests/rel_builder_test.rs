@@ -689,6 +689,82 @@ fn test_filter_no_simplify() -> Result<(), RelError> {
 }
 
 // -----------------------------------------------------------------------
+// Filter AND/OR constant folding (Task 13)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_scan_filter_and_false() -> Result<(), RelError> {
+    // AND(cond, false) → false → empty Values.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let cond = b.and(
+        b.gt(b.field("SAL")?, b.literal_int(1000)),
+        b.literal_bool(false),
+    );
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(plan, "LogicalValues(tuples=[[]])");
+    Ok(())
+}
+
+#[test]
+fn test_scan_filter_and_true() -> Result<(), RelError> {
+    // AND(cond, true) → cond.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let cond = b.and(
+        b.gt(b.field("SAL")?, b.literal_int(1000)),
+        b.literal_bool(true),
+    );
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[>($5, 1000)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_scan_filter_duplicate_and() -> Result<(), RelError> {
+    // AND(cond, cond) → cond (structural duplicate removed).
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let lhs = b.gt(b.field("SAL")?, b.literal_int(1000));
+    let rhs = b.gt(b.field("SAL")?, b.literal_int(1000));
+    let cond = b.and(lhs, rhs);
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[>($5, 1000)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_filter_empty() -> Result<(), RelError> {
+    // filter() on an empty Values is a no-op: stays empty.
+    let mut b = builder();
+    let row_type = vec![
+        ("A".to_string(), int_type()),
+        ("B".to_string(), bool_type()),
+    ];
+    b.empty(row_type);
+    let cond = b.literal_bool(true);
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(plan, "LogicalValues(tuples=[[]])");
+    Ok(())
+}
+
+// -----------------------------------------------------------------------
 // Values variants (Task 12)
 // -----------------------------------------------------------------------
 
