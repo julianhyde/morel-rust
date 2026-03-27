@@ -39,8 +39,8 @@ use crate::eval::code::Span;
 use crate::eval::val::Val;
 use crate::rel::schema::Schema;
 use crate::rel::{
-    bool_type, int_type, string_type, AggCall, AggFunction, Direction,
-    FieldCollation, JoinType, NullDirection, Rel,
+    AggCall, AggFunction, Direction, FieldCollation, JoinType, NullDirection,
+    Rel, bool_type, int_type, string_type,
 };
 use std::sync::Arc;
 
@@ -184,10 +184,7 @@ impl RelBuilder {
     }
 
     /// Creates a new builder with a custom configuration.
-    pub fn with_config(
-        schema: Arc<dyn Schema>,
-        config: BuilderConfig,
-    ) -> Self {
+    pub fn with_config(schema: Arc<dyn Schema>, config: BuilderConfig) -> Self {
         RelBuilder {
             schema,
             config,
@@ -212,10 +209,7 @@ impl RelBuilder {
     ///
     /// Panics if the stack is empty.
     pub fn build(&mut self) -> Rel {
-        self.stack
-            .pop()
-            .expect("RelBuilder stack is empty")
-            .rel
+        self.stack.pop().expect("RelBuilder stack is empty").rel
     }
 
     /// Pops `n` frames from the stack and returns them in bottom-to-top
@@ -233,10 +227,7 @@ impl RelBuilder {
             self.stack.len()
         );
         let drain_from = self.stack.len() - n;
-        self.stack
-            .drain(drain_from..)
-            .map(|f| f.rel)
-            .collect()
+        self.stack.drain(drain_from..).map(|f| f.rel).collect()
     }
 
     /// Returns a reference to the top-of-stack node's row type.
@@ -267,9 +258,7 @@ impl RelBuilder {
         let entry = self
             .schema
             .table(name)
-            .unwrap_or_else(|| {
-                panic!("table not found: {:?}", name)
-            });
+            .unwrap_or_else(|| panic!("table not found: {:?}", name));
         let rel = Rel::TableScan {
             table_name: entry.name.clone(),
             row_type: entry.columns.clone(),
@@ -290,11 +279,7 @@ impl RelBuilder {
     ///
     /// `names` is the ordered list of column names; `rows` is a list of
     /// rows, each a list of literal [`Val`] values.
-    pub fn values(
-        &mut self,
-        names: &[&str],
-        rows: Vec<Vec<Val>>,
-    ) -> &mut Self {
+    pub fn values(&mut self, names: &[&str], rows: Vec<Vec<Val>>) -> &mut Self {
         // Infer column types from the first row. If there are no rows,
         // default every column to `string`.
         let col_types: Vec<Type> = if let Some(first) = rows.first() {
@@ -312,9 +297,7 @@ impl RelBuilder {
             .map(|row| {
                 row.into_iter()
                     .zip(col_types.iter())
-                    .map(|(v, t)| {
-                        Expr::Literal(Box::new(t.clone()), v)
-                    })
+                    .map(|(v, t)| Expr::Literal(Box::new(t.clone()), v))
                     .collect()
             })
             .collect();
@@ -505,10 +488,7 @@ impl RelBuilder {
         let exprs: Vec<Expr> = input_row_type
             .iter()
             .map(|(name, ty)| {
-                Expr::Identifier(
-                    Box::new(ty.clone()),
-                    name.clone(),
-                )
+                Expr::Identifier(Box::new(ty.clone()), name.clone())
             })
             .collect();
         let row_type: Vec<(String, Type)> = names
@@ -585,9 +565,7 @@ impl RelBuilder {
             .iter()
             .filter_map(|e| {
                 if let Expr::Identifier(_, name) = e {
-                    input_row_type
-                        .iter()
-                        .position(|(n, _)| n == name)
+                    input_row_type.iter().position(|(n, _)| n == name)
                 } else {
                     None
                 }
@@ -607,19 +585,14 @@ impl RelBuilder {
                     .arg_names
                     .iter()
                     .filter_map(|name| {
-                        input_row_type
-                            .iter()
-                            .position(|(n, _)| n == name)
+                        input_row_type.iter().position(|(n, _)| n == name)
                     })
                     .collect();
-                let return_type = agg_return_type(
-                    def.agg,
-                    &args,
-                    &input_row_type,
-                );
-                let name = def.name.unwrap_or_else(|| {
-                    format!("${}", group_set.len() + i)
-                });
+                let return_type =
+                    agg_return_type(def.agg, &args, &input_row_type);
+                let name = def
+                    .name
+                    .unwrap_or_else(|| format!("${}", group_set.len() + i));
                 row_type.push((name.clone(), return_type.clone()));
                 AggCall {
                     agg: def.agg,
@@ -649,10 +622,7 @@ impl RelBuilder {
         let all_exprs: Vec<Expr> = row_type
             .iter()
             .map(|(name, ty)| {
-                Expr::Identifier(
-                    Box::new(ty.clone()),
-                    name.clone(),
-                )
+                Expr::Identifier(Box::new(ty.clone()), name.clone())
             })
             .collect();
         let gk = GroupKey { exprs: all_exprs };
@@ -749,19 +719,11 @@ impl RelBuilder {
     ///
     /// Pops the top two frames (right = top, left = second), concatenates
     /// their row types, and pushes a `Rel::Join`.
-    pub fn join(
-        &mut self,
-        join_type: JoinType,
-        condition: Expr,
-    ) -> &mut Self {
-        let right_frame = self
-            .stack
-            .pop()
-            .expect("RelBuilder stack is empty (right)");
-        let left_frame = self
-            .stack
-            .pop()
-            .expect("RelBuilder stack is empty (left)");
+    pub fn join(&mut self, join_type: JoinType, condition: Expr) -> &mut Self {
+        let right_frame =
+            self.stack.pop().expect("RelBuilder stack is empty (right)");
+        let left_frame =
+            self.stack.pop().expect("RelBuilder stack is empty (left)");
         let mut row_type = left_frame.rel.row_type().to_vec();
         row_type.extend_from_slice(right_frame.rel.row_type());
         let rel = Rel::Join {
@@ -796,36 +758,24 @@ impl RelBuilder {
         let conditions: Vec<Expr> = field_names
             .iter()
             .map(|name| {
-                let l_idx = left_rt
-                    .iter()
-                    .position(|(n, _)| n == name)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "join_using: field '{}' not in left",
-                            name
-                        )
-                    });
+                let l_idx =
+                    left_rt.iter().position(|(n, _)| n == name).unwrap_or_else(
+                        || panic!("join_using: field '{}' not in left", name),
+                    );
                 let r_idx = right_rt
                     .iter()
                     .position(|(n, _)| n == name)
                     .unwrap_or_else(|| {
-                        panic!(
-                            "join_using: field '{}' not in right",
-                            name
-                        )
+                        panic!("join_using: field '{}' not in right", name)
                     });
                 let l_ty = left_rt[l_idx].1.clone();
                 let r_ty = right_rt[r_idx].1.clone();
                 let abs_l = l_idx;
                 let abs_r = left_len + r_idx;
-                let l_expr = Expr::Identifier(
-                    Box::new(l_ty),
-                    format!("${}", abs_l),
-                );
-                let r_expr = Expr::Identifier(
-                    Box::new(r_ty),
-                    format!("${}", abs_r),
-                );
+                let l_expr =
+                    Expr::Identifier(Box::new(l_ty), format!("${}", abs_l));
+                let r_expr =
+                    Expr::Identifier(Box::new(r_ty), format!("${}", abs_r));
                 binary_op("=", bool_type(), l_expr, r_expr)
             })
             .collect();
@@ -848,11 +798,7 @@ impl RelBuilder {
     /// The identifier name is encoded as `"$N"` where N is the absolute
     /// ordinal in the combined (future) join row type. This lets
     /// `write_expr` emit `$N` verbatim when the name is unambiguous.
-    pub fn field2(
-        &self,
-        input_offset: usize,
-        name: &str,
-    ) -> Expr {
+    pub fn field2(&self, input_offset: usize, name: &str) -> Expr {
         let n = self.stack.len();
         assert!(
             input_offset < n,
@@ -865,10 +811,7 @@ impl RelBuilder {
             .iter()
             .position(|(col, _)| col == name)
             .unwrap_or_else(|| {
-                panic!(
-                    "field2: '{}' not found in input {}",
-                    name, input_offset
-                )
+                panic!("field2: '{}' not found in input {}", name, input_offset)
             });
         let (_, ty) = &row[col_ord];
         // Compute the absolute ordinal: sum column counts of frames
@@ -880,17 +823,14 @@ impl RelBuilder {
             .sum();
         let abs_ord = preceding_cols + col_ord;
         // Encode as "$N" so write_expr emits it verbatim.
-        Expr::Identifier(
-            Box::new(ty.clone()),
-            format!("${}", abs_ord),
-        )
+        Expr::Identifier(Box::new(ty.clone()), format!("${}", abs_ord))
     }
 
     // -------------------------------------------------------------------
     // Set operations
     // -------------------------------------------------------------------
 
-    /// Pops 2 frames and pushes their UNION [ALL].
+    /// Pops 2 frames and pushes their UNION \[ALL\].
     ///
     /// The two inputs must have the same number of columns. The row type
     /// is taken from the left (bottom) input.
@@ -898,7 +838,7 @@ impl RelBuilder {
         self.union_n(all, 2)
     }
 
-    /// Pops `n` frames and pushes their UNION [ALL].
+    /// Pops `n` frames and pushes their UNION \[ALL\].
     pub fn union_n(&mut self, all: bool, n: usize) -> &mut Self {
         let inputs = self.pop_n(n, "union_n");
         let row_type = inputs[0].row_type().to_vec();
@@ -909,12 +849,12 @@ impl RelBuilder {
         })
     }
 
-    /// Pops 2 frames and pushes their INTERSECT [ALL].
+    /// Pops 2 frames and pushes their INTERSECT \[ALL\].
     pub fn intersect(&mut self, all: bool) -> &mut Self {
         self.intersect_n(all, 2)
     }
 
-    /// Pops `n` frames and pushes their INTERSECT [ALL].
+    /// Pops `n` frames and pushes their INTERSECT \[ALL\].
     pub fn intersect_n(&mut self, all: bool, n: usize) -> &mut Self {
         let inputs = self.pop_n(n, "intersect_n");
         let row_type = inputs[0].row_type().to_vec();
@@ -925,7 +865,7 @@ impl RelBuilder {
         })
     }
 
-    /// Pops 2 frames and pushes their EXCEPT [ALL] (set difference).
+    /// Pops 2 frames and pushes their EXCEPT \[ALL\] (set difference).
     pub fn minus(&mut self, all: bool) -> &mut Self {
         let inputs = self.pop_n(2, "minus");
         let row_type = inputs[0].row_type().to_vec();
@@ -948,10 +888,8 @@ impl RelBuilder {
     /// Panics if no column with that name exists.
     pub fn field(&self, name: &str) -> Expr {
         let row = self.peek_row_type();
-        let (_, ty) = row
-            .iter()
-            .find(|(n, _)| n == name)
-            .unwrap_or_else(|| {
+        let (_, ty) =
+            row.iter().find(|(n, _)| n == name).unwrap_or_else(|| {
                 panic!("field '{}' not found in row type", name)
             });
         Expr::Identifier(Box::new(ty.clone()), name.to_string())
@@ -977,10 +915,7 @@ impl RelBuilder {
 
     /// Returns a boolean literal expression.
     pub fn literal_bool(&self, v: bool) -> Expr {
-        Expr::Literal(
-            Box::new(bool_type()),
-            Val::Bool(v),
-        )
+        Expr::Literal(Box::new(bool_type()), Val::Bool(v))
     }
 
     /// Returns an integer literal expression.
@@ -990,16 +925,12 @@ impl RelBuilder {
 
     /// Returns a string literal expression.
     pub fn literal_string(&self, v: impl Into<String>) -> Expr {
-        Expr::Literal(
-            Box::new(string_type()),
-            Val::String(v.into()),
-        )
+        Expr::Literal(Box::new(string_type()), Val::String(v.into()))
     }
 
     /// Returns a real (float) literal expression.
     pub fn literal_real(&self, v: f32) -> Expr {
-        let ty =
-            Type::Primitive(PrimitiveType::Real);
+        let ty = Type::Primitive(PrimitiveType::Real);
         Expr::Literal(Box::new(ty), Val::Real(v))
     }
 
@@ -1010,11 +941,7 @@ impl RelBuilder {
     /// accepts explicit names.
     ///
     /// [`project_named`]: RelBuilder::project_named
-    pub fn alias_expr(
-        &self,
-        expr: Expr,
-        name: &str,
-    ) -> (Expr, String) {
+    pub fn alias_expr(&self, expr: Expr, name: &str) -> (Expr, String) {
         (expr, name.to_string())
     }
 
@@ -1118,16 +1045,18 @@ fn sort_keys_to_collation(
     let mut seen = std::collections::HashSet::new();
     let mut result = Vec::new();
     for key in keys {
-        if let Expr::Identifier(_, name) = &key.expr {
-            if let Some(index) = row_type.iter().position(|(n, _)| n == name) {
-                if seen.insert(index) {
-                    result.push(FieldCollation {
-                        index,
-                        direction: key.direction,
-                        null_direction: key.null_direction,
-                    });
-                }
-            }
+        let Expr::Identifier(_, name) = &key.expr else {
+            continue;
+        };
+        let Some(index) = row_type.iter().position(|(n, _)| n == name) else {
+            continue;
+        };
+        if seen.insert(index) {
+            result.push(FieldCollation {
+                index,
+                direction: key.direction,
+                null_direction: key.null_direction,
+            });
         }
     }
     result
@@ -1135,51 +1064,29 @@ fn sort_keys_to_collation(
 
 /// Constructs a curried binary-operator application:
 /// `Apply(ret, Apply(fn_ty, Identifier(op), a), b)`.
-fn binary_op(
-    op: &str,
-    ret: Type,
-    a: Expr,
-    b: Expr,
-) -> Expr {
+fn binary_op(op: &str, ret: Type, a: Expr, b: Expr) -> Expr {
     let a_ty = *a.type_();
     let b_ty = *b.type_();
     // Type of the partially-applied function: a_ty → b_ty → ret
-    let partial_ty =
-        Type::Fn(Box::new(b_ty), Box::new(ret.clone()));
+    let partial_ty = Type::Fn(Box::new(b_ty), Box::new(ret.clone()));
     // Type of the full operator: a_ty → (b_ty → ret)
-    let op_ty = Type::Fn(
-        Box::new(a_ty),
-        Box::new(partial_ty.clone()),
-    );
-    let op_expr =
-        Expr::Identifier(Box::new(op_ty), op.to_string());
+    let op_ty = Type::Fn(Box::new(a_ty), Box::new(partial_ty.clone()));
+    let op_expr = Expr::Identifier(Box::new(op_ty), op.to_string());
     let partial = Expr::Apply(
         Box::new(partial_ty),
         Box::new(op_expr),
         Box::new(a),
         Span::new(""),
     );
-    Expr::Apply(
-        Box::new(ret),
-        Box::new(partial),
-        Box::new(b),
-        Span::new(""),
-    )
+    Expr::Apply(Box::new(ret), Box::new(partial), Box::new(b), Span::new(""))
 }
 
 /// Constructs a unary-operator application: `Apply(ret, Identifier(op), a)`.
 fn unary_op(op: &str, ret: Type, a: Expr) -> Expr {
     let a_ty = *a.type_();
-    let op_ty =
-        Type::Fn(Box::new(a_ty), Box::new(ret.clone()));
-    let op_expr =
-        Expr::Identifier(Box::new(op_ty), op.to_string());
-    Expr::Apply(
-        Box::new(ret),
-        Box::new(op_expr),
-        Box::new(a),
-        Span::new(""),
-    )
+    let op_ty = Type::Fn(Box::new(a_ty), Box::new(ret.clone()));
+    let op_expr = Expr::Identifier(Box::new(op_ty), op.to_string());
+    Expr::Apply(Box::new(ret), Box::new(op_expr), Box::new(a), Span::new(""))
 }
 
 /// Returns `true` if `expr` is the boolean literal `true`.
@@ -1193,31 +1100,27 @@ fn is_false(expr: &Expr) -> bool {
 }
 
 /// Returns a column name for `expr` if it is a simple field reference.
-fn expr_name(
-    expr: &Expr,
-    row_type: &[(String, Type)],
-) -> Option<String> {
-    if let Expr::Identifier(_, name) = expr {
-        if row_type.iter().any(|(n, _)| n == name) {
-            return Some(name.clone());
-        }
-    }
-    None
+fn expr_name(expr: &Expr, row_type: &[(String, Type)]) -> Option<String> {
+    let Expr::Identifier(_, name) = expr else {
+        return None;
+    };
+    row_type
+        .iter()
+        .any(|(n, _)| n == name)
+        .then(|| name.clone())
 }
 
 /// Returns `true` if `exprs` is the identity projection for `row_type`:
 /// each expression is `Identifier(_, col_name)` matching the column at
 /// the same ordinal.
-fn is_identity_project(
-    exprs: &[Expr],
-    row_type: &[(String, Type)],
-) -> bool {
+fn is_identity_project(exprs: &[Expr], row_type: &[(String, Type)]) -> bool {
     if exprs.len() != row_type.len() {
         return false;
     }
-    exprs.iter().zip(row_type.iter()).all(|(e, (name, _))| {
-        matches!(e, Expr::Identifier(_, n) if n == name)
-    })
+    exprs
+        .iter()
+        .zip(row_type.iter())
+        .all(|(e, (name, _))| matches!(e, Expr::Identifier(_, n) if n == name))
 }
 
 /// Infers a [`Type`] from a [`Val`].
@@ -1225,9 +1128,7 @@ fn val_type(v: &Val) -> Type {
     match v {
         Val::Bool(_) => bool_type(),
         Val::Int(_) => int_type(),
-        Val::Real(_) => {
-            Type::Primitive(PrimitiveType::Real)
-        }
+        Val::Real(_) => Type::Primitive(PrimitiveType::Real),
         Val::String(_) => string_type(),
         _ => string_type(), // safe default
     }
@@ -1263,10 +1164,7 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
         let plan = b.build();
-        assert_plan!(
-            plan,
-            "LogicalTableScan(table=[[scott, EMP]])"
-        );
+        assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
     }
 
     #[test]
@@ -1274,10 +1172,7 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "DEPT"]);
         let plan = b.build();
-        assert_plan!(
-            plan,
-            "LogicalTableScan(table=[[scott, DEPT]])"
-        );
+        assert_plan!(plan, "LogicalTableScan(table=[[scott, DEPT]])");
     }
 
     // ---------------------------------------------------------------
@@ -1293,10 +1188,7 @@ mod tests {
         ];
         b.empty(row_type);
         let plan = b.build();
-        assert_plan!(
-            plan,
-            "LogicalValues(tuples=[[]])"
-        );
+        assert_plan!(plan, "LogicalValues(tuples=[[]])");
     }
 
     #[test]
@@ -1310,10 +1202,7 @@ mod tests {
             ],
         );
         let plan = b.build();
-        assert_plan!(
-            plan,
-            "LogicalValues(tuples=[[{ 1, 'x' }, { 2, 'y' }]])"
-        );
+        assert_plan!(plan, "LogicalValues(tuples=[[{ 1, 'x' }, { 2, 'y' }]])");
     }
 
     // ---------------------------------------------------------------
@@ -1328,10 +1217,7 @@ mod tests {
         b.filter(cond);
         let plan = b.build();
         // simplification: Filter(true) is eliminated
-        assert_plan!(
-            plan,
-            "LogicalTableScan(table=[[scott, EMP]])"
-        );
+        assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
     }
 
     #[test]
@@ -1400,16 +1286,11 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
         // Identity projection: all columns in order.
-        let exprs: Vec<Expr> = (0..8)
-            .map(|i| b.field_ordinal(i))
-            .collect();
+        let exprs: Vec<Expr> = (0..8).map(|i| b.field_ordinal(i)).collect();
         b.project(exprs);
         let plan = b.build();
         // Simplification: identity project is removed.
-        assert_plan!(
-            plan,
-            "LogicalTableScan(table=[[scott, EMP]])"
-        );
+        assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
     }
 
     #[test]
@@ -1417,8 +1298,7 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
         let exprs = vec![b.field("EMPNO"), b.field("SAL")];
-        let names =
-            vec!["employee_no".to_string(), "salary".to_string()];
+        let names = vec!["employee_no".to_string(), "salary".to_string()];
         b.project_named(exprs, names);
         let plan = b.build();
         assert_plan!(
@@ -1471,10 +1351,7 @@ mod tests {
         // Empty key list — no Sort node is pushed.
         b.sort(&[]);
         let plan = b.build();
-        assert_plan!(
-            plan,
-            "LogicalTableScan(table=[[scott, EMP]])"
-        );
+        assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
     }
 
     #[test]
@@ -1581,10 +1458,7 @@ mod tests {
             "LOC".to_string(),
         ]);
         let plan = b.build();
-        assert_plan!(
-            plan,
-            "LogicalTableScan(table=[[scott, DEPT]])"
-        );
+        assert_plan!(plan, "LogicalTableScan(table=[[scott, DEPT]])");
     }
 
     // ---------------------------------------------------------------
@@ -1610,14 +1484,8 @@ mod tests {
     fn test_aggregate2() {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
-        let gk = b.group_key(vec![
-            b.field("DEPTNO"),
-            b.field("JOB"),
-        ]);
-        let aggs = vec![
-            b.count_star().as_("C"),
-            b.sum("SAL").as_("TOTAL_SAL"),
-        ];
+        let gk = b.group_key(vec![b.field("DEPTNO"), b.field("JOB")]);
+        let aggs = vec![b.count_star().as_("C"), b.sum("SAL").as_("TOTAL_SAL")];
         b.aggregate(&gk, aggs);
         let plan = b.build();
         assert_plan!(
@@ -1649,8 +1517,7 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
         let gk = b.group_key(vec![b.field("DEPTNO")]);
-        let aggs =
-            vec![b.count("ENAME").distinct().as_("UNIQUE_EMPS")];
+        let aggs = vec![b.count("ENAME").distinct().as_("UNIQUE_EMPS")];
         b.aggregate(&gk, aggs);
         let plan = b.build();
         assert_plan!(

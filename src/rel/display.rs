@@ -29,8 +29,8 @@ use crate::compile::core::Expr;
 use crate::compile::types::Type;
 use crate::eval::val::Val;
 use crate::rel::{
-    AggCall, AggFunction, Direction, FieldCollation, JoinType,
-    NullDirection, Rel,
+    AggCall, AggFunction, Direction, FieldCollation, JoinType, NullDirection,
+    Rel,
 };
 use std::fmt::{self, Write as FmtWrite};
 
@@ -59,11 +59,7 @@ pub fn explain(rel: &Rel) -> String {
 // -----------------------------------------------------------------------
 
 /// Writes one `Rel` node and its children at the given `indent` level.
-fn write_rel(
-    f: &mut String,
-    rel: &Rel,
-    indent: usize,
-) -> fmt::Result {
+fn write_rel(f: &mut String, rel: &Rel, indent: usize) -> fmt::Result {
     let pad = "  ".repeat(indent);
     match rel {
         // lint: sort until '^$' where '##Rel::'
@@ -110,17 +106,9 @@ fn write_rel(
         } => {
             let left_rt = left.row_type();
             let right_rt = right.row_type();
-            write!(
-                f,
-                "{}LogicalJoin(condition=[",
-                pad
-            )?;
+            write!(f, "{}LogicalJoin(condition=[", pad)?;
             write_expr(f, condition, &[left_rt, right_rt])?;
-            writeln!(
-                f,
-                "], joinType=[{}])",
-                join_type_str(*join_type)
-            )?;
+            writeln!(f, "], joinType=[{}])", join_type_str(*join_type))?;
             write_rel(f, left, indent + 1)?;
             write_rel(f, right, indent + 1)
         }
@@ -162,12 +150,7 @@ fn write_rel(
                 }
                 first = false;
                 write!(f, "sort{}=[${}]", i, key.index)?;
-                write!(
-                    f,
-                    ", dir{}=[{}]",
-                    i,
-                    collation_dir_str(key)
-                )?;
+                write!(f, ", dir{}=[{}]", i, collation_dir_str(key))?;
             }
             if let Some(off) = offset {
                 if !first {
@@ -261,24 +244,22 @@ pub(crate) fn write_expr(
         }
         Expr::Apply(_, func, arg, _) => {
             // Try to match binary op: Apply(Apply(Identifier(op),a),b)
-            if let Expr::Apply(_, inner_f, left, _) = func.as_ref() {
-                if let Expr::Identifier(_, op) = inner_f.as_ref() {
-                    if let Some(disp) = binary_op_display(op) {
-                        write!(f, "{}(", disp)?;
-                        write_expr(f, left, inputs)?;
-                        write!(f, ", ")?;
-                        write_expr(f, arg, inputs)?;
-                        return write!(f, ")");
-                    }
-                }
+            if let Expr::Apply(_, inner_f, left, _) = func.as_ref()
+                && let Expr::Identifier(_, op) = inner_f.as_ref()
+                && let Some(disp) = binary_op_display(op)
+            {
+                write!(f, "{}(", disp)?;
+                write_expr(f, left, inputs)?;
+                write!(f, ", ")?;
+                write_expr(f, arg, inputs)?;
+                return write!(f, ")");
             }
             // Try to match unary op: Apply(Identifier(op), a)
-            if let Expr::Identifier(_, op) = func.as_ref() {
-                if let Some(disp) = unary_op_display(op) {
-                    write!(f, "{}(", disp)?;
-                    write_expr(f, arg, inputs)?;
-                    return write!(f, ")");
-                }
+            if let Expr::Identifier(_, op) = func.as_ref()
+                && let Some(disp) = unary_op_display(op)
+            {
+                write_expr_unary(f, disp, arg, inputs)?;
+                return Ok(());
             }
             // Generic function application.
             write_expr(f, func, inputs)?;
@@ -292,6 +273,17 @@ pub(crate) fn write_expr(
 }
 
 /// Writes a [`Val`] as a SQL literal.
+fn write_expr_unary(
+    f: &mut String,
+    disp: &str,
+    arg: &Expr,
+    inputs: &[&[(String, Type)]],
+) -> fmt::Result {
+    write!(f, "{}(", disp)?;
+    write_expr(f, arg, inputs)?;
+    write!(f, ")")
+}
+
 fn write_val(f: &mut String, val: &Val) -> fmt::Result {
     match val {
         Val::Bool(b) => write!(f, "{}", b),
@@ -412,9 +404,9 @@ mod tests {
     use super::*;
     use crate::compile::types::PrimitiveType;
     use crate::eval::val::Val;
-    use crate::rel::{Direction, FieldCollation, NullDirection};
-    use crate::rel::schema::scott_schema;
     use crate::rel::schema::Schema;
+    use crate::rel::schema::scott_schema;
+    use crate::rel::{Direction, FieldCollation, NullDirection};
 
     fn int() -> Type {
         Type::Primitive(PrimitiveType::Int)
@@ -444,10 +436,7 @@ mod tests {
             table_name: vec!["scott".into(), "EMP".into()],
             row_type: emp_row_type(),
         };
-        assert_eq!(
-            explain(&rel),
-            "LogicalTableScan(table=[[scott, EMP]])\n"
-        );
+        assert_eq!(explain(&rel), "LogicalTableScan(table=[[scott, EMP]])\n");
     }
 
     #[test]
@@ -473,10 +462,8 @@ mod tests {
             table_name: vec!["scott".into(), "EMP".into()],
             row_type: emp_row_type(),
         };
-        let row_type = vec![
-            ("ENAME".to_string(), str_()),
-            ("EMPNO".to_string(), int()),
-        ];
+        let row_type =
+            vec![("ENAME".to_string(), str_()), ("EMPNO".to_string(), int())];
         let rel = Rel::Project {
             exprs: vec![
                 Expr::Identifier(Box::new(str_()), "ENAME".into()),
@@ -498,31 +485,19 @@ mod tests {
             row_type: vec![("X".to_string(), int())],
             rows: vec![],
         };
-        assert_eq!(
-            explain(&rel),
-            "LogicalValues(tuples=[[]])\n"
-        );
+        assert_eq!(explain(&rel), "LogicalValues(tuples=[[]])\n");
     }
 
     #[test]
     fn test_explain_values() {
         let rel = Rel::Values {
-            row_type: vec![
-                ("A".to_string(), int()),
-                ("B".to_string(), str_()),
-            ],
+            row_type: vec![("A".to_string(), int()), ("B".to_string(), str_())],
             rows: vec![vec![
                 lit_int(1),
-                Expr::Literal(
-                    Box::new(str_()),
-                    Val::String("hello".into()),
-                ),
+                Expr::Literal(Box::new(str_()), Val::String("hello".into())),
             ]],
         };
-        assert_eq!(
-            explain(&rel),
-            "LogicalValues(tuples=[[{ 1, 'hello' }]])\n"
-        );
+        assert_eq!(explain(&rel), "LogicalValues(tuples=[[{ 1, 'hello' }]])\n");
     }
 
     #[test]

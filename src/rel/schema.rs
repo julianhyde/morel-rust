@@ -51,10 +51,7 @@ impl TableEntry {
     ) -> Self {
         TableEntry {
             name: name.into_iter().map(Into::into).collect(),
-            columns: columns
-                .into_iter()
-                .map(|(n, t)| (n.into(), t))
-                .collect(),
+            columns: columns.into_iter().map(|(n, t)| (n.into(), t)).collect(),
         }
     }
 
@@ -122,9 +119,7 @@ impl MapSchema {
     }
 
     /// Creates a schema pre-populated with the given tables.
-    pub fn new(
-        tables: impl IntoIterator<Item = TableEntry>,
-    ) -> Self {
+    pub fn new(tables: impl IntoIterator<Item = TableEntry>) -> Self {
         let map = tables
             .into_iter()
             .map(|e| (e.name.clone(), Arc::new(e)))
@@ -173,19 +168,11 @@ pub fn scott_schema() -> MapSchema {
         ),
         TableEntry::new(
             ["scott", "DEPT"],
-            [
-                ("DEPTNO", int()),
-                ("DNAME", str_()),
-                ("LOC", str_()),
-            ],
+            [("DEPTNO", int()), ("DNAME", str_()), ("LOC", str_())],
         ),
         TableEntry::new(
             ["scott", "SALGRADE"],
-            [
-                ("GRADE", int()),
-                ("LOSAL", int()),
-                ("HISAL", int()),
-            ],
+            [("GRADE", int()), ("LOSAL", int()), ("HISAL", int())],
         ),
         TableEntry::new(
             ["scott", "BONUS"],

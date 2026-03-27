@@ -173,21 +173,21 @@ pub enum Rel {
         row_type: Vec<(String, Type)>,
     },
 
-    /// UNION [ALL].
+    /// UNION \[ALL\].
     Union {
         inputs: Vec<Rel>,
         all: bool,
         row_type: Vec<(String, Type)>,
     },
 
-    /// INTERSECT [ALL].
+    /// INTERSECT \[ALL\].
     Intersect {
         inputs: Vec<Rel>,
         all: bool,
         row_type: Vec<(String, Type)>,
     },
 
-    /// EXCEPT / MINUS [ALL].
+    /// EXCEPT / MINUS \[ALL\].
     Minus {
         inputs: Vec<Rel>,
         all: bool,
@@ -219,9 +219,7 @@ impl Rel {
             // lint: sort until '^$' where '##Rel::'
             Rel::Aggregate { input, .. } => vec![input],
             Rel::Filter { input, .. } => vec![input],
-            Rel::Intersect { inputs, .. } => {
-                inputs.iter().collect()
-            }
+            Rel::Intersect { inputs, .. } => inputs.iter().collect(),
             Rel::Join { left, right, .. } => vec![left, right],
             Rel::Minus { inputs, .. } => inputs.iter().collect(),
             Rel::Project { input, .. } => vec![input],
@@ -244,9 +242,7 @@ impl Rel {
 // -----------------------------------------------------------------------
 
 /// Converts an ordered column list to [`Type::Record`].
-pub(crate) fn columns_to_record_type(
-    columns: &[(String, Type)],
-) -> Type {
+pub(crate) fn columns_to_record_type(columns: &[(String, Type)]) -> Type {
     let fields = columns
         .iter()
         .map(|(name, t)| (Label::String(name.clone()), t.clone()))

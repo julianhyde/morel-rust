@@ -25,9 +25,7 @@ use morel::eval::val::Val;
 use morel::rel::builder::{BuilderConfig, RelBuilder, SortKey};
 use morel::rel::display::explain;
 use morel::rel::schema::scott_schema;
-use morel::rel::{
-    bool_type, int_type, Direction, JoinType, NullDirection,
-};
+use morel::rel::{Direction, JoinType, NullDirection, bool_type, int_type};
 use std::sync::Arc;
 
 // -----------------------------------------------------------------------
@@ -210,10 +208,7 @@ fn test_values() {
         ],
     );
     let plan = b.build();
-    assert_plan!(
-        plan,
-        "LogicalValues(tuples=[[{ 1, 'x' }, { 2, 'y' }]])"
-    );
+    assert_plan!(plan, "LogicalValues(tuples=[[{ 1, 'x' }, { 2, 'y' }]])");
 }
 
 #[test]
@@ -445,10 +440,7 @@ fn test_aggregate2() {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let gk = b.group_key(vec![b.field("DEPTNO"), b.field("JOB")]);
-    let aggs = vec![
-        b.count_star().as_("C"),
-        b.sum("SAL").as_("TOTAL_SAL"),
-    ];
+    let aggs = vec![b.count_star().as_("C"), b.sum("SAL").as_("TOTAL_SAL")];
     b.aggregate(&gk, aggs);
     let plan = b.build();
     assert_plan!(
@@ -559,14 +551,8 @@ fn test_alias() {
 #[test]
 fn test_union_project_values() {
     let mut b = builder();
-    b.values(
-        &["X", "Y"],
-        vec![vec![Val::Int(1), Val::Int(2)]],
-    );
-    b.values(
-        &["X", "Y"],
-        vec![vec![Val::Int(3), Val::Int(4)]],
-    );
+    b.values(&["X", "Y"], vec![vec![Val::Int(1), Val::Int(2)]]);
+    b.values(&["X", "Y"], vec![vec![Val::Int(3), Val::Int(4)]]);
     b.union(false);
     let plan = b.build();
     assert_plan!(
