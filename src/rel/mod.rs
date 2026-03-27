@@ -255,16 +255,16 @@ pub(crate) fn columns_to_record_type(
 }
 
 /// Returns `Type::Primitive(PrimitiveType::Bool)`.
-pub(crate) fn bool_type() -> Type {
+pub fn bool_type() -> Type {
     Type::Primitive(PrimitiveType::Bool)
 }
 
 /// Returns `Type::Primitive(PrimitiveType::Int)`.
-pub(crate) fn int_type() -> Type {
+pub fn int_type() -> Type {
     Type::Primitive(PrimitiveType::Int)
 }
 
 /// Returns `Type::Primitive(PrimitiveType::String)`.
-pub(crate) fn string_type() -> Type {
+pub fn string_type() -> Type {
     Type::Primitive(PrimitiveType::String)
 }

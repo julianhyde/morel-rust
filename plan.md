@@ -646,12 +646,12 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 8 — Set operations
+### Task 8 — Set operations ✓
 
-- [ ] `union(all)` / `union_n(all, n)`: pops 2 (or n) frames, validates
+- [x] `union(all)` / `union_n(all, n)`: pops 2 (or n) frames, validates
       compatible row types, pushes `Rel::Union`.
-- [ ] `intersect(all)` / `intersect_n(all, n)`.
-- [ ] `minus(all)`.
+- [x] `intersect(all)` / `intersect_n(all, n)`.
+- [x] `minus(all)`.
 
 **Tests enabled:**
 `testUnionProjectValues`, `testUnionProjectValues2`, `testUnionAlias`.
