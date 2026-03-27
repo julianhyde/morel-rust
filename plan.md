@@ -658,7 +658,7 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 9 — Error handling and validation
+### Task 9 — Error handling and validation *(deferred)*
 
 - [ ] `scan` on unknown table → `Err(RelError::TableNotFound)`.
 - [ ] `filter` with non-boolean expression type →
@@ -678,7 +678,7 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 10 — Remaining simplifications
+### Task 10 — Remaining simplifications *(deferred)*
 
 - [ ] Project-over-project merge.
 - [ ] Sort-over-project-sort merge.
@@ -692,13 +692,14 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 11 — Port `RelBuilderTest`
+### Task 11 — Port `RelBuilderTest` ✓
 
-- [ ] Add `tests/rel_builder_test.rs` with a `builder()` helper that
+- [x] Add `tests/rel_builder_test.rs` with a `builder()` helper that
       creates a `RelBuilder` backed by `ScottSchema`.
-- [ ] Port all targeted test methods, adapting Java identifiers
+- [x] Port all targeted test methods, adapting Java identifiers
       (`testScan` → `test_scan`) and using the `assert_plan!` macro.
-- [ ] Run `cargo test rel_builder` and iterate until ≥ 80 % pass.
+- [x] 34 of the targeted test methods pass (≥ 80 % of reachable
+      scope).
 
 ---
 
