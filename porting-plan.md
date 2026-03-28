@@ -199,7 +199,7 @@ symbol to resolve to different implementations based on type.
 |-----|------------|-------------|-------|
 | D1 | #297 | Source position in parse exceptions | Parser plumbing; improves error messages. |
 | ~~D2~~ | #259 | Tabular output mode in the shell | `output` property: `classic` (default) or `tabular`. |
-| D3 | #332 | Tuple field access via dot syntax (`tuple.1`) | Parser + resolver + eval change. |
+| ~~D3~~ | #332 | Tuple field access via dot syntax (`tuple.1`) | Parser already handled it; fix was one line in `Code::new_nth` to use `field_types()` instead of `expect_record()`. |
 | D4 | #346 | Postfix method-call syntax (`x.f arg`, `x.f(a,b).g(c)`) | Parser + resolver. Port `postfix.smli`. |
 | D5 | #151 | Tail-call optimization via trampolining | Needs eval refactor. Port `tail-recursion.smli`. Depends on G1/G2. |
 
