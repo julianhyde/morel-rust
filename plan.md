@@ -826,6 +826,299 @@ rename, aggregate.
 
 ---
 
+### Task 18 — Set-op and distinct variants
+
+Simple variations of existing operators requiring little or no new code.
+
+- [ ] `testDistinct` — *(already implemented as `test_distinct`)*.
+- [ ] `testDistinctAlready` — `distinct()` on a relation that is already
+      the result of `distinct()` (or an aggregate): should be a no-op.
+- [ ] `testDistinctEmpty` — `distinct()` on an empty `Values`.
+- [ ] `testUnion` — basic two-way `UNION DISTINCT`.
+- [ ] `testUnion1` — `union_n` with a single input (degenerate case).
+- [ ] `testUnion3` — *(already implemented as `test_union_project_values2`)*.
+- [ ] `testBadUnionArgsErrorMessage` — error when union inputs have
+      incompatible column counts.
+- [ ] `testIntersect` — basic two-way `INTERSECT`.
+- [ ] `testIntersect3` — three-way `INTERSECT`.
+- [ ] `testExcept` — `EXCEPT` / `MINUS`.
+
+---
+
+### Task 19 — Join variants
+
+More join forms using the existing `join()` and `join_using()` API.
+
+- [ ] `testJoin` — plain INNER join with an equality condition
+      (without the surrounding project that `test_project_join` uses).
+- [ ] `testJoinUsing` — `join_using()` on a shared column name.
+- [ ] `testJoin2` — join followed by a project that references both sides.
+- [ ] `testJoinCartesian` — cross-product (condition `= true`).
+- [ ] `testAntiJoin` — `JoinType::Anti`.
+- [ ] `testJoinConditionSimplification` — when the join condition
+      simplifies to `true`, the `Join` node is replaced by a cross join.
+- [ ] `testJoinPushCondition` — part of the join condition that references
+      only one side is pushed into a `Filter` below the join.
+
+---
+
+### Task 20 — Error condition variants
+
+New negative tests that verify specific `RelError` payloads.
+
+- [ ] `testScanInvalidQualifiedTable` — three-part name `[a, b, c]`
+      where the schema has only two-part names.
+- [ ] `testValuesBadNullFieldNames` — `values()` called with a `null`
+      entry inside the names list.
+- [ ] `testAggregateFilterFails` — a filter expression attached to an
+      aggregate call fails when the filter type is not boolean.
+- [ ] `testBadUnionArgsErrorMessage` — union inputs have different column
+      counts; verify the error message is informative.
+- [ ] `testAggregateGroupingWithFilterFails` — `GROUPING()` used together
+      with a FILTER clause; verify this is rejected.
+
+---
+
+### Task 21 — Sort expression and aggregate simple variants
+
+Small additions that extend existing sort/aggregate functionality.
+
+- [ ] `testSortExpThenLimit` — `sort()` by a computed expression, then
+      `limit()` (merged into a single `Sort` node with expression key).
+- [ ] `testEmptyValuesWithCollation` — `sort()` applied to an empty
+      `Values`; the empty node is preserved unchanged.
+- [ ] `testAggregateOneRow` — `aggregate()` with an empty group key and
+      no agg calls; verifies exactly one output row.
+- [ ] `testAggregate5b` — variant of `testAggregate5` with a different
+      set of agg functions.
+- [ ] `testAggregateFilterNullable` — agg call with a nullable FILTER
+      expression; verify the filter is accepted and reflected in the plan.
+
+---
+
+### Task 22 — New expression predicates
+
+Add builder methods for additional boolean/comparison operators.
+
+- [ ] `testScanFilterOr2` — OR filter with three terms.
+- [ ] `testIsDistinctFrom` — `IS DISTINCT FROM` predicate
+      (`a IS DISTINCT FROM b`); needs a new `is_distinct_from()` method.
+- [ ] `testNotLike` — `NOT LIKE` predicate; needs `not_like()` method.
+- [ ] `testNotIlike` — `NOT ILIKE` (case-insensitive); needs
+      `not_ilike()` method.
+- [ ] `testNotSimilarTo` — `NOT SIMILAR TO`; needs `not_similar_to()`.
+- [ ] `testCallBetweenOperator` — `BETWEEN a AND b` expression; needs
+      `between()` method.
+- [ ] `testSymmetricalOperatorsCanBeReversed` — `a = b` and `b = a`
+      produce identical plans (operand order is canonicalised).
+
+---
+
+### Task 23 — Cast expressions
+
+Add a `cast(expr, type)` builder method.
+
+- [ ] `testProject1asInt` — project a column cast to `INT`.
+- [ ] `testProject1asBigInt` — project a column cast to `BIGINT`.
+
+---
+
+### Task 24 — Scan/alias extensions
+
+Small additions to the scan and alias sub-systems.
+
+- [ ] `testScanAlias` — `scan()` with an immediate alias set by the
+      schema/table itself (distinct from the user-set `as_()`).
+- [ ] `testProjectWithAliasFromScan` — project fields using the alias
+      that was attached to the scan by `as_()`.
+- [ ] `testLetRename` — `let`-based rename: build an expression that
+      binds a new name to an existing field (Calcite's `alias()` expr).
+- [ ] `testAliasSuggester` — when no explicit alias is provided, the
+      builder suggests one based on the expression; verify the name.
+
+---
+
+### Task 25 — `projectExcept` family
+
+Add a `project_except()` method that projects all columns **except** the
+specified ones.
+
+- [ ] `testProjectExceptWithOrdinal` — exclude one column by ordinal.
+- [ ] `testProjectExceptWithName` — exclude one column by name.
+- [ ] `testProjectExceptWithExplicitAliasAndName` — column has an alias;
+      exclude by alias name.
+- [ ] `testProjectExceptWithImplicitAliasAndName` — column alias was
+      inferred from the expression; exclude by inferred name.
+- [ ] `testProjectExceptWithDuplicateField` — two columns share a name;
+      verify that only the specified one is excluded.
+- [ ] `testProjectExceptWithMissingField` — requested field is absent;
+      verify `RelError::FieldNotFound` is returned.
+
+---
+
+### Task 26 — Filter simplification pass
+
+Add a post-build simplification visitor that canonicalises filter
+conditions.
+
+- [ ] `testFilterSimplification` — `NOT(NOT(x))` → `x`,
+      `x OR FALSE` → `x`, `x AND TRUE` → `x`, and other algebraic
+      identities are applied by a rewrite pass over the plan tree.
+- [ ] `testExecuteNotLike` — `NOT LIKE` predicate is preserved correctly
+      through the simplifier (regression: must not be misidentified as
+      `LIKE`).
+
+---
+
+### Task 27 — Aggregate deduplication
+
+Deduplicate identical aggregate calls within a single `aggregate()` call,
+so only one computation is emitted.
+
+- [ ] `testAggregateEliminatesDuplicateCalls3` — third variant (distinct
+      agg function in duplicate pair).
+- [ ] `testAggregateEliminatesDuplicateDistinctCalls` — two identical
+      `COUNT(DISTINCT col)` calls; only one is emitted.
+- [ ] `testAggregateDuplicateAggCallsWithForceProjectAndFieldPruning` —
+      duplicate calls combined with field pruning of the input.
+- [ ] `testAggregateDuplicateAggCallsAndFieldPruningWithJoinAndLiteralGroupKey`
+      — same, but input is a join with a literal in the group key.
+- [ ] `testAggregateProjectPruneEmpty` — after pruning, the aggregate
+      input has zero columns; verify an empty project is added.
+
+---
+
+### Task 28 — Grouping sets extension
+
+Extend `aggregate()` to support `CUBE`, `ROLLUP`, and `GROUPING SETS`,
+and the `GROUPING()` / `GROUPING_ID()` pseudo-functions.
+
+- [ ] `testAggregateGroupingSetsOneRow` — `GROUPING SETS ((a), ())`;
+      verify the plan includes both grouping sets.
+- [ ] `testAggregateGroupingSetsGroupId` — plan includes a
+      `GROUPING_ID()` column that distinguishes which grouping set
+      each output row belongs to.
+- [ ] `testWithinDistinct` — `agg(...) WITHIN DISTINCT (col)` syntax;
+      verify the `distinct` flag is set on the correct grouping scope.
+
+---
+
+### Task 29 — RepeatUnion (recursive queries)
+
+Add `Rel::RepeatUnion` for recursive common-table-expression (`WITH
+RECURSIVE`) queries.
+
+- [ ] `testRepeatUnion1` — seed relation + iterative relation, fixed-point
+      termination by row equality.
+- [ ] `testRepeatUnion2` — variant with a depth-limit `fetch` bound.
+
+---
+
+### Task 30 — Subquery expressions
+
+Add scalar/existential/quantified subquery `Expr` variants and
+corresponding builder methods.
+
+- [ ] `testScalarQuery` — `(SELECT max(SAL) FROM EMP)` as a scalar
+      expression; requires `Expr::ScalarSubquery`.
+- [ ] `testExists` — `EXISTS (SELECT …)`.
+- [ ] `testExistsCorrelated` — correlated `EXISTS`.
+- [ ] `testInQuery` — `col IN (SELECT …)` semi-join sugar.
+- [ ] `testSomeAll` — `col > SOME (SELECT …)` and `col > ALL (SELECT …)`.
+- [ ] `testUnique` — `UNIQUE (SELECT …)` (true iff subquery has no
+      duplicate rows).
+- [ ] `testArrayQuery` — `ARRAY (SELECT …)`.
+- [ ] `testMultisetQuery` — `MULTISET (SELECT …)`.
+- [ ] `testMapQuery` — `MAP (SELECT k, v FROM …)`.
+
+---
+
+### Task 31 — Correlation variants
+
+Extend `correlate()` to cover anti-, inner-, and left-correlate-via-join
+forms; add error tests for right- and full-correlate.
+
+- [ ] `testCorrelationFails` — `correlate()` on a non-correlated builder
+      raises an error.
+- [ ] `testCorrelationWithCondition` — correlated join with an explicit
+      condition.
+- [ ] `testTrivialCorrelation` — correlation variable is present but
+      unused; builder removes it.
+- [ ] `testSimpleAntiCorrelateViaJoin` — anti-join expressed as correlate.
+- [ ] `testSimpleAntiCorrelateViaJoinWithoutConvertCorrelateToJoin`
+      — same, but the rewrite to `Join` is suppressed.
+- [ ] `testSimpleInnerCorrelateViaJoin` — inner-correlate to join.
+- [ ] `testSimpleInnerCorrelateViaJoinWithoutConvertCorrelateToJoin`.
+- [ ] `testSimpleLeftCorrelateViaJoinWithoutConvertCorrelateToJoin`.
+- [ ] `testSimpleSemiCorrelateViaJoinWithoutConvertCorrelateToJoin`.
+- [ ] `testSimpleRightCorrelateViaJoinThrowsException` — right-correlate
+      is not supported; verify the error.
+- [ ] `testSimpleFullCorrelateViaJoinThrowsException` — same for full.
+- [ ] `testRightCorrelateViaJoinThrowsException`.
+- [ ] `testFullCorrelateViaJoinThrowsException`.
+
+---
+
+### Task 32 — AggregateRex variants
+
+Port the `testAggregateRex*` tests that use Calcite's `RexNode`-style
+scalar expressions directly as aggregate arguments.
+
+- [ ] `testAggregateRex2` — aggregate call whose argument is a non-trivial
+      `Expr` (e.g. `SAL * 2`) rather than a bare field reference.
+- [ ] `testAggregateRex3` — aggregate argument is a constant expression.
+- [ ] `testAggregateRex4` — aggregate argument involves a CASE expression.
+
+---
+
+### Task 33 — Convention / physical planning
+
+These tests exercise Calcite's physical-convention layer
+(`EnumerableConvention`, `Convention.NONE`, rule-based conversion).
+They require a planner and trait-propagation infrastructure that is
+deliberately **out of scope** for this issue; listed here for completeness.
+
+- [ ] `testConvert`, `testConvertRename`, `testConvertNegative`
+- [ ] `testSwitchConventions`
+- [ ] `testPruneProjectInputOfAggregatePreservesConvention` (and four
+      variant suffixes: `AndCollationsWhenEmpty`,
+      `AndSingletonCollation`, `AndCompositeCollation`,
+      `AndDistribution`)
+
+---
+
+### Task 34 — Hints and metadata framework
+
+These tests require Calcite's `RelHint` and `RelMetadataQuery`
+infrastructure (cost, distribution, collation metadata providers).
+They are **out of scope** for this issue.
+
+- [ ] `testHintsOnEmptyStack`, `testHintsOnNonHintable`
+- [ ] `testCombineWithSharedSubexpression`, `testCombineDifferentRowTypes`
+- [ ] `testCombineMetadata`
+- [ ] `testCombineCumulativeCost`, `testCombineCumulativeCostWithSharedInputs`,
+      `testCombineCumulativeCostEmpty`
+- [ ] `testCombineExplain`
+
+---
+
+### Task 35 — Misc remaining tests
+
+A mix of type-system, sampling, view-expansion, and exchange tests.
+
+- [ ] `testTypeInferenceValidation` — type-checker rejects a project
+      whose output type is inconsistent with the declared column type.
+- [ ] `testSampleBernoulliRepeatable` — `TABLESAMPLE BERNOULLI(p)
+      REPEATABLE(seed)`; requires seeded-sample support in `Sample`.
+- [ ] `testSampleZero` — sample with probability 0 → empty relation.
+- [ ] `testSampleAll` — sample with probability 1 → identity.
+- [ ] `testExpandViewShouldKeepAlias` — when a view is expanded inline,
+      the original alias is preserved on the expanded subtree.
+- [ ] `testSortExchange` — `SortExchange` node (sort + distribution
+      exchange combined); requires a new `Rel::SortExchange` variant.
+
+---
+
 ## Test coverage target
 
 The table below lists the ~130 tests (out of ~230) that form the 80 %
