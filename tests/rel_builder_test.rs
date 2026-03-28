@@ -2220,6 +2220,48 @@ fn test_within_distinct() -> Result<(), RelError> {
     Ok(())
 }
 
+// -----------------------------------------------------------------------
+// RepeatUnion / recursive queries (Task 29)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_repeat_union1() -> Result<(), RelError> {
+    // Seed: VALUES (0), iterative: VALUES (1) — fixed-point termination.
+    let mut b = builder();
+    b.values(&["i"], vec![vec![Val::Int(0)]]);
+    b.values(&["i"], vec![vec![Val::Int(1)]]);
+    b.repeat_union(true, None)?;
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalRepeatUnion(all=[true])
+              LogicalValues(tuples=[[{ 0 }]])
+              LogicalValues(tuples=[[{ 1 }]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_repeat_union2() -> Result<(), RelError> {
+    // Same as repeat_union1 but with an iteration limit of 10.
+    let mut b = builder();
+    b.values(&["i"], vec![vec![Val::Int(0)]]);
+    b.values(&["i"], vec![vec![Val::Int(1)]]);
+    b.repeat_union(true, Some(10))?;
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalRepeatUnion(all=[true], iterationLimit=[10])
+              LogicalValues(tuples=[[{ 0 }]])
+              LogicalValues(tuples=[[{ 1 }]])
+        "}
+    );
+    Ok(())
+}
+
 #[test]
 fn test_aggregate_eliminates_duplicate_calls3() -> Result<(), RelError> {
     // Two identical COUNT(*) agg calls: one computation, project duplicates.

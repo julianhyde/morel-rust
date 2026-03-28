@@ -197,6 +197,18 @@ pub enum Rel {
         all: bool,
         row_type: Vec<(String, Type)>,
     },
+
+    /// Recursive UNION: evaluates `seed` once, then repeatedly applies
+    /// `iterative` until no new rows are produced (or `iteration_limit`
+    /// is reached).
+    RepeatUnion {
+        seed: Box<Rel>,
+        iterative: Box<Rel>,
+        all: bool,
+        /// Maximum iterations; `None` means unlimited (fixed-point).
+        iteration_limit: Option<usize>,
+        row_type: Vec<(String, Type)>,
+    },
 }
 
 impl Rel {
@@ -210,6 +222,7 @@ impl Rel {
             Rel::Join { row_type, .. } => row_type,
             Rel::Minus { row_type, .. } => row_type,
             Rel::Project { row_type, .. } => row_type,
+            Rel::RepeatUnion { row_type, .. } => row_type,
             Rel::Sort { input, .. } => input.row_type(),
             Rel::TableScan { row_type, .. } => row_type,
             Rel::Union { row_type, .. } => row_type,
@@ -227,6 +240,11 @@ impl Rel {
             Rel::Join { left, right, .. } => vec![left, right],
             Rel::Minus { inputs, .. } => inputs.iter().collect(),
             Rel::Project { input, .. } => vec![input],
+            Rel::RepeatUnion {
+                seed, iterative, ..
+            } => {
+                vec![seed, iterative]
+            }
             Rel::Sort { input, .. } => vec![input],
             Rel::TableScan { .. } => vec![],
             Rel::Union { inputs, .. } => inputs.iter().collect(),

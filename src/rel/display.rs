@@ -138,6 +138,21 @@ fn write_rel(f: &mut String, rel: &Rel, indent: usize) -> fmt::Result {
             }
             Ok(())
         }
+        Rel::RepeatUnion {
+            seed,
+            iterative,
+            all,
+            iteration_limit,
+            ..
+        } => {
+            write!(f, "{}LogicalRepeatUnion(all=[{}]", pad, all)?;
+            if let Some(limit) = iteration_limit {
+                write!(f, ", iterationLimit=[{}]", limit)?;
+            }
+            writeln!(f, ")")?;
+            write_rel(f, seed, indent + 1)?;
+            write_rel(f, iterative, indent + 1)
+        }
         Rel::Project {
             input,
             exprs,

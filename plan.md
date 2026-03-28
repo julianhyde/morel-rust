@@ -1001,9 +1001,9 @@ and the `GROUPING()` / `GROUPING_ID()` pseudo-functions.
 Add `Rel::RepeatUnion` for recursive common-table-expression (`WITH
 RECURSIVE`) queries.
 
-- [ ] `testRepeatUnion1` — seed relation + iterative relation, fixed-point
+- [x] `testRepeatUnion1` — seed relation + iterative relation, fixed-point
       termination by row equality.
-- [ ] `testRepeatUnion2` — variant with a depth-limit `fetch` bound.
+- [x] `testRepeatUnion2` — variant with a depth-limit `fetch` bound.
 
 ---
 

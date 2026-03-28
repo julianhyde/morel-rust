@@ -1498,6 +1498,45 @@ impl RelBuilder {
     }
 
     // -------------------------------------------------------------------
+    // Recursive union
+    // -------------------------------------------------------------------
+
+    /// Builds a `Rel::RepeatUnion` from the top two items on the stack.
+    ///
+    /// The second-from-top item is the **seed** relation (evaluated once);
+    /// the top item is the **iterative** relation (applied repeatedly).
+    /// `all` controls whether duplicate rows are kept.
+    /// `iteration_limit` caps the number of recursive steps; `None` means
+    /// run until a fixed point (no new rows).
+    ///
+    /// Both inputs must have the same column count.
+    pub fn repeat_union(
+        &mut self,
+        all: bool,
+        iteration_limit: Option<usize>,
+    ) -> Result<&mut Self, RelError> {
+        if self.error.is_some() {
+            return Ok(self);
+        }
+        let expected = self.stack[self.stack.len() - 2].rel.row_type().len();
+        let got = self.stack[self.stack.len() - 1].rel.row_type().len();
+        if got != expected {
+            return Err(RelError::SetOpColumnMismatch { expected, got });
+        }
+        let mut inputs = self.pop_n(2, "repeat_union");
+        let iterative = Box::new(inputs.pop().unwrap());
+        let seed = Box::new(inputs.pop().unwrap());
+        let row_type = seed.row_type().to_vec();
+        Ok(self.push(Rel::RepeatUnion {
+            seed,
+            iterative,
+            all,
+            iteration_limit,
+            row_type,
+        }))
+    }
+
+    // -------------------------------------------------------------------
     // Expression builders
     // -------------------------------------------------------------------
 
