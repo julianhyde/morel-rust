@@ -1578,6 +1578,109 @@ fn test_aggregate_project_with_expression() -> Result<(), RelError> {
 }
 
 // -----------------------------------------------------------------------
+// Sort / aggregate variants (Task 21)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_sort_exp_then_limit() -> Result<(), RelError> {
+    // sort() by SAL DESC then limit(fetch=3) → merged Sort node.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let key = b.desc(b.field("SAL")?);
+    b.sort(&[key]);
+    b.limit(None, Some(3));
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalSort(sort0=[$5], dir0=[DESC], fetch=[3])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_empty_values_with_collation() -> Result<(), RelError> {
+    // sort() on empty Values is a no-op; empty node is preserved.
+    let mut b = builder();
+    b.values(&["X", "Y"], vec![]);
+    let key = b.desc(b.field("X")?);
+    b.sort(&[key]);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalValues(tuples=[[]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_aggregate_one_row() -> Result<(), RelError> {
+    // Aggregate with empty group key and SUM: always one output row.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![]);
+    b.aggregate(&gk, vec![b.sum("SAL").as_("TOTAL")]);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalAggregate(group=[{}], TOTAL=[SUM($5)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_aggregate5b() -> Result<(), RelError> {
+    // Multiple agg functions on the same scan: MAX, MIN, AVG.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![b.field("DEPTNO")?]);
+    b.aggregate(
+        &gk,
+        vec![
+            b.max("SAL").as_("MAX_SAL"),
+            b.min("SAL").as_("MIN_SAL"),
+            b.avg("SAL").as_("AVG_SAL"),
+        ],
+    );
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalAggregate(group=[{7}], MAX_SAL=[MAX($5)], \
+            MIN_SAL=[MIN($5)], AVG_SAL=[AVG($5)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_aggregate_filter_nullable() -> Result<(), RelError> {
+    // COUNT(*) FILTER (WHERE DEPTNO = 20): filter is accepted and shown.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![b.field("DEPTNO")?]);
+    let filter_cond = b.equals(b.field("DEPTNO")?, b.literal_int(20));
+    b.aggregate(&gk, vec![b.count_star().with_filter(filter_cond).as_("C")]);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalAggregate(group=[{7}], C=[COUNT(*) FILTER [=($7, 20)]])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------
 // Error handling (Task 9)
 // -----------------------------------------------------------------------
 

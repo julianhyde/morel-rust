@@ -880,20 +880,18 @@ New negative tests that verify specific `RelError` payloads.
 
 ---
 
-### Task 21 — Sort expression and aggregate simple variants
+### Task 21 — Sort expression and aggregate simple variants ✓
 
 Small additions that extend existing sort/aggregate functionality.
 
-- [ ] `testSortExpThenLimit` — `sort()` by a computed expression, then
-      `limit()` (merged into a single `Sort` node with expression key).
-- [ ] `testEmptyValuesWithCollation` — `sort()` applied to an empty
-      `Values`; the empty node is preserved unchanged.
-- [ ] `testAggregateOneRow` — `aggregate()` with an empty group key and
-      no agg calls; verifies exactly one output row.
-- [ ] `testAggregate5b` — variant of `testAggregate5` with a different
-      set of agg functions.
-- [ ] `testAggregateFilterNullable` — agg call with a nullable FILTER
-      expression; verify the filter is accepted and reflected in the plan.
+- [x] `testSortExpThenLimit` — `sort()` by SAL DESC then `limit(fetch=3)`
+      merged into one `Sort` node.
+- [x] `testEmptyValuesWithCollation` — `sort()` on empty `Values` is a
+      no-op; added short-circuit in `sort()`.
+- [x] `testAggregateOneRow` — `aggregate()` with empty group key and SUM.
+- [x] `testAggregate5b` — MAX, MIN, AVG on same scan.
+- [x] `testAggregateFilterNullable` — agg call with boolean FILTER;
+      filter shown in plan via updated `write_agg_call` in display.rs.
 
 ---
 

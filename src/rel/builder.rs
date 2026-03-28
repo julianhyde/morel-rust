@@ -601,6 +601,13 @@ impl RelBuilder {
     /// Duplicate sort keys (same ordinal + direction) are eliminated.
     /// If `keys` is empty, this is a no-op.
     pub fn sort(&mut self, keys: &[SortKey]) -> &mut Self {
+        // sort() on empty input is already empty.
+        if matches!(
+            self.stack.last().map(|f| &f.rel),
+            Some(Rel::Values { rows, .. }) if rows.is_empty()
+        ) {
+            return self;
+        }
         let row_type = self.peek_row_type().to_vec();
         let collation = sort_keys_to_collation(keys, &row_type);
         if collation.is_empty() {

@@ -79,7 +79,7 @@ fn write_rel(f: &mut String, rel: &Rel, indent: usize) -> fmt::Result {
             write!(f, "}}]")?;
             for agg in agg_calls {
                 write!(f, ", ")?;
-                write_agg_call(f, agg, rel.row_type())?;
+                write_agg_call(f, agg, input.row_type())?;
             }
             writeln!(f, ")")?;
             write_rel(f, input, indent + 1)
@@ -336,7 +336,7 @@ fn unary_op_display(op: &str) -> Option<&'static str> {
 fn write_agg_call(
     f: &mut String,
     agg: &AggCall,
-    row_type: &[(String, Type)],
+    input_row_type: &[(String, Type)],
 ) -> fmt::Result {
     // Output column name.
     let name = agg.name.as_deref().unwrap_or("?");
@@ -352,7 +352,6 @@ fn write_agg_call(
         AggFunction::Sum => "SUM",
     };
     write!(f, "{}(", fn_name)?;
-    let _ = row_type; // args are input ordinals, not output
 
     if agg.agg == AggFunction::CountStar {
         // COUNT(*) — star instead of an argument.
@@ -368,7 +367,13 @@ fn write_agg_call(
             write!(f, "${}", arg)?;
         }
     }
-    write!(f, ")]")
+    write!(f, ")")?;
+    if let Some(filter) = &agg.filter {
+        write!(f, " FILTER [")?;
+        write_expr(f, filter, &[input_row_type])?;
+        write!(f, "]")?;
+    }
+    write!(f, "]")
 }
 
 // -----------------------------------------------------------------------
