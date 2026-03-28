@@ -734,19 +734,19 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 14 — Project variants
+### Task 14 — Project variants ✓
 
-- [ ] `testProject2`: project with a computed (non-identity) expression,
+- [x] `testProject2`: project with a computed (non-identity) expression,
       e.g. `EMPNO + 1`.
-- [ ] `testProjectIdentityWithFieldsRenameFilter`: identity project after
+- [x] `testProjectIdentityWithFieldsRenameFilter`: identity project after
       a filter; make sure the chain is not dropped.
-- [ ] `testProjectLeadingEdge`: project a strict leading prefix of input
+- [x] `testProjectLeadingEdge`: project a strict leading prefix of input
       columns.
-- [ ] `testProjectMapping`: project that reorders or repeats columns.
-- [ ] `testProjectBloat` / `testProjectBloat2`: outer project has a
+- [x] `testProjectMapping`: project that reorders or repeats columns.
+- [x] `testProjectBloat` / `testProjectBloat2`: outer project has a
       computed expression → merge is suppressed (only field-ref outer
       expressions are merged).
-- [ ] `testPermute`: project that permutes all columns.
+- [x] `testPermute`: project that permutes all columns.
 
 **Tests enabled:**
 `testProject2`, `testProjectIdentityWithFieldsRenameFilter`,

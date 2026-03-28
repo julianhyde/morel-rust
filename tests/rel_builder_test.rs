@@ -218,6 +218,143 @@ fn test_project_identity_with_fields_rename() -> Result<(), RelError> {
 }
 
 // -----------------------------------------------------------------------
+// Project variants (Task 14)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_project2() -> Result<(), RelError> {
+    // Project with a computed expression: EMPNO and EMPNO+1.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let empno = b.field("EMPNO")?;
+    let empno2 = b.field("EMPNO")?;
+    let one = b.literal_int(1);
+    let exprs = vec![empno, b.plus(empno2, one)];
+    b.project(exprs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(EMPNO=[$0], $1=[+($0, 1)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_project_leading_edge() -> Result<(), RelError> {
+    // Project the first 3 columns of EMP (a leading subset).
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let exprs = vec![b.field("EMPNO")?, b.field("ENAME")?, b.field("JOB")?];
+    b.project(exprs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_project_mapping() -> Result<(), RelError> {
+    // Project reordering two columns: [ENAME, EMPNO].
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let exprs = vec![b.field("ENAME")?, b.field("EMPNO")?];
+    b.project(exprs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(ENAME=[$1], EMPNO=[$0])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_permute() -> Result<(), RelError> {
+    // Full permutation of DEPT columns: LOC, DNAME, DEPTNO.
+    // DEPT: (DEPTNO=$0, DNAME=$1, LOC=$2)
+    let mut b = builder();
+    b.scan(&["scott", "DEPT"]);
+    let exprs = vec![b.field("LOC")?, b.field("DNAME")?, b.field("DEPTNO")?];
+    b.project(exprs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(LOC=[$2], DNAME=[$1], DEPTNO=[$0])
+              LogicalTableScan(table=[[scott, DEPT]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_project_bloat() -> Result<(), RelError> {
+    // project-over-project where outer has a computed expression
+    // → merge is suppressed; two Project nodes remain.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.project(vec![b.field("EMPNO")?, b.field("ENAME")?]);
+    let empno = b.field("EMPNO")?;
+    let one = b.literal_int(1);
+    let exprs = vec![b.plus(empno, one), b.field("ENAME")?];
+    b.project(exprs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject($0=[+($0, 1)], ENAME=[$1])
+              LogicalProject(EMPNO=[$0], ENAME=[$1])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_project_identity_with_fields_rename_filter() -> Result<(), RelError> {
+    // Rename one column, then filter, then project a subset.
+    // The outer Project is not over another Project, so no merge.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.rename(vec![
+        "EMPNO".into(),
+        "NAME".into(), // ENAME → NAME
+        "JOB".into(),
+        "MGR".into(),
+        "HIREDATE".into(),
+        "SAL".into(),
+        "COMM".into(),
+        "DEPTNO".into(),
+    ]);
+    let cond = b.equals(b.field("JOB")?, b.literal_string("CLERK"));
+    b.filter(cond);
+    let exprs = vec![b.field("EMPNO")?, b.field("NAME")?];
+    b.project(exprs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(EMPNO=[$0], NAME=[$1])
+              LogicalFilter(condition=[=($2, 'CLERK')])
+                LogicalProject(EMPNO=[$0], NAME=[$1], JOB=[$2], MGR=[$3], \
+                               HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7])
+                  LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------
 // Values / Empty
 // -----------------------------------------------------------------------
 
