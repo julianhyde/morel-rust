@@ -1368,6 +1368,41 @@ fn test_filter_non_boolean_condition() {
     assert!(matches!(b.build(), Err(RelError::NonBooleanCondition(_))));
 }
 
+// -----------------------------------------------------------------------
+// Misc and remaining (Task 17)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_scan_valid_table_wrong_case() -> Result<(), RelError> {
+    // MapSchema lookup is case-insensitive; canonical name is used in the plan.
+    let mut b = builder();
+    b.scan(&["SCOTT", "emp"]); // wrong case
+    let plan = b.build()?;
+    assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
+    Ok(())
+}
+
+#[test]
+fn test_union_project_values2() -> Result<(), RelError> {
+    // Three-way UNION DISTINCT using union_n.
+    let mut b = builder();
+    b.values(&["X", "Y"], vec![vec![Val::Int(1), Val::Int(2)]]);
+    b.values(&["X", "Y"], vec![vec![Val::Int(3), Val::Int(4)]]);
+    b.values(&["X", "Y"], vec![vec![Val::Int(5), Val::Int(6)]]);
+    b.union_n(false, 3);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalUnion(all=[false])
+              LogicalValues(tuples=[[{ 1, 2 }]])
+              LogicalValues(tuples=[[{ 3, 4 }]])
+              LogicalValues(tuples=[[{ 5, 6 }]])
+        "}
+    );
+    Ok(())
+}
+
 #[test]
 fn test_aggregate_group_key_out_of_range() {
     let mut b = builder();

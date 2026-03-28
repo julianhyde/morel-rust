@@ -805,17 +805,19 @@ rename, aggregate.
 
 ---
 
-### Task 17 — Misc and remaining error conditions
+### Task 17 — Misc and remaining error conditions ✓
 
-- [ ] `testScanValidTableWrongCase`: case-insensitive table name lookup in
-      `MapSchema`.
+- [x] `testScanValidTableWrongCase`: `MapSchema` lookup is now
+      case-insensitive; canonical name is used in the plan.
+- [x] `testUnionProjectValues2`: three-way `union_n(false, 3)`.
 - [ ] `testSortOverProjectSort`: outer `sort()` over `Project(Sort(…))`
-      — inner sort subsumed when outer collation dominates.
+      — inner sort subsumed when outer collation dominates (deferred).
 - [ ] `testBadType` / `testFieldOnNonStructExpression`: additional
-      `RelError` variants for type mismatches.
-- [ ] `testUnionProjectValues2`: three-way `union_n`.
-- [ ] `testRelBuilderToString`: `Display` / `to_string` on a `RelBuilder`.
-- [ ] `testSimplify`: constant-folding simplifier pass over a built plan.
+      `RelError` variants for type mismatches (deferred).
+- [ ] `testRelBuilderToString`: `Display` / `to_string` on a `RelBuilder`
+      (deferred).
+- [ ] `testSimplify`: constant-folding simplifier pass over a built plan
+      (deferred).
 
 **Tests enabled:**
 `testScanValidTableWrongCase`, `testSortOverProjectSort`,

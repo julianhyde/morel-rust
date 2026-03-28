@@ -131,7 +131,20 @@ impl MapSchema {
 impl Schema for MapSchema {
     fn table(&self, name: &[&str]) -> Option<Arc<TableEntry>> {
         let key: Vec<String> = name.iter().map(ToString::to_string).collect();
-        self.tables.get(&key).cloned()
+        // Try exact match first.
+        if let Some(t) = self.tables.get(&key) {
+            return Some(t.clone());
+        }
+        // Fall back to case-insensitive match.
+        let key_lower: Vec<String> =
+            key.iter().map(|s| s.to_lowercase()).collect();
+        self.tables
+            .iter()
+            .find(|(k, _)| {
+                k.iter().map(|s| s.to_lowercase()).collect::<Vec<_>>()
+                    == key_lower
+            })
+            .map(|(_, v)| v.clone())
     }
 }
 
@@ -270,9 +283,10 @@ mod tests {
     }
 
     #[test]
-    fn test_case_sensitive_table_name() {
+    fn test_case_insensitive_table_name() {
         let s = schema();
-        // "emp" (lowercase) is not found; lookup is case-sensitive.
-        assert!(s.table(&["scott", "emp"]).is_none());
+        // Lookup is case-insensitive; canonical name is returned.
+        let t = s.table(&["SCOTT", "emp"]).expect("should find EMP");
+        assert_eq!(t.name, vec!["scott", "EMP"]);
     }
 }
