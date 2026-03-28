@@ -895,21 +895,20 @@ Small additions that extend existing sort/aggregate functionality.
 
 ---
 
-### Task 22 — New expression predicates
+### Task 22 — New expression predicates ✓
 
 Add builder methods for additional boolean/comparison operators.
 
-- [ ] `testScanFilterOr2` — OR filter with three terms.
-- [ ] `testIsDistinctFrom` — `IS DISTINCT FROM` predicate
-      (`a IS DISTINCT FROM b`); needs a new `is_distinct_from()` method.
-- [ ] `testNotLike` — `NOT LIKE` predicate; needs `not_like()` method.
-- [ ] `testNotIlike` — `NOT ILIKE` (case-insensitive); needs
-      `not_ilike()` method.
-- [ ] `testNotSimilarTo` — `NOT SIMILAR TO`; needs `not_similar_to()`.
-- [ ] `testCallBetweenOperator` — `BETWEEN a AND b` expression; needs
-      `between()` method.
-- [ ] `testSymmetricalOperatorsCanBeReversed` — `a = b` and `b = a`
-      produce identical plans (operand order is canonicalised).
+- [x] `testScanFilterOr2` — OR filter with three terms.
+- [x] `testIsDistinctFrom` — added `is_distinct_from()` and
+      `is_not_distinct_from()`.
+- [x] `testNotLike` — added `like()` and `not_like()`.
+- [x] `testNotIlike` — added `ilike()` and `not_ilike()`.
+- [x] `testNotSimilarTo` — added `similar_to()` and `not_similar_to()`.
+- [x] `testCallBetweenOperator` — `between(a, low, high)` expands to
+      `AND(>=, <=)`.
+- [ ] `testSymmetricalOperatorsCanBeReversed` — requires operand
+      canonicalization; deferred.
 
 ---
 

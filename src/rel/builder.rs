@@ -1433,6 +1433,56 @@ impl RelBuilder {
     pub fn is_not_null(&self, a: Expr) -> Expr {
         unary_op("is_not_null", bool_type(), a)
     }
+
+    // --- string predicates / BETWEEN ------------------------------------
+
+    /// Returns `a BETWEEN low AND high`
+    /// (equivalent to `a >= low AND a <= high`).
+    pub fn between(&self, a: Expr, low: Expr, high: Expr) -> Expr {
+        let ge = self.ge(a.clone(), low);
+        let le = self.le(a, high);
+        self.and(ge, le)
+    }
+
+    /// Returns `a ILIKE b` (case-insensitive LIKE).
+    pub fn ilike(&self, a: Expr, b: Expr) -> Expr {
+        binary_op("ILIKE", bool_type(), a, b)
+    }
+
+    /// Returns `a IS DISTINCT FROM b`.
+    pub fn is_distinct_from(&self, a: Expr, b: Expr) -> Expr {
+        binary_op("IS DISTINCT FROM", bool_type(), a, b)
+    }
+
+    /// Returns `a IS NOT DISTINCT FROM b`.
+    pub fn is_not_distinct_from(&self, a: Expr, b: Expr) -> Expr {
+        binary_op("IS NOT DISTINCT FROM", bool_type(), a, b)
+    }
+
+    /// Returns `a LIKE b`.
+    pub fn like(&self, a: Expr, b: Expr) -> Expr {
+        binary_op("LIKE", bool_type(), a, b)
+    }
+
+    /// Returns `a NOT ILIKE b`.
+    pub fn not_ilike(&self, a: Expr, b: Expr) -> Expr {
+        binary_op("NOT ILIKE", bool_type(), a, b)
+    }
+
+    /// Returns `a NOT LIKE b`.
+    pub fn not_like(&self, a: Expr, b: Expr) -> Expr {
+        binary_op("NOT LIKE", bool_type(), a, b)
+    }
+
+    /// Returns `a NOT SIMILAR TO b`.
+    pub fn not_similar_to(&self, a: Expr, b: Expr) -> Expr {
+        binary_op("NOT SIMILAR TO", bool_type(), a, b)
+    }
+
+    /// Returns `a SIMILAR TO b`.
+    pub fn similar_to(&self, a: Expr, b: Expr) -> Expr {
+        binary_op("SIMILAR TO", bool_type(), a, b)
+    }
 }
 
 // -----------------------------------------------------------------------

@@ -151,6 +151,123 @@ fn test_scan_filter_or() -> Result<(), RelError> {
 }
 
 // -----------------------------------------------------------------------
+// Expression predicates (Task 22)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_scan_filter_or2() -> Result<(), RelError> {
+    // OR of three terms.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let t1 = b.equals(b.field("DEPTNO")?, b.literal_int(10));
+    let t2 = b.equals(b.field("DEPTNO")?, b.literal_int(20));
+    let t3 = b.equals(b.field("DEPTNO")?, b.literal_int(30));
+    let cond = b.or(b.or(t1, t2), t3);
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[OR(OR(=($7, 10), =($7, 20)), =($7, 30))])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_is_distinct_from() -> Result<(), RelError> {
+    // IS DISTINCT FROM predicate.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let cond = b.is_distinct_from(b.field("COMM")?, b.literal_int(0));
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[IS DISTINCT FROM($6, 0)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_not_like() -> Result<(), RelError> {
+    // NOT LIKE predicate.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let cond = b.not_like(b.field("ENAME")?, b.literal_string("A%"));
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[NOT LIKE($1, 'A%')])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_not_ilike() -> Result<(), RelError> {
+    // NOT ILIKE predicate (case-insensitive).
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let cond = b.not_ilike(b.field("ENAME")?, b.literal_string("a%"));
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[NOT ILIKE($1, 'a%')])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_not_similar_to() -> Result<(), RelError> {
+    // NOT SIMILAR TO predicate.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let cond =
+        b.not_similar_to(b.field("JOB")?, b.literal_string("%(CLERK|MGR)%"));
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[NOT SIMILAR TO($2, '%(CLERK|MGR)%')])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_call_between_operator() -> Result<(), RelError> {
+    // BETWEEN expands to AND(>=, <=).
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let cond =
+        b.between(b.field("SAL")?, b.literal_int(1000), b.literal_int(3000));
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[AND(>=($5, 1000), <=($5, 3000))])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------
 // Project
 // -----------------------------------------------------------------------
 
