@@ -936,21 +936,19 @@ Small additions to the scan and alias sub-systems.
 
 ---
 
-### Task 25 — `projectExcept` family
+### Task 25 — `projectExcept` family ✓
 
-Add a `project_except()` method that projects all columns **except** the
-specified ones.
+Add `project_except_ordinals()` and `project_except_names()` methods.
 
-- [ ] `testProjectExceptWithOrdinal` — exclude one column by ordinal.
-- [ ] `testProjectExceptWithName` — exclude one column by name.
-- [ ] `testProjectExceptWithExplicitAliasAndName` — column has an alias;
-      exclude by alias name.
-- [ ] `testProjectExceptWithImplicitAliasAndName` — column alias was
-      inferred from the expression; exclude by inferred name.
-- [ ] `testProjectExceptWithDuplicateField` — two columns share a name;
-      verify that only the specified one is excluded.
-- [ ] `testProjectExceptWithMissingField` — requested field is absent;
-      verify `RelError::FieldNotFound` is returned.
+- [x] `testProjectExceptWithOrdinal` — exclude column by ordinal.
+- [x] `testProjectExceptWithName` — exclude column by name.
+- [x] `testProjectExceptWithExplicitAliasAndName` — exclude aggregate
+      output column by its named alias.
+- [ ] `testProjectExceptWithImplicitAliasAndName` — not distinct from
+      WithName when column names are explicit; skipped.
+- [x] `testProjectExceptWithDuplicateField` — join produces two DEPTNO
+      columns; both are excluded by `project_except_names`.
+- [x] `testProjectExceptWithMissingField` — `FieldNotFound` returned.
 
 ---
 

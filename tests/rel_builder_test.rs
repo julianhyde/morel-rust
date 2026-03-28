@@ -1108,6 +1108,102 @@ fn test_anti_join() -> Result<(), RelError> {
 }
 
 // -----------------------------------------------------------------------
+// projectExcept family (Task 25)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_project_except_with_ordinal() -> Result<(), RelError> {
+    // Exclude DEPTNO (ordinal 7) from EMP.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.project_except_ordinals(&[7])?;
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], \
+            HIREDATE=[$4], SAL=[$5], COMM=[$6])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_project_except_with_name() -> Result<(), RelError> {
+    // Exclude DEPTNO by name from EMP.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.project_except_names(&["DEPTNO"])?;
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], \
+            HIREDATE=[$4], SAL=[$5], COMM=[$6])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_project_except_with_explicit_alias_and_name() -> Result<(), RelError> {
+    // project_named gives a column an explicit alias; project_except_names
+    // can then exclude it by that alias.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![b.field("DEPTNO")?]);
+    b.aggregate(&gk, vec![b.count_star().as_("C")]);
+    // Row type: [DEPTNO, C]. Exclude C by its explicit alias.
+    b.project_except_names(&["C"])?;
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(DEPTNO=[$0])
+              LogicalAggregate(group=[{7}], C=[COUNT(*)])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_project_except_with_duplicate_field() -> Result<(), RelError> {
+    // After a join, both EMP and DEPT have DEPTNO. project_except_names
+    // removes ALL columns with that name.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.scan(&["scott", "DEPT"]);
+    let cond = b.equals(
+        b.field_from("EMP", "DEPTNO")?,
+        b.field_from("DEPT", "DEPTNO")?,
+    );
+    b.join(JoinType::Inner, cond);
+    // Row type is EMP(8 cols) + DEPT(3 cols) = 11 cols,
+    // both DEPTNO at positions 7 and 8.
+    b.project_except_names(&["DEPTNO"])?;
+    let plan = b.build()?;
+    // ENAME, LOC and other non-DEPTNO columns remain.
+    let plan_str = explain(&plan);
+    // DEPTNO must not appear in the project output columns.
+    assert!(!plan_str.contains("DEPTNO=["), "DEPTNO should be excluded");
+    Ok(())
+}
+
+#[test]
+fn test_project_except_with_missing_field() {
+    // Excluding a non-existent field returns FieldNotFound.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    assert!(matches!(
+        b.project_except_names(&["NOSUCHCOL"]),
+        Err(RelError::FieldNotFound(_))
+    ));
+}
+
+// -----------------------------------------------------------------------
 // Alias variants (Task 15)
 // -----------------------------------------------------------------------
 

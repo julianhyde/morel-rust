@@ -598,6 +598,60 @@ impl RelBuilder {
         self
     }
 
+    /// Projects all columns of the top-of-stack node **except** those at
+    /// the given ordinals.
+    ///
+    /// Returns [`RelError::FieldOrdinalOutOfRange`] if any ordinal is out
+    /// of range.
+    pub fn project_except_ordinals(
+        &mut self,
+        exclude: &[usize],
+    ) -> Result<&mut Self, RelError> {
+        let row = self.peek_row_type().to_vec();
+        let n = row.len();
+        for &ord in exclude {
+            if ord >= n {
+                return Err(RelError::FieldOrdinalOutOfRange {
+                    ordinal: ord,
+                    len: n,
+                });
+            }
+        }
+        let exprs: Vec<Expr> = row
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !exclude.contains(i))
+            .map(|(_, (name, ty))| {
+                Expr::Identifier(Box::new(ty.clone()), name.clone())
+            })
+            .collect();
+        Ok(self.project(exprs))
+    }
+
+    /// Projects all columns of the top-of-stack node **except** those
+    /// with the given names.
+    ///
+    /// Returns [`RelError::FieldNotFound`] if any name is absent.
+    pub fn project_except_names(
+        &mut self,
+        exclude: &[&str],
+    ) -> Result<&mut Self, RelError> {
+        let row = self.peek_row_type().to_vec();
+        for &name in exclude {
+            if !row.iter().any(|(n, _)| n == name) {
+                return Err(RelError::FieldNotFound(name.to_string()));
+            }
+        }
+        let exprs: Vec<Expr> = row
+            .iter()
+            .filter(|(name, _)| !exclude.contains(&name.as_str()))
+            .map(|(name, ty)| {
+                Expr::Identifier(Box::new(ty.clone()), name.clone())
+            })
+            .collect();
+        Ok(self.project(exprs))
+    }
+
     // -------------------------------------------------------------------
     // Sort / limit
     // -------------------------------------------------------------------
