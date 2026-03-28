@@ -458,6 +458,24 @@ impl FromBuilder {
         self
     }
 
+    /// Adds a through step "through pat in f".
+    ///
+    /// Collects the current pipeline into a collection, applies `f` to it,
+    /// and rebinds `pat` over the result.
+    pub fn through(&mut self, pat: Pat, fn_expr: Expr) -> &mut Self {
+        // Reset bindings to only those introduced by the new pattern.
+        self.bindings.clear();
+        Binding::collect_bindings(&pat, &mut self.bindings);
+        self.atom = self.bindings.len() == 1;
+
+        let env = self.step_env();
+        let step = Step::new(
+            StepKind::Through(Box::new(pat), Box::new(fn_expr)),
+            env,
+        );
+        self.add_step(step)
+    }
+
     /// Adds a scan step "from pat in exp".
     /// This is a simplified version - the Java implementation has complex
     /// logic for inlining nested froms and handling patterns.

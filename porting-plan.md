@@ -165,7 +165,7 @@ finishes the rest.
 | A4 | #265, #276, #277 | `current` keyword, `ordinal` expression, `unorder` step | Parsed and type-inferred. Needs frame/row-index support. |
 | ~~A5~~ | #321 | `intersect`/`except` should count occurrences and preserve order | Already done alongside A3. |
 | ~~A6~~ | #287 | Degenerate joins (singleton scan with `=`) | `ScanEq(pat, expr)` in resolver wraps expr in singleton list `[expr]`; added `Pat::Record` to var_collector. |
-| A7 | #171 | `through` clause in queries (already have `into`) | Parsed. Needs compiler/eval. |
+| ~~A7~~ | #171 | `through` clause in queries (already have `into`) | ThroughRowSink collects upstream rows, applies function, iterates result. Handles user-defined functions; partially applied built-ins need further work. |
 
 ### Phase B — Core language features
 

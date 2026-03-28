@@ -733,7 +733,8 @@ impl<'a> Compiler<'a> {
         use crate::eval::row_sink::{
             CollectRowSink, ComputeRowSink, DistinctRowSink, ExceptRowSink,
             ExistsRowSink, GroupRowSink, IntersectRowSink, OrderRowSink,
-            ScanRowSink, SkipRowSink, TakeRowSink, UnionRowSink, WhereRowSink,
+            ScanRowSink, SkipRowSink, TakeRowSink, ThroughRowSink,
+            UnionRowSink, WhereRowSink,
         };
 
         if steps.is_empty() {
@@ -1071,6 +1072,27 @@ impl<'a> Compiler<'a> {
                 RowSinkFactory::new(move || {
                     Box::new(WhereRowSink::new(
                         filter_code.clone(),
+                        next_factory.create(),
+                    ))
+                })
+            }
+            StepKind::Through(pat, fn_expr) => {
+                let next_factory = self.create_row_sink_factory(
+                    cx,
+                    &first_step.env,
+                    &steps[1..],
+                    element_type,
+                );
+                let pat_code = self.compile_pat(cx, pat);
+                let fn_code = self.compile_expr(cx, None, fn_expr);
+                // slot_count is the number of upstream (pre-Through) bindings.
+                let slot_count = step_env.bindings.len();
+
+                RowSinkFactory::new(move || {
+                    Box::new(ThroughRowSink::new(
+                        fn_code.clone(),
+                        pat_code.clone(),
+                        slot_count,
                         next_factory.create(),
                     ))
                 })

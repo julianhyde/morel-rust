@@ -631,6 +631,98 @@ impl RowSink for TakeRowSink {
     }
 }
 
+/// Implementation of RowSink for a `through` step.
+///
+/// Collects all upstream rows into a list, applies a function to that list,
+/// then iterates over the result, binding each element to a pattern and
+/// passing it downstream.
+pub struct ThroughRowSink {
+    fn_code: Code,
+    pat_code: Code,
+    slot_count: usize,
+    row_sink: Box<dyn RowSink>,
+    rows: Vec<Val>,
+}
+
+impl ThroughRowSink {
+    pub fn new(
+        fn_code: Code,
+        pat_code: Code,
+        slot_count: usize,
+        row_sink: Box<dyn RowSink>,
+    ) -> Self {
+        Self {
+            fn_code,
+            pat_code,
+            slot_count,
+            row_sink,
+            rows: Vec::new(),
+        }
+    }
+}
+
+impl RowSink for ThroughRowSink {
+    fn start(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        self.rows.clear();
+        self.row_sink.start(r, f)
+    }
+
+    fn accept(
+        &mut self,
+        _r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        // Accumulate the current upstream element.
+        let row_val = if self.slot_count == 1 {
+            f.vals[0].clone()
+        } else {
+            Val::List(f.vals[0..self.slot_count].to_vec())
+        };
+        self.rows.push(row_val);
+        Ok(())
+    }
+
+    fn result(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<Val, MorelError> {
+        // 1. Build the collected list.
+        let list = Val::List(self.rows.clone());
+
+        // 2. Evaluate the function expression.
+        let fn_val = self.fn_code.eval_f0(r, f)?;
+
+        // 3. Apply the function to the collected list (mirrors Code::Apply).
+        let result_collection = match &fn_val {
+            Val::Code(c) => c.eval_f1(r, f, &list)?,
+            Val::Closure(frame_def, matches, bound_vals) => {
+                Frame::create_bind_and_eval(
+                    frame_def, matches, bound_vals, r, &list,
+                )?
+            }
+            _ => panic!(
+                "ThroughRowSink: expected function, got {:?}",
+                fn_val
+            ),
+        };
+
+        // 4. Iterate over the result, binding each element to the pattern.
+        for item in result_collection.expect_list() {
+            let matched = self.pat_code.eval_f1(r, f, item)?;
+            if matched.expect_bool() {
+                self.row_sink.accept(r, f)?;
+            }
+        }
+
+        self.row_sink.result(r, f)
+    }
+}
+
 /// Implementation of RowSink for an `intersect` step.
 ///
 /// Computes the intersection of the upstream collection with additional

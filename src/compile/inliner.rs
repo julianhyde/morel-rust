@@ -183,6 +183,11 @@ impl Expr {
                     .map(|c| Box::new(x.transform_expr(env, c)));
                 StepKind::Scan(Box::new(pat2), Box::new(expr2), condition2)
             }
+            StepKind::Through(pat, fn_expr) => {
+                let pat2 = x.transform_pat(env, pat);
+                let fn_expr2 = x.transform_expr(env, fn_expr);
+                StepKind::Through(Box::new(pat2), Box::new(fn_expr2))
+            }
             StepKind::Where(expr) => {
                 let expr2 = x.transform_expr(env, expr);
                 StepKind::Where(Box::new(expr2))

@@ -1027,6 +1027,11 @@ impl<'a> Resolver<'a> {
                 let resolved_expr = self.resolve_expr(expr);
                 builder.where_(resolved_expr);
             }
+            AstStepKind::Through(pat, fn_expr) => {
+                let resolved_pat = self.resolve_pat(pat);
+                let resolved_fn = self.resolve_expr(fn_expr);
+                builder.through(resolved_pat, resolved_fn);
+            }
             AstStepKind::ScanEq(pat, expr) => {
                 // "join y = expr" binds y to a singleton value.
                 // Wrap the value in a list so the Scan step can iterate.

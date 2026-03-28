@@ -292,6 +292,10 @@ impl Step {
                     cond.collect_vars(collector);
                 }
             }
+            StepKind::Through(pat, fn_expr) => {
+                fn_expr.collect_vars(collector);
+                pat.collect_vars(collector);
+            }
             StepKind::Where(expr) => {
                 expr.collect_vars(collector);
             }
