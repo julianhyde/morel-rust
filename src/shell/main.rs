@@ -121,6 +121,10 @@ impl Shell {
                 self.config.optional_int = Some(val.expect_int());
                 Ok(())
             }
+            "output" => {
+                self.config.output = val.expect_string().parse().ok();
+                Ok(())
+            }
             "printDepth" => {
                 self.config.print_depth = Some(val.expect_int());
                 Ok(())
@@ -154,6 +158,10 @@ impl Shell {
             }
             "optionalInt" => {
                 self.config.optional_int = None;
+                Ok(())
+            }
+            "output" => {
+                self.config.output = None;
                 Ok(())
             }
             "printDepth" => {
