@@ -1434,6 +1434,23 @@ impl RelBuilder {
         unary_op("is_not_null", bool_type(), a)
     }
 
+    // --- cast -----------------------------------------------------------
+
+    /// Returns `CAST(a AS target)`.
+    ///
+    /// The returned expression has type `target`.
+    pub fn cast(&self, a: Expr, target: Type) -> Expr {
+        let a_ty = *a.type_();
+        let op_ty = Type::Fn(Box::new(a_ty), Box::new(target.clone()));
+        let op_expr = Expr::Identifier(Box::new(op_ty), "CAST".to_string());
+        Expr::Apply(
+            Box::new(target),
+            Box::new(op_expr),
+            Box::new(a),
+            Span::new(""),
+        )
+    }
+
     // --- string predicates / BETWEEN ------------------------------------
 
     /// Returns `a BETWEEN low AND high`

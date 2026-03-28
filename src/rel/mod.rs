@@ -260,6 +260,11 @@ pub fn int_type() -> Type {
     Type::Primitive(PrimitiveType::Int)
 }
 
+/// Returns `Type::Primitive(PrimitiveType::Real)`.
+pub fn real_type() -> Type {
+    Type::Primitive(PrimitiveType::Real)
+}
+
 /// Returns `Type::Primitive(PrimitiveType::String)`.
 pub fn string_type() -> Type {
     Type::Primitive(PrimitiveType::String)

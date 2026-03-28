@@ -26,7 +26,9 @@ use morel::eval::val::Val;
 use morel::rel::builder::{BuilderConfig, RelBuilder, RelError, SortKey};
 use morel::rel::display::explain;
 use morel::rel::schema::scott_schema;
-use morel::rel::{Direction, JoinType, NullDirection, bool_type, int_type};
+use morel::rel::{
+    Direction, JoinType, NullDirection, bool_type, int_type, real_type,
+};
 use std::sync::Arc;
 
 // -----------------------------------------------------------------------
@@ -261,6 +263,46 @@ fn test_call_between_operator() -> Result<(), RelError> {
         plan,
         indoc! {"
             LogicalFilter(condition=[AND(>=($5, 1000), <=($5, 3000))])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------
+// Cast expressions (Task 23)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_project1_as_int() -> Result<(), RelError> {
+    // Project DEPTNO (already int) cast to INTEGER.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let cast_expr = b.cast(b.field("DEPTNO")?, int_type());
+    b.project(vec![cast_expr]);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject($0=[CAST($7):INTEGER])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_project1_as_double() -> Result<(), RelError> {
+    // Project SAL (real) cast to DOUBLE.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let cast_expr = b.cast(b.field("SAL")?, real_type());
+    b.project(vec![cast_expr]);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject($0=[CAST($5):DOUBLE])
               LogicalTableScan(table=[[scott, EMP]])
         "}
     );

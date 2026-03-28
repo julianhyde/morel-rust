@@ -227,7 +227,15 @@ pub(crate) fn write_expr(
 ) -> fmt::Result {
     match expr {
         // lint: sort until '#}' where '##[A-Z]'
-        Expr::Apply(_, func, arg, _) => {
+        Expr::Apply(ret_ty, func, arg, _) => {
+            // Try to match CAST: Apply(target_type, Identifier("CAST"), a)
+            if let Expr::Identifier(_, op) = func.as_ref()
+                && op == "CAST"
+            {
+                write!(f, "CAST(")?;
+                write_expr(f, arg, inputs)?;
+                return write!(f, "):{}", type_to_sql(ret_ty));
+            }
             // Try to match binary op: Apply(Apply(Identifier(op),a),b)
             if let Expr::Apply(_, inner_f, left, _) = func.as_ref()
                 && let Expr::Identifier(_, op) = inner_f.as_ref()
@@ -283,6 +291,18 @@ fn write_expr_unary(
     write!(f, "{}(", disp)?;
     write_expr(f, arg, inputs)?;
     write!(f, ")")
+}
+
+/// Returns the SQL type name for display in CAST expressions.
+fn type_to_sql(ty: &Type) -> &'static str {
+    use crate::compile::types::PrimitiveType;
+    match ty {
+        Type::Primitive(PrimitiveType::Bool) => "BOOLEAN",
+        Type::Primitive(PrimitiveType::Int) => "INTEGER",
+        Type::Primitive(PrimitiveType::Real) => "DOUBLE",
+        Type::Primitive(PrimitiveType::String) => "VARCHAR",
+        _ => "?",
+    }
 }
 
 fn write_val(f: &mut String, val: &Val) -> fmt::Result {

@@ -912,12 +912,13 @@ Add builder methods for additional boolean/comparison operators.
 
 ---
 
-### Task 23 — Cast expressions
+### Task 23 — Cast expressions ✓
 
 Add a `cast(expr, type)` builder method.
 
-- [ ] `testProject1asInt` — project a column cast to `INT`.
-- [ ] `testProject1asBigInt` — project a column cast to `BIGINT`.
+- [x] `testProject1asInt` — project DEPTNO cast to INTEGER.
+- [x] `testProject1asBigInt` — project SAL cast to DOUBLE (Morel has
+      no BIGINT; DOUBLE is the nearest mapping).
 
 ---
 
