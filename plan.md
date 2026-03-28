@@ -777,25 +777,23 @@ rename, aggregate.
 
 ---
 
-### Task 16 — Aggregate variants
+### Task 16 — Aggregate variants ✓
 
-- [ ] `testAggregate3`: `distinct()` on the output of an aggregate that
-      already groups all output columns — verify it is a no-op.
-- [ ] `testAggregateAndThenProjectNamedField`: aggregate then project a
+- [x] `testAggregate3`: `distinct()` on aggregate that groups two cols —
+      verify it is a no-op.
+- [x] `testAggregateAndThenProjectNamedField`: aggregate then project a
       named output field.
+- [x] `testAggregateProjectWithAliases`: project-with-rename after aggregate.
+- [x] `testAggregateProjectWithExpression`: aggregate output projected
+      through an arithmetic expression.
 - [ ] `testAggregateEliminatesDuplicateCalls` /
-      `testAggregateEliminatesDuplicateCalls2`: identical agg calls in
-      one `aggregate()` call are deduplicated.
-- [ ] `testAggregateProjectWithAliases`: aggregate with aliased agg calls.
-- [ ] `testAggregateProjectWithExpression`: aggregate output projected
-      through an expression.
-- [ ] `testAggregateProjectPrune`: columns unused after aggregate are
-      pruned from the input.
-- [ ] `testAggregateGroupingSetNotSubsetFails`: error when grouping-set
-      element is not a subset of the group key.
-- [ ] `testAggregateGroupingSetDuplicate`: duplicate entries in a grouping
-      set are deduplicated.
-- [ ] `testAggregateGrouping`: `GROUPING(col)` pseudo-column in output.
+      `testAggregateEliminatesDuplicateCalls2`: identical agg calls
+      deduplicated — requires new dedup logic, deferred.
+- [ ] `testAggregateProjectPrune`: prune unused input columns before
+      aggregate — requires new push-down pass, deferred.
+- [ ] `testAggregateGroupingSetNotSubsetFails`,
+      `testAggregateGroupingSetDuplicate`,
+      `testAggregateGrouping`: grouping-set features — deferred.
 
 **Tests enabled:**
 `testAggregate3`, `testAggregateAndThenProjectNamedField`,

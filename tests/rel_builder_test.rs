@@ -1232,6 +1232,95 @@ fn test_aggregate4() -> Result<(), RelError> {
 }
 
 // -----------------------------------------------------------------------
+// Aggregate variants (Task 16)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_aggregate3() -> Result<(), RelError> {
+    // GROUP BY two cols with no agg calls, then distinct() — no-op.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![b.field("DEPTNO")?, b.field("JOB")?]);
+    b.aggregate(&gk, vec![]);
+    b.distinct(); // already grouped → no-op
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalAggregate(group=[{7, 2}])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_aggregate_and_then_project_named_field() -> Result<(), RelError> {
+    // Aggregate, then project just the named agg-output column.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![b.field("DEPTNO")?]);
+    b.aggregate(&gk, vec![b.count_star().as_("C")]);
+    // Project only the count; DEPTNO is dropped.
+    b.project(vec![b.field("C")?]);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(C=[$1])
+              LogicalAggregate(group=[{7}], C=[COUNT(*)])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_aggregate_project_with_aliases() -> Result<(), RelError> {
+    // Aggregate, then project-with-rename: rename the agg output columns.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![b.field("DEPTNO")?]);
+    b.aggregate(&gk, vec![b.count_star().as_("C")]);
+    let exprs = vec![b.field("DEPTNO")?, b.field("C")?];
+    b.project_named(exprs, vec!["DEPT_NUM".into(), "COUNT_ROWS".into()]);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(DEPT_NUM=[$0], COUNT_ROWS=[$1])
+              LogicalAggregate(group=[{7}], C=[COUNT(*)])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_aggregate_project_with_expression() -> Result<(), RelError> {
+    // Aggregate, then project through an arithmetic expression on the
+    // agg output (total SAL + 1).
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![b.field("DEPTNO")?]);
+    b.aggregate(&gk, vec![b.sum("SAL").as_("TOTAL_SAL")]);
+    let total = b.field("TOTAL_SAL")?;
+    let one = b.literal_int(1);
+    let expr = b.plus(total, one);
+    b.project(vec![b.field("DEPTNO")?, expr]);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(DEPTNO=[$0], $1=[+($1, 1)])
+              LogicalAggregate(group=[{7}], TOTAL_SAL=[SUM($5)])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------
 // Error handling (Task 9)
 // -----------------------------------------------------------------------
 
