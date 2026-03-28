@@ -68,6 +68,52 @@ fn test_scan_qualified_table() -> Result<(), RelError> {
 }
 
 // -----------------------------------------------------------------------
+// Scan / alias extensions (Task 24)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_scan_alias() -> Result<(), RelError> {
+    // scan() auto-sets alias to the table's short name ("EMP").
+    // field_from() can use this alias without an explicit as_().
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.scan(&["scott", "DEPT"]);
+    let lhs = b.field_from("EMP", "DEPTNO")?; // $7
+    let rhs = b.field_from("DEPT", "DEPTNO")?; // $8
+    let cond = b.equals(lhs, rhs);
+    b.join(JoinType::Inner, cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalJoin(condition=[=($7, $8)], joinType=[inner])
+              LogicalTableScan(table=[[scott, EMP]])
+              LogicalTableScan(table=[[scott, DEPT]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_project_with_alias_from_scan() -> Result<(), RelError> {
+    // as_("e") overrides the auto-alias; field_from("e", col) works.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.as_("e");
+    let exprs = vec![b.field_from("e", "EMPNO")?, b.field_from("e", "ENAME")?];
+    b.project_named(exprs, vec!["EMPNO".into(), "ENAME".into()]);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(EMPNO=[$0], ENAME=[$1])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------
 // Filter
 // -----------------------------------------------------------------------
 

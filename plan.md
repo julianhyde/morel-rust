@@ -922,18 +922,17 @@ Add a `cast(expr, type)` builder method.
 
 ---
 
-### Task 24 — Scan/alias extensions
+### Task 24 — Scan/alias extensions ✓
 
 Small additions to the scan and alias sub-systems.
 
-- [ ] `testScanAlias` — `scan()` with an immediate alias set by the
-      schema/table itself (distinct from the user-set `as_()`).
-- [ ] `testProjectWithAliasFromScan` — project fields using the alias
-      that was attached to the scan by `as_()`.
-- [ ] `testLetRename` — `let`-based rename: build an expression that
-      binds a new name to an existing field (Calcite's `alias()` expr).
-- [ ] `testAliasSuggester` — when no explicit alias is provided, the
-      builder suggests one based on the expression; verify the name.
+- [x] `testScanAlias` — `scan()` auto-sets frame alias to the table's
+      short name (last name part); `field_from(alias, col)` works
+      without an explicit `as_()` call.
+- [x] `testProjectWithAliasFromScan` — `as_("e")` overrides auto-alias;
+      `field_from("e", col)` used in `project_named`.
+- [ ] `testLetRename` — requires a new alias-expression type; deferred.
+- [ ] `testAliasSuggester` — requires expression-name inference; deferred.
 
 ---
 

@@ -372,11 +372,17 @@ impl RelBuilder {
         match self.schema.table(name) {
             None => self.set_error(RelError::TableNotFound(name_vec)),
             Some(entry) => {
+                // Auto-set alias to the last name part (e.g. "EMP").
+                let auto_alias = entry.name.last().cloned();
                 let rel = Rel::TableScan {
                     table_name: entry.name.clone(),
                     row_type: entry.columns.clone(),
                 };
-                self.push(rel)
+                self.push(rel);
+                if let Some(a) = auto_alias {
+                    self.stack.last_mut().unwrap().alias = Some(a);
+                }
+                self
             }
         }
     }
