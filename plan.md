@@ -862,20 +862,21 @@ More join forms using the existing `join()` and `join_using()` API.
 
 ---
 
-### Task 20 — Error condition variants
+### Task 20 — Error condition variants ✓
 
 New negative tests that verify specific `RelError` payloads.
 
-- [ ] `testScanInvalidQualifiedTable` — three-part name `[a, b, c]`
+- [x] `testScanInvalidQualifiedTable` — three-part name `[a, b, c]`
       where the schema has only two-part names.
-- [ ] `testValuesBadNullFieldNames` — `values()` called with a `null`
-      entry inside the names list.
-- [ ] `testAggregateFilterFails` — a filter expression attached to an
-      aggregate call fails when the filter type is not boolean.
-- [ ] `testBadUnionArgsErrorMessage` — union inputs have different column
-      counts; verify the error message is informative.
-- [ ] `testAggregateGroupingWithFilterFails` — `GROUPING()` used together
-      with a FILTER clause; verify this is rejected.
+- [ ] `testValuesBadNullFieldNames` — not applicable in Rust (no null
+      strings); skipped.
+- [x] `testAggregateFilterFails` — a filter expression attached to an
+      aggregate call fails when the filter type is not boolean. Added
+      `with_filter()` to `AggCallDef`; validates filter type in
+      `aggregate()`.
+- [x] `testBadUnionArgsErrorMessage` — already done in Task 18.
+- [ ] `testAggregateGroupingWithFilterFails` — `GROUPING()` not
+      implemented; skipped.
 
 ---
 

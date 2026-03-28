@@ -178,6 +178,12 @@ impl AggCallDef {
         self.distinct = true;
         self
     }
+
+    /// Attaches a FILTER clause to the aggregate call.
+    pub fn with_filter(mut self, filter: Expr) -> Self {
+        self.filter = Some(filter);
+        self
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -821,6 +827,16 @@ impl RelBuilder {
             .iter()
             .map(|&i| input_row_type[i].clone())
             .collect();
+        // Validate agg-call filter expressions: must be boolean.
+        for def in &agg_calls {
+            if let Some(f) = &def.filter {
+                if *f.type_() == bool_type() {
+                    continue;
+                }
+                let got = format!("{:?}", f.type_());
+                return self.set_error(RelError::NonBooleanCondition(got));
+            }
+        }
         // Resolve agg calls.
         let resolved: Vec<AggCall> = agg_calls
             .into_iter()

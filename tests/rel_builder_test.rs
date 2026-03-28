@@ -1626,6 +1626,30 @@ fn test_filter_non_boolean_condition() {
 }
 
 // -----------------------------------------------------------------------
+// Error condition variants (Task 20)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_scan_invalid_qualified_table() {
+    // Three-part name is not found in a two-part schema.
+    let mut b = builder();
+    b.scan(&["a", "b", "c"]);
+    assert!(matches!(b.build(), Err(RelError::TableNotFound(_))));
+}
+
+#[test]
+fn test_aggregate_filter_fails() {
+    // AggCallDef.filter must be boolean; int filter → NonBooleanCondition.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![]);
+    let int_filter = b.literal_int(1); // not boolean
+    let agg = b.count_star().with_filter(int_filter);
+    b.aggregate(&gk, vec![agg]);
+    assert!(matches!(b.build(), Err(RelError::NonBooleanCondition(_))));
+}
+
+// -----------------------------------------------------------------------
 // Misc and remaining (Task 17)
 // -----------------------------------------------------------------------
 
