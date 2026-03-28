@@ -501,6 +501,7 @@ impl Shell {
                     bindings.clear();
                     let mut session = self.session.borrow_mut();
                     session.type_bindings.clear();
+                    session.type_alias_map.clear();
 
                     // Reset type_env to initial state (FunTypeEnv).
                     let empty_type_env = EmptyTypeEnv {};

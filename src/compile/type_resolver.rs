@@ -321,6 +321,9 @@ pub struct TypeResolver {
     /// accumulates the fresh unifier variables allocated for each `'a`-style
     /// annotation so that repeated occurrences resolve to the same variable.
     decl_type_vars: BTreeMap<String, Var>,
+
+    /// User-defined type aliases, populated from `type` declarations.
+    pub type_aliases: HashMap<String, Type>,
 }
 
 impl Default for TypeResolver {
@@ -357,6 +360,7 @@ impl TypeResolver {
             record_op,
             fn_op,
             decl_type_vars: BTreeMap::new(),
+            type_aliases: HashMap::new(),
         }
     }
 
@@ -464,6 +468,24 @@ impl TypeResolver {
                 // Fun declarations are converted to Val declarations,
                 // so this shouldn't happen
             }
+            DeclKind::Type(type_binds) => {
+                for tb in type_binds {
+                    let underlying =
+                        ast_type_to_type_simple(&tb.type_);
+                    if let Some(underlying) = underlying {
+                        let alias_type = Type::Alias(
+                            tb.name.clone(),
+                            Box::new(underlying),
+                            vec![],
+                        );
+                        bindings.push(TypeBinding {
+                            name: tb.name.clone(),
+                            resolved_type: alias_type,
+                            kind: BindingKind::Type,
+                        });
+                    }
+                }
+            }
             _ => {
                 // Other declaration types don't create value bindings
             }
@@ -570,6 +592,24 @@ impl TypeResolver {
                 // declaration unchanged.
                 // TODO: Implement proper signature type checking once
                 // structures are added.
+                Ok(decl.clone())
+            }
+            DeclKind::Type(type_binds) => {
+                // Register type aliases for within-statement use, then return
+                // the decl unchanged (no unification needed for type alias
+                // declarations).
+                for tb in type_binds {
+                    let underlying =
+                        ast_type_to_type_simple(&tb.type_);
+                    if let Some(underlying) = underlying {
+                        let alias = Type::Alias(
+                            tb.name.clone(),
+                            Box::new(underlying),
+                            vec![],
+                        );
+                        self.type_aliases.insert(tb.name.clone(), alias);
+                    }
+                }
                 Ok(decl.clone())
             }
             _ => todo!("{:?}", decl.kind),
@@ -3335,8 +3375,25 @@ impl<'a> TypeToTermConverter<'a> {
                 )
             }
             TypeKind::Id(name) => {
-                let p = PrimitiveType::parse_name(name).unwrap();
-                self.type_resolver.primitive_term(&p, &v);
+                if let Some(p) = PrimitiveType::parse_name(name) {
+                    self.type_resolver.primitive_term(&p, &v);
+                } else if let Some(alias) =
+                    self.type_resolver.type_aliases.get(name).cloned()
+                {
+                    // Expand the alias for type inference purposes
+                    self.type_resolver.type_term(&alias, &Subst::Empty, &v);
+                } else {
+                    // Unknown named type (datatype, etc.) —
+                    // create a 0-arity op
+                    let op = self
+                        .type_resolver
+                        .unifier
+                        .op(name.as_str(), Some(0));
+                    let seq =
+                        self.type_resolver.unifier.apply(op, &[]);
+                    self.type_resolver
+                        .equiv(&Term::Sequence(seq), &v);
+                }
                 self.type_resolver.reg_type(
                     &type_node.kind,
                     &type_node.span,
@@ -3465,6 +3522,45 @@ fn missing_format<T>(query: &Expr, span: &Span) -> Result<T, Error> {
         require.clause()
     );
     Err(Error::Compile(message, span.clone()))
+}
+
+/// Converts a simple AST type to a core Type without type inference.
+/// Handles only the common cases; returns `None` for complex types.
+fn ast_type_to_type_simple(ast_type: &AstType) -> Option<Type> {
+    match &ast_type.kind {
+        TypeKind::Id(name) => PrimitiveType::parse_name(name)
+            .map(|p| Type::Primitive(p))
+            .or_else(|| {
+                // Could be a named type (datatype, etc.)
+                Some(Type::Named(vec![], name.clone()))
+            }),
+        TypeKind::Tuple(types) => {
+            let ts: Option<Vec<Type>> =
+                types.iter().map(ast_type_to_type_simple).collect();
+            ts.map(Type::Tuple)
+        }
+        TypeKind::App(args, t) => {
+            if let TypeKind::Id(name) = &t.kind {
+                let flat = AstType::flatten(args);
+                let arg_types: Option<Vec<Type>> =
+                    flat.iter().map(ast_type_to_type_simple).collect();
+                arg_types.map(|a| match name.as_str() {
+                    "list" if a.len() == 1 => {
+                        Type::List(Box::new(a.into_iter().next().unwrap()))
+                    }
+                    _ => Type::Named(a, name.clone()),
+                })
+            } else {
+                None
+            }
+        }
+        TypeKind::Fn(param, result) => {
+            let p = ast_type_to_type_simple(param)?;
+            let r = ast_type_to_type_simple(result)?;
+            Some(Type::Fn(Box::new(p), Box::new(r)))
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]

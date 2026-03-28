@@ -18,7 +18,7 @@
 use crate::compile::type_env::{
     BindType, EmptyTypeEnv, FunTypeEnv, SimpleTypeEnv, TypeEnv, TypeEnvBuilder,
 };
-use crate::compile::type_resolver::{Resolved, TypeResolver};
+use crate::compile::type_resolver::{BindingKind, Resolved, TypeResolver};
 use crate::compile::types::Type;
 use crate::eval::code::Code;
 use crate::eval::val::Val;
@@ -46,6 +46,8 @@ pub struct Session {
     /// Accumulated type bindings from all statements. When a name is redefined,
     /// the HashMap::insert naturally overwrites the old binding.
     pub type_bindings: HashMap<String, Type>,
+    /// Accumulated type aliases from `type` declarations.
+    pub type_alias_map: HashMap<String, Type>,
     // Debug ID to track session instances
     // pub debug_id: usize,
 }
@@ -73,6 +75,7 @@ impl Session {
             out: None,
             type_env: Rc::new(type_env) as Rc<dyn TypeEnv>,
             type_bindings: HashMap::new(),
+            type_alias_map: HashMap::new(),
             // debug_id: id,
         }
     }
@@ -133,6 +136,7 @@ impl Session {
         node: &Statement,
     ) -> Result<Resolved, Error> {
         let mut type_resolver = TypeResolver::new();
+        type_resolver.type_aliases = self.type_alias_map.clone();
 
         // Use the accumulated type environment from previous statements
         let resolved = type_resolver.deduce_type(&*self.type_env, node)?;
@@ -143,12 +147,18 @@ impl Session {
         // memory growth from shadowed values.
         let mut has_new_bindings = false;
         for binding in &resolved.bindings {
-            if binding.kind == crate::compile::type_resolver::BindingKind::Val {
+            if binding.kind == BindingKind::Val {
                 self.type_bindings.insert(
                     binding.name.clone(),
                     binding.resolved_type.clone(),
                 );
                 has_new_bindings = true;
+            }
+            if binding.kind == BindingKind::Type {
+                self.type_alias_map.insert(
+                    binding.name.clone(),
+                    binding.resolved_type.clone(),
+                );
             }
         }
 

@@ -172,7 +172,7 @@ finishes the rest.
 | Seq | Java issue | Description | Notes |
 |-----|------------|-------------|-------|
 | ~~B1~~ | #230 | Multi-arm `fn` expressions (`fn p1 => e1 \| p2 => e2`) | Parser, compiler, and eval all supported `Fn(Vec<Match>)`. Tests in match.smli. |
-| B2 | #285 | Type aliases (`type t = ...`) | Parsed (`DeclKind::Type`). Needs resolver and evaluator. Port `type-alias.smli`. |
+| ~~B2~~ | #285 | Type aliases (`type t = ...`) | Resolver, evaluator, inliner, compiler, pretty-printer all updated. `type-alias.smli` uses validate mode and passes. Limitation: binding type shows as expanded type (e.g. `int` not `myInt`) since aliases expand through the unifier. |
 | ~~B3~~ | #249 | `with` operator for records (`{r with f = v}`) | Evaluate mode. Resolver + type_resolver fix. |
 | ~~B4~~ | #291 | `typeof` operator | TypeKind::Expression was parsed; added TypeToTermConverter handler. |
 | ~~B5~~ | #306 | Nested block comments (`(* (* ... *) *)`) | Already supported by pest grammar. Fixed grammar bug: `(*)` inside a block comment is now a line comment, matching SML/NJ and morel-java. |

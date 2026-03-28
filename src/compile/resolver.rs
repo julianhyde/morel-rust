@@ -31,7 +31,7 @@ use crate::eval::val::Val;
 use crate::syntax::ast::{
     DatatypeBind, Decl, DeclKind, Expr, ExprKind, Literal, LiteralKind, Match,
     Pat, PatField, PatKind, Step as AstStep, StepKind as AstStepKind,
-    Type as AstType, TypeBind, ValBind,
+    Type as AstType, TypeBind, TypeKind, ValBind,
 };
 use crate::syntax::parser;
 use std::collections::{HashSet, VecDeque};
@@ -804,8 +804,12 @@ impl<'a> Resolver<'a> {
     }
 
     /// Resolves an AST type binding to a core type binding.
-    fn resolve_type_bind(&self, _type_bind: &TypeBind) -> CoreTypeBind {
-        todo!("Implement type bind resolution")
+    fn resolve_type_bind(&self, type_bind: &TypeBind) -> CoreTypeBind {
+        CoreTypeBind {
+            type_vars: type_bind.type_vars.clone(),
+            name: type_bind.name.clone(),
+            type_: self.resolve_ast_type(&type_bind.type_),
+        }
     }
 
     /// Resolves an AST datatype binding to a core datatype binding.
@@ -817,11 +821,48 @@ impl<'a> Resolver<'a> {
     }
 
     /// Resolves an AST type to a core type.
-    fn resolve_ast_type(&self, _ast_type: &AstType) -> Type {
-        // For now, just returns a basic type. This would need a proper
-        // implementation to convert AST type to core type based on the
-        // type resolver.
-        Type::Primitive(PrimitiveType::Unit)
+    fn resolve_ast_type(&self, ast_type: &AstType) -> Type {
+        // Try node id in type_map first
+        if let Some(id) = ast_type.id {
+            if let Some(t) = self.type_map.get_type(id) {
+                return *t;
+            }
+        }
+        // Fall back to structural conversion
+        match &ast_type.kind {
+            TypeKind::Id(name) => {
+                if let Some(p) = PrimitiveType::parse_name(name) {
+                    Type::Primitive(p)
+                } else {
+                    Type::Named(vec![], name.clone())
+                }
+            }
+            TypeKind::Tuple(types) => {
+                Type::Tuple(
+                    types.iter().map(|t| self.resolve_ast_type(t)).collect(),
+                )
+            }
+            TypeKind::App(args, t) => {
+                if let TypeKind::Id(name) = &t.kind {
+                    let flat = AstType::flatten(args);
+                    let arg_types: Vec<Type> =
+                        flat.iter().map(|a| self.resolve_ast_type(a)).collect();
+                    match name.as_str() {
+                        "list" if arg_types.len() == 1 => Type::List(
+                            Box::new(arg_types.into_iter().next().unwrap()),
+                        ),
+                        _ => Type::Named(arg_types, name.clone()),
+                    }
+                } else {
+                    Type::Primitive(PrimitiveType::Unit)
+                }
+            }
+            TypeKind::Fn(param, result) => Type::Fn(
+                Box::new(self.resolve_ast_type(param)),
+                Box::new(self.resolve_ast_type(result)),
+            ),
+            _ => Type::Primitive(PrimitiveType::Unit),
+        }
     }
 
     /// Resolves an AST match to a core match.

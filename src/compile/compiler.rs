@@ -284,10 +284,17 @@ impl<'a> Compiler<'a> {
 
     fn compile_type_decl(
         &self,
-        _type_binds: &[TypeBind],
+        type_binds: &[TypeBind],
         _bindings: &mut [Binding],
-        _actions: Option<&mut Vec<Box<dyn Action>>>,
+        actions: Option<&mut Vec<Box<dyn Action>>>,
     ) {
+        if let Some(actions) = actions {
+            let lines: Vec<String> = type_binds
+                .iter()
+                .map(|tb| format!("type {} = {}", tb.name, tb.type_))
+                .collect();
+            actions.push(Box::new(TypeDeclAction { lines }));
+        }
     }
 
     fn compile_datatype_decl(
@@ -1214,6 +1221,18 @@ trait Action {
 }
 
 // Simple action implementation
+struct TypeDeclAction {
+    lines: Vec<String>,
+}
+
+impl Action for TypeDeclAction {
+    fn apply(&self, r: &mut EvalEnv, _f: &mut Frame) {
+        for line in &self.lines {
+            r.emit_effect(Effect::EmitLine(line.clone()));
+        }
+    }
+}
+
 struct ValDeclAction {
     code: Arc<Code>,
     pat: Pat,

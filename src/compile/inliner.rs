@@ -221,6 +221,9 @@ impl Decl {
                     val_binds.iter().map(|b| b.visit(env, x)).collect();
                 Decl::RecVal(val_binds2)
             }
+            Decl::Type(_) | Decl::Datatype(_) | Decl::Over(_) => {
+                self.clone()
+            }
             _ => todo!("inline {:}", self),
         }
     }
