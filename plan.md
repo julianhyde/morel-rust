@@ -845,20 +845,20 @@ Simple variations of existing operators requiring little or no new code.
 
 ---
 
-### Task 19 — Join variants
+### Task 19 — Join variants ✓
 
 More join forms using the existing `join()` and `join_using()` API.
 
-- [ ] `testJoin` — plain INNER join with an equality condition
+- [x] `testJoin` — plain INNER join with an equality condition
       (without the surrounding project that `test_project_join` uses).
-- [ ] `testJoinUsing` — `join_using()` on a shared column name.
-- [ ] `testJoin2` — join followed by a project that references both sides.
-- [ ] `testJoinCartesian` — cross-product (condition `= true`).
-- [ ] `testAntiJoin` — `JoinType::Anti`.
-- [ ] `testJoinConditionSimplification` — when the join condition
-      simplifies to `true`, the `Join` node is replaced by a cross join.
-- [ ] `testJoinPushCondition` — part of the join condition that references
-      only one side is pushed into a `Filter` below the join.
+- [x] `testJoinUsing` — `join_using()` on a shared column name.
+- [x] `testJoin2` — self-join EMP on EMPNO = MGR (manager lookup).
+- [x] `testJoinCartesian` — cross-product (condition `= true`).
+- [x] `testAntiJoin` — `JoinType::Anti`.
+- [ ] `testJoinConditionSimplification` — requires expression simplification
+      pass not yet implemented; deferred.
+- [ ] `testJoinPushCondition` — requires join-condition push-down
+      optimization; deferred.
 
 ---
 

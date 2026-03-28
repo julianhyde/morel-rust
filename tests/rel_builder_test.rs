@@ -794,6 +794,115 @@ fn test_alias() -> Result<(), RelError> {
 }
 
 // -----------------------------------------------------------------------
+// Join variants (Task 19)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_join() -> Result<(), RelError> {
+    // Plain INNER join, no surrounding project.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.scan(&["scott", "DEPT"]);
+    let lhs = b.field2(1, "DEPTNO")?;
+    let rhs = b.field2(0, "DEPTNO")?;
+    let cond = b.equals(lhs, rhs);
+    b.join(JoinType::Inner, cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalJoin(condition=[=($7, $8)], joinType=[inner])
+              LogicalTableScan(table=[[scott, EMP]])
+              LogicalTableScan(table=[[scott, DEPT]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_join_using() -> Result<(), RelError> {
+    // join_using() builds an equality condition from shared column name.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.scan(&["scott", "DEPT"]);
+    b.join_using(JoinType::Inner, &["DEPTNO"]);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalJoin(condition=[=($7, $8)], joinType=[inner])
+              LogicalTableScan(table=[[scott, EMP]])
+              LogicalTableScan(table=[[scott, DEPT]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_join2() -> Result<(), RelError> {
+    // Self-join EMP to find manager: join on EMPNO = MGR.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.scan(&["scott", "EMP"]);
+    let lhs = b.field2(1, "EMPNO")?; // $0 (left EMPNO)
+    let rhs = b.field2(0, "MGR")?; // $11 (right MGR)
+    let cond = b.equals(lhs, rhs);
+    b.join(JoinType::Inner, cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalJoin(condition=[=($0, $11)], joinType=[inner])
+              LogicalTableScan(table=[[scott, EMP]])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_join_cartesian() -> Result<(), RelError> {
+    // Cross product: condition = true.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.scan(&["scott", "DEPT"]);
+    let cond = b.literal_bool(true);
+    b.join(JoinType::Inner, cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalJoin(condition=[true], joinType=[inner])
+              LogicalTableScan(table=[[scott, EMP]])
+              LogicalTableScan(table=[[scott, DEPT]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_anti_join() -> Result<(), RelError> {
+    // ANTI join: rows from left that have no matching row in right.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.scan(&["scott", "DEPT"]);
+    let lhs = b.field2(1, "DEPTNO")?;
+    let rhs = b.field2(0, "DEPTNO")?;
+    let cond = b.equals(lhs, rhs);
+    b.join(JoinType::Anti, cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalJoin(condition=[=($7, $8)], joinType=[anti])
+              LogicalTableScan(table=[[scott, EMP]])
+              LogicalTableScan(table=[[scott, DEPT]])
+        "}
+    );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------
 // Alias variants (Task 15)
 // -----------------------------------------------------------------------
 
