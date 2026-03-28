@@ -1063,10 +1063,11 @@ forms; add error tests for right- and full-correlate.
 Port the `testAggregateRex*` tests that use Calcite's `RexNode`-style
 scalar expressions directly as aggregate arguments.
 
-- [ ] `testAggregateRex2` — aggregate call whose argument is a non-trivial
-      `Expr` (e.g. `SAL * 2`) rather than a bare field reference.
-- [ ] `testAggregateRex3` — aggregate argument is a constant expression.
-- [ ] `testAggregateRex4` — aggregate argument involves a CASE expression.
+- [x] `testAggregateRex2` — `SUM(SAL + 2)`: non-trivial arg inserts a
+      pre-project (`test_aggregate_rex2`).
+- [x] `testAggregateRex3` — `SUM(2)`: constant arg (`test_aggregate_rex3`).
+- [ ] `testAggregateRex4` — aggregate argument involves a CASE expression
+      (deferred; CASE expression builder not yet implemented).
 
 ---
 

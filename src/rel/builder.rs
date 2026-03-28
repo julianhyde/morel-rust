@@ -177,6 +177,10 @@ pub struct AggCallDef {
     pub agg: AggFunction,
     /// Input column names (one per argument to the function).
     pub arg_names: Vec<String>,
+    /// Optional scalar expression arguments.  When `Some`, these
+    /// override `arg_names`; the builder inserts a `Project` to
+    /// materialise any non-field-reference expressions.
+    pub arg_exprs: Option<Vec<Expr>>,
     pub distinct: bool,
     pub name: Option<String>,
     pub filter: Option<Expr>,
@@ -926,7 +930,61 @@ impl RelBuilder {
         if self.error.is_some() {
             return self;
         }
-        let input_row_type = self.peek_row_type().to_vec();
+        let mut input_row_type = self.peek_row_type().to_vec();
+        // If any agg call has arg_exprs, resolve them: field refs stay as
+        // arg_names; non-field-ref expressions are materialised by inserting
+        // a Project node that appends them as extra columns ($f<n>).
+        let agg_calls: Vec<AggCallDef> = {
+            let n_in = input_row_type.len();
+            let mut extra: Vec<(String, Expr)> = Vec::new();
+            let mapped: Vec<AggCallDef> = agg_calls
+                .into_iter()
+                .map(|mut def| {
+                    if let Some(exprs) = def.arg_exprs.take() {
+                        let mut names: Vec<String> = Vec::new();
+                        for expr in exprs {
+                            if let Expr::Identifier(_, ref name) = expr
+                                && input_row_type.iter().any(|(n, _)| n == name)
+                            {
+                                names.push(name.clone());
+                                continue;
+                            }
+                            let col = format!("$f{}", n_in + extra.len());
+                            extra.push((col.clone(), expr));
+                            names.push(col);
+                        }
+                        def.arg_names = names;
+                    }
+                    def
+                })
+                .collect();
+            if !extra.is_empty() {
+                let orig =
+                    self.stack.pop().expect("RelBuilder stack is empty").rel;
+                let mut proj_exprs: Vec<Expr> = input_row_type
+                    .iter()
+                    .map(|(name, ty)| {
+                        Expr::Identifier(Box::new(ty.clone()), name.clone())
+                    })
+                    .collect();
+                let mut proj_rt = input_row_type.clone();
+                for (col, expr) in extra {
+                    let ty = *expr.type_();
+                    proj_exprs.push(expr);
+                    proj_rt.push((col, ty));
+                }
+                input_row_type = proj_rt.clone();
+                self.stack.push(Frame {
+                    rel: Rel::Project {
+                        input: Box::new(orig),
+                        exprs: proj_exprs,
+                        row_type: proj_rt,
+                    },
+                    alias: None,
+                });
+            }
+            mapped
+        };
         // Resolve grouping expressions to ordinals; error on any unresolved.
         let mut group_set: Vec<usize> = Vec::new();
         for e in &group_key.exprs {
@@ -1144,6 +1202,7 @@ impl RelBuilder {
         AggCallDef {
             agg: AggFunction::CountStar,
             arg_names: vec![],
+            arg_exprs: None,
             distinct: false,
             name: None,
             filter: None,
@@ -1156,6 +1215,7 @@ impl RelBuilder {
         AggCallDef {
             agg: AggFunction::Count,
             arg_names: vec![col.to_string()],
+            arg_exprs: None,
             distinct: false,
             name: None,
             filter: None,
@@ -1168,6 +1228,21 @@ impl RelBuilder {
         AggCallDef {
             agg: AggFunction::Sum,
             arg_names: vec![col.to_string()],
+            arg_exprs: None,
+            distinct: false,
+            name: None,
+            filter: None,
+            within_distinct_names: vec![],
+        }
+    }
+
+    /// Returns a `SUM(expr)` aggregate call definition where `expr` may
+    /// be any scalar expression.
+    pub fn sum_expr(&self, expr: Expr) -> AggCallDef {
+        AggCallDef {
+            agg: AggFunction::Sum,
+            arg_names: vec![],
+            arg_exprs: Some(vec![expr]),
             distinct: false,
             name: None,
             filter: None,
@@ -1180,6 +1255,7 @@ impl RelBuilder {
         AggCallDef {
             agg: AggFunction::Min,
             arg_names: vec![col.to_string()],
+            arg_exprs: None,
             distinct: false,
             name: None,
             filter: None,
@@ -1192,6 +1268,7 @@ impl RelBuilder {
         AggCallDef {
             agg: AggFunction::Max,
             arg_names: vec![col.to_string()],
+            arg_exprs: None,
             distinct: false,
             name: None,
             filter: None,
@@ -1204,6 +1281,7 @@ impl RelBuilder {
         AggCallDef {
             agg: AggFunction::Avg,
             arg_names: vec![col.to_string()],
+            arg_exprs: None,
             distinct: false,
             name: None,
             filter: None,
@@ -1219,6 +1297,7 @@ impl RelBuilder {
         AggCallDef {
             agg: AggFunction::GroupingId,
             arg_names: cols.into_iter().map(str::to_string).collect(),
+            arg_exprs: None,
             distinct: false,
             name: None,
             filter: None,
@@ -1234,6 +1313,7 @@ impl RelBuilder {
         AggCallDef {
             agg: AggFunction::Grouping,
             arg_names: vec![col.to_string()],
+            arg_exprs: None,
             distinct: false,
             name: None,
             filter: None,
@@ -2161,7 +2241,7 @@ mod tests {
     use super::*;
     use crate::rel::display::explain;
     use crate::rel::schema::scott_schema;
-    use indoc::formatdoc;
+    use indoc::{formatdoc, indoc};
 
     fn builder() -> RelBuilder {
         RelBuilder::new(Arc::new(scott_schema()))
@@ -2787,6 +2867,53 @@ mod tests {
         let gk = b.group_key(vec![bad_expr]);
         b.aggregate(&gk, vec![]);
         assert!(matches!(b.build(), Err(RelError::InvalidGroupKey(_))));
+    }
+
+    // ---------------------------------------------------------------
+    // AggregateRex: aggregate calls with expression arguments
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_aggregate_rex2() {
+        // SUM(SAL + 2): non-trivial expression arg → pre-project inserted.
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let sal = b.field("SAL").unwrap();
+        let expr = b.plus(sal, b.literal_int(2));
+        let gk = b.group_key(vec![b.field("DEPTNO").unwrap()]);
+        let agg = b.sum_expr(expr).as_("S");
+        b.aggregate(&gk, vec![agg]);
+        let plan = b.build().unwrap();
+        assert_plan!(
+            plan,
+            indoc! {"
+                LogicalAggregate(group=[{7}], S=[SUM($8)])
+                  LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], \
+                      HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7], \
+                      $f8=[+($5, 2)])
+                    LogicalTableScan(table=[[scott, EMP]])"
+            }
+        );
+    }
+
+    #[test]
+    fn test_aggregate_rex3() {
+        // SUM(2): constant expression arg.
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let gk = b.group_key(vec![b.field("DEPTNO").unwrap()]);
+        let agg = b.sum_expr(b.literal_int(2)).as_("S");
+        b.aggregate(&gk, vec![agg]);
+        let plan = b.build().unwrap();
+        assert_plan!(
+            plan,
+            indoc! {"
+                LogicalAggregate(group=[{7}], S=[SUM($8)])
+                  LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], \
+                      HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7], $f8=[2])
+                    LogicalTableScan(table=[[scott, EMP]])"
+            }
+        );
     }
 
     // ---------------------------------------------------------------
