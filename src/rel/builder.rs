@@ -69,6 +69,8 @@ pub enum RelError {
         expected: usize,
         got: usize,
     },
+    /// Set-operation inputs have different column counts.
+    SetOpColumnMismatch { expected: usize, got: usize },
     /// A table name was not found in the schema.
     TableNotFound(Vec<String>),
 }
@@ -100,6 +102,12 @@ impl fmt::Display for RelError {
                 f,
                 "row {} has {} values but {} field names were given",
                 row, got, expected
+            ),
+            RelError::SetOpColumnMismatch { expected, got } => write!(
+                f,
+                "set-op inputs have different column counts: \
+                 expected {}, got {}",
+                expected, got
             ),
             RelError::TableNotFound(name) => {
                 write!(f, "table not found: {:?}", name)
@@ -872,6 +880,13 @@ impl RelBuilder {
         {
             return self;
         }
+        // distinct() on empty input is already empty.
+        if matches!(
+            self.stack.last().map(|f| &f.rel),
+            Some(Rel::Values { rows, .. }) if rows.is_empty()
+        ) {
+            return self;
+        }
         let row_type = self.peek_row_type().to_vec();
         let all_exprs: Vec<Expr> = row_type
             .iter()
@@ -1141,46 +1156,93 @@ impl RelBuilder {
     ///
     /// The two inputs must have the same number of columns. The row type
     /// is taken from the left (bottom) input.
-    pub fn union(&mut self, all: bool) -> &mut Self {
+    ///
+    /// Returns [`RelError::SetOpColumnMismatch`] if column counts differ.
+    pub fn union(&mut self, all: bool) -> Result<&mut Self, RelError> {
         self.union_n(all, 2)
     }
 
     /// Pops `n` frames and pushes their UNION \[ALL\].
-    pub fn union_n(&mut self, all: bool, n: usize) -> &mut Self {
+    ///
+    /// If `n == 1`, the single input is left on the stack unchanged
+    /// (identity). Returns [`RelError::SetOpColumnMismatch`] if any input
+    /// has a different column count from the first.
+    pub fn union_n(
+        &mut self,
+        all: bool,
+        n: usize,
+    ) -> Result<&mut Self, RelError> {
+        if n == 1 {
+            return Ok(self);
+        }
+        let expected = self.stack[self.stack.len() - n].rel.row_type().len();
+        for i in 1..n {
+            let got = self.stack[self.stack.len() - n + i].rel.row_type().len();
+            if got != expected {
+                return Err(RelError::SetOpColumnMismatch { expected, got });
+            }
+        }
         let inputs = self.pop_n(n, "union_n");
         let row_type = inputs[0].row_type().to_vec();
-        self.push(Rel::Union {
+        Ok(self.push(Rel::Union {
             inputs,
             all,
             row_type,
-        })
+        }))
     }
 
     /// Pops 2 frames and pushes their INTERSECT \[ALL\].
-    pub fn intersect(&mut self, all: bool) -> &mut Self {
+    ///
+    /// Returns [`RelError::SetOpColumnMismatch`] if column counts differ.
+    pub fn intersect(&mut self, all: bool) -> Result<&mut Self, RelError> {
         self.intersect_n(all, 2)
     }
 
     /// Pops `n` frames and pushes their INTERSECT \[ALL\].
-    pub fn intersect_n(&mut self, all: bool, n: usize) -> &mut Self {
+    ///
+    /// If `n == 1`, the single input is left on the stack unchanged
+    /// (identity). Returns [`RelError::SetOpColumnMismatch`] if any input
+    /// has a different column count from the first.
+    pub fn intersect_n(
+        &mut self,
+        all: bool,
+        n: usize,
+    ) -> Result<&mut Self, RelError> {
+        if n == 1 {
+            return Ok(self);
+        }
+        let expected = self.stack[self.stack.len() - n].rel.row_type().len();
+        for i in 1..n {
+            let got = self.stack[self.stack.len() - n + i].rel.row_type().len();
+            if got != expected {
+                return Err(RelError::SetOpColumnMismatch { expected, got });
+            }
+        }
         let inputs = self.pop_n(n, "intersect_n");
         let row_type = inputs[0].row_type().to_vec();
-        self.push(Rel::Intersect {
+        Ok(self.push(Rel::Intersect {
             inputs,
             all,
             row_type,
-        })
+        }))
     }
 
     /// Pops 2 frames and pushes their EXCEPT \[ALL\] (set difference).
-    pub fn minus(&mut self, all: bool) -> &mut Self {
+    ///
+    /// Returns [`RelError::SetOpColumnMismatch`] if column counts differ.
+    pub fn minus(&mut self, all: bool) -> Result<&mut Self, RelError> {
+        let expected = self.stack[self.stack.len() - 2].rel.row_type().len();
+        let got = self.stack[self.stack.len() - 1].rel.row_type().len();
+        if got != expected {
+            return Err(RelError::SetOpColumnMismatch { expected, got });
+        }
         let inputs = self.pop_n(2, "minus");
         let row_type = inputs[0].row_type().to_vec();
-        self.push(Rel::Minus {
+        Ok(self.push(Rel::Minus {
             inputs,
             all,
             row_type,
-        })
+        }))
     }
 
     // -------------------------------------------------------------------

@@ -707,6 +707,41 @@ fn test_distinct() -> Result<(), RelError> {
     Ok(())
 }
 
+#[test]
+fn test_distinct_already() -> Result<(), RelError> {
+    // distinct() on an Aggregate is a no-op.
+    let mut b = builder();
+    b.scan(&["scott", "DEPT"]);
+    let gk = b.group_key(vec![b.field("DEPTNO")?]);
+    b.aggregate(&gk, vec![]);
+    b.distinct();
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalAggregate(group=[{0}])
+              LogicalTableScan(table=[[scott, DEPT]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_distinct_empty() -> Result<(), RelError> {
+    // distinct() on empty Values is a no-op (stays empty).
+    let mut b = builder();
+    b.values(&["X", "Y"], vec![]);
+    b.distinct();
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalValues(tuples=[[]])
+        "}
+    );
+    Ok(())
+}
+
 // -----------------------------------------------------------------------
 // Join
 // -----------------------------------------------------------------------
@@ -960,7 +995,7 @@ fn test_union_project_values() -> Result<(), RelError> {
     let mut b = builder();
     b.values(&["X", "Y"], vec![vec![Val::Int(1), Val::Int(2)]]);
     b.values(&["X", "Y"], vec![vec![Val::Int(3), Val::Int(4)]]);
-    b.union(false);
+    b.union(false)?;
     let plan = b.build()?;
     assert_plan!(
         plan,
@@ -979,7 +1014,7 @@ fn test_union_alias() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     b.scan(&["scott", "EMP"]);
-    b.union(true);
+    b.union(true)?;
     let plan = b.build()?;
     assert_plan!(
         plan,
@@ -987,6 +1022,119 @@ fn test_union_alias() -> Result<(), RelError> {
             LogicalUnion(all=[true])
               LogicalTableScan(table=[[scott, EMP]])
               LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_union() -> Result<(), RelError> {
+    // UNION ALL of two EMP scans.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.scan(&["scott", "EMP"]);
+    b.union(true)?;
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalUnion(all=[true])
+              LogicalTableScan(table=[[scott, EMP]])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_union1() -> Result<(), RelError> {
+    // union_n with n=1 is identity: no Union node is created.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.union_n(false, 1)?;
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_bad_union_args_error_message() {
+    // union of inputs with different column counts → SetOpColumnMismatch.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]); // 8 columns
+    b.scan(&["scott", "DEPT"]); // 3 columns
+    let result = b.union(false);
+    assert!(
+        matches!(
+            result,
+            Err(RelError::SetOpColumnMismatch {
+                expected: 8,
+                got: 3
+            })
+        ),
+        "expected SetOpColumnMismatch"
+    );
+}
+
+#[test]
+fn test_intersect() -> Result<(), RelError> {
+    // INTERSECT of two DEPT scans.
+    let mut b = builder();
+    b.scan(&["scott", "DEPT"]);
+    b.scan(&["scott", "DEPT"]);
+    b.intersect(false)?;
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalIntersect(all=[false])
+              LogicalTableScan(table=[[scott, DEPT]])
+              LogicalTableScan(table=[[scott, DEPT]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_intersect3() -> Result<(), RelError> {
+    // Three-way INTERSECT using intersect_n.
+    let mut b = builder();
+    b.scan(&["scott", "DEPT"]);
+    b.scan(&["scott", "DEPT"]);
+    b.scan(&["scott", "DEPT"]);
+    b.intersect_n(false, 3)?;
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalIntersect(all=[false])
+              LogicalTableScan(table=[[scott, DEPT]])
+              LogicalTableScan(table=[[scott, DEPT]])
+              LogicalTableScan(table=[[scott, DEPT]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_except() -> Result<(), RelError> {
+    // EXCEPT of two DEPT scans.
+    let mut b = builder();
+    b.scan(&["scott", "DEPT"]);
+    b.scan(&["scott", "DEPT"]);
+    b.minus(false)?;
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalMinus(all=[false])
+              LogicalTableScan(table=[[scott, DEPT]])
+              LogicalTableScan(table=[[scott, DEPT]])
         "}
     );
     Ok(())
@@ -1389,7 +1537,7 @@ fn test_union_project_values2() -> Result<(), RelError> {
     b.values(&["X", "Y"], vec![vec![Val::Int(1), Val::Int(2)]]);
     b.values(&["X", "Y"], vec![vec![Val::Int(3), Val::Int(4)]]);
     b.values(&["X", "Y"], vec![vec![Val::Int(5), Val::Int(6)]]);
-    b.union_n(false, 3);
+    b.union_n(false, 3)?;
     let plan = b.build()?;
     assert_plan!(
         plan,

@@ -826,22 +826,22 @@ rename, aggregate.
 
 ---
 
-### Task 18 — Set-op and distinct variants
+### Task 18 — Set-op and distinct variants ✓
 
 Simple variations of existing operators requiring little or no new code.
 
-- [ ] `testDistinct` — *(already implemented as `test_distinct`)*.
-- [ ] `testDistinctAlready` — `distinct()` on a relation that is already
+- [x] `testDistinct` — *(already implemented as `test_distinct`)*.
+- [x] `testDistinctAlready` — `distinct()` on a relation that is already
       the result of `distinct()` (or an aggregate): should be a no-op.
-- [ ] `testDistinctEmpty` — `distinct()` on an empty `Values`.
-- [ ] `testUnion` — basic two-way `UNION DISTINCT`.
-- [ ] `testUnion1` — `union_n` with a single input (degenerate case).
-- [ ] `testUnion3` — *(already implemented as `test_union_project_values2`)*.
-- [ ] `testBadUnionArgsErrorMessage` — error when union inputs have
+- [x] `testDistinctEmpty` — `distinct()` on an empty `Values`.
+- [x] `testUnion` — basic two-way `UNION DISTINCT`.
+- [x] `testUnion1` — `union_n` with a single input (degenerate case).
+- [x] `testUnion3` — *(already implemented as `test_union_project_values2`)*.
+- [x] `testBadUnionArgsErrorMessage` — error when union inputs have
       incompatible column counts.
-- [ ] `testIntersect` — basic two-way `INTERSECT`.
-- [ ] `testIntersect3` — three-way `INTERSECT`.
-- [ ] `testExcept` — `EXCEPT` / `MINUS`.
+- [x] `testIntersect` — basic two-way `INTERSECT`.
+- [x] `testIntersect3` — three-way `INTERSECT`.
+- [x] `testExcept` — `EXCEPT` / `MINUS`.
 
 ---
 
