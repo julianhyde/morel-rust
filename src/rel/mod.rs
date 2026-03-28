@@ -66,6 +66,8 @@ pub enum AggFunction {
     Avg,
     Count,
     CountStar,
+    Grouping,
+    GroupingId,
     Max,
     Min,
     Sum,
@@ -85,6 +87,8 @@ pub struct AggCall {
     /// Output column name.
     pub name: Option<String>,
     pub return_type: Type,
+    /// Column ordinals for `WITHIN DISTINCT (…)`; empty means none.
+    pub within_distinct: Vec<usize>,
 }
 
 /// Join variant.

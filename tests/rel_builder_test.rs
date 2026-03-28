@@ -2150,6 +2150,76 @@ fn test_aggregate_group_key_out_of_range() {
     assert!(matches!(b.build(), Err(RelError::InvalidGroupKey(_))));
 }
 
+// -----------------------------------------------------------------------
+// Grouping sets (Task 28)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_aggregate_grouping_sets_one_row() -> Result<(), RelError> {
+    // GROUPING SETS ((DEPTNO), ()) — two grouping sets.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.grouping_sets(
+        vec![b.field("DEPTNO")?],
+        vec![vec![b.field("DEPTNO")?], vec![]],
+    );
+    let aggs = vec![b.count_star().as_("C")];
+    b.aggregate(&gk, aggs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalAggregate(group=[{7}], groups=[[{7}, {}]], C=[COUNT(*)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_aggregate_grouping_sets_group_id() -> Result<(), RelError> {
+    // GROUPING SETS with GROUPING_ID() pseudo-function.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.grouping_sets(
+        vec![b.field("DEPTNO")?],
+        vec![vec![b.field("DEPTNO")?], vec![]],
+    );
+    let aggs = vec![
+        b.count_star().as_("C"),
+        b.grouping_id(vec!["DEPTNO"]).as_("G"),
+    ];
+    b.aggregate(&gk, aggs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalAggregate(group=[{7}], groups=[[{7}, {}]], C=[COUNT(*)], G=[GROUPING_ID($7)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_within_distinct() -> Result<(), RelError> {
+    // SUM(SAL) WITHIN DISTINCT (JOB) — aggregate within a distinct scope.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![b.field("DEPTNO")?]);
+    let aggs = vec![b.sum("SAL").within_distinct("JOB").as_("s")];
+    b.aggregate(&gk, aggs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalAggregate(group=[{7}], s=[SUM($5) WITHIN DISTINCT ($2)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
 #[test]
 fn test_aggregate_eliminates_duplicate_calls3() -> Result<(), RelError> {
     // Two identical COUNT(*) agg calls: one computation, project duplicates.

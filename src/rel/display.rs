@@ -66,6 +66,7 @@ fn write_rel(f: &mut String, rel: &Rel, indent: usize) -> fmt::Result {
         Rel::Aggregate {
             input,
             group_set,
+            group_sets,
             agg_calls,
             ..
         } => {
@@ -77,6 +78,24 @@ fn write_rel(f: &mut String, rel: &Rel, indent: usize) -> fmt::Result {
                 write!(f, "{}", g)?;
             }
             write!(f, "}}]")?;
+            // Show groups=[...] only when there are multiple grouping sets.
+            if group_sets.len() > 1 {
+                write!(f, ", groups=[[")?;
+                for (si, set) in group_sets.iter().enumerate() {
+                    if si > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{{")?;
+                    for (gi, g) in set.iter().enumerate() {
+                        if gi > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}", g)?;
+                    }
+                    write!(f, "}}")?;
+                }
+                write!(f, "]]")?;
+            }
             for agg in agg_calls {
                 write!(f, ", ")?;
                 write_agg_call(f, agg, input.row_type())?;
@@ -374,6 +393,8 @@ fn write_agg_call(
         // lint: sort until '#}' where '##[A-Z]'
         AggFunction::Avg => "AVG",
         AggFunction::Count | AggFunction::CountStar => "COUNT",
+        AggFunction::Grouping => "GROUPING",
+        AggFunction::GroupingId => "GROUPING_ID",
         AggFunction::Max => "MAX",
         AggFunction::Min => "MIN",
         AggFunction::Sum => "SUM",
@@ -395,6 +416,16 @@ fn write_agg_call(
         }
     }
     write!(f, ")")?;
+    if !agg.within_distinct.is_empty() {
+        write!(f, " WITHIN DISTINCT (")?;
+        for (i, &ord) in agg.within_distinct.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "${}", ord)?;
+        }
+        write!(f, ")")?;
+    }
     if let Some(filter) = &agg.filter {
         write!(f, " FILTER [")?;
         write_expr(f, filter, &[input_row_type])?;

@@ -986,12 +986,12 @@ so only one computation is emitted.
 Extend `aggregate()` to support `CUBE`, `ROLLUP`, and `GROUPING SETS`,
 and the `GROUPING()` / `GROUPING_ID()` pseudo-functions.
 
-- [ ] `testAggregateGroupingSetsOneRow` — `GROUPING SETS ((a), ())`;
+- [x] `testAggregateGroupingSetsOneRow` — `GROUPING SETS ((a), ())`;
       verify the plan includes both grouping sets.
-- [ ] `testAggregateGroupingSetsGroupId` — plan includes a
+- [x] `testAggregateGroupingSetsGroupId` — plan includes a
       `GROUPING_ID()` column that distinguishes which grouping set
       each output row belongs to.
-- [ ] `testWithinDistinct` — `agg(...) WITHIN DISTINCT (col)` syntax;
+- [x] `testWithinDistinct` — `agg(...) WITHIN DISTINCT (col)` syntax;
       verify the `distinct` flag is set on the correct grouping scope.
 
 ---

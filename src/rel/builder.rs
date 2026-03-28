@@ -141,11 +141,16 @@ pub struct SortKey {
 
 /// Specifies the GROUP BY columns for [`RelBuilder::aggregate`].
 ///
-/// Constructed by [`RelBuilder::group_key`].
+/// Constructed by [`RelBuilder::group_key`] or
+/// [`RelBuilder::grouping_sets`].
 #[derive(Clone, Debug)]
 pub struct GroupKey {
     /// Ordered list of grouping expressions (field references).
     pub exprs: Vec<Expr>,
+    /// Optional explicit grouping sets.  When `None`, the single group
+    /// set `[exprs]` is used.  When `Some`, each inner `Vec` is one
+    /// grouping set; the union of all sets must be a subset of `exprs`.
+    pub group_sets: Option<Vec<Vec<Expr>>>,
 }
 
 // -----------------------------------------------------------------------
@@ -154,8 +159,8 @@ pub struct GroupKey {
 
 /// A pending aggregate-function call, built by `count_star`, `sum`, etc.
 ///
-/// Use `.as_(name)` and `.distinct()` to customise before passing to
-/// [`RelBuilder::aggregate`].
+/// Use `.as_(name)`, `.distinct()`, and `.within_distinct(col)` to
+/// customise before passing to [`RelBuilder::aggregate`].
 #[derive(Clone, Debug)]
 pub struct AggCallDef {
     pub agg: AggFunction,
@@ -164,6 +169,8 @@ pub struct AggCallDef {
     pub distinct: bool,
     pub name: Option<String>,
     pub filter: Option<Expr>,
+    /// Column names for `WITHIN DISTINCT (…)`; empty means none.
+    pub within_distinct_names: Vec<String>,
 }
 
 impl AggCallDef {
@@ -182,6 +189,12 @@ impl AggCallDef {
     /// Attaches a FILTER clause to the aggregate call.
     pub fn with_filter(mut self, filter: Expr) -> Self {
         self.filter = Some(filter);
+        self
+    }
+
+    /// Attaches a `WITHIN DISTINCT (col)` clause to the aggregate call.
+    pub fn within_distinct(mut self, col: impl Into<String>) -> Self {
+        self.within_distinct_names.push(col.into());
         self
     }
 }
@@ -854,7 +867,26 @@ impl RelBuilder {
     /// Each expression must be a field reference to a column in the
     /// current top-of-stack row type.
     pub fn group_key(&self, exprs: Vec<Expr>) -> GroupKey {
-        GroupKey { exprs }
+        GroupKey {
+            exprs,
+            group_sets: None,
+        }
+    }
+
+    /// Returns a `GroupKey` with explicit `GROUPING SETS`.
+    ///
+    /// `exprs` is the union of all columns used in any grouping set;
+    /// `sets` lists each individual grouping set.  Each set is a
+    /// sub-list of field-reference `Expr`s drawn from `exprs`.
+    pub fn grouping_sets(
+        &self,
+        exprs: Vec<Expr>,
+        sets: Vec<Vec<Expr>>,
+    ) -> GroupKey {
+        GroupKey {
+            exprs,
+            group_sets: Some(sets),
+        }
     }
 
     /// Applies GROUP BY and aggregation to the top-of-stack node.
@@ -904,6 +936,35 @@ impl RelBuilder {
                 return self.set_error(RelError::NonBooleanCondition(got));
             }
         }
+        // Resolve grouping sets (if any).
+        let group_sets: Vec<Vec<usize>> = if let Some(sets) =
+            group_key.group_sets.clone()
+        {
+            let mut resolved_sets: Vec<Vec<usize>> = Vec::new();
+            for set in sets {
+                let mut ordinals: Vec<usize> = Vec::new();
+                for e in &set {
+                    if let Expr::Identifier(_, name) = e {
+                        if let Some(idx) =
+                            input_row_type.iter().position(|(n, _)| n == name)
+                        {
+                            ordinals.push(idx);
+                        } else {
+                            return self.set_error(RelError::InvalidGroupKey(
+                                name.clone(),
+                            ));
+                        }
+                    } else {
+                        let msg = format!("{:?}", e);
+                        return self.set_error(RelError::InvalidGroupKey(msg));
+                    }
+                }
+                resolved_sets.push(ordinals);
+            }
+            resolved_sets
+        } else {
+            vec![group_set.clone()]
+        };
         // Resolve agg calls; collect names for later dedup project.
         let n_group = group_set.len();
         let mut all_names: Vec<String> = Vec::new();
@@ -913,6 +974,13 @@ impl RelBuilder {
             .map(|(i, def)| {
                 let args: Vec<usize> = def
                     .arg_names
+                    .iter()
+                    .filter_map(|name| {
+                        input_row_type.iter().position(|(n, _)| n == name)
+                    })
+                    .collect();
+                let within_distinct: Vec<usize> = def
+                    .within_distinct_names
                     .iter()
                     .filter_map(|name| {
                         input_row_type.iter().position(|(n, _)| n == name)
@@ -931,6 +999,7 @@ impl RelBuilder {
                     filter: def.filter,
                     name: Some(name),
                     return_type,
+                    within_distinct,
                 }
             })
             .collect();
@@ -970,7 +1039,6 @@ impl RelBuilder {
         } else {
             row_type.clone()
         };
-        let group_sets = vec![group_set.clone()];
         let alias = self.stack.last().and_then(|f| f.alias.clone());
         let input = Box::new(self.build().expect("aggregate: empty stack"));
         self.push(Rel::Aggregate {
@@ -1039,7 +1107,10 @@ impl RelBuilder {
                 Expr::Identifier(Box::new(ty.clone()), name.clone())
             })
             .collect();
-        let gk = GroupKey { exprs: all_exprs };
+        let gk = GroupKey {
+            exprs: all_exprs,
+            group_sets: None,
+        };
         self.aggregate(&gk, vec![])
     }
 
@@ -1053,6 +1124,7 @@ impl RelBuilder {
             distinct: false,
             name: None,
             filter: None,
+            within_distinct_names: vec![],
         }
     }
 
@@ -1064,6 +1136,7 @@ impl RelBuilder {
             distinct: false,
             name: None,
             filter: None,
+            within_distinct_names: vec![],
         }
     }
 
@@ -1075,6 +1148,7 @@ impl RelBuilder {
             distinct: false,
             name: None,
             filter: None,
+            within_distinct_names: vec![],
         }
     }
 
@@ -1086,6 +1160,7 @@ impl RelBuilder {
             distinct: false,
             name: None,
             filter: None,
+            within_distinct_names: vec![],
         }
     }
 
@@ -1097,6 +1172,7 @@ impl RelBuilder {
             distinct: false,
             name: None,
             filter: None,
+            within_distinct_names: vec![],
         }
     }
 
@@ -1108,6 +1184,37 @@ impl RelBuilder {
             distinct: false,
             name: None,
             filter: None,
+            within_distinct_names: vec![],
+        }
+    }
+
+    /// Returns a `GROUPING_ID(col, …)` aggregate call definition.
+    ///
+    /// `cols` are the column names from the group key; the call returns
+    /// an integer that identifies which grouping set applies to each row.
+    pub fn grouping_id(&self, cols: Vec<&str>) -> AggCallDef {
+        AggCallDef {
+            agg: AggFunction::GroupingId,
+            arg_names: cols.into_iter().map(str::to_string).collect(),
+            distinct: false,
+            name: None,
+            filter: None,
+            within_distinct_names: vec![],
+        }
+    }
+
+    /// Returns a `GROUPING(col)` aggregate call definition.
+    ///
+    /// Returns 1 when the column is not part of the current grouping
+    /// set, 0 otherwise.
+    pub fn grouping(&self, col: &str) -> AggCallDef {
+        AggCallDef {
+            agg: AggFunction::Grouping,
+            arg_names: vec![col.to_string()],
+            distinct: false,
+            name: None,
+            filter: None,
+            within_distinct_names: vec![],
         }
     }
 
@@ -1679,6 +1786,7 @@ fn agg_return_type(
         // lint: sort until '#}' where '##[A-Z]'
         AggFunction::Avg => Type::Primitive(PrimitiveType::Real),
         AggFunction::Count | AggFunction::CountStar => int_type(),
+        AggFunction::Grouping | AggFunction::GroupingId => int_type(),
         _ => {
             if let Some(&i) = args.first() {
                 row_type[i].1.clone()
