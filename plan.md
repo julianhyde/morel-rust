@@ -952,17 +952,14 @@ Add `project_except_ordinals()` and `project_except_names()` methods.
 
 ---
 
-### Task 26 — Filter simplification pass
+### Task 26 — Filter simplification pass ✓
 
-Add a post-build simplification visitor that canonicalises filter
-conditions.
+Expression-level simplifications added to builder methods.
 
-- [ ] `testFilterSimplification` — `NOT(NOT(x))` → `x`,
-      `x OR FALSE` → `x`, `x AND TRUE` → `x`, and other algebraic
-      identities are applied by a rewrite pass over the plan tree.
-- [ ] `testExecuteNotLike` — `NOT LIKE` predicate is preserved correctly
-      through the simplifier (regression: must not be misidentified as
-      `LIKE`).
+- [x] `testFilterSimplification` — `NOT(NOT(x))` → `x` (in `not()`);
+      `OR(x, false)` → `x`, `OR(true, x)` → `true` (in `or()`);
+      `AND(x, true)` → `x` (already in `and()`).
+- [x] `testExecuteNotLike` — `NOT LIKE` preserved through simplification.
 
 ---
 

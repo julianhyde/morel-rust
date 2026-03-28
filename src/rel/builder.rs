@@ -1472,13 +1472,36 @@ impl RelBuilder {
         binary_op("andalso", bool_type(), a, b)
     }
 
-    /// Returns `a orelse b`.
+    /// Returns `a orelse b`, with constant folding:
+    /// - `OR(x, true)` or `OR(true, x)` → `true`
+    /// - `OR(x, false)` → `x`; `OR(false, x)` → `x`
+    /// - `OR(x, x)` → `x` (structural duplicate)
     pub fn or(&self, a: Expr, b: Expr) -> Expr {
+        if is_true(&a) || is_true(&b) {
+            return Expr::Literal(Box::new(bool_type()), Val::Bool(true));
+        }
+        if is_false(&b) {
+            return a;
+        }
+        if is_false(&a) {
+            return b;
+        }
+        if format!("{:?}", a) == format!("{:?}", b) {
+            return a;
+        }
         binary_op("orelse", bool_type(), a, b)
     }
 
-    /// Returns `not a`.
+    /// Returns `not a`, with double-negation elimination:
+    /// - `NOT(NOT(x))` → `x`
     pub fn not(&self, a: Expr) -> Expr {
+        // Double-negation: NOT(NOT(x)) → x
+        if let Expr::Apply(_, func, inner, _) = &a
+            && let Expr::Identifier(_, op) = func.as_ref()
+            && op == "not"
+        {
+            return *inner.clone();
+        }
         unary_op("not", bool_type(), a)
     }
 

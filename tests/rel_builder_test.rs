@@ -1551,6 +1551,52 @@ fn test_except() -> Result<(), RelError> {
 }
 
 // -----------------------------------------------------------------------
+// Filter simplification (Task 26)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_filter_simplification() -> Result<(), RelError> {
+    // NOT(NOT(x)) → x, OR(x, false) → x, AND(x, true) → x.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let sal_gt = b.gt(b.field("SAL")?, b.literal_int(1000));
+    // NOT(NOT(sal > 1000)) → sal > 1000
+    let double_neg = b.not(b.not(sal_gt.clone()));
+    // OR(double_neg, false) → double_neg (which is sal > 1000)
+    let or_false = b.or(double_neg, b.literal_bool(false));
+    // AND(or_false, true) → or_false
+    let cond = b.and(or_false, b.literal_bool(true));
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[>($5, 1000)])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_execute_not_like() -> Result<(), RelError> {
+    // NOT LIKE is preserved through simplification (not confused with LIKE).
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let cond = b.not_like(b.field("ENAME")?, b.literal_string("S%"));
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[NOT LIKE($1, 'S%')])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------
 // Config (simplification flags)
 // -----------------------------------------------------------------------
 
