@@ -1027,6 +1027,17 @@ impl<'a> Resolver<'a> {
                 let resolved_expr = self.resolve_expr(expr);
                 builder.where_(resolved_expr);
             }
+            AstStepKind::ScanEq(pat, expr) => {
+                // "join y = expr" binds y to a singleton value.
+                // Wrap the value in a list so the Scan step can iterate.
+                let resolved_pat = self.resolve_pat(pat);
+                let resolved_expr = self.resolve_expr(expr);
+                let elem_type = resolved_expr.type_();
+                let list_type = Box::new(Type::List(elem_type));
+                let singleton =
+                    CoreExpr::List(list_type, vec![resolved_expr]);
+                builder.scan_with_condition(resolved_pat, singleton, None);
+            }
             AstStepKind::Yield(expr) => {
                 let resolved_expr = self.resolve_expr(expr);
                 builder.yield_(resolved_expr);

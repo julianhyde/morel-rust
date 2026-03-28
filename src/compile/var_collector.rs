@@ -15,7 +15,7 @@
 // language governing permissions and limitations under the
 // License.
 
-use crate::compile::core::{Decl, Expr, Match, Pat, Step, StepKind};
+use crate::compile::core::{Decl, Expr, Match, Pat, PatField, Step, StepKind};
 use crate::compile::type_env::Binding;
 use crate::compile::types::{Label, Type};
 use crate::eval::frame::FrameDef;
@@ -139,6 +139,16 @@ impl Pat {
             }
             Pat::Literal(_, _) => {
                 // no variables
+            }
+            Pat::Record(_, pat_fields, _) => {
+                for field in pat_fields {
+                    match field {
+                        PatField::Labeled(_, p) | PatField::Anonymous(p) => {
+                            p.collect_vars(collector);
+                        }
+                        PatField::Ellipsis => {}
+                    }
+                }
             }
             Pat::Wildcard(_) => {
                 // no variables
