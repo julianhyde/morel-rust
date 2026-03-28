@@ -968,9 +968,9 @@ Expression-level simplifications added to builder methods.
 Deduplicate identical aggregate calls within a single `aggregate()` call,
 so only one computation is emitted.
 
-- [ ] `testAggregateEliminatesDuplicateCalls3` — third variant (distinct
+- [x] `testAggregateEliminatesDuplicateCalls3` — third variant (distinct
       agg function in duplicate pair).
-- [ ] `testAggregateEliminatesDuplicateDistinctCalls` — two identical
+- [x] `testAggregateEliminatesDuplicateDistinctCalls` — two identical
       `COUNT(DISTINCT col)` calls; only one is emitted.
 - [ ] `testAggregateDuplicateAggCallsWithForceProjectAndFieldPruning` —
       duplicate calls combined with field pruning of the input.

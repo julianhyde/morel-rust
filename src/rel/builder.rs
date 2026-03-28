@@ -904,7 +904,9 @@ impl RelBuilder {
                 return self.set_error(RelError::NonBooleanCondition(got));
             }
         }
-        // Resolve agg calls.
+        // Resolve agg calls; collect names for later dedup project.
+        let n_group = group_set.len();
+        let mut all_names: Vec<String> = Vec::new();
         let resolved: Vec<AggCall> = agg_calls
             .into_iter()
             .enumerate()
@@ -918,9 +920,9 @@ impl RelBuilder {
                     .collect();
                 let return_type =
                     agg_return_type(def.agg, &args, &input_row_type);
-                let name = def
-                    .name
-                    .unwrap_or_else(|| format!("${}", group_set.len() + i));
+                let name =
+                    def.name.unwrap_or_else(|| format!("${}", n_group + i));
+                all_names.push(name.clone());
                 row_type.push((name.clone(), return_type.clone()));
                 AggCall {
                     agg: def.agg,
@@ -932,18 +934,78 @@ impl RelBuilder {
                 }
             })
             .collect();
+        // Deduplicate identical agg calls: only emit one computation per
+        // unique (agg, args, distinct, filter) tuple, then add a project
+        // to expose the original names.
+        let mut unique_calls: Vec<AggCall> = Vec::new();
+        let mut dedup_keys: Vec<String> = Vec::new();
+        let mut dedup_map: Vec<usize> = Vec::new();
+        for call in &resolved {
+            let key = agg_call_key(call);
+            let idx =
+                if let Some(pos) = dedup_keys.iter().position(|k| k == &key) {
+                    pos
+                } else {
+                    let pos = unique_calls.len();
+                    unique_calls.push(call.clone());
+                    dedup_keys.push(key);
+                    pos
+                };
+            dedup_map.push(idx);
+        }
+        let has_duplicates = unique_calls.len() < resolved.len();
+        // Build unique row_type for the Aggregate node.
+        let agg_row_type: Vec<(String, Type)> = if has_duplicates {
+            let mut rt: Vec<(String, Type)> = group_set
+                .iter()
+                .map(|&i| input_row_type[i].clone())
+                .collect();
+            for c in &unique_calls {
+                rt.push((
+                    c.name.clone().unwrap_or_default(),
+                    c.return_type.clone(),
+                ));
+            }
+            rt
+        } else {
+            row_type.clone()
+        };
         let group_sets = vec![group_set.clone()];
         let alias = self.stack.last().and_then(|f| f.alias.clone());
         let input = Box::new(self.build().expect("aggregate: empty stack"));
         self.push(Rel::Aggregate {
             input,
-            group_set,
+            group_set: group_set.clone(),
             group_sets,
-            agg_calls: resolved,
-            row_type,
+            agg_calls: unique_calls,
+            row_type: agg_row_type.clone(),
         });
-        if let Some(a) = alias {
-            self.stack.last_mut().unwrap().alias = Some(a);
+        if let Some(ref a) = alias {
+            self.stack.last_mut().unwrap().alias = Some(a.clone());
+        }
+        // If duplicates were removed, add a project to re-expose the
+        // original names (including duplicated columns).
+        if has_duplicates {
+            let project_exprs: Vec<Expr> = agg_row_type[..n_group]
+                .iter()
+                .map(|(name, ty)| {
+                    Expr::Identifier(Box::new(ty.clone()), name.clone())
+                })
+                .chain(dedup_map.iter().enumerate().map(|(orig_i, &uniq_i)| {
+                    let (ref name, ref ty) = agg_row_type[n_group + uniq_i];
+                    let _ = &all_names[orig_i]; // original name for project_named
+                    Expr::Identifier(Box::new(ty.clone()), name.clone())
+                }))
+                .collect();
+            let project_names: Vec<String> = agg_row_type[..n_group]
+                .iter()
+                .map(|(name, _)| name.clone())
+                .chain(all_names)
+                .collect();
+            self.project_named(project_exprs, project_names);
+            if let Some(a) = alias {
+                self.stack.last_mut().unwrap().alias = Some(a);
+            }
         }
         self
     }
@@ -1588,6 +1650,21 @@ impl RelBuilder {
 // -----------------------------------------------------------------------
 // Helper functions
 // -----------------------------------------------------------------------
+
+/// Returns a deduplication key for an [`AggCall`] based on its identity:
+/// function, argument ordinals, DISTINCT flag, and optional filter.
+/// Two calls with the same key produce the same result and can be merged.
+fn agg_call_key(call: &AggCall) -> String {
+    format!(
+        "{:?}_{:?}_{}_{}",
+        call.agg,
+        call.args,
+        call.distinct,
+        call.filter
+            .as_ref()
+            .map_or("none".to_string(), |f| format!("{:?}", f))
+    )
+}
 
 /// Returns the output type of an aggregate function.
 ///

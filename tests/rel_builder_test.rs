@@ -2149,3 +2149,47 @@ fn test_aggregate_group_key_out_of_range() {
     b.aggregate(&gk, vec![]);
     assert!(matches!(b.build(), Err(RelError::InvalidGroupKey(_))));
 }
+
+#[test]
+fn test_aggregate_eliminates_duplicate_calls3() -> Result<(), RelError> {
+    // Two identical COUNT(*) agg calls: one computation, project duplicates.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![b.field("DEPTNO")?]);
+    let aggs = vec![b.count_star().as_("C1"), b.count_star().as_("C2")];
+    b.aggregate(&gk, aggs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(DEPTNO=[$0], C1=[$1], C2=[$1])
+              LogicalAggregate(group=[{7}], C1=[COUNT(*)])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_aggregate_eliminates_duplicate_distinct_calls() -> Result<(), RelError>
+{
+    // Two identical COUNT(DISTINCT ENAME): one computation, project duplicates.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![]);
+    let aggs = vec![
+        b.count("ENAME").distinct().as_("A"),
+        b.count("ENAME").distinct().as_("B"),
+    ];
+    b.aggregate(&gk, aggs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(A=[$0], B=[$0])
+              LogicalAggregate(group=[{}], A=[COUNT(DISTINCT $1)])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
