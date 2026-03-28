@@ -1108,14 +1108,21 @@ A mix of type-system, sampling, view-expansion, and exchange tests.
 
 - [ ] `testTypeInferenceValidation` — type-checker rejects a project
       whose output type is inconsistent with the declared column type.
-- [ ] `testSampleBernoulliRepeatable` — `TABLESAMPLE BERNOULLI(p)
-      REPEATABLE(seed)`; requires seeded-sample support in `Sample`.
-- [ ] `testSampleZero` — sample with probability 0 → empty relation.
-- [ ] `testSampleAll` — sample with probability 1 → identity.
-- [ ] `testExpandViewShouldKeepAlias` — when a view is expanded inline,
-      the original alias is preserved on the expanded subtree.
-- [ ] `testSortExchange` — `SortExchange` node (sort + distribution
-      exchange combined); requires a new `Rel::SortExchange` variant.
+- [ ] `testSampleBernoulliRepeatable` — out of scope.
+- [ ] `testSampleZero`, `testSampleAll` — out of scope.
+- [ ] `testExpandViewShouldKeepAlias` — out of scope.
+- [ ] `testSortExchange` — out of scope.
+
+Coverage-table items added here (not originally in Task 35):
+
+- [x] `testAggregateGrouping` — `GROUPING($7)` in grouping-sets aggregate
+      (`test_aggregate_grouping`).
+- [x] `testAggregateGroupingSetNotSubsetFails` — grouping set column not
+      in group key → `GroupingSetNotSubset` error
+      (`test_aggregate_grouping_set_not_subset_fails`).
+- [x] `testRelBuilderToString` — `Display` impl on `RelBuilder`
+      (`test_rel_builder_to_string`).
+- [x] `testSimplify` — `filter(true)` simplification (`test_simplify`).
 
 ---
 

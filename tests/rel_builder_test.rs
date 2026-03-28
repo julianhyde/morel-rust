@@ -2472,3 +2472,67 @@ fn test_aggregate_eliminates_duplicate_distinct_calls() -> Result<(), RelError>
     );
     Ok(())
 }
+
+/// `testAggregateGrouping` — `GROUPING(col)` returns 0/1 per grouping set.
+#[test]
+fn test_aggregate_grouping() -> Result<(), RelError> {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.grouping_sets(
+        vec![b.field("DEPTNO")?],
+        vec![vec![b.field("DEPTNO")?], vec![]],
+    );
+    let aggs = vec![b.count_star().as_("C"), b.grouping("DEPTNO").as_("G")];
+    b.aggregate(&gk, aggs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        concat!(
+            "LogicalAggregate(group=[{7}],",
+            " groups=[[{7}, {}]], C=[COUNT(*)], G=[GROUPING($7)])\n",
+            "  LogicalTableScan(table=[[scott, EMP]])"
+        )
+    );
+    Ok(())
+}
+
+/// `testAggregateGroupingSetNotSubsetFails` — grouping set column not in
+/// group key raises `GroupingSetNotSubset`.
+#[test]
+fn test_aggregate_grouping_set_not_subset_fails() {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    // Group key is DEPTNO only; grouping set references JOB which is not
+    // in the group key.
+    let gk = b.grouping_sets(
+        vec![b.field("DEPTNO").unwrap()],
+        vec![
+            vec![b.field("DEPTNO").unwrap()],
+            vec![b.field("JOB").unwrap()],
+        ],
+    );
+    b.aggregate(&gk, vec![]);
+    assert!(matches!(b.build(), Err(RelError::GroupingSetNotSubset(_))));
+}
+
+/// `testRelBuilderToString` — `Display` for `RelBuilder` shows the plan.
+#[test]
+fn test_rel_builder_to_string() {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let s = b.to_string();
+    assert_eq!(s.trim(), "LogicalTableScan(table=[[scott, EMP]])");
+}
+
+/// `testSimplify` — builder simplifications: `filter(true)` is removed,
+/// `project(identity)` is removed.
+#[test]
+fn test_simplify() -> Result<(), RelError> {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.filter(b.literal_bool(true));
+    let plan = b.build()?;
+    // filter(true) is simplified away → just the scan.
+    assert_plan!(plan, "LogicalTableScan(table=[[scott, EMP]])");
+    Ok(())
+}

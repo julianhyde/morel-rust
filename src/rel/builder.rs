@@ -58,6 +58,8 @@ pub enum RelError {
     FieldNotFound(String),
     /// A field ordinal was out of range.
     FieldOrdinalOutOfRange { ordinal: usize, len: usize },
+    /// A grouping set references a column not in the group key.
+    GroupingSetNotSubset(String),
     /// A group key expression did not resolve to an input column.
     InvalidGroupKey(String),
     /// `values()` was called with no field names but non-empty rows.
@@ -93,6 +95,9 @@ impl fmt::Display for RelError {
                     "field ordinal {} out of range (row has {} columns)",
                     ordinal, len
                 )
+            }
+            RelError::GroupingSetNotSubset(name) => {
+                write!(f, "grouping set column '{}' not in group key", name)
             }
             RelError::InvalidGroupKey(expr) => {
                 write!(f, "group key expression not in input: {}", expr)
@@ -1029,6 +1034,13 @@ impl RelBuilder {
                         if let Some(idx) =
                             input_row_type.iter().position(|(n, _)| n == name)
                         {
+                            if !group_set.contains(&idx) {
+                                return self.set_error(
+                                    RelError::GroupingSetNotSubset(
+                                        name.clone(),
+                                    ),
+                                );
+                            }
                             ordinals.push(idx);
                         } else {
                             return self.set_error(RelError::InvalidGroupKey(
@@ -2229,6 +2241,21 @@ fn val_type(v: &Val) -> Type {
         Val::Real(_) => Type::Primitive(PrimitiveType::Real),
         Val::String(_) => string_type(),
         _ => string_type(), // safe default
+    }
+}
+
+impl fmt::Display for RelBuilder {
+    /// Formats the top-of-stack plan as a multi-line explain string.
+    ///
+    /// Produces the same output as [`crate::rel::display::explain`]
+    /// applied to the current top node.  Useful for debugging.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use crate::rel::display::explain;
+        if let Some(frame) = self.stack.last() {
+            write!(f, "{}", explain(&frame.rel))
+        } else {
+            write!(f, "(empty)")
+        }
     }
 }
 
