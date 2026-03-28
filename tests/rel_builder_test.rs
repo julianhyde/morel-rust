@@ -99,7 +99,7 @@ fn test_project_with_alias_from_scan() -> Result<(), RelError> {
     // as_("e") overrides the auto-alias; field_from("e", col) works.
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    b.as_("e");
+    b.alias("e");
     let exprs = vec![b.field_from("e", "EMPNO")?, b.field_from("e", "ENAME")?];
     b.project_named(exprs, vec!["EMPNO".into(), "ENAME".into()]);
     let plan = b.build()?;
@@ -824,7 +824,7 @@ fn test_aggregate() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let gk = b.group_key(vec![b.field("DEPTNO")?]);
-    let aggs = vec![b.count_star().as_("C")];
+    let aggs = vec![b.count_star().alias("C")];
     b.aggregate(&gk, aggs);
     let plan = b.build()?;
     assert_plan!(
@@ -842,7 +842,7 @@ fn test_aggregate2() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let gk = b.group_key(vec![b.field("DEPTNO")?, b.field("JOB")?]);
-    let aggs = vec![b.count_star().as_("C"), b.sum("SAL").as_("TOTAL_SAL")];
+    let aggs = vec![b.count_star().alias("C"), b.sum("SAL").alias("TOTAL_SAL")];
     b.aggregate(&gk, aggs);
     let plan = b.build()?;
     assert_plan!(
@@ -861,7 +861,7 @@ fn test_aggregate5() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let gk = b.group_key(vec![]);
-    let aggs = vec![b.count_star().as_("C"), b.sum("SAL").as_("S")];
+    let aggs = vec![b.count_star().alias("C"), b.sum("SAL").alias("S")];
     b.aggregate(&gk, aggs);
     let plan = b.build()?;
     assert_plan!(
@@ -882,7 +882,7 @@ fn test_aggregate_filter() -> Result<(), RelError> {
     let cond = b.gt(b.field("SAL")?, b.literal_int(1000));
     b.filter(cond);
     let gk = b.group_key(vec![b.field("DEPTNO")?]);
-    let aggs = vec![b.count_star().as_("C")];
+    let aggs = vec![b.count_star().alias("C")];
     b.aggregate(&gk, aggs);
     let plan = b.build()?;
     assert_plan!(
@@ -979,9 +979,9 @@ fn test_project_join() -> Result<(), RelError> {
 fn test_alias() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    b.as_("e");
+    b.alias("e");
     b.scan(&["scott", "DEPT"]);
-    b.as_("d");
+    b.alias("d");
     let lhs = b.field2(1, "DEPTNO")?;
     let rhs = b.field2(0, "DEPTNO")?;
     let cond = b.equals(lhs, rhs);
@@ -1154,7 +1154,7 @@ fn test_project_except_with_explicit_alias_and_name() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let gk = b.group_key(vec![b.field("DEPTNO")?]);
-    b.aggregate(&gk, vec![b.count_star().as_("C")]);
+    b.aggregate(&gk, vec![b.count_star().alias("C")]);
     // Row type: [DEPTNO, C]. Exclude C by its explicit alias.
     b.project_except_names(&["C"])?;
     let plan = b.build()?;
@@ -1212,9 +1212,9 @@ fn test_alias2() -> Result<(), RelError> {
     // Two aliased scans; join condition resolved via field_from(alias, col).
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    b.as_("e");
+    b.alias("e");
     b.scan(&["scott", "DEPT"]);
-    b.as_("d");
+    b.alias("d");
     // field_from searches by alias rather than frame offset.
     let lhs = b.field_from("e", "DEPTNO")?; // EMP.DEPTNO = $7
     let rhs = b.field_from("d", "DEPTNO")?; // DEPT.DEPTNO = $8
@@ -1237,7 +1237,7 @@ fn test_alias_project() -> Result<(), RelError> {
     // Alias propagates through project; field_from works after project.
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    b.as_("e");
+    b.alias("e");
     b.project(vec![b.field("EMPNO")?, b.field("ENAME")?]);
     // "e" alias now on the project frame; field_from resolves it.
     let cond = b.gt(b.field_from("e", "EMPNO")?, b.literal_int(7000));
@@ -1259,7 +1259,7 @@ fn test_alias_filter() -> Result<(), RelError> {
     // Alias propagates through filter; field_from works after filter.
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    b.as_("e");
+    b.alias("e");
     let cond1 = b.gt(b.field("SAL")?, b.literal_int(1000));
     b.filter(cond1);
     // "e" alias now on the filter frame.
@@ -1282,9 +1282,9 @@ fn test_alias_aggregate() -> Result<(), RelError> {
     // Alias propagates through aggregate; field_from resolves output cols.
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    b.as_("e");
+    b.alias("e");
     let gk = b.group_key(vec![b.field("DEPTNO")?]);
-    b.aggregate(&gk, vec![b.count_star().as_("C")]);
+    b.aggregate(&gk, vec![b.count_star().alias("C")]);
     // "e" alias now on the aggregate frame (row_type: DEPTNO, C).
     let cond = b.gt(b.field_from("e", "C")?, b.literal_int(1));
     b.filter(cond);
@@ -1307,7 +1307,7 @@ fn test_alias_past_top() -> Result<(), RelError> {
     // EMP has 8 cols (base 0–7); DEPT is at base 8.
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    b.as_("e");
+    b.alias("e");
     b.scan(&["scott", "DEPT"]);
     let lhs = b.field_from("e", "DEPTNO")?; // absolute $7
     let rhs = b.field2(0, "DEPTNO")?; // top frame (DEPT) → absolute $8
@@ -1330,7 +1330,7 @@ fn test_alias_sort() -> Result<(), RelError> {
     // Alias propagates through sort; field_from resolves cols after sort.
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    b.as_("e");
+    b.alias("e");
     let key = b.desc(b.field("SAL")?);
     b.sort(&[key]);
     // "e" alias now on the sort frame.
@@ -1353,7 +1353,7 @@ fn test_alias_limit() -> Result<(), RelError> {
     // Alias propagates through limit; field_from resolves cols after limit.
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    b.as_("e");
+    b.alias("e");
     b.limit(None, Some(5));
     // "e" alias now on the limit (Sort with empty collation) frame.
     let cond = b.gt(b.field_from("e", "SAL")?, b.literal_int(500));
@@ -1376,9 +1376,9 @@ fn test_multi_level_alias() -> Result<(), RelError> {
     // field_from finds the correct frame for each alias.
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
-    b.as_("emp1");
+    b.alias("emp1");
     b.scan(&["scott", "EMP"]);
-    b.as_("emp2");
+    b.alias("emp2");
     let lhs = b.field_from("emp1", "EMPNO")?; // $0
     // MGR ordinal 3 in emp2: base=8 → $11
     let rhs = b.field_from("emp2", "MGR")?;
@@ -1711,7 +1711,7 @@ fn test_empty_with_alias() -> Result<(), RelError> {
         ("B".to_string(), bool_type()),
     ];
     b.empty(row_type);
-    b.as_("e");
+    b.alias("e");
     let plan = b.build()?;
     assert_plan!(plan, "LogicalValues(tuples=[[]])");
     Ok(())
@@ -1822,7 +1822,7 @@ fn test_aggregate4() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let gk = b.group_key(vec![b.field("DEPTNO")?]);
-    b.aggregate(&gk, vec![b.count_star().as_("C")]);
+    b.aggregate(&gk, vec![b.count_star().alias("C")]);
     b.distinct();
     let plan = b.build()?;
     assert_plan!(
@@ -1864,7 +1864,7 @@ fn test_aggregate_and_then_project_named_field() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let gk = b.group_key(vec![b.field("DEPTNO")?]);
-    b.aggregate(&gk, vec![b.count_star().as_("C")]);
+    b.aggregate(&gk, vec![b.count_star().alias("C")]);
     // Project only the count; DEPTNO is dropped.
     b.project(vec![b.field("C")?]);
     let plan = b.build()?;
@@ -1885,7 +1885,7 @@ fn test_aggregate_project_with_aliases() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let gk = b.group_key(vec![b.field("DEPTNO")?]);
-    b.aggregate(&gk, vec![b.count_star().as_("C")]);
+    b.aggregate(&gk, vec![b.count_star().alias("C")]);
     let exprs = vec![b.field("DEPTNO")?, b.field("C")?];
     b.project_named(exprs, vec!["DEPT_NUM".into(), "COUNT_ROWS".into()]);
     let plan = b.build()?;
@@ -1907,7 +1907,7 @@ fn test_aggregate_project_with_expression() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let gk = b.group_key(vec![b.field("DEPTNO")?]);
-    b.aggregate(&gk, vec![b.sum("SAL").as_("TOTAL_SAL")]);
+    b.aggregate(&gk, vec![b.sum("SAL").alias("TOTAL_SAL")]);
     let total = b.field("TOTAL_SAL")?;
     let one = b.literal_int(1);
     let expr = b.plus(total, one);
@@ -1970,7 +1970,7 @@ fn test_aggregate_one_row() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let gk = b.group_key(vec![]);
-    b.aggregate(&gk, vec![b.sum("SAL").as_("TOTAL")]);
+    b.aggregate(&gk, vec![b.sum("SAL").alias("TOTAL")]);
     let plan = b.build()?;
     assert_plan!(
         plan,
@@ -1991,9 +1991,9 @@ fn test_aggregate5b() -> Result<(), RelError> {
     b.aggregate(
         &gk,
         vec![
-            b.max("SAL").as_("MAX_SAL"),
-            b.min("SAL").as_("MIN_SAL"),
-            b.avg("SAL").as_("AVG_SAL"),
+            b.max("SAL").alias("MAX_SAL"),
+            b.min("SAL").alias("MIN_SAL"),
+            b.avg("SAL").alias("AVG_SAL"),
         ],
     );
     let plan = b.build()?;
@@ -2015,7 +2015,10 @@ fn test_aggregate_filter_nullable() -> Result<(), RelError> {
     b.scan(&["scott", "EMP"]);
     let gk = b.group_key(vec![b.field("DEPTNO")?]);
     let filter_cond = b.equals(b.field("DEPTNO")?, b.literal_int(20));
-    b.aggregate(&gk, vec![b.count_star().with_filter(filter_cond).as_("C")]);
+    b.aggregate(
+        &gk,
+        vec![b.count_star().with_filter(filter_cond).alias("C")],
+    );
     let plan = b.build()?;
     assert_plan!(
         plan,
@@ -2160,7 +2163,7 @@ fn test_scalar_query() -> Result<(), RelError> {
     let mut bi = builder();
     bi.scan(&["scott", "EMP"]);
     let gk = bi.group_key(vec![]);
-    bi.aggregate(&gk, vec![bi.avg("SAL").as_("agg#0")]);
+    bi.aggregate(&gk, vec![bi.avg("SAL").alias("agg#0")]);
     let inner = bi.build()?;
 
     let mut b = builder();
@@ -2329,7 +2332,7 @@ fn test_aggregate_grouping_sets_one_row() -> Result<(), RelError> {
         vec![b.field("DEPTNO")?],
         vec![vec![b.field("DEPTNO")?], vec![]],
     );
-    let aggs = vec![b.count_star().as_("C")];
+    let aggs = vec![b.count_star().alias("C")];
     b.aggregate(&gk, aggs);
     let plan = b.build()?;
     assert_plan!(
@@ -2352,8 +2355,8 @@ fn test_aggregate_grouping_sets_group_id() -> Result<(), RelError> {
         vec![vec![b.field("DEPTNO")?], vec![]],
     );
     let aggs = vec![
-        b.count_star().as_("C"),
-        b.grouping_id(vec!["DEPTNO"]).as_("G"),
+        b.count_star().alias("C"),
+        b.grouping_id(vec!["DEPTNO"]).alias("G"),
     ];
     b.aggregate(&gk, aggs);
     let plan = b.build()?;
@@ -2374,7 +2377,7 @@ fn test_within_distinct() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let gk = b.group_key(vec![b.field("DEPTNO")?]);
-    let aggs = vec![b.sum("SAL").within_distinct("JOB").as_("s")];
+    let aggs = vec![b.sum("SAL").within_distinct("JOB").alias("s")];
     b.aggregate(&gk, aggs);
     let plan = b.build()?;
     assert_plan!(
@@ -2435,7 +2438,7 @@ fn test_aggregate_eliminates_duplicate_calls3() -> Result<(), RelError> {
     let mut b = builder();
     b.scan(&["scott", "EMP"]);
     let gk = b.group_key(vec![b.field("DEPTNO")?]);
-    let aggs = vec![b.count_star().as_("C1"), b.count_star().as_("C2")];
+    let aggs = vec![b.count_star().alias("C1"), b.count_star().alias("C2")];
     b.aggregate(&gk, aggs);
     let plan = b.build()?;
     assert_plan!(
@@ -2457,8 +2460,8 @@ fn test_aggregate_eliminates_duplicate_distinct_calls() -> Result<(), RelError>
     b.scan(&["scott", "EMP"]);
     let gk = b.group_key(vec![]);
     let aggs = vec![
-        b.count("ENAME").distinct().as_("A"),
-        b.count("ENAME").distinct().as_("B"),
+        b.count("ENAME").distinct().alias("A"),
+        b.count("ENAME").distinct().alias("B"),
     ];
     b.aggregate(&gk, aggs);
     let plan = b.build()?;
@@ -2482,7 +2485,7 @@ fn test_aggregate_grouping() -> Result<(), RelError> {
         vec![b.field("DEPTNO")?],
         vec![vec![b.field("DEPTNO")?], vec![]],
     );
-    let aggs = vec![b.count_star().as_("C"), b.grouping("DEPTNO").as_("G")];
+    let aggs = vec![b.count_star().alias("C"), b.grouping("DEPTNO").alias("G")];
     b.aggregate(&gk, aggs);
     let plan = b.build()?;
     assert_plan!(

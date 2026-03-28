@@ -175,7 +175,7 @@ pub struct GroupKey {
 
 /// A pending aggregate-function call, built by `count_star`, `sum`, etc.
 ///
-/// Use `.as_(name)`, `.distinct()`, and `.within_distinct(col)` to
+/// Use `.alias(name)`, `.distinct()`, and `.within_distinct(col)` to
 /// customise before passing to [`RelBuilder::aggregate`].
 #[derive(Clone, Debug)]
 pub struct AggCallDef {
@@ -195,7 +195,11 @@ pub struct AggCallDef {
 
 impl AggCallDef {
     /// Sets the output column name.
-    pub fn as_(mut self, name: impl Into<String>) -> Self {
+    ///
+    /// Corresponds to [`as`] in Calcite's Java `RelBuilder.AggCall`.
+    ///
+    /// [`as`]: https://calcite.apache.org/javadocAggregate/org/apache/calcite/tools/RelBuilder.AggCall.html#as(java.lang.String)
+    pub fn alias(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
     }
@@ -265,7 +269,7 @@ impl Default for BuilderConfig {
 struct Frame {
     /// The relational node.
     rel: Rel,
-    /// Optional table alias assigned by [`RelBuilder::as_`].
+    /// Optional table alias assigned by [`RelBuilder::alias`].
     alias: Option<String>,
 }
 
@@ -1342,8 +1346,15 @@ impl RelBuilder {
     /// The alias can later be used with [`field2`] to disambiguate
     /// columns when two aliased frames are on the stack.
     ///
+    /// Corresponds to [`as`] in Calcite's Java `RelBuilder`.
+    /// Note: this is unrelated to Java's
+    /// [`alias(RexNode, String)`][calcite-alias], which names an
+    /// expression within a `project` call.
+    ///
+    /// [`as`]: https://calcite.apache.org/javadocAggregate/org/apache/calcite/tools/RelBuilder.html#as(java.lang.String)
+    /// [calcite-alias]: https://calcite.apache.org/javadocAggregate/org/apache/calcite/tools/RelBuilder.html#alias(org.apache.calcite.rex.RexNode,java.lang.String)
     /// [`field2`]: RelBuilder::field2
-    pub fn as_(&mut self, alias: impl Into<String>) -> &mut Self {
+    pub fn alias(&mut self, alias: impl Into<String>) -> &mut Self {
         self.stack
             .last_mut()
             .expect("RelBuilder stack is empty")
@@ -2597,7 +2608,7 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
         let gk = b.group_key(vec![b.field("DEPTNO").unwrap()]);
-        let aggs = vec![b.count_star().as_("C")];
+        let aggs = vec![b.count_star().alias("C")];
         b.aggregate(&gk, aggs);
         let plan = b.build().unwrap();
         assert_plan!(
@@ -2615,7 +2626,8 @@ mod tests {
             b.field("DEPTNO").unwrap(),
             b.field("JOB").unwrap(),
         ]);
-        let aggs = vec![b.count_star().as_("C"), b.sum("SAL").as_("TOTAL_SAL")];
+        let aggs =
+            vec![b.count_star().alias("C"), b.sum("SAL").alias("TOTAL_SAL")];
         b.aggregate(&gk, aggs);
         let plan = b.build().unwrap();
         assert_plan!(
@@ -2632,7 +2644,7 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
         let gk = b.group_key(vec![]);
-        let aggs = vec![b.count_star().as_("C")];
+        let aggs = vec![b.count_star().alias("C")];
         b.aggregate(&gk, aggs);
         let plan = b.build().unwrap();
         assert_plan!(
@@ -2647,7 +2659,7 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
         let gk = b.group_key(vec![b.field("DEPTNO").unwrap()]);
-        let aggs = vec![b.count("ENAME").distinct().as_("UNIQUE_EMPS")];
+        let aggs = vec![b.count("ENAME").distinct().alias("UNIQUE_EMPS")];
         b.aggregate(&gk, aggs);
         let plan = b.build().unwrap();
         assert_plan!(
@@ -2731,9 +2743,9 @@ mod tests {
     fn test_alias() {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
-        b.as_("e");
+        b.alias("e");
         b.scan(&["scott", "DEPT"]);
-        b.as_("d");
+        b.alias("d");
         // Use field2 to reference columns from each aliased input.
         let lhs = b.field2(1, "DEPTNO").unwrap(); // e.DEPTNO
         let rhs = b.field2(0, "DEPTNO").unwrap(); // d.DEPTNO
@@ -2908,7 +2920,7 @@ mod tests {
         let sal = b.field("SAL").unwrap();
         let expr = b.plus(sal, b.literal_int(2));
         let gk = b.group_key(vec![b.field("DEPTNO").unwrap()]);
-        let agg = b.sum_expr(expr).as_("S");
+        let agg = b.sum_expr(expr).alias("S");
         b.aggregate(&gk, vec![agg]);
         let plan = b.build().unwrap();
         assert_plan!(
@@ -2929,7 +2941,7 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
         let gk = b.group_key(vec![b.field("DEPTNO").unwrap()]);
-        let agg = b.sum_expr(b.literal_int(2)).as_("S");
+        let agg = b.sum_expr(b.literal_int(2)).alias("S");
         b.aggregate(&gk, vec![agg]);
         let plan = b.build().unwrap();
         assert_plan!(
