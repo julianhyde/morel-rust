@@ -2151,6 +2151,172 @@ fn test_aggregate_group_key_out_of_range() {
 }
 
 // -----------------------------------------------------------------------
+// Subquery expressions (Task 30)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_scalar_query() -> Result<(), RelError> {
+    // filter: SAL > (SELECT AVG(SAL) FROM EMP)
+    let mut bi = builder();
+    bi.scan(&["scott", "EMP"]);
+    let gk = bi.group_key(vec![]);
+    bi.aggregate(&gk, vec![bi.avg("SAL").as_("agg#0")]);
+    let inner = bi.build()?;
+
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let scalar = b.scalar_query(inner);
+    let cond = b.gt(b.field("SAL")?, scalar);
+    b.filter(cond);
+    let plan = b.build()?;
+    let expected = concat!(
+        "LogicalFilter(condition=[>($5, $SCALAR_QUERY({\n",
+        "LogicalAggregate(group=[{}], agg#0=[AVG($5)])\n",
+        "  LogicalTableScan(table=[[scott, EMP]])\n",
+        "}))])\n",
+        "  LogicalTableScan(table=[[scott, EMP]])"
+    );
+    assert_eq!(explain(&plan).trim(), expected);
+    Ok(())
+}
+
+#[test]
+fn test_exists() -> Result<(), RelError> {
+    // filter: EXISTS (SELECT * FROM DEPT)
+    let mut bi = builder();
+    bi.scan(&["scott", "DEPT"]);
+    let inner = bi.build()?;
+
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let cond = b.exists(inner);
+    b.filter(cond);
+    let plan = b.build()?;
+    let expected = concat!(
+        "LogicalFilter(condition=[EXISTS({\n",
+        "LogicalTableScan(table=[[scott, DEPT]])\n",
+        "})])\n",
+        "  LogicalTableScan(table=[[scott, EMP]])"
+    );
+    assert_eq!(explain(&plan).trim(), expected);
+    Ok(())
+}
+
+#[test]
+fn test_in_query() -> Result<(), RelError> {
+    // filter: DEPTNO IN (SELECT DEPTNO FROM DEPT)
+    let mut bi = builder();
+    bi.scan(&["scott", "DEPT"]);
+    bi.project(vec![bi.field("DEPTNO")?]);
+    let inner = bi.build()?;
+
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let deptno = b.field("DEPTNO")?;
+    let cond = b.in_subquery(deptno, inner);
+    b.filter(cond);
+    let plan = b.build()?;
+    let expected = concat!(
+        "LogicalFilter(condition=[IN($7, {\n",
+        "LogicalProject(DEPTNO=[$0])\n",
+        "  LogicalTableScan(table=[[scott, DEPT]])\n",
+        "})])\n",
+        "  LogicalTableScan(table=[[scott, EMP]])"
+    );
+    assert_eq!(explain(&plan).trim(), expected);
+    Ok(())
+}
+
+#[test]
+fn test_some_all() -> Result<(), RelError> {
+    // filter: SAL > SOME (SELECT SAL FROM EMP)
+    let mut bi = builder();
+    bi.scan(&["scott", "EMP"]);
+    bi.project(vec![bi.field("SAL")?]);
+    let inner = bi.build()?;
+
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let sal = b.field("SAL")?;
+    let cond = b.some_query(">", sal, inner);
+    b.filter(cond);
+    let plan = b.build()?;
+    let expected = concat!(
+        "LogicalFilter(condition=[SOME(>)($5, {\n",
+        "LogicalProject(SAL=[$5])\n",
+        "  LogicalTableScan(table=[[scott, EMP]])\n",
+        "})])\n",
+        "  LogicalTableScan(table=[[scott, EMP]])"
+    );
+    assert_eq!(explain(&plan).trim(), expected);
+    Ok(())
+}
+
+#[test]
+fn test_unique() -> Result<(), RelError> {
+    // filter: UNIQUE (SELECT DEPTNO FROM DEPT)
+    let mut bi = builder();
+    bi.scan(&["scott", "DEPT"]);
+    bi.project(vec![bi.field("DEPTNO")?, bi.field("DEPTNO")?]);
+    let inner = bi.build()?;
+
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let cond = b.unique(inner);
+    b.filter(cond);
+    let plan = b.build()?;
+    let expected = concat!(
+        "LogicalFilter(condition=[UNIQUE({\n",
+        "LogicalProject(DEPTNO=[$0], DEPTNO=[$0])\n",
+        "  LogicalTableScan(table=[[scott, DEPT]])\n",
+        "})])\n",
+        "  LogicalTableScan(table=[[scott, EMP]])"
+    );
+    assert_eq!(explain(&plan).trim(), expected);
+    Ok(())
+}
+
+#[test]
+fn test_array_query() -> Result<(), RelError> {
+    // ARRAY (SELECT DEPTNO FROM DEPT)
+    let mut bi = builder();
+    bi.scan(&["scott", "DEPT"]);
+    bi.project(vec![bi.field("DEPTNO")?]);
+    let inner = bi.build()?;
+
+    let b = builder();
+    let _arr = b.array_query(inner);
+    // Just verify it builds without error.
+    Ok(())
+}
+
+#[test]
+fn test_multiset_query() -> Result<(), RelError> {
+    // MULTISET (SELECT DEPTNO FROM DEPT)
+    let mut bi = builder();
+    bi.scan(&["scott", "DEPT"]);
+    bi.project(vec![bi.field("DEPTNO")?]);
+    let inner = bi.build()?;
+
+    let b = builder();
+    let _ms = b.multiset_query(inner);
+    Ok(())
+}
+
+#[test]
+fn test_map_query() -> Result<(), RelError> {
+    // MAP (SELECT DEPTNO, DNAME FROM DEPT)
+    let mut bi = builder();
+    bi.scan(&["scott", "DEPT"]);
+    bi.project(vec![bi.field("DEPTNO")?, bi.field("DNAME")?]);
+    let inner = bi.build()?;
+
+    let b = builder();
+    let _map = b.map_query(inner);
+    Ok(())
+}
+
+// -----------------------------------------------------------------------
 // Grouping sets (Task 28)
 // -----------------------------------------------------------------------
 

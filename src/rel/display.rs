@@ -270,6 +270,43 @@ pub(crate) fn write_expr(
                 write_expr(f, arg, inputs)?;
                 return write!(f, "):{}", type_to_sql(ret_ty));
             }
+            // Subquery unary: EXISTS/UNIQUE/ARRAY/MULTISET/MAP wrapping
+            // a Scalar subquery.
+            if let Expr::Identifier(_, op) = func.as_ref()
+                && matches!(
+                    op.as_str(),
+                    "ARRAY" | "EXISTS" | "MAP" | "MULTISET" | "UNIQUE"
+                )
+                && let Expr::Scalar(_, rel) = arg.as_ref()
+            {
+                write!(f, "{}(", op)?;
+                write_subquery_plan(f, rel)?;
+                return write!(f, ")");
+            }
+            // IN subquery: Apply(Apply(Identifier("IN"), col), Scalar(rel))
+            if let Expr::Apply(_, inner_f, col, _) = func.as_ref()
+                && let Expr::Identifier(_, op) = inner_f.as_ref()
+                && op == "IN"
+                && let Expr::Scalar(_, rel) = arg.as_ref()
+            {
+                write!(f, "IN(")?;
+                write_expr(f, col, inputs)?;
+                write!(f, ", ")?;
+                write_subquery_plan(f, rel)?;
+                return write!(f, ")");
+            }
+            // SOME(op)/ALL(op) subquery.
+            if let Expr::Apply(_, inner_f, col, _) = func.as_ref()
+                && let Expr::Identifier(_, op_name) = inner_f.as_ref()
+                && (op_name.starts_with("SOME(") || op_name.starts_with("ALL("))
+                && let Expr::Scalar(_, rel) = arg.as_ref()
+            {
+                write!(f, "{}(", op_name)?;
+                write_expr(f, col, inputs)?;
+                write!(f, ", ")?;
+                write_subquery_plan(f, rel)?;
+                return write!(f, ")");
+            }
             // Try to match binary op: Apply(Apply(Identifier(op),a),b)
             if let Expr::Apply(_, inner_f, left, _) = func.as_ref()
                 && let Expr::Identifier(_, op) = inner_f.as_ref()
@@ -310,9 +347,22 @@ pub(crate) fn write_expr(
             write!(f, "{}", name)
         }
         Expr::Literal(_, val) => write_val(f, val),
+        Expr::Scalar(_, rel) => {
+            // Scalar subquery: $SCALAR_QUERY({<plan>})
+            write!(f, "$SCALAR_QUERY(")?;
+            write_subquery_plan(f, rel)?;
+            write!(f, ")")
+        }
         // Other Expr variants are not produced by RelBuilder; emit ?
         _ => write!(f, "?"),
     }
+}
+
+/// Writes the inner relation of a subquery as `{\n<plan>}`.
+fn write_subquery_plan(f: &mut String, rel: &Rel) -> fmt::Result {
+    writeln!(f, "{{")?;
+    write_rel(f, rel, 0)?;
+    write!(f, "}}")
 }
 
 /// Writes a [`Val`] as a SQL literal.

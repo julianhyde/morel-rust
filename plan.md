@@ -1012,17 +1012,18 @@ RECURSIVE`) queries.
 Add scalar/existential/quantified subquery `Expr` variants and
 corresponding builder methods.
 
-- [ ] `testScalarQuery` — `(SELECT max(SAL) FROM EMP)` as a scalar
-      expression; requires `Expr::ScalarSubquery`.
-- [ ] `testExists` — `EXISTS (SELECT …)`.
-- [ ] `testExistsCorrelated` — correlated `EXISTS`.
-- [ ] `testInQuery` — `col IN (SELECT …)` semi-join sugar.
-- [ ] `testSomeAll` — `col > SOME (SELECT …)` and `col > ALL (SELECT …)`.
-- [ ] `testUnique` — `UNIQUE (SELECT …)` (true iff subquery has no
+- [x] `testScalarQuery` — `(SELECT max(SAL) FROM EMP)` as a scalar
+      expression; uses `Expr::Scalar`.
+- [x] `testExists` — `EXISTS (SELECT …)`.
+- [ ] `testExistsCorrelated` — correlated `EXISTS` (deferred; requires
+      correlation variable infrastructure).
+- [x] `testInQuery` — `col IN (SELECT …)` semi-join sugar.
+- [x] `testSomeAll` — `col > SOME (SELECT …)` and `col > ALL (SELECT …)`.
+- [x] `testUnique` — `UNIQUE (SELECT …)` (true iff subquery has no
       duplicate rows).
-- [ ] `testArrayQuery` — `ARRAY (SELECT …)`.
-- [ ] `testMultisetQuery` — `MULTISET (SELECT …)`.
-- [ ] `testMapQuery` — `MAP (SELECT k, v FROM …)`.
+- [x] `testArrayQuery` — `ARRAY (SELECT …)`.
+- [x] `testMultisetQuery` — `MULTISET (SELECT …)`.
+- [x] `testMapQuery` — `MAP (SELECT k, v FROM …)`.
 
 ---
 
