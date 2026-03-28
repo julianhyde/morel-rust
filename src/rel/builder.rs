@@ -40,7 +40,7 @@ use crate::eval::val::Val;
 use crate::rel::schema::Schema;
 use crate::rel::{
     AggCall, AggFunction, Direction, FieldCollation, JoinType, NullDirection,
-    Rel, bool_type, int_type, string_type,
+    Rel, bool_type, columns_to_record_type, int_type, string_type,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -2040,48 +2040,53 @@ impl RelBuilder {
 
     /// Wraps `rel` as a scalar subquery expression.
     ///
-    /// The return type is the type of the first output column of `rel`.
+    /// Applies Morel's `Relational.only` to the [`Expr::Rel`], which
+    /// extracts the single row from the subquery.  If `rel` has bag type
+    /// `r bag`, the return type is `r` (the record type of that row).
     pub fn scalar_query(&self, rel: Rel) -> Expr {
-        let ty = rel
-            .row_type()
-            .first()
-            .map_or_else(int_type, |(_, t)| t.clone());
-        Expr::Scalar(Box::new(ty), Box::new(rel))
+        let record_type = columns_to_record_type(rel.row_type());
+        let subq = Expr::Rel(Box::new(rel));
+        unary_op("only", record_type, subq)
     }
 
-    /// Returns `EXISTS({rel})`.
+    /// Returns `nonEmpty({rel})` — true iff the subquery produces at least
+    /// one row.
+    ///
+    /// Uses Morel's `Relational.nonEmpty` function rather than SQL's
+    /// `EXISTS`, so the inner [`Expr::Rel`] carries the natural bag type
+    /// of `rel`.
     pub fn exists(&self, rel: Rel) -> Expr {
-        let subq = Expr::Scalar(Box::new(bool_type()), Box::new(rel));
-        unary_op("EXISTS", bool_type(), subq)
+        let subq = Expr::Rel(Box::new(rel));
+        unary_op("nonEmpty", bool_type(), subq)
     }
 
     /// Returns `UNIQUE({rel})` (true iff the subquery has no duplicate rows).
     pub fn unique(&self, rel: Rel) -> Expr {
-        let subq = Expr::Scalar(Box::new(bool_type()), Box::new(rel));
+        let subq = Expr::Rel(Box::new(rel));
         unary_op("UNIQUE", bool_type(), subq)
     }
 
     /// Returns `ARRAY({rel})`.
     pub fn array_query(&self, rel: Rel) -> Expr {
-        let subq = Expr::Scalar(Box::new(bool_type()), Box::new(rel));
+        let subq = Expr::Rel(Box::new(rel));
         unary_op("ARRAY", bool_type(), subq)
     }
 
     /// Returns `MULTISET({rel})`.
     pub fn multiset_query(&self, rel: Rel) -> Expr {
-        let subq = Expr::Scalar(Box::new(bool_type()), Box::new(rel));
+        let subq = Expr::Rel(Box::new(rel));
         unary_op("MULTISET", bool_type(), subq)
     }
 
     /// Returns `MAP({rel})`.
     pub fn map_query(&self, rel: Rel) -> Expr {
-        let subq = Expr::Scalar(Box::new(bool_type()), Box::new(rel));
+        let subq = Expr::Rel(Box::new(rel));
         unary_op("MAP", bool_type(), subq)
     }
 
     /// Returns `col IN ({rel})`.
     pub fn in_subquery(&self, col: Expr, rel: Rel) -> Expr {
-        let subq = Expr::Scalar(Box::new(bool_type()), Box::new(rel));
+        let subq = Expr::Rel(Box::new(rel));
         binary_op("IN", bool_type(), col, subq)
     }
 
@@ -2090,14 +2095,14 @@ impl RelBuilder {
     /// `cmp_op` is a comparison operator: `">"`, `"<"`, `">="`, `"<="`,
     /// `"="`, or `"<>"`.
     pub fn some_query(&self, cmp_op: &str, col: Expr, rel: Rel) -> Expr {
-        let subq = Expr::Scalar(Box::new(bool_type()), Box::new(rel));
+        let subq = Expr::Rel(Box::new(rel));
         let op = format!("SOME({})", cmp_op);
         binary_op(&op, bool_type(), col, subq)
     }
 
     /// Returns `col cmp_op ALL ({rel})`.
     pub fn all_query(&self, cmp_op: &str, col: Expr, rel: Rel) -> Expr {
-        let subq = Expr::Scalar(Box::new(bool_type()), Box::new(rel));
+        let subq = Expr::Rel(Box::new(rel));
         let op = format!("ALL({})", cmp_op);
         binary_op(&op, bool_type(), col, subq)
     }

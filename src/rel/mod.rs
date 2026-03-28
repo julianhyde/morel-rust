@@ -282,7 +282,7 @@ impl Rel {
 // -----------------------------------------------------------------------
 
 /// Converts an ordered column list to [`Type::Record`].
-pub(crate) fn columns_to_record_type(columns: &[(String, Type)]) -> Type {
+pub fn columns_to_record_type(columns: &[(String, Type)]) -> Type {
     let fields = columns
         .iter()
         .map(|(name, t)| (Label::String(name.clone()), t.clone()))

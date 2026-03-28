@@ -298,24 +298,31 @@ pub(crate) fn write_expr(
                 write_expr(f, arg, inputs)?;
                 return write!(f, "):{}", type_to_sql(ret_ty));
             }
-            // Subquery unary: EXISTS/UNIQUE/ARRAY/MULTISET/MAP wrapping
-            // a Scalar subquery.
+            // Subquery unary operators wrapping a relational subquery.
+            // Internal Morel names are mapped to Calcite-compatible display
+            // names: "only" → "$SCALAR_QUERY", "nonEmpty" → "EXISTS".
             if let Expr::Identifier(_, op) = func.as_ref()
-                && matches!(
-                    op.as_str(),
-                    "ARRAY" | "EXISTS" | "MAP" | "MULTISET" | "UNIQUE"
-                )
-                && let Expr::Scalar(_, rel) = arg.as_ref()
+                && let Expr::Rel(rel) = arg.as_ref()
             {
-                write!(f, "{}(", op)?;
-                write_subquery_plan(f, rel)?;
-                return write!(f, ")");
+                let disp = match op.as_str() {
+                    "only" => Some("$SCALAR_QUERY"),
+                    "nonEmpty" => Some("EXISTS"),
+                    "ARRAY" | "MAP" | "MULTISET" | "UNIQUE" => {
+                        Some(op.as_str())
+                    }
+                    _ => None,
+                };
+                if let Some(disp) = disp {
+                    write!(f, "{}(", disp)?;
+                    write_subquery_plan(f, rel)?;
+                    return write!(f, ")");
+                }
             }
-            // IN subquery: Apply(Apply(Identifier("IN"), col), Scalar(rel))
+            // IN subquery: Apply(Apply(Identifier("IN"), col), Rel(rel))
             if let Expr::Apply(_, inner_f, col, _) = func.as_ref()
                 && let Expr::Identifier(_, op) = inner_f.as_ref()
                 && op == "IN"
-                && let Expr::Scalar(_, rel) = arg.as_ref()
+                && let Expr::Rel(rel) = arg.as_ref()
             {
                 write!(f, "IN(")?;
                 write_expr(f, col, inputs)?;
@@ -327,7 +334,7 @@ pub(crate) fn write_expr(
             if let Expr::Apply(_, inner_f, col, _) = func.as_ref()
                 && let Expr::Identifier(_, op_name) = inner_f.as_ref()
                 && (op_name.starts_with("SOME(") || op_name.starts_with("ALL("))
-                && let Expr::Scalar(_, rel) = arg.as_ref()
+                && let Expr::Rel(rel) = arg.as_ref()
             {
                 write!(f, "{}(", op_name)?;
                 write_expr(f, col, inputs)?;
@@ -383,8 +390,8 @@ pub(crate) fn write_expr(
             write!(f, "{}", name)
         }
         Expr::Literal(_, val) => write_val(f, val),
-        Expr::Scalar(_, rel) => {
-            // Scalar subquery: $SCALAR_QUERY({<plan>})
+        Expr::Rel(rel) => {
+            // Relational subquery: $SCALAR_QUERY({<plan>})
             write!(f, "$SCALAR_QUERY(")?;
             write_subquery_plan(f, rel)?;
             write!(f, ")")
