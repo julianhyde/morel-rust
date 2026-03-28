@@ -786,14 +786,17 @@ rename, aggregate.
 - [x] `testAggregateProjectWithAliases`: project-with-rename after aggregate.
 - [x] `testAggregateProjectWithExpression`: aggregate output projected
       through an arithmetic expression.
-- [ ] `testAggregateEliminatesDuplicateCalls` /
-      `testAggregateEliminatesDuplicateCalls2`: identical agg calls
-      deduplicated — requires new dedup logic, deferred.
+- [x] `testAggregateEliminatesDuplicateCalls` /
+      `testAggregateEliminatesDuplicateCalls2` /
+      `testAggregateEliminatesDuplicateCalls3` /
+      `testAggregateEliminatesDuplicateDistinctCalls`: identical agg
+      calls deduplicated; a wrapping `Project` exposes both names.
 - [ ] `testAggregateProjectPrune`: prune unused input columns before
       aggregate — requires new push-down pass, deferred.
-- [ ] `testAggregateGroupingSetNotSubsetFails`,
-      `testAggregateGroupingSetDuplicate`,
-      `testAggregateGrouping`: grouping-set features — deferred.
+- [x] `testAggregateGroupingSetNotSubsetFails`,
+      `testAggregateGrouping`: grouping-set validation and GROUPING()
+      function implemented.
+- [ ] `testAggregateGroupingSetDuplicate`: deferred.
 
 **Tests enabled:**
 `testAggregate3`, `testAggregateAndThenProjectNamedField`,
@@ -875,8 +878,9 @@ New negative tests that verify specific `RelError` payloads.
       `with_filter()` to `AggCallDef`; validates filter type in
       `aggregate()`.
 - [x] `testBadUnionArgsErrorMessage` — already done in Task 18.
-- [ ] `testAggregateGroupingWithFilterFails` — `GROUPING()` not
-      implemented; skipped.
+- [x] `testAggregateGroupingWithFilterFails` — `GroupingWithFilter` error
+      added to `RelError`; validation in `aggregate()` checks that
+      `GROUPING`/`GROUPING_ID` calls have no `FILTER` clause.
 
 ---
 

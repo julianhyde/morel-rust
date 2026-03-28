@@ -2432,6 +2432,48 @@ fn test_repeat_union2() -> Result<(), RelError> {
     Ok(())
 }
 
+/// `testAggregateEliminatesDuplicateCalls` — two identical `SUM(SAL)` calls
+/// are merged; a project exposes both output names.
+#[test]
+fn test_aggregate_eliminates_duplicate_calls() -> Result<(), RelError> {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![b.field("DEPTNO")?]);
+    let aggs = vec![b.sum("SAL").alias("S"), b.sum("SAL").alias("S2")];
+    b.aggregate(&gk, aggs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(DEPTNO=[$0], S=[$1], S2=[$1])
+              LogicalAggregate(group=[{7}], S=[SUM($5)])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+/// `testAggregateEliminatesDuplicateCalls2` — same as above but with an
+/// empty group key (scalar aggregate).
+#[test]
+fn test_aggregate_eliminates_duplicate_calls2() -> Result<(), RelError> {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![]);
+    let aggs = vec![b.sum("SAL").alias("S"), b.sum("SAL").alias("S2")];
+    b.aggregate(&gk, aggs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(S=[$0], S2=[$0])
+              LogicalAggregate(group=[{}], S=[SUM($5)])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
 #[test]
 fn test_aggregate_eliminates_duplicate_calls3() -> Result<(), RelError> {
     // Two identical COUNT(*) agg calls: one computation, project duplicates.
@@ -2516,6 +2558,22 @@ fn test_aggregate_grouping_set_not_subset_fails() {
     );
     b.aggregate(&gk, vec![]);
     assert!(matches!(b.build(), Err(RelError::GroupingSetNotSubset(_))));
+}
+
+/// `testAggregateGroupingWithFilterFails` — `GROUPING()` with a FILTER clause
+/// raises `GroupingWithFilter`.
+#[test]
+fn test_aggregate_grouping_with_filter_fails() {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.grouping_sets(
+        vec![b.field("DEPTNO").unwrap()],
+        vec![vec![b.field("DEPTNO").unwrap()], vec![]],
+    );
+    let filter = b.literal_bool(true);
+    let agg = b.grouping("DEPTNO").with_filter(filter).alias("G");
+    b.aggregate(&gk, vec![agg]);
+    assert!(matches!(b.build(), Err(RelError::GroupingWithFilter)));
 }
 
 /// `testRelBuilderToString` — `Display` for `RelBuilder` shows the plan.

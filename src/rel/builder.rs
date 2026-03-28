@@ -60,6 +60,9 @@ pub enum RelError {
     FieldOrdinalOutOfRange { ordinal: usize, len: usize },
     /// A grouping set references a column not in the group key.
     GroupingSetNotSubset(String),
+    /// A `GROUPING` or `GROUPING_ID` aggregate call had a FILTER clause,
+    /// which is not supported.
+    GroupingWithFilter,
     /// A group key expression did not resolve to an input column.
     InvalidGroupKey(String),
     /// `values()` was called with no field names but non-empty rows.
@@ -98,6 +101,9 @@ impl fmt::Display for RelError {
             }
             RelError::GroupingSetNotSubset(name) => {
                 write!(f, "grouping set column '{}' not in group key", name)
+            }
+            RelError::GroupingWithFilter => {
+                write!(f, "GROUPING / GROUPING_ID does not support FILTER")
             }
             RelError::InvalidGroupKey(expr) => {
                 write!(f, "group key expression not in input: {}", expr)
@@ -1016,8 +1022,17 @@ impl RelBuilder {
             .iter()
             .map(|&i| input_row_type[i].clone())
             .collect();
-        // Validate agg-call filter expressions: must be boolean.
+        // Validate agg-call filter expressions.
         for def in &agg_calls {
+            // GROUPING / GROUPING_ID cannot have a FILTER clause.
+            if def.filter.is_some()
+                && matches!(
+                    def.agg,
+                    AggFunction::Grouping | AggFunction::GroupingId
+                )
+            {
+                return self.set_error(RelError::GroupingWithFilter);
+            }
             if let Some(f) = &def.filter {
                 if *f.type_() == bool_type() {
                     continue;
