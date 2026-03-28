@@ -759,6 +759,199 @@ fn test_alias() -> Result<(), RelError> {
 }
 
 // -----------------------------------------------------------------------
+// Alias variants (Task 15)
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_alias2() -> Result<(), RelError> {
+    // Two aliased scans; join condition resolved via field_from(alias, col).
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.as_("e");
+    b.scan(&["scott", "DEPT"]);
+    b.as_("d");
+    // field_from searches by alias rather than frame offset.
+    let lhs = b.field_from("e", "DEPTNO")?; // EMP.DEPTNO = $7
+    let rhs = b.field_from("d", "DEPTNO")?; // DEPT.DEPTNO = $8
+    let cond = b.equals(lhs, rhs);
+    b.join(JoinType::Inner, cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalJoin(condition=[=($7, $8)], joinType=[inner])
+              LogicalTableScan(table=[[scott, EMP]])
+              LogicalTableScan(table=[[scott, DEPT]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_alias_project() -> Result<(), RelError> {
+    // Alias propagates through project; field_from works after project.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.as_("e");
+    b.project(vec![b.field("EMPNO")?, b.field("ENAME")?]);
+    // "e" alias now on the project frame; field_from resolves it.
+    let cond = b.gt(b.field_from("e", "EMPNO")?, b.literal_int(7000));
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[>($0, 7000)])
+              LogicalProject(EMPNO=[$0], ENAME=[$1])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_alias_filter() -> Result<(), RelError> {
+    // Alias propagates through filter; field_from works after filter.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.as_("e");
+    let cond1 = b.gt(b.field("SAL")?, b.literal_int(1000));
+    b.filter(cond1);
+    // "e" alias now on the filter frame.
+    let cond2 = b.gt(b.field_from("e", "SAL")?, b.literal_int(2000));
+    b.filter(cond2);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[>($5, 2000)])
+              LogicalFilter(condition=[>($5, 1000)])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_alias_aggregate() -> Result<(), RelError> {
+    // Alias propagates through aggregate; field_from resolves output cols.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.as_("e");
+    let gk = b.group_key(vec![b.field("DEPTNO")?]);
+    b.aggregate(&gk, vec![b.count_star().as_("C")]);
+    // "e" alias now on the aggregate frame (row_type: DEPTNO, C).
+    let cond = b.gt(b.field_from("e", "C")?, b.literal_int(1));
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[>($1, 1)])
+              LogicalAggregate(group=[{7}], C=[COUNT(*)])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_alias_past_top() -> Result<(), RelError> {
+    // "e" alias is on the bottom frame (EMP); DEPT is the top frame (no
+    // alias). field_from("e", ...) finds EMP even though it is buried.
+    // EMP has 8 cols (base 0–7); DEPT is at base 8.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.as_("e");
+    b.scan(&["scott", "DEPT"]);
+    let lhs = b.field_from("e", "DEPTNO")?; // absolute $7
+    let rhs = b.field2(0, "DEPTNO")?; // top frame (DEPT) → absolute $8
+    let cond = b.equals(lhs, rhs);
+    b.join(JoinType::Inner, cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalJoin(condition=[=($7, $8)], joinType=[inner])
+              LogicalTableScan(table=[[scott, EMP]])
+              LogicalTableScan(table=[[scott, DEPT]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_alias_sort() -> Result<(), RelError> {
+    // Alias propagates through sort; field_from resolves cols after sort.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.as_("e");
+    let key = b.desc(b.field("SAL")?);
+    b.sort(&[key]);
+    // "e" alias now on the sort frame.
+    let cond = b.gt(b.field_from("e", "SAL")?, b.literal_int(500));
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[>($5, 500)])
+              LogicalSort(sort0=[$5], dir0=[DESC])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_alias_limit() -> Result<(), RelError> {
+    // Alias propagates through limit; field_from resolves cols after limit.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.as_("e");
+    b.limit(None, Some(5));
+    // "e" alias now on the limit (Sort with empty collation) frame.
+    let cond = b.gt(b.field_from("e", "SAL")?, b.literal_int(500));
+    b.filter(cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalFilter(condition=[>($5, 500)])
+              LogicalSort(fetch=[5])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+#[test]
+fn test_multi_level_alias() -> Result<(), RelError> {
+    // Self-join: EMP aliased as "emp1" and "emp2".
+    // field_from finds the correct frame for each alias.
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    b.as_("emp1");
+    b.scan(&["scott", "EMP"]);
+    b.as_("emp2");
+    let lhs = b.field_from("emp1", "EMPNO")?; // $0
+    // MGR ordinal 3 in emp2: base=8 → $11
+    let rhs = b.field_from("emp2", "MGR")?;
+    let cond = b.equals(lhs, rhs);
+    b.join(JoinType::Inner, cond);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalJoin(condition=[=($0, $11)], joinType=[inner])
+              LogicalTableScan(table=[[scott, EMP]])
+              LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------
 // Set operations
 // -----------------------------------------------------------------------
 

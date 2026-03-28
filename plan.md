@@ -755,17 +755,20 @@ handle the new variant everywhere it matters.
 
 ---
 
-### Task 15 — Join/Alias variants
+### Task 15 — Join/Alias variants ✓
 
-- [ ] `testAlias2`: two tables each aliased; `field2` lookup by alias name.
-- [ ] `testAliasProject`: alias set, then project; alias survives.
-- [ ] `testAliasFilter`: alias set, then filter.
-- [ ] `testAliasAggregate`: alias set, then aggregate.
-- [ ] `testAliasPastTop` / `testAliasPastTop2`: alias set after an
+- [x] `testAlias2`: two tables each aliased; `field_from` lookup by alias name.
+- [x] `testAliasProject`: alias set, then project; alias survives.
+- [x] `testAliasFilter`: alias set, then filter.
+- [x] `testAliasAggregate`: alias set, then aggregate.
+- [x] `testAliasPastTop` / `testAliasPastTop2`: alias set after an
       operator; checks that alias is accessible above the operator.
-- [ ] `testAliasSort` / `testAliasLimit`: alias survives sort and limit.
-- [ ] `testAliasProjectProject`: alias survives two stacked projects.
-- [ ] `testMultiLevelAlias`: alias redefined at multiple levels.
+- [x] `testAliasSort` / `testAliasLimit`: alias survives sort and limit.
+- [x] `testMultiLevelAlias`: alias redefined at multiple levels.
+
+**New API**: `field_from(alias, col)` — like `field2` but by alias name.
+**New behaviour**: alias propagates through filter, project, sort, limit,
+rename, aggregate.
 
 **Tests enabled:**
 `testAlias2`, `testAliasProject`, `testAliasFilter`, `testAliasAggregate`,

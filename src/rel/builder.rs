@@ -462,8 +462,13 @@ impl RelBuilder {
         ) {
             return self;
         }
+        let alias = self.stack.last().and_then(|f| f.alias.clone());
         let input = Box::new(self.build().expect("filter: empty stack"));
-        self.push(Rel::Filter { input, condition })
+        self.push(Rel::Filter { input, condition });
+        if let Some(a) = alias {
+            self.stack.last_mut().unwrap().alias = Some(a);
+        }
+        self
     }
 
     /// Applies a projection to the top-of-stack node.
@@ -489,6 +494,8 @@ impl RelBuilder {
         {
             return self;
         }
+        // Save alias from the current top-of-stack before any pop.
+        let alias = self.stack.last().and_then(|f| f.alias.clone());
         // Project-over-project merge: compose the two projections into one.
         if self.config.simplify_project_merge {
             let composed = match self.stack.last().map(|f| &f.rel) {
@@ -505,11 +512,15 @@ impl RelBuilder {
                     input: inner_input, ..
                 } = inner_frame.rel
                 {
-                    return self.push(Rel::Project {
+                    self.push(Rel::Project {
                         input: inner_input,
                         exprs: composed_exprs,
                         row_type,
                     });
+                    if let Some(a) = alias {
+                        self.stack.last_mut().unwrap().alias = Some(a);
+                    }
+                    return self;
                 }
             }
         }
@@ -518,7 +529,11 @@ impl RelBuilder {
             input,
             exprs,
             row_type,
-        })
+        });
+        if let Some(a) = alias {
+            self.stack.last_mut().unwrap().alias = Some(a);
+        }
+        self
     }
 
     /// Applies a named projection to the top-of-stack node.
@@ -550,12 +565,17 @@ impl RelBuilder {
         {
             return self;
         }
+        let alias = self.stack.last().and_then(|f| f.alias.clone());
         let input = Box::new(self.build().expect("project_named: empty stack"));
         self.push(Rel::Project {
             input,
             exprs,
             row_type,
-        })
+        });
+        if let Some(a) = alias {
+            self.stack.last_mut().unwrap().alias = Some(a);
+        }
+        self
     }
 
     // -------------------------------------------------------------------
@@ -572,13 +592,18 @@ impl RelBuilder {
         if collation.is_empty() {
             return self;
         }
+        let alias = self.stack.last().and_then(|f| f.alias.clone());
         let input = Box::new(self.build().expect("sort: empty stack"));
         self.push(Rel::Sort {
             input,
             collation,
             offset: None,
             fetch: None,
-        })
+        });
+        if let Some(a) = alias {
+            self.stack.last_mut().unwrap().alias = Some(a);
+        }
+        self
     }
 
     /// Limits the top-of-stack node to at most `fetch` rows, optionally
@@ -593,6 +618,7 @@ impl RelBuilder {
         offset: Option<usize>,
         fetch: Option<usize>,
     ) -> &mut Self {
+        let alias = self.stack.last().and_then(|f| f.alias.clone());
         // Sort-then-limit merge: absorb limit into an existing Sort.
         if self.config.simplify_sort_limit_merge {
             let can_merge = matches!(
@@ -609,12 +635,16 @@ impl RelBuilder {
                     input, collation, ..
                 } = frame.rel
                 {
-                    return self.push(Rel::Sort {
+                    self.push(Rel::Sort {
                         input,
                         collation,
                         offset,
                         fetch,
                     });
+                    if let Some(a) = alias {
+                        self.stack.last_mut().unwrap().alias = Some(a);
+                    }
+                    return self;
                 }
             }
         }
@@ -624,7 +654,11 @@ impl RelBuilder {
             collation: vec![],
             offset,
             fetch,
-        })
+        });
+        if let Some(a) = alias {
+            self.stack.last_mut().unwrap().alias = Some(a);
+        }
+        self
     }
 
     /// Sorts and optionally limits the top-of-stack node.
@@ -686,12 +720,17 @@ impl RelBuilder {
             .zip(input_row_type.iter())
             .map(|(name, (_, ty))| (name, ty.clone()))
             .collect();
+        let alias = self.stack.last().and_then(|f| f.alias.clone());
         let input = Box::new(self.build().expect("rename: empty stack"));
         self.push(Rel::Project {
             input,
             exprs,
             row_type,
-        })
+        });
+        if let Some(a) = alias {
+            self.stack.last_mut().unwrap().alias = Some(a);
+        }
+        self
     }
 
     // -------------------------------------------------------------------
@@ -803,6 +842,7 @@ impl RelBuilder {
             })
             .collect();
         let group_sets = vec![group_set.clone()];
+        let alias = self.stack.last().and_then(|f| f.alias.clone());
         let input = Box::new(self.build().expect("aggregate: empty stack"));
         self.push(Rel::Aggregate {
             input,
@@ -810,7 +850,11 @@ impl RelBuilder {
             group_sets,
             agg_calls: resolved,
             row_type,
-        })
+        });
+        if let Some(a) = alias {
+            self.stack.last_mut().unwrap().alias = Some(a);
+        }
+        self
     }
 
     /// Deduplicates the top-of-stack node (equivalent to
@@ -1053,6 +1097,42 @@ impl RelBuilder {
         ))
     }
 
+    /// Returns a field-reference expression for column `name` in the
+    /// frame whose alias matches `alias`.
+    ///
+    /// The returned expression encodes the column as an absolute ordinal
+    /// `"$N"` across all frames on the stack (left-to-right), matching
+    /// the semantics of [`field2`].
+    ///
+    /// Returns [`RelError::FieldNotFound`] if no frame carries `alias`
+    /// or the named column is absent in the matching frame.
+    ///
+    /// [`field2`]: RelBuilder::field2
+    pub fn field_from(
+        &self,
+        alias: &str,
+        name: &str,
+    ) -> Result<Expr, RelError> {
+        let mut base = 0usize;
+        for frame in &self.stack {
+            let row = frame.rel.row_type();
+            if frame.alias.as_deref() == Some(alias) {
+                return match row.iter().position(|(col, _)| col == name) {
+                    Some(i) => {
+                        let (_, ty) = &row[i];
+                        Ok(Expr::Identifier(
+                            Box::new(ty.clone()),
+                            format!("${}", base + i),
+                        ))
+                    }
+                    None => Err(RelError::FieldNotFound(name.to_string())),
+                };
+            }
+            base += row.len();
+        }
+        Err(RelError::FieldNotFound(format!("{}.{}", alias, name)))
+    }
+
     // -------------------------------------------------------------------
     // Set operations
     // -------------------------------------------------------------------
@@ -1170,6 +1250,26 @@ impl RelBuilder {
     /// [`project_named`]: RelBuilder::project_named
     pub fn alias_expr(&self, expr: Expr, name: &str) -> (Expr, String) {
         (expr, name.to_string())
+    }
+
+    // --- arithmetic operators -------------------------------------------
+
+    /// Returns `a + b` (integer or real addition).
+    pub fn plus(&self, a: Expr, b: Expr) -> Expr {
+        let ret = *a.type_();
+        binary_op("+", ret, a, b)
+    }
+
+    /// Returns `a - b` (integer or real subtraction).
+    pub fn minus_op(&self, a: Expr, b: Expr) -> Expr {
+        let ret = *a.type_();
+        binary_op("-", ret, a, b)
+    }
+
+    /// Returns `a * b` (integer or real multiplication).
+    pub fn times(&self, a: Expr, b: Expr) -> Expr {
+        let ret = *a.type_();
+        binary_op("*", ret, a, b)
     }
 
     // --- binary comparison operators ------------------------------------
