@@ -103,6 +103,34 @@ fn write_rel(f: &mut String, rel: &Rel, indent: usize) -> fmt::Result {
             writeln!(f, ")")?;
             write_rel(f, input, indent + 1)
         }
+        Rel::Correlate {
+            left,
+            right,
+            correlation_id,
+            join_type,
+            required_columns,
+            ..
+        } => {
+            write!(
+                f,
+                "{}LogicalCorrelate(correlation=[{}],",
+                pad, correlation_id
+            )?;
+            write!(
+                f,
+                " joinType=[{}], requiredColumns=[{{",
+                join_type_str(*join_type)
+            )?;
+            for (i, col) in required_columns.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", col)?;
+            }
+            writeln!(f, "}}])")?;
+            write_rel(f, left, indent + 1)?;
+            write_rel(f, right, indent + 1)
+        }
         Rel::Filter { input, condition } => {
             write!(f, "{}LogicalFilter(condition=[", pad)?;
             write_expr(f, condition, &[input.row_type()])?;
@@ -138,21 +166,6 @@ fn write_rel(f: &mut String, rel: &Rel, indent: usize) -> fmt::Result {
             }
             Ok(())
         }
-        Rel::RepeatUnion {
-            seed,
-            iterative,
-            all,
-            iteration_limit,
-            ..
-        } => {
-            write!(f, "{}LogicalRepeatUnion(all=[{}]", pad, all)?;
-            if let Some(limit) = iteration_limit {
-                write!(f, ", iterationLimit=[{}]", limit)?;
-            }
-            writeln!(f, ")")?;
-            write_rel(f, seed, indent + 1)?;
-            write_rel(f, iterative, indent + 1)
-        }
         Rel::Project {
             input,
             exprs,
@@ -169,6 +182,21 @@ fn write_rel(f: &mut String, rel: &Rel, indent: usize) -> fmt::Result {
             }
             writeln!(f, ")")?;
             write_rel(f, input, indent + 1)
+        }
+        Rel::RepeatUnion {
+            seed,
+            iterative,
+            all,
+            iteration_limit,
+            ..
+        } => {
+            write!(f, "{}LogicalRepeatUnion(all=[{}]", pad, all)?;
+            if let Some(limit) = iteration_limit {
+                write!(f, ", iterationLimit=[{}]", limit)?;
+            }
+            writeln!(f, ")")?;
+            write_rel(f, seed, indent + 1)?;
+            write_rel(f, iterative, indent + 1)
         }
         Rel::Sort {
             input,
@@ -332,6 +360,14 @@ pub(crate) fn write_expr(
             write!(f, ")")
         }
         Expr::Identifier(_, name) => {
+            // Correlation variable references: "$cor0::FIELD" → "$cor0.FIELD"
+            if let Some(sep) = name.find("::") {
+                let cor_part = &name[..sep];
+                let field_part = &name[sep + 2..];
+                if cor_part.starts_with("$cor") {
+                    return write!(f, "{}.{}", cor_part, field_part);
+                }
+            }
             // Resolve field name to a concatenated ordinal.
             let mut base = 0usize;
             for input in inputs {

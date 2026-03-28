@@ -2359,10 +2359,11 @@ fn test_aggregate_grouping_sets_group_id() -> Result<(), RelError> {
     let plan = b.build()?;
     assert_plan!(
         plan,
-        indoc! {"
-            LogicalAggregate(group=[{7}], groups=[[{7}, {}]], C=[COUNT(*)], G=[GROUPING_ID($7)])
-              LogicalTableScan(table=[[scott, EMP]])
-        "}
+        concat!(
+            "LogicalAggregate(group=[{7}], groups=[[{7}, {}]],",
+            " C=[COUNT(*)], G=[GROUPING_ID($7)])\n",
+            "  LogicalTableScan(table=[[scott, EMP]])"
+        )
     );
     Ok(())
 }

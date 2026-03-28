@@ -209,6 +209,22 @@ pub enum Rel {
         iteration_limit: Option<usize>,
         row_type: Vec<(String, Type)>,
     },
+
+    /// Correlated join (`LATERAL`): for each row of `left`, evaluates
+    /// `right` using `correlation_id` to reference columns of that row.
+    ///
+    /// `required_columns` lists the zero-based ordinals of `left` columns
+    /// that are actually referenced in `right` via `correlation_id`.
+    Correlate {
+        left: Box<Rel>,
+        right: Box<Rel>,
+        /// Correlation variable name, e.g. `"$cor0"`.
+        correlation_id: String,
+        join_type: JoinType,
+        /// Ordinals of `left` columns referenced in `right`.
+        required_columns: Vec<usize>,
+        row_type: Vec<(String, Type)>,
+    },
 }
 
 impl Rel {
@@ -217,6 +233,7 @@ impl Rel {
         match self {
             // lint: sort until '^$' where '##Rel::'
             Rel::Aggregate { row_type, .. } => row_type,
+            Rel::Correlate { row_type, .. } => row_type,
             Rel::Filter { input, .. } => input.row_type(),
             Rel::Intersect { row_type, .. } => row_type,
             Rel::Join { row_type, .. } => row_type,
@@ -235,6 +252,7 @@ impl Rel {
         match self {
             // lint: sort until '^$' where '##Rel::'
             Rel::Aggregate { input, .. } => vec![input],
+            Rel::Correlate { left, right, .. } => vec![left, right],
             Rel::Filter { input, .. } => vec![input],
             Rel::Intersect { inputs, .. } => inputs.iter().collect(),
             Rel::Join { left, right, .. } => vec![left, right],

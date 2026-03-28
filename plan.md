@@ -1032,24 +1032,29 @@ corresponding builder methods.
 Extend `correlate()` to cover anti-, inner-, and left-correlate-via-join
 forms; add error tests for right- and full-correlate.
 
-- [ ] `testCorrelationFails` — `correlate()` on a non-correlated builder
-      raises an error.
+- [x] `testCorrelationFails` — `correlate()` with undeclared cor_id raises
+      `UndeclaredCorrelationId` (`test_correlate_undeclared_throws`).
 - [ ] `testCorrelationWithCondition` — correlated join with an explicit
-      condition.
+      condition (deferred; requires convert-correlate-to-join rewrite).
 - [ ] `testTrivialCorrelation` — correlation variable is present but
-      unused; builder removes it.
-- [ ] `testSimpleAntiCorrelateViaJoin` — anti-join expressed as correlate.
-- [ ] `testSimpleAntiCorrelateViaJoinWithoutConvertCorrelateToJoin`
-      — same, but the rewrite to `Join` is suppressed.
-- [ ] `testSimpleInnerCorrelateViaJoin` — inner-correlate to join.
-- [ ] `testSimpleInnerCorrelateViaJoinWithoutConvertCorrelateToJoin`.
-- [ ] `testSimpleLeftCorrelateViaJoinWithoutConvertCorrelateToJoin`.
-- [ ] `testSimpleSemiCorrelateViaJoinWithoutConvertCorrelateToJoin`.
-- [ ] `testSimpleRightCorrelateViaJoinThrowsException` — right-correlate
-      is not supported; verify the error.
-- [ ] `testSimpleFullCorrelateViaJoinThrowsException` — same for full.
-- [ ] `testRightCorrelateViaJoinThrowsException`.
-- [ ] `testFullCorrelateViaJoinThrowsException`.
+      unused (deferred; requires convert-correlate-to-join rewrite).
+- [ ] `testSimpleAntiCorrelateViaJoin` — deferred; requires
+      convert-correlate-to-join rewrite.
+- [x] `testSimpleAntiCorrelateViaJoinWithoutConvertCorrelateToJoin`
+      — `test_correlate_anti_without_convert`.
+- [ ] `testSimpleInnerCorrelateViaJoin` — deferred.
+- [x] `testSimpleInnerCorrelateViaJoinWithoutConvertCorrelateToJoin`
+      — `test_correlate_inner_without_convert`.
+- [x] `testSimpleLeftCorrelateViaJoinWithoutConvertCorrelateToJoin`
+      — `test_correlate_left_without_convert`.
+- [x] `testSimpleSemiCorrelateViaJoinWithoutConvertCorrelateToJoin`
+      — `test_correlate_semi_without_convert`.
+- [x] `testSimpleRightCorrelateViaJoinThrowsException`
+      — `test_correlate_right_throws`.
+- [x] `testSimpleFullCorrelateViaJoinThrowsException`
+      — `test_correlate_full_throws`.
+- [x] `testRightCorrelateViaJoinThrowsException` — same as right above.
+- [x] `testFullCorrelateViaJoinThrowsException` — same as full above.
 
 ---
 

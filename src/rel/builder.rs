@@ -42,6 +42,7 @@ use crate::rel::{
     AggCall, AggFunction, Direction, FieldCollation, JoinType, NullDirection,
     Rel, bool_type, int_type, string_type,
 };
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -73,6 +74,10 @@ pub enum RelError {
     SetOpColumnMismatch { expected: usize, got: usize },
     /// A table name was not found in the schema.
     TableNotFound(Vec<String>),
+    /// A correlation variable was referenced or used but never declared.
+    UndeclaredCorrelationId(String),
+    /// Right and Full correlate join types are not supported.
+    UnsupportedCorrelateJoinType(String),
 }
 
 impl fmt::Display for RelError {
@@ -111,6 +116,12 @@ impl fmt::Display for RelError {
             ),
             RelError::TableNotFound(name) => {
                 write!(f, "table not found: {:?}", name)
+            }
+            RelError::UndeclaredCorrelationId(id) => {
+                write!(f, "correlation variable '{}' was not declared", id)
+            }
+            RelError::UnsupportedCorrelateJoinType(jt) => {
+                write!(f, "correlate does not support join type {}", jt)
             }
         }
     }
@@ -279,6 +290,14 @@ pub struct RelBuilder {
     ///
     /// [`build`]: RelBuilder::build
     error: Option<RelError>,
+    /// Counter for generating unique correlation-variable names.
+    next_cor_id: usize,
+    /// Maps each declared correlation-variable name to its row type and
+    /// the (sorted) ordinals of left columns referenced via [`cor_field`].
+    ///
+    /// [`cor_field`]: RelBuilder::cor_field
+    #[allow(clippy::type_complexity)]
+    declared_variables: HashMap<String, (Vec<(String, Type)>, Vec<usize>)>,
 }
 
 impl RelBuilder {
@@ -289,6 +308,8 @@ impl RelBuilder {
             config: BuilderConfig::default(),
             stack: Vec::new(),
             error: None,
+            next_cor_id: 0,
+            declared_variables: HashMap::new(),
         }
     }
 
@@ -299,6 +320,8 @@ impl RelBuilder {
             config,
             stack: Vec::new(),
             error: None,
+            next_cor_id: 0,
+            declared_variables: HashMap::new(),
         }
     }
 
@@ -1061,7 +1084,7 @@ impl RelBuilder {
                 })
                 .chain(dedup_map.iter().enumerate().map(|(orig_i, &uniq_i)| {
                     let (ref name, ref ty) = agg_row_type[n_group + uniq_i];
-                    let _ = &all_names[orig_i]; // original name for project_named
+                    let _ = &all_names[orig_i]; // original name
                     Expr::Identifier(Box::new(ty.clone()), name.clone())
                 }))
                 .collect();
@@ -1532,6 +1555,109 @@ impl RelBuilder {
             iterative,
             all,
             iteration_limit,
+            row_type,
+        }))
+    }
+
+    /// Declares a new correlation variable bound to the current
+    /// top-of-stack row type and returns its name (e.g. `"$cor0"`).
+    ///
+    /// Call this after pushing the left input, before building the right
+    /// sub-plan.  Use the returned name with [`cor_field`] to reference
+    /// left columns inside the right sub-plan, then pass the name to
+    /// [`correlate`].
+    ///
+    /// [`cor_field`]: RelBuilder::cor_field
+    /// [`correlate`]: RelBuilder::correlate
+    pub fn declare_variable(&mut self) -> String {
+        let row_type = self.peek_row_type().to_vec();
+        let id = format!("$cor{}", self.next_cor_id);
+        self.next_cor_id += 1;
+        self.declared_variables
+            .insert(id.clone(), (row_type, vec![]));
+        id
+    }
+
+    /// Returns a correlation-variable field reference for `field_name`
+    /// within `cor_id`.
+    ///
+    /// Records `field_name`'s ordinal in the correlation variable's
+    /// required-columns set.  Returns [`RelError::UndeclaredCorrelationId`]
+    /// if `cor_id` was not previously declared, or
+    /// [`RelError::FieldNotFound`] if the field does not exist in the
+    /// declared row type.
+    pub fn cor_field(
+        &mut self,
+        cor_id: &str,
+        field_name: &str,
+    ) -> Result<Expr, RelError> {
+        let (row_type, required) =
+            self.declared_variables.get_mut(cor_id).ok_or_else(|| {
+                RelError::UndeclaredCorrelationId(cor_id.to_string())
+            })?;
+        match row_type.iter().position(|(n, _)| n == field_name) {
+            Some(idx) => {
+                let ty = row_type[idx].1.clone();
+                if !required.contains(&idx) {
+                    required.push(idx);
+                    required.sort();
+                }
+                let ref_name = format!("{}::{}", cor_id, field_name);
+                Ok(Expr::Identifier(Box::new(ty), ref_name))
+            }
+            None => Err(RelError::FieldNotFound(field_name.to_string())),
+        }
+    }
+
+    /// Creates a [`Rel::Correlate`] node by popping the right input then
+    /// the left input from the stack.
+    ///
+    /// `cor_id` must be a name previously returned by [`declare_variable`].
+    /// `join_type` must be `Inner`, `Left`, `Semi`, or `Anti`; `Right` and
+    /// `Full` are unsupported and return
+    /// [`RelError::UnsupportedCorrelateJoinType`].
+    ///
+    /// The `required_columns` of the node are the ordinals of left columns
+    /// that were referenced via [`cor_field`] for this `cor_id`.
+    ///
+    /// [`declare_variable`]: RelBuilder::declare_variable
+    /// [`cor_field`]: RelBuilder::cor_field
+    pub fn correlate(
+        &mut self,
+        join_type: JoinType,
+        cor_id: &str,
+    ) -> Result<&mut Self, RelError> {
+        if matches!(join_type, JoinType::Right | JoinType::Full) {
+            return Err(RelError::UnsupportedCorrelateJoinType(format!(
+                "{:?}",
+                join_type
+            )));
+        }
+        let required_columns = self
+            .declared_variables
+            .get(cor_id)
+            .ok_or_else(|| {
+                RelError::UndeclaredCorrelationId(cor_id.to_string())
+            })?
+            .1
+            .clone();
+        let mut inputs = self.pop_n(2, "correlate");
+        let right = Box::new(inputs.pop().unwrap());
+        let left = Box::new(inputs.pop().unwrap());
+        let row_type = match join_type {
+            JoinType::Semi | JoinType::Anti => left.row_type().to_vec(),
+            _ => {
+                let mut rt = left.row_type().to_vec();
+                rt.extend_from_slice(right.row_type());
+                rt
+            }
+        };
+        Ok(self.push(Rel::Correlate {
+            left,
+            right,
+            correlation_id: cor_id.to_string(),
+            join_type,
+            required_columns,
             row_type,
         }))
     }
@@ -2035,6 +2161,7 @@ mod tests {
     use super::*;
     use crate::rel::display::explain;
     use crate::rel::schema::scott_schema;
+    use indoc::formatdoc;
 
     fn builder() -> RelBuilder {
         RelBuilder::new(Arc::new(scott_schema()))
@@ -2660,5 +2787,115 @@ mod tests {
         let gk = b.group_key(vec![bad_expr]);
         b.aggregate(&gk, vec![]);
         assert!(matches!(b.build(), Err(RelError::InvalidGroupKey(_))));
+    }
+
+    // ---------------------------------------------------------------
+    // Correlate
+    // ---------------------------------------------------------------
+
+    fn correlate_plan_lines(join_type: &str) -> String {
+        formatdoc! {"
+            LogicalCorrelate(correlation=[$cor0], joinType=[{}], \
+                requiredColumns=[{{7}}])
+              LogicalTableScan(table=[[scott, EMP]])
+              LogicalFilter(condition=[=($0, $cor0.DEPTNO)])
+                LogicalTableScan(table=[[scott, DEPT]])",
+            join_type
+        }
+    }
+
+    #[test]
+    fn test_correlate_anti_without_convert() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let cor_id = b.declare_variable();
+        b.scan(&["scott", "DEPT"]);
+        let dept_deptno = b.field("DEPTNO").unwrap();
+        let emp_deptno = b.cor_field(&cor_id, "DEPTNO").unwrap();
+        let cond = b.equals(dept_deptno, emp_deptno);
+        b.filter(cond);
+        b.correlate(JoinType::Anti, &cor_id).unwrap();
+        let plan = b.build().unwrap();
+        assert_plan!(plan, correlate_plan_lines("anti"));
+    }
+
+    #[test]
+    fn test_correlate_inner_without_convert() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let cor_id = b.declare_variable();
+        b.scan(&["scott", "DEPT"]);
+        let dept_deptno = b.field("DEPTNO").unwrap();
+        let emp_deptno = b.cor_field(&cor_id, "DEPTNO").unwrap();
+        let cond = b.equals(dept_deptno, emp_deptno);
+        b.filter(cond);
+        b.correlate(JoinType::Inner, &cor_id).unwrap();
+        let plan = b.build().unwrap();
+        assert_plan!(plan, correlate_plan_lines("inner"));
+    }
+
+    #[test]
+    fn test_correlate_left_without_convert() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let cor_id = b.declare_variable();
+        b.scan(&["scott", "DEPT"]);
+        let dept_deptno = b.field("DEPTNO").unwrap();
+        let emp_deptno = b.cor_field(&cor_id, "DEPTNO").unwrap();
+        let cond = b.equals(dept_deptno, emp_deptno);
+        b.filter(cond);
+        b.correlate(JoinType::Left, &cor_id).unwrap();
+        let plan = b.build().unwrap();
+        assert_plan!(plan, correlate_plan_lines("left"));
+    }
+
+    #[test]
+    fn test_correlate_semi_without_convert() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let cor_id = b.declare_variable();
+        b.scan(&["scott", "DEPT"]);
+        let dept_deptno = b.field("DEPTNO").unwrap();
+        let emp_deptno = b.cor_field(&cor_id, "DEPTNO").unwrap();
+        let cond = b.equals(dept_deptno, emp_deptno);
+        b.filter(cond);
+        b.correlate(JoinType::Semi, &cor_id).unwrap();
+        let plan = b.build().unwrap();
+        assert_plan!(plan, correlate_plan_lines("semi"));
+    }
+
+    #[test]
+    fn test_correlate_right_throws() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let cor_id = b.declare_variable();
+        b.scan(&["scott", "DEPT"]);
+        assert!(matches!(
+            b.correlate(JoinType::Right, &cor_id),
+            Err(RelError::UnsupportedCorrelateJoinType(_))
+        ));
+    }
+
+    #[test]
+    fn test_correlate_full_throws() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let cor_id = b.declare_variable();
+        b.scan(&["scott", "DEPT"]);
+        assert!(matches!(
+            b.correlate(JoinType::Full, &cor_id),
+            Err(RelError::UnsupportedCorrelateJoinType(_))
+        ));
+    }
+
+    #[test]
+    fn test_correlate_undeclared_throws() {
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        b.scan(&["scott", "DEPT"]);
+        assert!(matches!(
+            b.correlate(JoinType::Inner, "$cor99"),
+            Err(RelError::UndeclaredCorrelationId(_))
+        ));
     }
 }
