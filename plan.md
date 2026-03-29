@@ -791,8 +791,8 @@ rename, aggregate.
       `testAggregateEliminatesDuplicateCalls3` /
       `testAggregateEliminatesDuplicateDistinctCalls`: identical agg
       calls deduplicated; a wrapping `Project` exposes both names.
-- [ ] `testAggregateProjectPrune`: prune unused input columns before
-      aggregate — requires new push-down pass, deferred.
+- [x] `testAggregateProjectPrune`: prune unused input columns before
+      aggregate via `BuilderConfig.simplify_aggregate_project_prune`.
 - [x] `testAggregateGroupingSetNotSubsetFails`,
       `testAggregateGrouping`: grouping-set validation and GROUPING()
       function implemented.
@@ -983,8 +983,8 @@ so only one computation is emitted.
       duplicate calls combined with field pruning of the input.
 - [ ] `testAggregateDuplicateAggCallsAndFieldPruningWithJoinAndLiteralGroupKey`
       — same, but input is a join with a literal in the group key.
-- [ ] `testAggregateProjectPruneEmpty` — after pruning, the aggregate
-      input has zero columns; verify an empty project is added.
+- [x] `testAggregateProjectPruneEmpty` — after pruning, the aggregate
+      input has zero columns; an empty project is added.
 
 ---
 

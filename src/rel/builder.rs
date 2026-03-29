@@ -271,6 +271,9 @@ pub struct BuilderConfig {
     /// Eliminate `distinct()` applied directly to an `Aggregate` node
     /// (aggregate already produces distinct rows per group key).
     pub simplify_aggregate_distinct: bool,
+    /// Insert a pruning `Project` before `Aggregate` to drop input columns
+    /// not referenced by the group key or any aggregate-call argument.
+    pub simplify_aggregate_project_prune: bool,
 }
 
 impl Default for BuilderConfig {
@@ -282,6 +285,7 @@ impl Default for BuilderConfig {
             simplify_project_merge: true,
             simplify_sort_limit_merge: true,
             simplify_aggregate_distinct: true,
+            simplify_aggregate_project_prune: false,
         }
     }
 }
@@ -1061,7 +1065,7 @@ impl RelBuilder {
             }
         }
         // Resolve grouping sets (if any).
-        let group_sets: Vec<Vec<usize>> = if let Some(sets) =
+        let mut group_sets: Vec<Vec<usize>> = if let Some(sets) =
             group_key.group_sets.clone()
         {
             let mut resolved_sets: Vec<Vec<usize>> = Vec::new();
@@ -1103,6 +1107,68 @@ impl RelBuilder {
         } else {
             vec![group_set.clone()]
         };
+        // Prune unused input columns before the aggregate.
+        if self.config.simplify_aggregate_project_prune {
+            // Collect all input ordinals used by the group key or any
+            // aggregate call argument (including within-distinct).
+            let mut needed: Vec<usize> = group_set.clone();
+            for def in &agg_calls {
+                for name in &def.arg_names {
+                    if let Some(idx) =
+                        input_row_type.iter().position(|(n, _)| n == name)
+                    {
+                        needed.push(idx);
+                    }
+                }
+                for name in &def.within_distinct_names {
+                    if let Some(idx) =
+                        input_row_type.iter().position(|(n, _)| n == name)
+                    {
+                        needed.push(idx);
+                    }
+                }
+            }
+            needed.sort_unstable();
+            needed.dedup();
+            // Only insert the pruning Project when columns can be dropped.
+            if needed.len() < input_row_type.len() {
+                let orig =
+                    self.stack.pop().expect("RelBuilder stack is empty").rel;
+                let proj_exprs: Vec<Expr> = needed
+                    .iter()
+                    .map(|&i| {
+                        let (name, ty) = &input_row_type[i];
+                        Expr::Identifier(Box::new(ty.clone()), name.clone())
+                    })
+                    .collect();
+                let proj_rt: Vec<(String, Type)> =
+                    needed.iter().map(|&i| input_row_type[i].clone()).collect();
+                self.stack.push(Frame {
+                    rel: Rel::Project {
+                        input: Box::new(orig),
+                        exprs: proj_exprs,
+                        row_type: proj_rt.clone(),
+                    },
+                    alias: None,
+                });
+                // Remap group_set and group_sets to new column positions.
+                group_set = group_set
+                    .iter()
+                    .map(|&o| needed.iter().position(|&x| x == o).unwrap())
+                    .collect();
+                group_sets = group_sets
+                    .iter()
+                    .map(|set| {
+                        set.iter()
+                            .map(|&o| {
+                                needed.iter().position(|&x| x == o).unwrap()
+                            })
+                            .collect()
+                    })
+                    .collect();
+                input_row_type = proj_rt;
+            }
+        }
         // Resolve agg calls; collect names for later dedup project.
         let n_group = group_set.len();
         let mut all_names: Vec<String> = Vec::new();

@@ -39,6 +39,16 @@ fn builder() -> RelBuilder {
     RelBuilder::new(Arc::new(scott_schema()))
 }
 
+fn builder_pruning() -> RelBuilder {
+    RelBuilder::with_config(
+        Arc::new(scott_schema()),
+        BuilderConfig {
+            simplify_aggregate_project_prune: true,
+            ..Default::default()
+        },
+    )
+}
+
 macro_rules! assert_plan {
     ($rel:expr, $expected:expr) => {
         assert_eq!(explain(&$rel).trim(), $expected.trim())
@@ -2636,6 +2646,49 @@ fn test_aggregate_grouping_with_filter_fails() {
     let agg = b.grouping("DEPTNO").with_filter(filter).alias("G");
     b.aggregate(&gk, vec![agg]);
     assert!(matches!(b.build(), Err(RelError::GroupingWithFilter)));
+}
+
+/// `testAggregateProjectPrune` — a pruning Project is inserted before the
+/// Aggregate, keeping only the columns used by the group key and agg calls.
+#[test]
+fn test_aggregate_project_prune() -> Result<(), RelError> {
+    let mut b = builder_pruning();
+    b.scan(&["scott", "EMP"]);
+    // GROUP BY DEPTNO; SUM(SAL), COUNT(*).
+    // EMP has 8 columns; only SAL($5) and DEPTNO($7) are needed.
+    let gk = b.group_key(vec![b.field("DEPTNO")?]);
+    let aggs = vec![b.sum("SAL").alias("S"), b.count_star().alias("C")];
+    b.aggregate(&gk, aggs);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalAggregate(group=[{1}], S=[SUM($0)], C=[COUNT(*)])
+              LogicalProject(SAL=[$5], DEPTNO=[$7])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
+/// `testAggregateProjectPruneEmpty` — when no input columns are used
+/// (scalar COUNT(*) with empty group key), an empty Project is inserted.
+#[test]
+fn test_aggregate_project_prune_empty() -> Result<(), RelError> {
+    let mut b = builder_pruning();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![]);
+    b.aggregate(&gk, vec![b.count_star().alias("C")]);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalAggregate(group=[{}], C=[COUNT(*)])
+              LogicalProject()
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
 }
 
 /// `testRelBuilderToString` — `Display` for `RelBuilder` shows the plan.
