@@ -34,7 +34,7 @@
 //! ```
 
 use crate::compile::core::Expr;
-use crate::compile::types::{PrimitiveType, Type};
+use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::code::Span;
 use crate::eval::val::Val;
 use crate::rel::schema::Schema;
@@ -42,7 +42,7 @@ use crate::rel::{
     AggCall, AggFunction, Direction, FieldCollation, JoinType, NullDirection,
     Rel, bool_type, columns_to_record_type, int_type, string_type,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -56,6 +56,8 @@ pub enum RelError {
     // lint: sort until '#}' where '##[A-Z]'
     /// A field name was not found in the current row type.
     FieldNotFound(String),
+    /// A field was accessed on an expression that is not of record type.
+    FieldOnNonRecord(String),
     /// A field ordinal was out of range.
     FieldOrdinalOutOfRange { ordinal: usize, len: usize },
     /// A grouping set references a column not in the group key.
@@ -79,6 +81,12 @@ pub enum RelError {
     SetOpColumnMismatch { expected: usize, got: usize },
     /// A table name was not found in the schema.
     TableNotFound(Vec<String>),
+    /// An operator was applied to operands of incompatible types.
+    TypeMismatch {
+        op: String,
+        left: String,
+        right: String,
+    },
     /// A correlation variable was referenced or used but never declared.
     UndeclaredCorrelationId(String),
     /// Right and Full correlate join types are not supported.
@@ -91,6 +99,9 @@ impl fmt::Display for RelError {
             // lint: sort until '#}' where '##[A-Z]'
             RelError::FieldNotFound(name) => {
                 write!(f, "field '{}' not found", name)
+            }
+            RelError::FieldOnNonRecord(got) => {
+                write!(f, "field access on non-record type: {}", got)
             }
             RelError::FieldOrdinalOutOfRange { ordinal, len } => {
                 write!(
@@ -127,6 +138,14 @@ impl fmt::Display for RelError {
             ),
             RelError::TableNotFound(name) => {
                 write!(f, "table not found: {:?}", name)
+            }
+            RelError::TypeMismatch { op, left, right } => {
+                write!(
+                    f,
+                    "operator '{}' requires numeric operands, \
+                     got '{}' and '{}'",
+                    op, left, right
+                )
             }
             RelError::UndeclaredCorrelationId(id) => {
                 write!(f, "correlation variable '{}' was not declared", id)
@@ -1073,6 +1092,13 @@ impl RelBuilder {
                 }
                 resolved_sets.push(ordinals);
             }
+            // Deduplicate grouping sets (preserve first occurrence).
+            let mut seen: HashSet<Vec<usize>> = HashSet::new();
+            resolved_sets.retain(|s| {
+                let mut key = s.clone();
+                key.sort_unstable();
+                seen.insert(key)
+            });
             resolved_sets
         } else {
             vec![group_set.clone()]
@@ -1817,6 +1843,26 @@ impl RelBuilder {
         }
     }
 
+    /// Returns the named field of a record-typed expression.
+    ///
+    /// Returns `Err(FieldOnNonRecord)` if `expr` is not of record type, or
+    /// `Err(FieldNotFound)` if the record has no field with that name.
+    pub fn field_on(&self, expr: &Expr, name: &str) -> Result<Expr, RelError> {
+        match *expr.type_() {
+            Type::Record(_, ref fields) => {
+                let label = Label::String(name.to_string());
+                match fields.get(&label) {
+                    Some(ty) => Ok(Expr::Identifier(
+                        Box::new(ty.clone()),
+                        name.to_string(),
+                    )),
+                    None => Err(RelError::FieldNotFound(name.to_string())),
+                }
+            }
+            ref t => Err(RelError::FieldOnNonRecord(type_name(t))),
+        }
+    }
+
     /// Returns a boolean literal expression.
     pub fn literal_bool(&self, v: bool) -> Expr {
         Expr::Literal(Box::new(bool_type()), Val::Bool(v))
@@ -1852,21 +1898,45 @@ impl RelBuilder {
     // --- arithmetic operators -------------------------------------------
 
     /// Returns `a + b` (integer or real addition).
-    pub fn plus(&self, a: Expr, b: Expr) -> Expr {
-        let ret = *a.type_();
-        binary_op("+", ret, a, b)
+    pub fn plus(&self, a: Expr, b: Expr) -> Result<Expr, RelError> {
+        let ta = *a.type_();
+        let tb = *b.type_();
+        if !is_numeric(&ta) || !is_numeric(&tb) {
+            return Err(RelError::TypeMismatch {
+                op: "+".to_string(),
+                left: type_name(&ta),
+                right: type_name(&tb),
+            });
+        }
+        Ok(binary_op("+", ta, a, b))
     }
 
     /// Returns `a - b` (integer or real subtraction).
-    pub fn minus_op(&self, a: Expr, b: Expr) -> Expr {
-        let ret = *a.type_();
-        binary_op("-", ret, a, b)
+    pub fn minus_op(&self, a: Expr, b: Expr) -> Result<Expr, RelError> {
+        let ta = *a.type_();
+        let tb = *b.type_();
+        if !is_numeric(&ta) || !is_numeric(&tb) {
+            return Err(RelError::TypeMismatch {
+                op: "-".to_string(),
+                left: type_name(&ta),
+                right: type_name(&tb),
+            });
+        }
+        Ok(binary_op("-", ta, a, b))
     }
 
     /// Returns `a * b` (integer or real multiplication).
-    pub fn times(&self, a: Expr, b: Expr) -> Expr {
-        let ret = *a.type_();
-        binary_op("*", ret, a, b)
+    pub fn times(&self, a: Expr, b: Expr) -> Result<Expr, RelError> {
+        let ta = *a.type_();
+        let tb = *b.type_();
+        if !is_numeric(&ta) || !is_numeric(&tb) {
+            return Err(RelError::TypeMismatch {
+                op: "*".to_string(),
+                left: type_name(&ta),
+                right: type_name(&tb),
+            });
+        }
+        Ok(binary_op("*", ta, a, b))
     }
 
     // --- binary comparison operators ------------------------------------
@@ -2213,6 +2283,21 @@ fn is_true(expr: &Expr) -> bool {
 /// Returns `true` if `expr` is the boolean literal `false`.
 fn is_false(expr: &Expr) -> bool {
     matches!(expr, Expr::Literal(_, Val::Bool(false)))
+}
+
+/// Returns `true` if `t` is a numeric type (int or real).
+fn is_numeric(t: &Type) -> bool {
+    matches!(t, Type::Primitive(PrimitiveType::Int | PrimitiveType::Real))
+}
+
+/// Returns a short human-readable name for `t` (for error messages).
+fn type_name(t: &Type) -> String {
+    match t {
+        Type::Primitive(p) => p.as_str().to_string(),
+        Type::Record(_, _) => "record".to_string(),
+        Type::Bag(_) => "bag".to_string(),
+        _ => format!("{:?}", t),
+    }
 }
 
 /// Returns a column name for `expr` if it is a simple field reference.
@@ -2938,7 +3023,7 @@ mod tests {
         let mut b = builder();
         b.scan(&["scott", "EMP"]);
         let sal = b.field("SAL").unwrap();
-        let expr = b.plus(sal, b.literal_int(2));
+        let expr = b.plus(sal, b.literal_int(2)).unwrap();
         let gk = b.group_key(vec![b.field("DEPTNO").unwrap()]);
         let agg = b.sum_expr(expr).alias("S");
         b.aggregate(&gk, vec![agg]);

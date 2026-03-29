@@ -434,7 +434,7 @@ fn test_project2() -> Result<(), RelError> {
     let empno = b.field("EMPNO")?;
     let empno2 = b.field("EMPNO")?;
     let one = b.literal_int(1);
-    let exprs = vec![empno, b.plus(empno2, one)];
+    let exprs = vec![empno, b.plus(empno2, one)?];
     b.project(exprs);
     let plan = b.build()?;
     assert_plan!(
@@ -511,7 +511,7 @@ fn test_project_bloat() -> Result<(), RelError> {
     b.project(vec![b.field("EMPNO")?, b.field("ENAME")?]);
     let empno = b.field("EMPNO")?;
     let one = b.literal_int(1);
-    let exprs = vec![b.plus(empno, one), b.field("ENAME")?];
+    let exprs = vec![b.plus(empno, one)?, b.field("ENAME")?];
     b.project(exprs);
     let plan = b.build()?;
     assert_plan!(
@@ -1910,7 +1910,7 @@ fn test_aggregate_project_with_expression() -> Result<(), RelError> {
     b.aggregate(&gk, vec![b.sum("SAL").alias("TOTAL_SAL")]);
     let total = b.field("TOTAL_SAL")?;
     let one = b.literal_int(1);
-    let expr = b.plus(total, one);
+    let expr = b.plus(total, one)?;
     b.project(vec![b.field("DEPTNO")?, expr]);
     let plan = b.build()?;
     assert_plan!(
@@ -2100,6 +2100,68 @@ fn test_aggregate_filter_fails() {
     let agg = b.count_star().with_filter(int_filter);
     b.aggregate(&gk, vec![agg]);
     assert!(matches!(b.build(), Err(RelError::NonBooleanCondition(_))));
+}
+
+/// `testAggregateGroupingKeyOutOfRangeFails` — a group key ordinal beyond the
+/// input column count raises `FieldOrdinalOutOfRange`.
+#[test]
+fn test_aggregate_grouping_key_out_of_range_fails() {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    // EMP has 8 columns (0–7); ordinal 8 is out of range.
+    assert!(matches!(
+        b.field_ordinal(8),
+        Err(RelError::FieldOrdinalOutOfRange { ordinal: 8, .. })
+    ));
+}
+
+/// `testAggregateGroupingSetDuplicate` — duplicate grouping sets are
+/// deduplicated to a single set.
+#[test]
+fn test_aggregate_grouping_set_duplicate() -> Result<(), RelError> {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    // GROUPING SETS ((DEPTNO), (DEPTNO)) → deduplicated to GROUP BY DEPTNO.
+    let gk = b.grouping_sets(
+        vec![b.field("DEPTNO")?],
+        vec![vec![b.field("DEPTNO")?], vec![b.field("DEPTNO")?]],
+    );
+    b.aggregate(&gk, vec![]);
+    let plan = b.build()?;
+    assert_plan!(
+        plan,
+        indoc! {"
+        LogicalAggregate(group=[{7}])
+          LogicalTableScan(table=[[scott, EMP]])
+    "}
+    );
+    Ok(())
+}
+
+/// `testBadType` — `+` on a non-numeric operand raises `TypeMismatch`.
+#[test]
+fn test_bad_type() {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let ename = b.field("ENAME").unwrap(); // string type
+    let one = b.literal_int(1);
+    assert!(matches!(
+        b.plus(ename, one),
+        Err(RelError::TypeMismatch { .. })
+    ));
+}
+
+/// `testFieldOnNonStructExpression` — accessing a field on a non-record
+/// expression raises `FieldOnNonRecord`.
+#[test]
+fn test_field_on_non_struct_expression() {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    let sal = b.field("SAL").unwrap(); // int, not a record
+    assert!(matches!(
+        b.field_on(&sal, "anything"),
+        Err(RelError::FieldOnNonRecord(_))
+    ));
 }
 
 // -----------------------------------------------------------------------

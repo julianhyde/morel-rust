@@ -796,7 +796,8 @@ rename, aggregate.
 - [x] `testAggregateGroupingSetNotSubsetFails`,
       `testAggregateGrouping`: grouping-set validation and GROUPING()
       function implemented.
-- [ ] `testAggregateGroupingSetDuplicate`: deferred.
+- [x] `testAggregateGroupingSetDuplicate` — duplicate grouping sets
+      deduplicated in `aggregate()` (retain first occurrence).
 
 **Tests enabled:**
 `testAggregate3`, `testAggregateAndThenProjectNamedField`,
@@ -815,8 +816,10 @@ rename, aggregate.
 - [x] `testUnionProjectValues2`: three-way `union_n(false, 3)`.
 - [ ] `testSortOverProjectSort`: outer `sort()` over `Project(Sort(…))`
       — inner sort subsumed when outer collation dominates (deferred).
-- [ ] `testBadType` / `testFieldOnNonStructExpression`: additional
-      `RelError` variants for type mismatches (deferred).
+- [x] `testBadType` — `TypeMismatch` error; `plus()`/`minus_op()`/
+      `times()` now return `Result` and validate numeric operand types.
+- [x] `testFieldOnNonStructExpression` — `FieldOnNonRecord` error;
+      new `field_on(&expr, name)` method validates record type.
 - [ ] `testRelBuilderToString`: `Display` / `to_string` on a `RelBuilder`
       (deferred).
 - [ ] `testSimplify`: constant-folding simplifier pass over a built plan
