@@ -2629,6 +2629,38 @@ fn test_aggregate_eliminates_duplicate_distinct_calls() -> Result<(), RelError>
     Ok(())
 }
 
+/// `testAggregateDuplicateAggCallsWithForceProjectAndFieldPruning` —
+/// duplicate agg calls combined with input-column pruning.
+/// Two identical SUM(SAL) calls are deduped to one; unused EMP columns
+/// are pruned via a pre-Project; a wrapping Project exposes both names.
+#[test]
+fn test_aggregate_duplicate_calls_with_pruning() -> Result<(), RelError> {
+    let mut b = builder_pruning();
+    b.scan(&["scott", "EMP"]);
+    let gk = b.group_key(vec![b.field("DEPTNO")?]);
+    let aggs = vec![
+        b.sum("SAL").alias("S1"),
+        b.sum("SAL").alias("S2"),
+        b.count("ENAME").alias("C"),
+    ];
+    b.aggregate(&gk, aggs);
+    let plan = b.build()?;
+    // Pruning project keeps only ENAME($1), SAL($5), DEPTNO($7)
+    // (sorted by EMP ordinal).  After remapping: ENAME=0, SAL=1, DEPTNO=2.
+    // Dedup: S1 and S2 both map to the same SUM($1); outer project
+    // exposes DEPTNO=$0, S1=$1, S2=$1, C=$2.
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(DEPTNO=[$0], S1=[$1], S2=[$1], C=[$2])
+              LogicalAggregate(group=[{2}], S1=[SUM($1)], C=[COUNT($0)])
+                LogicalProject(ENAME=[$1], SAL=[$5], DEPTNO=[$7])
+                  LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
 /// `testAggregateGrouping` — `GROUPING(col)` returns 0/1 per grouping set.
 #[test]
 fn test_aggregate_grouping() -> Result<(), RelError> {

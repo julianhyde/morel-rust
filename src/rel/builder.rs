@@ -2185,6 +2185,44 @@ impl RelBuilder {
         self.and(ge, le)
     }
 
+    /// Returns `CASE WHEN cond THEN then_val ELSE else_val END`.
+    ///
+    /// The result type is the type of `then_val`.
+    pub fn case_when(
+        &self,
+        cond: Expr,
+        then_val: Expr,
+        else_val: Expr,
+    ) -> Expr {
+        let result_type = *then_val.type_();
+        let else_ty = *else_val.type_();
+        let then_ty = result_type.clone();
+        // CASE is a 3-arg curried function:
+        // Apply(Apply(Apply(Identifier("CASE"), cond), then_val), else_val)
+        let fn3_ty = Type::Fn(Box::new(else_ty), Box::new(result_type.clone()));
+        let fn2_ty = Type::Fn(Box::new(then_ty), Box::new(fn3_ty.clone()));
+        let fn1_ty = Type::Fn(Box::new(bool_type()), Box::new(fn2_ty.clone()));
+        let case_id = Expr::Identifier(Box::new(fn1_ty), "CASE".to_string());
+        let a1 = Expr::Apply(
+            Box::new(fn2_ty),
+            Box::new(case_id),
+            Box::new(cond),
+            Span::new(""),
+        );
+        let a2 = Expr::Apply(
+            Box::new(fn3_ty),
+            Box::new(a1),
+            Box::new(then_val),
+            Span::new(""),
+        );
+        Expr::Apply(
+            Box::new(result_type),
+            Box::new(a2),
+            Box::new(else_val),
+            Span::new(""),
+        )
+    }
+
     /// Returns `a ILIKE b` (case-insensitive LIKE).
     pub fn ilike(&self, a: Expr, b: Expr) -> Expr {
         binary_op("ILIKE", bool_type(), a, b)
@@ -3208,6 +3246,31 @@ mod tests {
                 LogicalAggregate(group=[{7}], S=[SUM($8)])
                   LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], \
                       HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7], $f8=[2])
+                    LogicalTableScan(table=[[scott, EMP]])"
+            }
+        );
+    }
+
+    #[test]
+    fn test_aggregate_rex4() {
+        // SUM(CASE WHEN DEPTNO=20 THEN SAL ELSE 0): CASE expr arg.
+        let mut b = builder();
+        b.scan(&["scott", "EMP"]);
+        let cond = b.equals(b.field("DEPTNO").unwrap(), b.literal_int(20));
+        let then_val = b.field("SAL").unwrap();
+        let else_val = b.literal_int(0);
+        let case_expr = b.case_when(cond, then_val, else_val);
+        let gk = b.group_key(vec![]);
+        let agg = b.sum_expr(case_expr).alias("$f0");
+        b.aggregate(&gk, vec![agg]);
+        let plan = b.build().unwrap();
+        assert_plan!(
+            plan,
+            indoc! {"
+                LogicalAggregate(group=[{}], $f0=[SUM($8)])
+                  LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], \
+                      HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7], \
+                      $f8=[CASE(=($7, 20), $5, 0)])
                     LogicalTableScan(table=[[scott, EMP]])"
             }
         );

@@ -977,7 +977,7 @@ so only one computation is emitted.
       agg function in duplicate pair).
 - [x] `testAggregateEliminatesDuplicateDistinctCalls` — two identical
       `COUNT(DISTINCT col)` calls; only one is emitted.
-- [ ] `testAggregateDuplicateAggCallsWithForceProjectAndFieldPruning` —
+- [x] `testAggregateDuplicateAggCallsWithForceProjectAndFieldPruning` —
       duplicate calls combined with field pruning of the input.
 - [ ] `testAggregateDuplicateAggCallsAndFieldPruningWithJoinAndLiteralGroupKey`
       — same, but input is a join with a literal in the group key.
@@ -1071,8 +1071,8 @@ scalar expressions directly as aggregate arguments.
 - [x] `testAggregateRex2` — `SUM(SAL + 2)`: non-trivial arg inserts a
       pre-project (`test_aggregate_rex2`).
 - [x] `testAggregateRex3` — `SUM(2)`: constant arg (`test_aggregate_rex3`).
-- [ ] `testAggregateRex4` — aggregate argument involves a CASE expression
-      (deferred; CASE expression builder not yet implemented).
+- [x] `testAggregateRex4` — `case_when()` builder method; display as
+      `CASE(cond, then, else)` in Calcite style.
 
 ---
 

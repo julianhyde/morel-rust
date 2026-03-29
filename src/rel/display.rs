@@ -342,6 +342,21 @@ pub(crate) fn write_expr(
                 write_subquery_plan(f, rel)?;
                 return write!(f, ")");
             }
+            // CASE(cond, then_val, else_val):
+            // Apply(Apply(Apply(Identifier("CASE"), cond), then_val), else_val)
+            if let Expr::Apply(_, inner_f, then_val, _) = func.as_ref()
+                && let Expr::Apply(_, case_id, cond, _) = inner_f.as_ref()
+                && let Expr::Identifier(_, op) = case_id.as_ref()
+                && op == "CASE"
+            {
+                write!(f, "CASE(")?;
+                write_expr(f, cond, inputs)?;
+                write!(f, ", ")?;
+                write_expr(f, then_val, inputs)?;
+                write!(f, ", ")?;
+                write_expr(f, arg, inputs)?;
+                return write!(f, ")");
+            }
             // Try to match binary op: Apply(Apply(Identifier(op),a),b)
             if let Expr::Apply(_, inner_f, left, _) = func.as_ref()
                 && let Expr::Identifier(_, op) = inner_f.as_ref()
