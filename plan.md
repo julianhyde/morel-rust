@@ -707,13 +707,13 @@ handle the new variant everywhere it matters.
 
 ### Task 12 — Values validation and variants
 
-- [ ] `values()`: error when field-name count is zero but rows are
+- [x] `values()`: error when field-name count is zero but rows are
       non-empty (`RelError::NoFieldNames`).
-- [ ] `values()`: error when any row's length differs from the field-name
+- [x] `values()`: error when any row's length differs from the field-name
       count (`RelError::RowLengthMismatch`).
-- [ ] `empty()` then `as_()`: alias on an empty node.
-- [ ] `values()` with heterogeneous column types (`testDifferentTypeValues`).
-- [ ] `values()` with a renamed column list (`testValuesRename`).
+- [x] `empty()` then `as_()`: alias on an empty node.
+- [x] `values()` with heterogeneous column types (`testDifferentTypeValues`).
+- [x] `values()` with a renamed column list (`testValuesRename`).
 
 **Tests enabled:**
 `testValuesBadNoFields`, `testValuesBadNoValues`, `testValuesBadOddMultiple`,
@@ -814,16 +814,14 @@ rename, aggregate.
 - [x] `testScanValidTableWrongCase`: `MapSchema` lookup is now
       case-insensitive; canonical name is used in the plan.
 - [x] `testUnionProjectValues2`: three-way `union_n(false, 3)`.
-- [ ] `testSortOverProjectSort`: outer `sort()` over `Project(Sort(…))`
-      — inner sort subsumed when outer collation dominates (deferred).
+- [x] `testSortOverProjectSort`: outer `sort()` over `Project(Sort(…))`
+      — inner sort subsumed when outer collation dominates.
 - [x] `testBadType` — `TypeMismatch` error; `plus()`/`minus_op()`/
       `times()` now return `Result` and validate numeric operand types.
 - [x] `testFieldOnNonStructExpression` — `FieldOnNonRecord` error;
       new `field_on(&expr, name)` method validates record type.
-- [ ] `testRelBuilderToString`: `Display` / `to_string` on a `RelBuilder`
-      (deferred).
-- [ ] `testSimplify`: constant-folding simplifier pass over a built plan
-      (deferred).
+- [x] `testRelBuilderToString`: `Display` / `to_string` on a `RelBuilder`.
+- [x] `testSimplify`: `filter(true)` simplification already present.
 
 **Tests enabled:**
 `testScanValidTableWrongCase`, `testSortOverProjectSort`,

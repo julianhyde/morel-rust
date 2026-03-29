@@ -753,6 +753,59 @@ impl RelBuilder {
         }
         let alias = self.stack.last().and_then(|f| f.alias.clone());
         let input = Box::new(self.build().expect("sort: empty stack"));
+        // Sort-over-project-sort: if the input is Project(Sort(...)) and the
+        // outer collation is satisfied by the inner sort (remapped through
+        // the project), drop the inner sort node.
+        let input = {
+            let rel = *input;
+            if let Rel::Project {
+                input: proj_input,
+                exprs,
+                row_type: proj_rt,
+            } = rel
+            {
+                let proj_rel = *proj_input;
+                if let Rel::Sort {
+                    input: inner_input,
+                    collation: inner_coll,
+                    offset: None,
+                    fetch: None,
+                } = proj_rel
+                {
+                    if can_subsume_inner_sort(
+                        &collation,
+                        &exprs,
+                        &inner_coll,
+                        inner_input.row_type(),
+                    ) {
+                        Box::new(Rel::Project {
+                            input: inner_input,
+                            exprs,
+                            row_type: proj_rt,
+                        })
+                    } else {
+                        Box::new(Rel::Project {
+                            input: Box::new(Rel::Sort {
+                                input: inner_input,
+                                collation: inner_coll,
+                                offset: None,
+                                fetch: None,
+                            }),
+                            exprs,
+                            row_type: proj_rt,
+                        })
+                    }
+                } else {
+                    Box::new(Rel::Project {
+                        input: Box::new(proj_rel),
+                        exprs,
+                        row_type: proj_rt,
+                    })
+                }
+            } else {
+                Box::new(rel)
+            }
+        };
         self.push(Rel::Sort {
             input,
             collation,
@@ -2285,6 +2338,40 @@ fn agg_return_type(
             }
         }
     }
+}
+
+/// Returns `true` when `inner_coll` (on `inner_row_type`) already satisfies
+/// `outer_coll` mapped through `project_exprs`.
+///
+/// Each outer key must correspond to a simple `Identifier` projection whose
+/// column in the inner row type aligns — at the same position — with the
+/// inner collation, with matching direction.
+fn can_subsume_inner_sort(
+    outer_coll: &[FieldCollation],
+    project_exprs: &[Expr],
+    inner_coll: &[FieldCollation],
+    inner_row_type: &[(String, Type)],
+) -> bool {
+    if outer_coll.len() > inner_coll.len() {
+        return false;
+    }
+    for (i, outer_fc) in outer_coll.iter().enumerate() {
+        let proj_expr = &project_exprs[outer_fc.index];
+        let col_name = match proj_expr {
+            Expr::Identifier(_, name) => name.as_str(),
+            _ => return false,
+        };
+        let inner_idx =
+            match inner_row_type.iter().position(|(n, _)| n == col_name) {
+                Some(idx) => idx,
+                None => return false,
+            };
+        let ifc = &inner_coll[i];
+        if ifc.index != inner_idx || ifc.direction != outer_fc.direction {
+            return false;
+        }
+    }
+    true
 }
 
 /// Converts `SortKey` list to `Vec<FieldCollation>`, resolving each

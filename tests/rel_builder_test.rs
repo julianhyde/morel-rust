@@ -1825,6 +1825,45 @@ fn test_sort_then_limit() -> Result<(), RelError> {
     Ok(())
 }
 
+/// `testSortOverProjectSort` — outer `sort()` over `Project(Sort(…))` drops
+/// the inner sort when the outer collation is satisfied by the inner one.
+#[test]
+fn test_sort_over_project_sort() -> Result<(), RelError> {
+    let mut b = builder();
+    b.scan(&["scott", "EMP"]);
+    // Inner sort: ORDER BY EMPNO ASC.
+    let inner_key = SortKey {
+        expr: b.field("EMPNO")?,
+        direction: Direction::Ascending,
+        null_direction: NullDirection::Unspecified,
+    };
+    b.sort(&[inner_key]);
+    // Project: keep EMPNO($0), ENAME($1), DEPTNO($7).
+    let exprs = vec![b.field("EMPNO")?, b.field("ENAME")?, b.field("DEPTNO")?];
+    b.project_named(
+        exprs,
+        vec!["EMPNO".into(), "ENAME".into(), "DEPTNO".into()],
+    );
+    // Outer sort: ORDER BY EMPNO ASC (same key, now index 0 in project output).
+    let outer_key = SortKey {
+        expr: b.field("EMPNO")?,
+        direction: Direction::Ascending,
+        null_direction: NullDirection::Unspecified,
+    };
+    b.sort(&[outer_key]);
+    let plan = b.build()?;
+    // Inner sort is subsumed; only the outer Sort remains.
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalSort(sort0=[$0], dir0=[ASC])
+              LogicalProject(EMPNO=[$0], ENAME=[$1], DEPTNO=[$7])
+                LogicalTableScan(table=[[scott, EMP]])
+        "}
+    );
+    Ok(())
+}
+
 #[test]
 fn test_aggregate4() -> Result<(), RelError> {
     // distinct() after aggregate() is eliminated (aggregate already
