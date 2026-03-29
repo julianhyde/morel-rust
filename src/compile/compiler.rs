@@ -860,35 +860,42 @@ impl<'a> Compiler<'a> {
                 let slot_count = step_env.bindings.len();
 
                 // Compile aggregate expression and determine slot layout.
-                let (aggregate_code, elements_slot, agg_output_slots) =
-                    if let Some(agg_expr) = aggregate_expr {
-                        let agg_code = self.compile_expr(cx, None, agg_expr);
+                let (
+                    aggregate_code,
+                    elements_slot,
+                    agg_output_slots,
+                    agg_is_record,
+                ) = if let Some(agg_expr) = aggregate_expr {
+                    let agg_code = self.compile_expr(cx, None, agg_expr);
 
-                        // Slot where rows_val is written before aggregate eval.
-                        let els = cx.frame_def.try_var_index("elements");
+                    // Slot where rows_val is written before aggregate eval.
+                    let els = cx.frame_def.try_var_index("elements");
 
-                        // Slots for aggregate output fields, in field order.
-                        let out_slots: Vec<usize> =
-                            match agg_expr.type_().as_ref() {
-                                Type::Record(_, fields) => fields
+                    // Slots for aggregate output fields, in field order.
+                    let (out_slots, is_record): (Vec<usize>, bool) =
+                        match agg_expr.type_().as_ref() {
+                            Type::Record(_, fields) => (
+                                fields
                                     .keys()
                                     .map(|label| {
                                         cx.frame_def
                                             .var_index(&label.to_string())
                                     })
                                     .collect(),
-                                _ => {
-                                    // Scalar aggregate: output goes to slot
-                                    // key_slot_count (which is 0 for empty
-                                    // key, overwriting the scan variable).
-                                    vec![key_slot_count]
-                                }
-                            };
+                                true,
+                            ),
+                            _ => {
+                                // Scalar/list aggregate: output goes to
+                                // slot key_slot_count (which is 0 for
+                                // empty key, overwriting the scan var).
+                                (vec![key_slot_count], false)
+                            }
+                        };
 
-                        (Some(agg_code), els, out_slots)
-                    } else {
-                        (None, None, vec![])
-                    };
+                    (Some(agg_code), els, out_slots, is_record)
+                } else {
+                    (None, None, vec![], false)
+                };
 
                 RowSinkFactory::new(move || {
                     Box::new(GroupRowSink::new(
@@ -896,6 +903,7 @@ impl<'a> Compiler<'a> {
                         aggregate_code.clone(),
                         elements_slot,
                         agg_output_slots.clone(),
+                        agg_is_record,
                         slot_count,
                         key_slot_count,
                         next_factory.create(),
@@ -1022,6 +1030,27 @@ impl<'a> Compiler<'a> {
                     ))
                 })
             }
+            StepKind::Through(pat, fn_expr) => {
+                let next_factory = self.create_row_sink_factory(
+                    cx,
+                    &first_step.env,
+                    &steps[1..],
+                    element_type,
+                );
+                let pat_code = self.compile_pat(cx, pat);
+                let fn_code = self.compile_expr(cx, None, fn_expr);
+                // slot_count is the number of upstream (pre-Through) bindings.
+                let slot_count = step_env.bindings.len();
+
+                RowSinkFactory::new(move || {
+                    Box::new(ThroughRowSink::new(
+                        fn_code.clone(),
+                        pat_code.clone(),
+                        slot_count,
+                        next_factory.create(),
+                    ))
+                })
+            }
             StepKind::Union(distinct, exprs) => {
                 // Translate "union-distinct" as if it were ordinary "union"
                 // followed by "distinct". (We could also make the inputs
@@ -1072,27 +1101,6 @@ impl<'a> Compiler<'a> {
                 RowSinkFactory::new(move || {
                     Box::new(WhereRowSink::new(
                         filter_code.clone(),
-                        next_factory.create(),
-                    ))
-                })
-            }
-            StepKind::Through(pat, fn_expr) => {
-                let next_factory = self.create_row_sink_factory(
-                    cx,
-                    &first_step.env,
-                    &steps[1..],
-                    element_type,
-                );
-                let pat_code = self.compile_pat(cx, pat);
-                let fn_code = self.compile_expr(cx, None, fn_expr);
-                // slot_count is the number of upstream (pre-Through) bindings.
-                let slot_count = step_env.bindings.len();
-
-                RowSinkFactory::new(move || {
-                    Box::new(ThroughRowSink::new(
-                        fn_code.clone(),
-                        pat_code.clone(),
-                        slot_count,
                         next_factory.create(),
                     ))
                 })

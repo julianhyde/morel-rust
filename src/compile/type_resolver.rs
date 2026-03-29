@@ -470,8 +470,7 @@ impl TypeResolver {
             }
             DeclKind::Type(type_binds) => {
                 for tb in type_binds {
-                    let underlying =
-                        ast_type_to_type_simple(&tb.type_);
+                    let underlying = ast_type_to_type_simple(&tb.type_);
                     if let Some(underlying) = underlying {
                         let alias_type = Type::Alias(
                             tb.name.clone(),
@@ -599,8 +598,7 @@ impl TypeResolver {
                 // the decl unchanged (no unification needed for type alias
                 // declarations).
                 for tb in type_binds {
-                    let underlying =
-                        ast_type_to_type_simple(&tb.type_);
+                    let underlying = ast_type_to_type_simple(&tb.type_);
                     if let Some(underlying) = underlying {
                         let alias = Type::Alias(
                             tb.name.clone(),
@@ -3385,14 +3383,10 @@ impl<'a> TypeToTermConverter<'a> {
                 } else {
                     // Unknown named type (datatype, etc.) —
                     // create a 0-arity op
-                    let op = self
-                        .type_resolver
-                        .unifier
-                        .op(name.as_str(), Some(0));
-                    let seq =
-                        self.type_resolver.unifier.apply(op, &[]);
-                    self.type_resolver
-                        .equiv(&Term::Sequence(seq), &v);
+                    let op =
+                        self.type_resolver.unifier.op(name.as_str(), Some(0));
+                    let seq = self.type_resolver.unifier.apply(op, &[]);
+                    self.type_resolver.equiv(&Term::Sequence(seq), &v);
                 }
                 self.type_resolver.reg_type(
                     &type_node.kind,
@@ -3529,7 +3523,7 @@ fn missing_format<T>(query: &Expr, span: &Span) -> Result<T, Error> {
 fn ast_type_to_type_simple(ast_type: &AstType) -> Option<Type> {
     match &ast_type.kind {
         TypeKind::Id(name) => PrimitiveType::parse_name(name)
-            .map(|p| Type::Primitive(p))
+            .map(Type::Primitive)
             .or_else(|| {
                 // Could be a named type (datatype, etc.)
                 Some(Type::Named(vec![], name.clone()))

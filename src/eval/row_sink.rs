@@ -705,10 +705,7 @@ impl RowSink for ThroughRowSink {
                     frame_def, matches, bound_vals, r, &list,
                 )?
             }
-            _ => panic!(
-                "ThroughRowSink: expected function, got {:?}",
-                fn_val
-            ),
+            _ => panic!("ThroughRowSink: expected function, got {:?}", fn_val),
         };
 
         // 4. Iterate over the result, binding each element to the pattern.
@@ -989,6 +986,11 @@ pub struct GroupRowSink {
     /// Frame slots to write the aggregate output fields into.
     /// For a record aggregate with N fields, this has N entries.
     agg_output_slots: Vec<usize>,
+    /// True if the aggregate expression returns a record type, meaning we
+    /// should destructure Val::List into individual output slots.
+    /// False for scalar or list aggregates (e.g., `elements`), where the
+    /// whole value goes into `agg_output_slots[0]`.
+    agg_is_record: bool,
     slot_count: usize,
     key_slot_count: usize,
     row_sink: Box<dyn RowSink>,
@@ -1004,6 +1006,7 @@ impl GroupRowSink {
         aggregate_code: Option<Code>,
         elements_slot: Option<usize>,
         agg_output_slots: Vec<usize>,
+        agg_is_record: bool,
         slot_count: usize,
         key_slot_count: usize,
         row_sink: Box<dyn RowSink>,
@@ -1013,6 +1016,7 @@ impl GroupRowSink {
             aggregate_code,
             elements_slot,
             agg_output_slots,
+            agg_is_record,
             slot_count,
             key_slot_count,
             row_sink,
@@ -1092,24 +1096,17 @@ impl RowSink for GroupRowSink {
 
                 // Destructure aggregate result into output slots.
                 // - Record aggregate (Val::List): one field per slot.
-                // - Scalar aggregate: goes directly to agg_output_slots[0].
-                match &agg_val {
-                    Val::List(fields)
-                        if !self.agg_output_slots.is_empty()
-                            && self.agg_output_slots.len() == fields.len() =>
-                    {
+                // - Scalar/list aggregate: whole value to agg_output_slots[0].
+                if self.agg_is_record {
+                    if let Val::List(fields) = &agg_val {
                         for (i, slot) in
                             self.agg_output_slots.iter().enumerate()
                         {
                             f.vals[*slot] = fields[i].clone();
                         }
                     }
-                    _ => {
-                        // Scalar aggregate result.
-                        if let Some(&slot) = self.agg_output_slots.first() {
-                            f.vals[slot] = agg_val;
-                        }
-                    }
+                } else if let Some(&slot) = self.agg_output_slots.first() {
+                    f.vals[slot] = agg_val;
                 }
             }
 

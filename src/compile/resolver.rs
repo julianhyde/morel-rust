@@ -823,10 +823,10 @@ impl<'a> Resolver<'a> {
     /// Resolves an AST type to a core type.
     fn resolve_ast_type(&self, ast_type: &AstType) -> Type {
         // Try node id in type_map first
-        if let Some(id) = ast_type.id {
-            if let Some(t) = self.type_map.get_type(id) {
-                return *t;
-            }
+        if let Some(id) = ast_type.id
+            && let Some(t) = self.type_map.get_type(id)
+        {
+            return *t;
         }
         // Fall back to structural conversion
         match &ast_type.kind {
@@ -837,20 +837,18 @@ impl<'a> Resolver<'a> {
                     Type::Named(vec![], name.clone())
                 }
             }
-            TypeKind::Tuple(types) => {
-                Type::Tuple(
-                    types.iter().map(|t| self.resolve_ast_type(t)).collect(),
-                )
-            }
+            TypeKind::Tuple(types) => Type::Tuple(
+                types.iter().map(|t| self.resolve_ast_type(t)).collect(),
+            ),
             TypeKind::App(args, t) => {
                 if let TypeKind::Id(name) = &t.kind {
                     let flat = AstType::flatten(args);
                     let arg_types: Vec<Type> =
                         flat.iter().map(|a| self.resolve_ast_type(a)).collect();
                     match name.as_str() {
-                        "list" if arg_types.len() == 1 => Type::List(
-                            Box::new(arg_types.into_iter().next().unwrap()),
-                        ),
+                        "list" if arg_types.len() == 1 => Type::List(Box::new(
+                            arg_types.into_iter().next().unwrap(),
+                        )),
                         _ => Type::Named(arg_types, name.clone()),
                     }
                 } else {
@@ -1007,6 +1005,16 @@ impl<'a> Resolver<'a> {
                     resolved_condition,
                 );
             }
+            AstStepKind::ScanEq(pat, expr) => {
+                // "join y = expr" binds y to a singleton value.
+                // Wrap the value in a list so the Scan step can iterate.
+                let resolved_pat = self.resolve_pat(pat);
+                let resolved_expr = self.resolve_expr(expr);
+                let elem_type = resolved_expr.type_();
+                let list_type = Box::new(Type::List(elem_type));
+                let singleton = CoreExpr::List(list_type, vec![resolved_expr]);
+                builder.scan_with_condition(resolved_pat, singleton, None);
+            }
             AstStepKind::Skip(expr) => {
                 let resolved_expr = self.resolve_expr(expr);
                 builder.skip(resolved_expr);
@@ -1014,6 +1022,11 @@ impl<'a> Resolver<'a> {
             AstStepKind::Take(expr) => {
                 let resolved_expr = self.resolve_expr(expr);
                 builder.take(resolved_expr);
+            }
+            AstStepKind::Through(pat, fn_expr) => {
+                let resolved_pat = self.resolve_pat(pat);
+                let resolved_fn = self.resolve_expr(fn_expr);
+                builder.through(resolved_pat, resolved_fn);
             }
             AstStepKind::Union(distinct, exprs) => {
                 let resolved_exprs: Vec<_> =
@@ -1026,22 +1039,6 @@ impl<'a> Resolver<'a> {
             AstStepKind::Where(expr) => {
                 let resolved_expr = self.resolve_expr(expr);
                 builder.where_(resolved_expr);
-            }
-            AstStepKind::Through(pat, fn_expr) => {
-                let resolved_pat = self.resolve_pat(pat);
-                let resolved_fn = self.resolve_expr(fn_expr);
-                builder.through(resolved_pat, resolved_fn);
-            }
-            AstStepKind::ScanEq(pat, expr) => {
-                // "join y = expr" binds y to a singleton value.
-                // Wrap the value in a list so the Scan step can iterate.
-                let resolved_pat = self.resolve_pat(pat);
-                let resolved_expr = self.resolve_expr(expr);
-                let elem_type = resolved_expr.type_();
-                let list_type = Box::new(Type::List(elem_type));
-                let singleton =
-                    CoreExpr::List(list_type, vec![resolved_expr]);
-                builder.scan_with_condition(resolved_pat, singleton, None);
             }
             AstStepKind::Yield(expr) => {
                 let resolved_expr = self.resolve_expr(expr);

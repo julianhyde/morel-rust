@@ -153,7 +153,6 @@ impl Pat {
             Pat::Wildcard(_) => {
                 // no variables
             }
-            _ => todo!("collect_vars {:?}", self),
         }
     }
 }

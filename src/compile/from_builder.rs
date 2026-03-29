@@ -36,6 +36,16 @@ fn is_list_type(type_: &Type) -> bool {
     matches!(type_, Type::List(_))
 }
 
+/// Returns the implicit label for a core Expr, if one can be derived.
+/// Mirrors the logic of `ast::Expr::implicit_label_opt`.
+fn agg_implicit_label(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Identifier(_, name) => Some(name.clone()),
+        Expr::Aggregate(_, left, _) => agg_implicit_label(left),
+        _ => None,
+    }
+}
+
 /// Classification of tuple types for yield optimization.
 #[derive(Eq, PartialEq, Debug)]
 enum TupleType {
@@ -414,10 +424,7 @@ impl FromBuilder {
         // For aggregate groups with named output fields, update the bindings
         // to reflect the combined key + aggregate output fields. This enables
         // get_collection_code to emit the correct slot-read codes.
-        if let Some(agg) = &aggregate_expr
-            && let Type::Record(_, fields) = agg.type_().as_ref()
-            && !fields.is_empty()
-        {
+        if let Some(agg) = &aggregate_expr {
             let mut new_bindings = Vec::new();
 
             // Key bindings: scalar identifier key → one binding.
@@ -425,18 +432,33 @@ impl FromBuilder {
                 new_bindings.push(Binding::new(Id::new(name, 0), t.clone()));
             }
 
-            // Aggregate field bindings (alphabetical from record type).
-            for (label, t) in fields {
-                if let Label::String(name) = label {
-                    new_bindings.push(Binding::new(
-                        Id::new(name, 0),
-                        Box::new(t.clone()),
-                    ));
+            match agg.type_().as_ref() {
+                Type::Record(_, fields) if !fields.is_empty() => {
+                    // Record aggregate: one binding per field (alphabetical).
+                    for (label, t) in fields {
+                        if let Label::String(name) = label {
+                            new_bindings.push(Binding::new(
+                                Id::new(name, 0),
+                                Box::new(t.clone()),
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    // Non-record aggregate (e.g., `elements` returning a list,
+                    // or a scalar like `count`): one binding named after the
+                    // aggregate expression itself.
+                    if let Some(name) = agg_implicit_label(agg) {
+                        new_bindings
+                            .push(Binding::new(Id::new(&name, 0), agg.type_()));
+                    }
                 }
             }
 
-            self.bindings = new_bindings;
-            self.atom = self.bindings.len() == 1;
+            if !new_bindings.is_empty() {
+                self.bindings = new_bindings;
+                self.atom = self.bindings.len() == 1;
+            }
         }
 
         // Build the step env from the (possibly updated) bindings.
@@ -469,10 +491,8 @@ impl FromBuilder {
         self.atom = self.bindings.len() == 1;
 
         let env = self.step_env();
-        let step = Step::new(
-            StepKind::Through(Box::new(pat), Box::new(fn_expr)),
-            env,
-        );
+        let step =
+            Step::new(StepKind::Through(Box::new(pat), Box::new(fn_expr)), env);
         self.add_step(step)
     }
 
