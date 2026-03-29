@@ -2661,6 +2661,50 @@ fn test_aggregate_duplicate_calls_with_pruning() -> Result<(), RelError> {
     Ok(())
 }
 
+/// `testAggregateDuplicateAggCallsAndFieldPruningWithJoinAndLiteralGroupKey`
+/// — duplicate agg calls + field pruning on a join input with a literal in
+/// the group key.
+///
+/// The literal `1` in the group key is materialised as `$f11` (n_in=11
+/// for EMP⋈DEPT).  Pruning keeps ENAME, SAL, and `$f11`; the two Project
+/// nodes (materialisation + pruning) are merged into one.
+#[test]
+fn test_aggregate_duplicate_calls_join_literal_group_key()
+-> Result<(), RelError> {
+    let mut b = builder_pruning();
+    b.scan(&["scott", "EMP"]);
+    b.scan(&["scott", "DEPT"]);
+    let cond = b.equals(
+        b.field_from("EMP", "DEPTNO")?,
+        b.field_from("DEPT", "DEPTNO")?,
+    );
+    b.join(JoinType::Inner, cond);
+    // Group key: ENAME, literal 1.
+    let gk = b.group_key(vec![b.field("ENAME")?, b.literal_int(1)]);
+    let aggs = vec![
+        b.sum("SAL").alias("S1"),
+        b.sum("SAL").alias("S2"),
+        b.count("ENAME").alias("C"),
+    ];
+    b.aggregate(&gk, aggs);
+    let plan = b.build()?;
+    // Materialization project for literal(1) → $f11; pruning keeps
+    // ENAME($1), SAL($5), $f11(literal 1); merged into one project.
+    // Remap: ENAME=0, SAL=1, $f11=2.  Dedup: S2 is a copy of S1.
+    assert_plan!(
+        plan,
+        indoc! {"
+            LogicalProject(ENAME=[$0], $f11=[$1], S1=[$2], S2=[$2], C=[$3])
+              LogicalAggregate(group=[{0, 2}], S1=[SUM($1)], C=[COUNT($0)])
+                LogicalProject(ENAME=[$1], SAL=[$5], $f11=[1])
+                  LogicalJoin(condition=[=($7, $8)], joinType=[inner])
+                    LogicalTableScan(table=[[scott, EMP]])
+                    LogicalTableScan(table=[[scott, DEPT]])
+        "}
+    );
+    Ok(())
+}
+
 /// `testAggregateGrouping` — `GROUPING(col)` returns 0/1 per grouping set.
 #[test]
 fn test_aggregate_grouping() -> Result<(), RelError> {

@@ -1022,63 +1022,82 @@ impl RelBuilder {
             return self;
         }
         let mut input_row_type = self.peek_row_type().to_vec();
-        // If any agg call has arg_exprs, resolve them: field refs stay as
-        // arg_names; non-field-ref expressions are materialised by inserting
-        // a Project node that appends them as extra columns ($f<n>).
-        let agg_calls: Vec<AggCallDef> = {
-            let n_in = input_row_type.len();
-            let mut extra: Vec<(String, Expr)> = Vec::new();
-            let mapped: Vec<AggCallDef> = agg_calls
-                .into_iter()
-                .map(|mut def| {
-                    if let Some(exprs) = def.arg_exprs.take() {
-                        let mut names: Vec<String> = Vec::new();
-                        for expr in exprs {
-                            if let Expr::Identifier(_, ref name) = expr
-                                && input_row_type.iter().any(|(n, _)| n == name)
-                            {
-                                names.push(name.clone());
-                                continue;
-                            }
-                            let col = format!("$f{}", n_in + extra.len());
-                            extra.push((col.clone(), expr));
-                            names.push(col);
+        // Materialise non-identifier group key expressions (e.g. literals)
+        // and non-field-ref agg call arg_exprs by appending them as extra
+        // columns ($f<n>) in a single pre-project node.
+        let n_in = input_row_type.len();
+        let mut extra: Vec<(String, Expr)> = Vec::new();
+        // Resolve group key expressions:
+        //  - Field refs that exist in input_row_type → kept as-is.
+        //  - Field refs NOT in input_row_type → InvalidGroupKey error.
+        //  - Non-identifiers (literals, etc.) → materialised into extra.
+        let mut gk_exprs: Vec<Expr> = Vec::new();
+        for e in &group_key.exprs {
+            if let Expr::Identifier(_, name) = e {
+                if input_row_type.iter().any(|(n, _)| n == name) {
+                    gk_exprs.push(e.clone());
+                } else {
+                    return self
+                        .set_error(RelError::InvalidGroupKey(name.clone()));
+                }
+            } else {
+                // Non-identifier: materialise as a new column.
+                let col = format!("$f{}", n_in + extra.len());
+                let ty = *e.type_();
+                extra.push((col.clone(), e.clone()));
+                gk_exprs.push(Expr::Identifier(Box::new(ty), col));
+            }
+        }
+        // Resolve agg call arg_exprs: field refs stay as arg_names; others
+        // are appended to `extra`.
+        let agg_calls: Vec<AggCallDef> = agg_calls
+            .into_iter()
+            .map(|mut def| {
+                if let Some(exprs) = def.arg_exprs.take() {
+                    let mut names: Vec<String> = Vec::new();
+                    for expr in exprs {
+                        if let Expr::Identifier(_, ref name) = expr
+                            && input_row_type.iter().any(|(n, _)| n == name)
+                        {
+                            names.push(name.clone());
+                            continue;
                         }
-                        def.arg_names = names;
+                        let col = format!("$f{}", n_in + extra.len());
+                        extra.push((col.clone(), expr));
+                        names.push(col);
                     }
-                    def
+                    def.arg_names = names;
+                }
+                def
+            })
+            .collect();
+        if !extra.is_empty() {
+            let orig = self.stack.pop().expect("RelBuilder stack is empty").rel;
+            let mut proj_exprs: Vec<Expr> = input_row_type
+                .iter()
+                .map(|(name, ty)| {
+                    Expr::Identifier(Box::new(ty.clone()), name.clone())
                 })
                 .collect();
-            if !extra.is_empty() {
-                let orig =
-                    self.stack.pop().expect("RelBuilder stack is empty").rel;
-                let mut proj_exprs: Vec<Expr> = input_row_type
-                    .iter()
-                    .map(|(name, ty)| {
-                        Expr::Identifier(Box::new(ty.clone()), name.clone())
-                    })
-                    .collect();
-                let mut proj_rt = input_row_type.clone();
-                for (col, expr) in extra {
-                    let ty = *expr.type_();
-                    proj_exprs.push(expr);
-                    proj_rt.push((col, ty));
-                }
-                input_row_type = proj_rt.clone();
-                self.stack.push(Frame {
-                    rel: Rel::Project {
-                        input: Box::new(orig),
-                        exprs: proj_exprs,
-                        row_type: proj_rt,
-                    },
-                    alias: None,
-                });
+            let mut proj_rt = input_row_type.clone();
+            for (col, expr) in extra {
+                let ty = *expr.type_();
+                proj_exprs.push(expr);
+                proj_rt.push((col, ty));
             }
-            mapped
-        };
+            input_row_type = proj_rt.clone();
+            self.stack.push(Frame {
+                rel: Rel::Project {
+                    input: Box::new(orig),
+                    exprs: proj_exprs,
+                    row_type: proj_rt,
+                },
+                alias: None,
+            });
+        }
         // Resolve grouping expressions to ordinals; error on any unresolved.
         let mut group_set: Vec<usize> = Vec::new();
-        for e in &group_key.exprs {
+        for e in &gk_exprs {
             if let Expr::Identifier(_, name) = e {
                 if let Some(idx) =
                     input_row_type.iter().position(|(n, _)| n == name)
@@ -1121,30 +1140,59 @@ impl RelBuilder {
         let mut group_sets: Vec<Vec<usize>> = if let Some(sets) =
             group_key.group_sets.clone()
         {
+            // Build a debug-string → resolved name map for materialised
+            // non-identifier group key expressions.
+            let gk_matl: HashMap<String, String> = group_key
+                .exprs
+                .iter()
+                .zip(gk_exprs.iter())
+                .filter_map(|(orig, mat)| {
+                    if let Expr::Identifier(_, mat_name) = mat {
+                        // Non-identifiers were materialised; skip pass-through
+                        // field refs (where orig is already mat_name).
+                        let same = matches!(
+                            orig,
+                            Expr::Identifier(_, n) if n == mat_name
+                        );
+                        if !same {
+                            return Some((
+                                format!("{:?}", orig),
+                                mat_name.clone(),
+                            ));
+                        }
+                    }
+                    None
+                })
+                .collect();
             let mut resolved_sets: Vec<Vec<usize>> = Vec::new();
             for set in sets {
                 let mut ordinals: Vec<usize> = Vec::new();
                 for e in &set {
-                    if let Expr::Identifier(_, name) = e {
-                        if let Some(idx) =
-                            input_row_type.iter().position(|(n, _)| n == name)
-                        {
-                            if !group_set.contains(&idx) {
-                                return self.set_error(
-                                    RelError::GroupingSetNotSubset(
-                                        name.clone(),
-                                    ),
-                                );
-                            }
-                            ordinals.push(idx);
-                        } else {
-                            return self.set_error(RelError::InvalidGroupKey(
-                                name.clone(),
-                            ));
-                        }
+                    // Resolve: field-ref identifier, or materialized name.
+                    let name = if let Expr::Identifier(_, n) = e {
+                        n.clone()
                     } else {
-                        let msg = format!("{:?}", e);
-                        return self.set_error(RelError::InvalidGroupKey(msg));
+                        let key = format!("{:?}", e);
+                        match gk_matl.get(&key) {
+                            Some(n) => n.clone(),
+                            None => {
+                                let msg = format!("{:?}", e);
+                                return self
+                                    .set_error(RelError::InvalidGroupKey(msg));
+                            }
+                        }
+                    };
+                    if let Some(idx) =
+                        input_row_type.iter().position(|(n, _)| n == &name)
+                    {
+                        if !group_set.contains(&idx) {
+                            return self.set_error(
+                                RelError::GroupingSetNotSubset(name),
+                            );
+                        }
+                        ordinals.push(idx);
+                    } else {
+                        return self.set_error(RelError::InvalidGroupKey(name));
                     }
                 }
                 resolved_sets.push(ordinals);
@@ -1220,6 +1268,65 @@ impl RelBuilder {
                     })
                     .collect();
                 input_row_type = proj_rt;
+                // Merge the pruning Project with an underlying
+                // materialisation Project (Project-over-project compose).
+                if self.config.simplify_project_merge {
+                    let frame = self.stack.pop().unwrap();
+                    if let Rel::Project {
+                        input: prun_input,
+                        exprs: prun_exprs,
+                        row_type: prun_rt,
+                    } = frame.rel
+                    {
+                        if let Rel::Project {
+                            input: inner_input,
+                            exprs: inner_exprs,
+                            row_type: inner_rt,
+                        } = *prun_input
+                        {
+                            if let Some(composed) = try_compose_projects(
+                                &prun_exprs,
+                                &inner_exprs,
+                                &inner_rt,
+                            ) {
+                                self.stack.push(Frame {
+                                    rel: Rel::Project {
+                                        input: inner_input,
+                                        exprs: composed,
+                                        row_type: prun_rt,
+                                    },
+                                    alias: None,
+                                });
+                            } else {
+                                // Cannot compose; restore nested projects.
+                                let inner = Box::new(Rel::Project {
+                                    input: inner_input,
+                                    exprs: inner_exprs,
+                                    row_type: inner_rt,
+                                });
+                                self.stack.push(Frame {
+                                    rel: Rel::Project {
+                                        input: inner,
+                                        exprs: prun_exprs,
+                                        row_type: prun_rt,
+                                    },
+                                    alias: None,
+                                });
+                            }
+                        } else {
+                            self.stack.push(Frame {
+                                rel: Rel::Project {
+                                    input: prun_input,
+                                    exprs: prun_exprs,
+                                    row_type: prun_rt,
+                                },
+                                alias: None,
+                            });
+                        }
+                    } else {
+                        self.stack.push(frame);
+                    }
+                }
             }
         }
         // Resolve agg calls; collect names for later dedup project.

@@ -979,8 +979,9 @@ so only one computation is emitted.
       `COUNT(DISTINCT col)` calls; only one is emitted.
 - [x] `testAggregateDuplicateAggCallsWithForceProjectAndFieldPruning` —
       duplicate calls combined with field pruning of the input.
-- [ ] `testAggregateDuplicateAggCallsAndFieldPruningWithJoinAndLiteralGroupKey`
-      — same, but input is a join with a literal in the group key.
+- [x] `testAggregateDuplicateAggCallsAndFieldPruningWithJoinAndLiteralGroupKey`
+      — join input; literal `1` in group key materialised as `$f11`; pruning
+      and materialisation projects merged into one.
 - [x] `testAggregateProjectPruneEmpty` — after pruning, the aggregate
       input has zero columns; an empty project is added.
 
