@@ -1173,13 +1173,12 @@ impl RelBuilder {
                         n.clone()
                     } else {
                         let key = format!("{:?}", e);
-                        match gk_matl.get(&key) {
-                            Some(n) => n.clone(),
-                            None => {
-                                let msg = format!("{:?}", e);
-                                return self
-                                    .set_error(RelError::InvalidGroupKey(msg));
-                            }
+                        if let Some(n) = gk_matl.get(&key) {
+                            n.clone()
+                        } else {
+                            let msg = format!("{:?}", e);
+                            return self
+                                .set_error(RelError::InvalidGroupKey(msg));
                         }
                     };
                     if let Some(idx) =
