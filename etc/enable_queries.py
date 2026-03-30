@@ -497,8 +497,36 @@ def apply_changes(smli_path: str, sections: List[Section], dry_run: bool) -> int
     with open(smli_path, 'w') as f:
         f.writelines(new_lines)
 
+    clean_empty_mode_pairs(smli_path)
+
     print(f'\nEnabled {enabled_count} block(s). File updated: {smli_path}')
     return enabled_count
+
+
+def clean_empty_mode_pairs(smli_path: str) -> None:
+    """Remove consecutive mode-switch pairs with no content between them.
+
+    Removes both orders:
+      set("mode", "validate") immediately followed by set("mode", "evaluate")
+      set("mode", "evaluate") immediately followed by set("mode", "validate")
+    """
+    with open(smli_path) as f:
+        content = f.read()
+
+    response = r';\n> val it = \(\) : unit\n'
+    validate = r'set\("mode", "validate"\)' + response
+    evaluate = r'set\("mode", "evaluate"\)' + response
+    blank = r'\n+'
+
+    changed = True
+    while changed:
+        new_content = re.sub(validate + blank + evaluate, '', content)
+        new_content = re.sub(evaluate + blank + validate, '', new_content)
+        changed = new_content != content
+        content = new_content
+
+    with open(smli_path, 'w') as f:
+        f.write(content)
 
 
 # ---------------------------------------------------------------------------

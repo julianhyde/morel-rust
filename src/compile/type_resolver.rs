@@ -908,6 +908,22 @@ impl TypeResolver {
                 let x = ExprKind::Cons(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
+            ExprKind::Current => {
+                // 'current' is bound in the query environment for each step.
+                match env.get("current", self) {
+                    Some(BindType::Val(term))
+                    | Some(BindType::Constructor(term)) => {
+                        self.equiv(&term, v);
+                    }
+                    None => {
+                        return Err(Error::Compile(
+                            "'current' is only valid in a query".into(),
+                            expr.span.clone(),
+                        ));
+                    }
+                }
+                self.reg_expr(&expr.kind, &expr.span, expr.id, v)
+            }
             ExprKind::Div(left, right) => {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op div", left, right, v)?;
@@ -1107,6 +1123,11 @@ impl TypeResolver {
                     self.deduce_call2_type(env, "op orelse", left, right, v)?;
                 let x = ExprKind::OrElse(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::Ordinal => {
+                // 'ordinal' is a row counter with type int.
+                self.primitive_term(&PrimitiveType::Int, v);
+                self.reg_expr(&expr.kind, &expr.span, expr.id, v)
             }
             ExprKind::Plus(left, right) => {
                 let (left2, right2) =
@@ -1407,7 +1428,11 @@ impl TypeResolver {
         let v0 = self.variable();
         let c0 = self.variable();
 
-        self.list_term(Term::Variable(v0), &c0);
+        // The scan expression may be a list or bag; defer the element-type
+        // constraint until c0 is resolved (instead of forcing list here).
+        if !eq {
+            self.may_be_bag_or_list(&c0, &v0);
+        }
         let expr2 = self.deduce_expr_type(
             &*p.env,
             expr.unwrap(),
@@ -1426,15 +1451,21 @@ impl TypeResolver {
             self.reg_expr(&ExprKind::Identifier(name.clone()), span, None, &v);
             field_vars.push((name.clone(), v));
         }
+        // Bind 'current' to the scanned element type so that 'where' and
+        // other steps after a scan can reference the element via 'current'.
+        env_builder.push("current".to_string(), Term::Variable(v0));
         let env4 = env_builder.build();
 
-        // Determine collection type - simplified for now, just use list.
-        // TODO: Implement full collection type logic from Java
-        // (is_list_or_bag_matching_input, is_list_if_both_are_lists,
-        // may_be_bag_or_list)
+        // Output collection type matches the input's list/bag kind.
         let v = self.field_var(field_vars, true);
         let c = self.unifier.variable();
-        self.list_term(Term::Variable(v), &c);
+        if eq {
+            // ScanEq (= expr): output inherits the preceding collection type.
+            self.is_list_or_bag_matching_input(&p.c.unwrap(), &p.v, &c, &v);
+        } else {
+            // Normal scan: output collection kind matches this scan's input.
+            self.is_list_or_bag_matching_input(&c0, &v0, &c, &v);
+        }
 
         // Handle the condition, if present.
         let condition2 = if let Some(cond) = condition {
@@ -2558,12 +2589,119 @@ impl TypeResolver {
         self.equiv(&Term::Sequence(seq3), v3);
     }
 
-    /// Marks that a variable may be either a bag or list.
+    /// Constrains `v` to be the element type of collection `c`, where `c` may
+    /// be either a list or a bag. Does not constrain which kind `c` is.
+    ///
+    /// This corresponds to Java's `mayBeBagOrList(c, v)`.
     fn may_be_bag_or_list(&mut self, c: &Var, v: &Var) {
-        // For now, assume list semantics
-        let list_v = Term::Variable(*v);
-        let seq = self.unifier.apply1(self.list_op, list_v);
-        self.equiv(&Term::Sequence(seq), c);
+        let list_op = self.list_op;
+        let bag_op = self.bag_op;
+        let v = *v;
+
+        struct MayBeBagOrListAction {
+            v: Var,
+            list_op: Op,
+            bag_op: Op,
+        }
+        impl Action for MayBeBagOrListAction {
+            fn accept(
+                &self,
+                _variable: &Var,
+                term: &Term,
+                substitution: &Substitution,
+                term_pairs: &mut Vec<(Term, Term)>,
+            ) {
+                if let Term::Sequence(seq) = term
+                    && (seq.op == self.list_op || seq.op == self.bag_op)
+                    && seq.terms.len() == 1
+                {
+                    let v_term =
+                        substitution.resolve_term(&Term::Variable(self.v));
+                    let elem_term = substitution.resolve_term(&seq.terms[0]);
+                    term_pairs.push((v_term, elem_term));
+                }
+            }
+        }
+        self.actions
+            .push((*c, Rc::new(MayBeBagOrListAction { v, list_op, bag_op })));
+    }
+
+    /// Constrains `c2` to have the same collection kind (list or bag) as `c1`,
+    /// and `v1`/`v2` to be the respective element types.
+    ///
+    /// This corresponds to Java's `isListOrBagMatchingInput(c1, v1, c2, v2)`.
+    fn is_list_or_bag_matching_input(
+        &mut self,
+        c1: &Var,
+        v1: &Var,
+        c2: &Var,
+        v2: &Var,
+    ) {
+        let list_op = self.list_op;
+        let bag_op = self.bag_op;
+
+        // When c1 resolves to list(T) or bag(T):
+        //   - constrain v1 = T
+        //   - constrain c2 = list(v2) or bag(v2) (same collection kind)
+        struct MatchInputAction {
+            v_self: Var,  // v1
+            c_other: Var, // c2
+            v_other: Var, // v2
+            list_op: Op,
+            bag_op: Op,
+        }
+        impl Action for MatchInputAction {
+            fn accept(
+                &self,
+                _variable: &Var,
+                term: &Term,
+                substitution: &Substitution,
+                term_pairs: &mut Vec<(Term, Term)>,
+            ) {
+                if let Term::Sequence(seq) = term
+                    && (seq.op == self.list_op || seq.op == self.bag_op)
+                    && seq.terms.len() == 1
+                {
+                    // v_self = element type of c
+                    let v_self_term =
+                        substitution.resolve_term(&Term::Variable(self.v_self));
+                    let elem = substitution.resolve_term(&seq.terms[0]);
+                    term_pairs.push((v_self_term, elem));
+
+                    // c_other = same collection kind with element v_other
+                    let v_other_term = Term::Variable(self.v_other);
+                    let c_other_seq = Sequence {
+                        op: seq.op, // same list or bag op
+                        terms: Rc::from(vec![v_other_term]),
+                    };
+                    let c_other_term = substitution
+                        .resolve_term(&Term::Variable(self.c_other));
+                    term_pairs
+                        .push((c_other_term, Term::Sequence(c_other_seq)));
+                }
+            }
+        }
+        // Register bidirectional actions.
+        self.actions.push((
+            *c1,
+            Rc::new(MatchInputAction {
+                v_self: *v1,
+                c_other: *c2,
+                v_other: *v2,
+                list_op,
+                bag_op,
+            }),
+        ));
+        self.actions.push((
+            *c2,
+            Rc::new(MatchInputAction {
+                v_self: *v2,
+                c_other: *c1,
+                v_other: *v1,
+                list_op,
+                bag_op,
+            }),
+        ));
     }
 
     /// Creates a term for a bag type and associates it with a variable.
