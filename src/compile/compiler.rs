@@ -23,7 +23,7 @@ use crate::compile::library::BuiltInFunction;
 use crate::compile::pretty::Pretty;
 use crate::compile::type_env::{Binding, Id};
 use crate::compile::type_resolver::TypeMap;
-use crate::compile::types::{PrimitiveType, Type};
+use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::compile::var_collector::VarCollector;
 use crate::eval::code::{
     Code, Effect, EvalEnv, EvalMode, Frame, Impl, QueryStep,
@@ -31,7 +31,7 @@ use crate::eval::code::{
 use crate::eval::comparator::comparator_for;
 use crate::eval::frame::FrameDef;
 use crate::eval::order::Order;
-use crate::eval::row_sink::RowSinkFactory;
+use crate::eval::row_sink::{RowSink, RowSinkFactory};
 use crate::eval::session::Session;
 use crate::eval::val::Val;
 use crate::shell::Shell;
@@ -599,6 +599,12 @@ impl<'a> Compiler<'a> {
                 }
                 Code::new_match(&codes)
             }
+            Expr::Current(_) => {
+                // 'current' is the primary element: the first local variable
+                // in the frame (after any bound/captured variables).
+                let slot = cx.frame_def.bound_vars.len();
+                Code::new_get_local(&cx.frame_def, slot)
+            }
             Expr::Fn(_, match_list) => {
                 let mut collector = VarCollector::new(&cx.env);
                 for m in match_list {
@@ -709,6 +715,12 @@ impl<'a> Compiler<'a> {
                 };
                 Code::new_constant(type_, val2.clone())
             }
+            Expr::Ordinal(_) => {
+                // 'ordinal' is the row counter written by OrdinalRowSink;
+                // the slot was reserved by VarCollector when it saw this.
+                let slot = cx.frame_def.var_index("ordinal");
+                Code::new_get_local(&cx.frame_def, slot)
+            }
             Expr::RecordSelector(t, slot) => {
                 let (record_type, _) = t.expect_fn();
                 Code::new_nth(record_type, *slot)
@@ -733,8 +745,9 @@ impl<'a> Compiler<'a> {
         use crate::eval::row_sink::{
             CollectRowSink, ComputeRowSink, DistinctRowSink, ExceptRowSink,
             ExistsRowSink, GroupRowSink, IntersectRowSink, OrderRowSink,
-            ScanRowSink, SkipRowSink, TakeRowSink, ThroughRowSink,
-            UnionRowSink, WhereRowSink,
+            OrdinalRowSink, ScanRowSink, SkipRowSink, TakeRowSink,
+            ThroughRowSink, UnionRowSink, UnorderRowSink, WhereRowSink,
+            YieldRowSink,
         };
 
         if steps.is_empty() {
@@ -1089,6 +1102,17 @@ impl<'a> Compiler<'a> {
                     ))
                 })
             }
+            StepKind::Unorder => {
+                let next_factory = self.create_row_sink_factory(
+                    cx,
+                    &first_step.env,
+                    &steps[1..],
+                    element_type,
+                );
+                RowSinkFactory::new(move || {
+                    Box::new(UnorderRowSink::new(next_factory.create()))
+                })
+            }
             StepKind::Where(expr) => {
                 let next_factory = self.create_row_sink_factory(
                     cx,
@@ -1098,19 +1122,89 @@ impl<'a> Compiler<'a> {
                 );
                 let filter_code = self.compile_expr(cx, None, expr);
 
+                // If the where expression uses 'ordinal', wrap the whole
+                // where+downstream pipeline with OrdinalRowSink so ordinal
+                // is incremented before the filter is evaluated.
+                let ordinal_slot = if Self::expr_uses_ordinal(expr) {
+                    cx.frame_def.try_var_index("ordinal")
+                } else {
+                    None
+                };
+
                 RowSinkFactory::new(move || {
-                    Box::new(WhereRowSink::new(
-                        filter_code.clone(),
-                        next_factory.create(),
-                    ))
+                    let where_sink: Box<dyn RowSink> =
+                        Box::new(WhereRowSink::new(
+                            filter_code.clone(),
+                            next_factory.create(),
+                        ));
+                    if let Some(slot) = ordinal_slot {
+                        Box::new(OrdinalRowSink::new(slot, where_sink))
+                    } else {
+                        where_sink
+                    }
                 })
             }
             StepKind::Yield(expr) => {
-                // Yield step: use the yield expression for collection.
                 let yield_code = self.compile_expr(cx, None, expr);
-                RowSinkFactory::new(move || {
-                    Box::new(CollectRowSink::new(yield_code.clone()))
-                })
+                if steps.len() == 1 {
+                    // Terminal yield: collect results, optionally wrapped
+                    // with OrdinalRowSink when yield uses 'ordinal'.
+                    let ordinal_slot = if Self::expr_uses_ordinal(expr) {
+                        cx.frame_def.try_var_index("ordinal")
+                    } else {
+                        None
+                    };
+                    RowSinkFactory::new(move || {
+                        let collect: Box<dyn RowSink> =
+                            Box::new(CollectRowSink::new(yield_code.clone()));
+                        if let Some(slot) = ordinal_slot {
+                            Box::new(OrdinalRowSink::new(slot, collect))
+                        } else {
+                            collect
+                        }
+                    })
+                } else {
+                    // Non-terminal yield: bind the yielded value to frame
+                    // slots so downstream steps can reference the variables.
+                    let next_factory = self.create_row_sink_factory(
+                        cx,
+                        &first_step.env,
+                        &steps[1..],
+                        element_type,
+                    );
+                    let yield_type = expr.type_().clone();
+                    if let Type::Record(_, fields) = yield_type.as_ref() {
+                        // Record yield: unpack each field into its own slot.
+                        let field_slots: Vec<usize> = fields
+                            .keys()
+                            .filter_map(|label| {
+                                if let Label::String(name) = label {
+                                    Some(cx.frame_def.var_index(name))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        RowSinkFactory::new(move || {
+                            Box::new(YieldRowSink::new_record(
+                                yield_code.clone(),
+                                field_slots.clone(),
+                                next_factory.create(),
+                            ))
+                        })
+                    } else {
+                        // Scalar yield: write to the current slot (slot 0
+                        // past any bound vars).
+                        let current_slot = cx.frame_def.bound_vars.len();
+                        RowSinkFactory::new(move || {
+                            Box::new(YieldRowSink::new(
+                                yield_code.clone(),
+                                current_slot,
+                                next_factory.create(),
+                            ))
+                        })
+                    }
+                }
             }
             _ => todo!("create_row_sink_factory: {:?}", first_step.kind),
         }
@@ -1145,7 +1239,13 @@ impl<'a> Compiler<'a> {
             // Single binding matching the element type - just get that
             // variable.
             let name = &field_names[0];
-            let slot = cx.frame_def.var_index(name);
+            // "current" is not a named frame slot; it refers to the primary
+            // element at index bound_vars.len() (i.e., the first local var).
+            let slot = if name == "current" {
+                cx.frame_def.bound_vars.len()
+            } else {
+                cx.frame_def.var_index(name)
+            };
             Code::new_get_local(&cx.frame_def, slot)
         } else {
             // Multiple bindings or type mismatch - create a tuple.
@@ -1157,6 +1257,26 @@ impl<'a> Compiler<'a> {
                 })
                 .collect();
             Code::Tuple(codes)
+        }
+    }
+
+    /// Returns true if the expression (or any sub-expression) references
+    /// `ordinal`.
+    fn expr_uses_ordinal(expr: &Expr) -> bool {
+        match expr {
+            Expr::Ordinal(_) => true,
+            Expr::Apply(_, f, a, _) => {
+                Self::expr_uses_ordinal(f) || Self::expr_uses_ordinal(a)
+            }
+            Expr::Case(_, e, matches) => {
+                Self::expr_uses_ordinal(e)
+                    || matches.iter().any(|m| Self::expr_uses_ordinal(&m.expr))
+            }
+            Expr::Let(_, _, e) => Self::expr_uses_ordinal(e),
+            Expr::List(_, exprs) | Expr::Tuple(_, exprs) => {
+                exprs.iter().any(Self::expr_uses_ordinal)
+            }
+            _ => false,
         }
     }
 

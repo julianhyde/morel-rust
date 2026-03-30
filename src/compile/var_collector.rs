@@ -208,6 +208,10 @@ impl Expr {
                 expr.collect_vars(collector);
                 matches.iter().for_each(|m| m.collect_vars(collector));
             }
+            Expr::Current(_) => {
+                // 'current' refers to the primary element already in the
+                // frame; no additional frame slot is needed.
+            }
             Expr::Fn(_, matches) => {
                 // do not traverse into a function
                 if false {
@@ -229,6 +233,11 @@ impl Expr {
             }
             Expr::Literal(_, _) => {
                 // no variables
+            }
+            Expr::Ordinal(_) => {
+                // 'ordinal' needs a dedicated frame slot so the OrdinalRowSink
+                // can write to it before each row is processed.
+                collector.add_def(Binding::of_name("ordinal"));
             }
             Expr::RecordSelector(_, _) => {
                 // no variables
@@ -299,6 +308,16 @@ impl Step {
                 expr.collect_vars(collector);
             }
             StepKind::Yield(expr) => {
+                // If yielding a record, add field names as defs so that
+                // subsequent steps can reference them as frame variables
+                // (e.g., 'yield {x = e.deptno} where x > 10').
+                if let Type::Record(_, fields) = expr.type_().as_ref() {
+                    for label in fields.keys() {
+                        if let Label::String(name) = label {
+                            collector.add_def(Binding::of_name(name));
+                        }
+                    }
+                }
                 expr.collect_vars(collector);
             }
             _ => {

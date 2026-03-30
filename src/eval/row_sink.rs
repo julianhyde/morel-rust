@@ -1187,3 +1187,181 @@ impl RowSink for ComputeRowSink {
         self.compute_code.eval_f0(r, f)
     }
 }
+
+/// Implementation of RowSink for a non-terminal `yield` step.
+///
+/// When a `yield` step is followed by more steps (e.g., `yield expr
+/// where ...`), this sink evaluates the yield expression, writes the
+/// result into the "current" frame slot (slot 0 for closures with no
+/// bound vars), and forwards the row to the downstream sink. Downstream
+/// steps (such as `where current mod 2 = 1`) can then read the yielded
+/// value via `current`.
+pub struct YieldRowSink {
+    yield_code: Code,
+    /// If non-empty, the yielded record's fields are written to these frame
+    /// slots (one slot per field, in the same order as the record's fields).
+    /// If empty, the yielded value is written to `current_slot` instead.
+    field_slots: Vec<usize>,
+    current_slot: usize,
+    row_sink: Box<dyn RowSink>,
+}
+
+impl YieldRowSink {
+    /// Creates a sink that writes a scalar (or whole record) to `current_slot`.
+    pub fn new(
+        yield_code: Code,
+        current_slot: usize,
+        row_sink: Box<dyn RowSink>,
+    ) -> Self {
+        Self {
+            yield_code,
+            field_slots: Vec::new(),
+            current_slot,
+            row_sink,
+        }
+    }
+
+    /// Creates a sink that unpacks a record's fields into separate frame slots.
+    /// `field_slots[i]` is the frame slot for the i-th field of the record.
+    pub fn new_record(
+        yield_code: Code,
+        field_slots: Vec<usize>,
+        row_sink: Box<dyn RowSink>,
+    ) -> Self {
+        Self {
+            yield_code,
+            field_slots,
+            current_slot: 0,
+            row_sink,
+        }
+    }
+}
+
+impl RowSink for YieldRowSink {
+    fn start(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        self.row_sink.start(r, f)
+    }
+
+    fn accept(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        let val = self.yield_code.eval_f0(r, f)?;
+        if self.field_slots.is_empty() {
+            // Scalar (or whole-record) yield: write to current_slot.
+            f.vals[self.current_slot] = val;
+        } else {
+            // Record yield: unpack each field into its own frame slot.
+            for (field_idx, &slot) in self.field_slots.iter().enumerate() {
+                f.vals[slot] = val.get_field(field_idx).unwrap().clone();
+            }
+        }
+        self.row_sink.accept(r, f)
+    }
+
+    fn result(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<Val, MorelError> {
+        self.row_sink.result(r, f)
+    }
+}
+
+/// Implementation of RowSink for an `unorder` step.
+///
+/// `unorder` is a pass-through that changes the query result type from
+/// `list` to `bag`, signaling that downstream processing no longer depends
+/// on row order. At runtime there is nothing to do — rows pass straight
+/// through to the downstream sink.
+pub struct UnorderRowSink {
+    row_sink: Box<dyn RowSink>,
+}
+
+impl UnorderRowSink {
+    pub fn new(row_sink: Box<dyn RowSink>) -> Self {
+        Self { row_sink }
+    }
+}
+
+impl RowSink for UnorderRowSink {
+    fn start(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        self.row_sink.start(r, f)
+    }
+
+    fn accept(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        self.row_sink.accept(r, f)
+    }
+
+    fn result(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<Val, MorelError> {
+        self.row_sink.result(r, f)
+    }
+}
+
+/// Implementation of RowSink for an `ordinal` step.
+///
+/// Wraps a downstream sink and increments a frame slot (the ordinal counter)
+/// before forwarding each row. The ordinal starts at 0 and increases by 1
+/// for every row accepted.
+pub struct OrdinalRowSink {
+    ordinal_slot: usize,
+    next_ordinal: i32,
+    row_sink: Box<dyn RowSink>,
+}
+
+impl OrdinalRowSink {
+    pub fn new(ordinal_slot: usize, row_sink: Box<dyn RowSink>) -> Self {
+        Self {
+            ordinal_slot,
+            next_ordinal: 0_i32,
+            row_sink,
+        }
+    }
+}
+
+impl RowSink for OrdinalRowSink {
+    fn start(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        self.next_ordinal = 0;
+        self.row_sink.start(r, f)
+    }
+
+    fn accept(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        // Write the current ordinal into the frame slot, then advance.
+        f.vals[self.ordinal_slot] = Val::Int(self.next_ordinal);
+        self.next_ordinal += 1;
+        self.row_sink.accept(r, f)
+    }
+
+    fn result(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<Val, MorelError> {
+        self.row_sink.result(r, f)
+    }
+}
