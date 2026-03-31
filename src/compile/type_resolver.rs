@@ -1125,8 +1125,19 @@ impl TypeResolver {
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Ordinal => {
-                // 'ordinal' is a row counter with type int.
-                self.primitive_term(&PrimitiveType::Int, v);
+                // 'ordinal' is a row counter; only valid inside a query.
+                match env.get("ordinal", self) {
+                    Some(BindType::Val(term))
+                    | Some(BindType::Constructor(term)) => {
+                        self.equiv(&term, v);
+                    }
+                    None => {
+                        return Err(Error::Compile(
+                            "'ordinal' is only valid in a query".into(),
+                            expr.span.clone(),
+                        ));
+                    }
+                }
                 self.reg_expr(&expr.kind, &expr.span, expr.id, v)
             }
             ExprKind::Plus(left, right) => {
@@ -1334,7 +1345,10 @@ impl TypeResolver {
                 let expr3 = self.validate_order(&expr2);
                 let step2 = StepKind::Order(Box::new(expr3));
                 steps2.push(step2.spanned(&step.span));
-                Ok(p.clone())
+                // 'order' always produces an ordered (list) collection.
+                let c = self.unifier.variable();
+                self.list_term(Term::Variable(p.v), &c);
+                Ok(p.with_c(c))
             }
             StepKind::Require(expr) => {
                 let v = self.unifier.variable();
@@ -1454,6 +1468,11 @@ impl TypeResolver {
         // Bind 'current' to the scanned element type so that 'where' and
         // other steps after a scan can reference the element via 'current'.
         env_builder.push("current".to_string(), Term::Variable(v0));
+        // Bind 'ordinal' (type int) so that subsequent steps can use the
+        // row counter. The actual value is written by OrdinalRowSink at eval.
+        let v_ordinal = self.unifier.variable();
+        self.primitive_term(&PrimitiveType::Int, &v_ordinal);
+        env_builder.push("ordinal".to_string(), Term::Variable(v_ordinal));
         let env4 = env_builder.build();
 
         // Output collection type matches the input's list/bag kind.
