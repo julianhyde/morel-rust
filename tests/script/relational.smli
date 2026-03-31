@@ -785,14 +785,11 @@ from i in [1,2,3],
   _ in [()];
 > val it = [1,2,3] : int list
 
-set("mode", "validate");
-> val it = () : unit
+
 from i in [1,2,3],
   {} in [()];
 > val it = [1,2,3] : int list
 
-set("mode", "evaluate");
-> val it = () : unit
 
 from i in [1,2,3]
   join _ in [()];
@@ -832,14 +829,11 @@ from (i, j) in [(1, 2), (3, 4)],
   () in bag [()];
 > val it = [{i=1,j=2},{i=3,j=4}] : {i:int, j:int} bag
 
-set("mode", "validate");
-> val it = () : unit
+
 from (i, j) in [(1, 2), (3, 4)],
   {} in bag [()];
 > val it = [{i=1,j=2},{i=3,j=4}] : {i:int, j:int} bag
 
-set("mode", "evaluate");
-> val it = () : unit
 
 from (i, j) in [(1, 2), (3, 4)]
   join _ in bag [()];
@@ -848,14 +842,11 @@ from (i, j) in [(1, 2), (3, 4)]
   join () in bag [()];
 > val it = [{i=1,j=2},{i=3,j=4}] : {i:int, j:int} bag
 
-set("mode", "validate");
-> val it = () : unit
+
 from (i, j) in [(1, 2), (3, 4)]
   join {} in bag [()];
 > val it = [{i=1,j=2},{i=3,j=4}] : {i:int, j:int} bag
 
-set("mode", "evaluate");
-> val it = () : unit
 
 from (i, j) in [(1, 2), (3, 4)]
   join _ in bag ["a"];
@@ -880,14 +871,11 @@ from () in [()],
     () in [(), ()];
 > val it = [(),()] : unit list
 
-set("mode", "validate");
-> val it = () : unit
+
 from {} in [()],
   {} in [()];
 > val it = [()] : unit list
 
-set("mode", "evaluate");
-> val it = () : unit
 
 from _ in ["a","b","c"],
   _ in [true,false];
@@ -898,27 +886,26 @@ from _ in [()],
   i in [1,2,3];
 > val it = [1,2,3] : int list
 
-set("mode", "validate");
-> val it = () : unit
+
 from {} in [()],
   i in [1,2,3];
 > val it = [1,2,3] : int list
 
-set("mode", "evaluate");
-> val it = () : unit
 
 from _ in [()],
   i in bag [1,2,3];
 > val it = [1,2,3] : int bag
 
-set("mode", "validate");
-> val it = () : unit
+
 from {} in [()],
   i in bag [1,2,3];
 > val it = [1,2,3] : int bag
 from {} in bag [()],
   i in bag [1,2,3];
 > val it = [1,2,3] : int bag
+
+set("mode", "validate");
+> val it = () : unit
 from {} in bag [()],
   i in [1,2,3];
 > val it = [1,2,3] : int bag

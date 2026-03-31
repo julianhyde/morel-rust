@@ -357,6 +357,10 @@ impl<'a> Compiler<'a> {
                     .collect::<Vec<Code>>();
                 Code::new_bind_tuple(&codes)
             }
+            Pat::Record(_, fields, _) if fields.is_empty() => {
+                // Empty record pattern {} matches unit (); trivially succeeds.
+                Code::BindWildcard
+            }
             Pat::Wildcard(_) => {
                 // no variables to bind;
                 // trivially succeeds
