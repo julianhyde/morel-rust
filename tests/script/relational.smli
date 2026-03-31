@@ -326,8 +326,6 @@ from e in emps
   yield x + y;
 > val it = [202] : int list
 
-set("mode", "validate");
-> val it = () : unit
 
 (* Order ------------------------------------------------------ *)
 from e in emps
@@ -355,9 +353,6 @@ from e in emps
   skip 1;
 > val it = [{deptno=30},{deptno=20},{deptno=10}] : {deptno:int} list
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) Composite order
 from e in emps
@@ -394,8 +389,6 @@ from e in emps
 >    {deptno=30,id=103,name="Scooby"},{deptno=30,id=102,name="Shaggy"}]
 >   : {deptno:int, id:int, name:string} list
 
-set("mode", "validate");
-> val it = () : unit
 
 from e in emps
   yield {e.deptno}
@@ -427,9 +420,6 @@ end;
 >   : {deptno:int, id:int} list * {deptno:int, id:int} list
 
 
-set("mode", "evaluate");
-> val it = () : unit
-
 (* Unorder ---------------------------------------------------- *)
 from i in [1,2] unorder;
 > val it = [1,2] : int bag
@@ -447,8 +437,6 @@ from i in [1,2,3,4] where i > 1 unorder where i < 4 unorder;
 from i in [1,2,3,4] where i > 1 unorder where i < 4 order DESC i;
 > val it = [3,2] : int list
 
-set("mode", "validate");
-> val it = () : unit
 
 from e in emps
   order DESC e.name
@@ -457,9 +445,6 @@ from e in emps
 > val it = [{deptno=20,id=101,name="Velma"},{deptno=30,id=102,name="Shaggy"}]
 >   : {deptno:int, id:int, name:string} bag
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 exists i in [1,2,3,4] unorder where i > 3;
 > val it = true : bool
@@ -930,6 +915,10 @@ from _ = "a",
   _ = 1;
 > val it = [()] : unit list
 
+
+set("mode", "evaluate");
+> val it = () : unit
+
 (* Combinations of steps -------------------------------------- *)
 (*) 'yield' followed by 'order'
 from e in emps
@@ -951,9 +940,6 @@ from e in emps
 >    {name=20,x="Velma",z=21},{name=10,x="Fred",z=11}]
 >   : {name:int, x:string, z:int} list
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) 'yield' followed by 'join'
 from job in ["CLERK", "MANAGER"]
@@ -1186,8 +1172,6 @@ from e in elements;
 > stdIn:1.11-1.19 Error: 'elements' is only valid in a 'compute' clause
 >   raised at: stdIn:1.11-1.19
 
-set("mode", "validate");
-> val it = () : unit
 
 (*) singleton record 'yield' followed by 'order'
 from e in emps
@@ -1209,6 +1193,9 @@ from e in emps
   yield {tens = d div 10, units = d mod 10};
 > val it = [{tens=3,units=0},{tens=3,units=0},{tens=2,units=0},{tens=1,units=0}]
 >   : {tens:int, units:int} list
+
+set("mode", "validate");
+> val it = () : unit
 
 (*) assignment to 'd' via a pattern
 from {deptno = d} in [{deptno=10}, {deptno=20}]
@@ -1386,11 +1373,18 @@ from (i, j) in [("a", 1), ("b", 4), ("a", 3)]
 >    {c=0,elements=[{i="b",j=4}],i="b"}]
 >   : {c:int, elements:{i:string, j:int} list, i:string} list
 
+
+set("mode", "evaluate");
+> val it = () : unit
+
 from (i, j) in [("a", 1), ("b", 4), ("a", 3)]
   group i compute elements order i;
 > val it =
 >   [{elements=[{i="a",j=1},{i="a",j=3}],i="a"},{elements=[{i="b",j=4}],i="b"}]
 >   : {elements:{i:string, j:int} list, i:string} list
+
+set("mode", "validate");
+> val it = () : unit
 
 from (i, j) in [("a", 1), ("b", 4), ("a", 3)]
   group {i} compute {s = from r in elements compute sum over r.j} order i;

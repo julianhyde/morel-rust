@@ -419,7 +419,9 @@ impl RowSink for CollectRowSink {
 pub struct OrderRowSink {
     order_code: Code,
     comparator: Arc<dyn Comparator>,
-    slot_count: usize,
+    /// The actual frame slot indices for the active bindings at this step.
+    /// Used to save and restore the frame when sorting rows.
+    binding_slots: Vec<usize>,
     row_sink: Box<dyn RowSink>,
     rows: Vec<Val>,
 }
@@ -428,15 +430,41 @@ impl OrderRowSink {
     pub fn new(
         order_code: Code,
         comparator: Arc<dyn Comparator>,
-        slot_count: usize,
+        binding_slots: Vec<usize>,
         row_sink: Box<dyn RowSink>,
     ) -> Self {
         Self {
             order_code,
             comparator,
-            slot_count,
+            binding_slots,
             row_sink,
             rows: Vec::new(),
+        }
+    }
+
+    /// Saves the current row's frame slots into a Val for later restoration.
+    fn save_row(&self, f: &Frame) -> Val {
+        if self.binding_slots.len() == 1 {
+            f.vals[self.binding_slots[0]].clone()
+        } else {
+            Val::List(
+                self.binding_slots
+                    .iter()
+                    .map(|&s| f.vals[s].clone())
+                    .collect(),
+            )
+        }
+    }
+
+    /// Restores frame slots from a previously saved row Val.
+    fn restore_row(&self, f: &mut Frame, row: Val) {
+        if self.binding_slots.len() == 1 {
+            f.vals[self.binding_slots[0]] = row;
+        } else {
+            let items = row.expect_list();
+            for (&slot, item) in self.binding_slots.iter().zip(items) {
+                f.vals[slot] = item.clone();
+            }
         }
     }
 }
@@ -456,16 +484,7 @@ impl RowSink for OrderRowSink {
         _r: &mut EvalEnv,
         f: &mut Frame,
     ) -> Result<(), MorelError> {
-        // Accumulate the current row for sorting later.
-        // Extract the current row value from the frame.
-        let row_val = if self.slot_count == 1 {
-            // Atom case: single binding.
-            f.vals[0].clone()
-        } else {
-            // Tuple case: create tuple from slots 0..slot_count.
-            Val::List(f.vals[0..self.slot_count].to_vec())
-        };
-        self.rows.push(row_val);
+        self.rows.push(self.save_row(f));
         Ok(())
     }
 
@@ -474,46 +493,29 @@ impl RowSink for OrderRowSink {
         r: &mut EvalEnv,
         f: &mut Frame,
     ) -> Result<Val, MorelError> {
-        // Sort the accumulated rows.
-        // We need to evaluate the order expression for each row and
-        // compare. This is tricky because we need to restore the frame
-        // state for each comparison.
-
         // Create tuples of (row_val, order_key) for stable sorting.
         let mut rows_with_keys: Vec<(Val, Val)> = Vec::new();
 
         for row in &self.rows {
-            // Restore the frame to this row's state.
-            if self.slot_count == 1 {
-                f.vals[0] = row.clone();
-            } else {
-                let items = row.expect_list();
-                f.vals[..self.slot_count]
-                    .clone_from_slice(&items[..self.slot_count]);
-            }
-
-            // Evaluate the order expression for this row.
+            // Restore the frame to this row's state and evaluate the key.
+            self.restore_row(f, row.clone());
             let order_key = self.order_code.eval_f0(r, f)?;
             rows_with_keys.push((row.clone(), order_key));
         }
 
         // Sort by the order keys using the comparator.
-        rows_with_keys.sort_by(|a, b| {
-            // Compare the order keys (second element of the tuple).
-            self.comparator.compare(&a.1, &b.1)
-        });
+        rows_with_keys.sort_by(|a, b| self.comparator.compare(&a.1, &b.1));
 
-        // Pass sorted rows downstream.
+        // Pass sorted rows downstream, catching EarlyReturn to allow
+        // short-circuit sinks (take, exists) to terminate early while still
+        // delivering the final result.
         for (row, _key) in rows_with_keys {
-            // Restore the frame to this row.
-            if self.slot_count == 1 {
-                f.vals[0] = row;
-            } else {
-                let items = row.expect_list();
-                f.vals[..self.slot_count]
-                    .clone_from_slice(&items[..self.slot_count]);
+            self.restore_row(f, row);
+            match self.row_sink.accept(r, f) {
+                Ok(()) => {}
+                Err(MorelError::EarlyReturn) => break,
+                Err(e) => return Err(e),
             }
-            self.row_sink.accept(r, f)?;
         }
 
         self.row_sink.result(r, f)

@@ -350,16 +350,16 @@ impl<'a> Compiler<'a> {
                 Code::new_bind_list(&codes)
             }
             Pat::Literal(_, val) => Code::new_bind_literal(val),
+            Pat::Record(_, fields, _) if fields.is_empty() => {
+                // Empty record pattern {} matches unit (); trivially succeeds.
+                Code::BindWildcard
+            }
             Pat::Tuple(_, pats) => {
                 let codes = pats
                     .iter()
                     .map(|p| self.compile_pat(cx, p))
                     .collect::<Vec<Code>>();
                 Code::new_bind_tuple(&codes)
-            }
-            Pat::Record(_, fields, _) if fields.is_empty() => {
-                // Empty record pattern {} matches unit (); trivially succeeds.
-                Code::BindWildcard
             }
             Pat::Wildcard(_) => {
                 // no variables to bind;
@@ -975,7 +975,15 @@ impl<'a> Compiler<'a> {
 
                 // Compile the order expression.
                 let order_code = self.compile_expr(cx, None, expr);
-                let slot_count = step_env.bindings.len();
+
+                // Compute the actual frame slot indices for each active
+                // binding. After a 'yield', named fields may occupy slots
+                // beyond index 0, so we cannot assume 0..slot_count.
+                let binding_slots: Vec<usize> = step_env
+                    .bindings
+                    .iter()
+                    .map(|b| cx.frame_def.var_index(&b.id.name))
+                    .collect();
 
                 // Create a comparator for the order expression's type.
                 let expr_type = expr.type_();
@@ -985,7 +993,7 @@ impl<'a> Compiler<'a> {
                     Box::new(OrderRowSink::new(
                         order_code.clone(),
                         comparator.clone(),
-                        slot_count,
+                        binding_slots.clone(),
                         next_factory.create(),
                     ))
                 })
