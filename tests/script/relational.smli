@@ -634,8 +634,6 @@ from e in emps, i in bag [1]
 >   [{name="Fred",ordinal=0},{name="Velma",ordinal=1},{name="Shaggy",ordinal=2},
 >    {name="Scooby",ordinal=3}] : {name:string, ordinal:int} list
 
-set("mode", "validate");
-> val it = () : unit
 
 (*) A 'where' clause after 'yield ordinal' creates gaps in the ordinals.
 from e in emps
@@ -648,9 +646,6 @@ from e in emps
 >    {name="Scooby",ordinal=6},{name="Scooby",ordinal=7}]
 >   : {name:string, ordinal:int} list
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) Do the equivalent of 'take' using ordinal.
 from e in emps
@@ -666,8 +661,6 @@ from e in emps
 > val it = [{deptno=30,id=102,name="Shaggy"},{deptno=30,id=103,name="Scooby"}]
 >   : {deptno:int, id:int, name:string} list
 
-set("mode", "validate");
-> val it = () : unit
 
 (*) When there is a field called 'ordinal', it doesn't get used unless you quote it.
 from i in [3,1,4,5,3,5,8,9,7]
@@ -682,6 +675,9 @@ from i in [3,1,4,5,3,5,8,9,7]
   where `ordinal` > 1;
 > val it = [{i=8,ordinal=6},{i=9,ordinal=7},{i=7,ordinal=8}]
 >   : {i:int, ordinal:int} list
+
+set("mode", "validate");
+> val it = () : unit
 
 from e in scott.emps
   yield {e.ename, e.sal, rank = ordinal + 1};
@@ -746,17 +742,12 @@ from i in [1,2]
   join j in (from k in ["a","b","c"] where ordinal < i);
 > val it = [{i=1,j="a"},{i=2,j="a"},{i=2,j="b"}] : {i:int, j:string} list
 
-set("mode", "validate");
-> val it = () : unit
 
 from i in [1,2]
   join j in (from k in ["a","b","c"] yield {m = ordinal} yield m);
 > val it = [{i=1,j=0},{i=1,j=1},{i=1,j=2},{i=2,j=0},{i=2,j=1},{i=2,j=2}]
 >   : {i:int, j:int} list
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (* Degenerate joins ------------------------------------------- *)
 (*) Join atom to list of units

@@ -1367,3 +1367,86 @@ impl RowSink for OrdinalRowSink {
         self.row_sink.result(r, f)
     }
 }
+
+/// Combined sink for a `where` step whose filter expression uses the live
+/// ordinal counter AND where `ordinal` is also a yielded field that must be
+/// preserved in the output.
+///
+/// It writes the live counter into `ordinal_slot` for filter evaluation, then
+/// restores the original field value before passing the row downstream.  When
+/// `preserve_field` is false (ordinal is only a live counter, not a field) the
+/// sink behaves like `OrdinalRowSink → WhereRowSink`.
+pub struct OrdinalFilterRowSink {
+    ordinal_slot: usize,
+    filter_code: Code,
+    row_sink: Box<dyn RowSink>,
+    next_ordinal: i32,
+    preserve_field: bool,
+}
+
+impl OrdinalFilterRowSink {
+    pub fn new(
+        ordinal_slot: usize,
+        filter_code: Code,
+        row_sink: Box<dyn RowSink>,
+        preserve_field: bool,
+    ) -> Self {
+        Self {
+            ordinal_slot,
+            filter_code,
+            row_sink,
+            next_ordinal: 0,
+            preserve_field,
+        }
+    }
+}
+
+impl RowSink for OrdinalFilterRowSink {
+    fn start(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        self.next_ordinal = 0;
+        self.row_sink.start(r, f)
+    }
+
+    fn accept(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        // Optionally save the original field value before overwriting it.
+        let saved = if self.preserve_field {
+            Some(f.vals[self.ordinal_slot].clone())
+        } else {
+            None
+        };
+
+        // Write the live counter into the ordinal slot.
+        f.vals[self.ordinal_slot] = Val::Int(self.next_ordinal);
+        self.next_ordinal += 1;
+
+        // Evaluate the filter in the context of the live counter.
+        let passes = self.filter_code.eval_f0(r, f)?.expect_bool();
+
+        // Restore the original field value so downstream sees the yielded
+        // ordinal value, not the ephemeral counter.
+        if let Some(orig) = saved {
+            f.vals[self.ordinal_slot] = orig;
+        }
+
+        if passes {
+            self.row_sink.accept(r, f)?;
+        }
+        Ok(())
+    }
+
+    fn result(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<Val, MorelError> {
+        self.row_sink.result(r, f)
+    }
+}

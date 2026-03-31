@@ -749,9 +749,9 @@ impl<'a> Compiler<'a> {
         use crate::eval::row_sink::{
             CollectRowSink, ComputeRowSink, DistinctRowSink, ExceptRowSink,
             ExistsRowSink, GroupRowSink, IntersectRowSink, OrderRowSink,
-            OrdinalRowSink, ScanRowSink, SkipRowSink, TakeRowSink,
-            ThroughRowSink, UnionRowSink, UnorderRowSink, WhereRowSink,
-            YieldRowSink,
+            OrdinalFilterRowSink, OrdinalRowSink, ScanRowSink, SkipRowSink,
+            TakeRowSink, ThroughRowSink, UnionRowSink, UnorderRowSink,
+            WhereRowSink, YieldRowSink,
         };
 
         if steps.is_empty() {
@@ -1134,25 +1134,32 @@ impl<'a> Compiler<'a> {
                 );
                 let filter_code = self.compile_expr(cx, None, expr);
 
-                // If the where expression uses 'ordinal', wrap the whole
-                // where+downstream pipeline with OrdinalRowSink so ordinal
-                // is incremented before the filter is evaluated.
                 let ordinal_slot = if Self::expr_uses_ordinal(expr) {
                     cx.frame_def.try_var_index("ordinal")
                 } else {
                     None
                 };
 
+                // When 'ordinal' is a yielded field (present in step_env
+                // bindings), we need to preserve its value across the
+                // counter increment so downstream sinks (e.g.
+                // CollectRowSink) still see the original field value.
+                let ordinal_is_field = ordinal_slot.is_some()
+                    && step_env.bindings.iter().any(|b| b.id.name == "ordinal");
+
                 RowSinkFactory::new(move || {
-                    let where_sink: Box<dyn RowSink> =
+                    if let Some(slot) = ordinal_slot {
+                        Box::new(OrdinalFilterRowSink::new(
+                            slot,
+                            filter_code.clone(),
+                            next_factory.create(),
+                            ordinal_is_field,
+                        ))
+                    } else {
                         Box::new(WhereRowSink::new(
                             filter_code.clone(),
                             next_factory.create(),
-                        ));
-                    if let Some(slot) = ordinal_slot {
-                        Box::new(OrdinalRowSink::new(slot, where_sink))
-                    } else {
-                        where_sink
+                        ))
                     }
                 })
             }
@@ -1185,36 +1192,59 @@ impl<'a> Compiler<'a> {
                         element_type,
                     );
                     let yield_type = expr.type_().clone();
-                    if let Type::Record(_, fields) = yield_type.as_ref() {
-                        // Record yield: unpack each field into its own slot.
-                        let field_slots: Vec<usize> = fields
-                            .keys()
-                            .filter_map(|label| {
-                                if let Label::String(name) = label {
-                                    Some(cx.frame_def.var_index(name))
-                                } else {
-                                    None
-                                }
+
+                    // If the yield expression references 'ordinal', wrap with
+                    // OrdinalRowSink so the counter is written into the frame
+                    // slot before the yield expression captures it.
+                    let ordinal_slot = if Self::expr_uses_ordinal(expr) {
+                        cx.frame_def.try_var_index("ordinal")
+                    } else {
+                        None
+                    };
+
+                    let yield_factory =
+                        if let Type::Record(_, fields) = yield_type.as_ref() {
+                            // Record yield: unpack each field into its own
+                            // slot.
+                            let field_slots: Vec<usize> = fields
+                                .keys()
+                                .filter_map(|label| {
+                                    if let Label::String(name) = label {
+                                        Some(cx.frame_def.var_index(name))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            RowSinkFactory::new(move || {
+                                Box::new(YieldRowSink::new_record(
+                                    yield_code.clone(),
+                                    field_slots.clone(),
+                                    next_factory.create(),
+                                ))
                             })
-                            .collect();
+                        } else {
+                            // Scalar yield: write to the current slot (slot 0
+                            // past any bound vars).
+                            let current_slot = cx.frame_def.bound_vars.len();
+                            RowSinkFactory::new(move || {
+                                Box::new(YieldRowSink::new(
+                                    yield_code.clone(),
+                                    current_slot,
+                                    next_factory.create(),
+                                ))
+                            })
+                        };
+
+                    if let Some(slot) = ordinal_slot {
                         RowSinkFactory::new(move || {
-                            Box::new(YieldRowSink::new_record(
-                                yield_code.clone(),
-                                field_slots.clone(),
-                                next_factory.create(),
+                            Box::new(OrdinalRowSink::new(
+                                slot,
+                                yield_factory.create(),
                             ))
                         })
                     } else {
-                        // Scalar yield: write to the current slot (slot 0
-                        // past any bound vars).
-                        let current_slot = cx.frame_def.bound_vars.len();
-                        RowSinkFactory::new(move || {
-                            Box::new(YieldRowSink::new(
-                                yield_code.clone(),
-                                current_slot,
-                                next_factory.create(),
-                            ))
-                        })
+                        yield_factory
                     }
                 }
             }
