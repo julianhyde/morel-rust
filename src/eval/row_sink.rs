@@ -1254,16 +1254,32 @@ impl RowSink for YieldRowSink {
         f: &mut Frame,
     ) -> Result<(), MorelError> {
         let val = self.yield_code.eval_f0(r, f)?;
+        // Save the frame slots we are about to overwrite, so that callers
+        // higher in the pipeline (e.g. an enclosing join's scan loop) still
+        // see the original values after we return.
         if self.field_slots.is_empty() {
             // Scalar (or whole-record) yield: write to current_slot.
+            let saved = f.vals[self.current_slot].clone();
             f.vals[self.current_slot] = val;
+            let result = self.row_sink.accept(r, f);
+            f.vals[self.current_slot] = saved;
+            result
         } else {
             // Record yield: unpack each field into its own frame slot.
+            let saved: Vec<Val> = self
+                .field_slots
+                .iter()
+                .map(|&s| f.vals[s].clone())
+                .collect();
             for (field_idx, &slot) in self.field_slots.iter().enumerate() {
                 f.vals[slot] = val.get_field(field_idx).unwrap().clone();
             }
+            let result = self.row_sink.accept(r, f);
+            for (&slot, sv) in self.field_slots.iter().zip(saved) {
+                f.vals[slot] = sv;
+            }
+            result
         }
-        self.row_sink.accept(r, f)
     }
 
     fn result(

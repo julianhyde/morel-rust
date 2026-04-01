@@ -769,8 +769,17 @@ impl<'a> Resolver<'a> {
     }
 
     /// Resolves an AST pattern field to a core pattern field.
-    fn resolve_pat_field(&self, _field: &PatField) -> CorePatField {
-        todo!("Implement pat field resolution")
+    fn resolve_pat_field(&self, field: &PatField) -> CorePatField {
+        match field {
+            PatField::Labeled(_, name, pat) => CorePatField::Labeled(
+                name.clone(),
+                Box::new(self.resolve_pat(pat)),
+            ),
+            PatField::Anonymous(_, pat) => {
+                CorePatField::Anonymous(Box::new(self.resolve_pat(pat)))
+            }
+            PatField::Ellipsis(_) => CorePatField::Ellipsis,
+        }
     }
 
     /// Resolves an AST value binding to a core value binding.

@@ -16,8 +16,8 @@
 // License.
 
 use crate::compile::core::{
-    DatatypeBind, Decl, Expr, Match, Pat, Step, StepEnv, StepKind, TypeBind,
-    ValBind,
+    DatatypeBind, Decl, Expr, Match, Pat, PatField, Step, StepEnv, StepKind,
+    TypeBind, ValBind,
 };
 use crate::compile::library::BuiltInFunction;
 use crate::compile::pretty::Pretty;
@@ -353,6 +353,45 @@ impl<'a> Compiler<'a> {
             Pat::Record(_, fields, _) if fields.is_empty() => {
                 // Empty record pattern {} matches unit (); trivially succeeds.
                 Code::BindWildcard
+            }
+            Pat::Record(type_, fields, _has_ellipsis) => {
+                // Build a name→sub-pat map from the pattern fields.
+                let mut field_map: BTreeMap<String, &Pat> = BTreeMap::new();
+                for f in fields {
+                    match f {
+                        PatField::Labeled(name, sub_pat) => {
+                            field_map.insert(name.clone(), sub_pat);
+                        }
+                        PatField::Anonymous(sub_pat) => {
+                            if let Some(name) = sub_pat.name() {
+                                field_map.insert(name, sub_pat);
+                            }
+                        }
+                        PatField::Ellipsis => {}
+                    }
+                }
+                // For each field in the record type (alphabetical order),
+                // emit the sub-pattern code or Wildcard if not mentioned.
+                let codes: Vec<Code> =
+                    if let Type::Record(_, type_fields) = type_.as_ref() {
+                        type_fields
+                            .keys()
+                            .map(|label| {
+                                if let Label::String(name) = label {
+                                    if let Some(sub_pat) = field_map.get(name) {
+                                        self.compile_pat(cx, sub_pat)
+                                    } else {
+                                        Code::BindWildcard
+                                    }
+                                } else {
+                                    Code::BindWildcard
+                                }
+                            })
+                            .collect()
+                    } else {
+                        vec![]
+                    };
+                Code::new_bind_tuple(&codes)
             }
             Pat::Tuple(_, pats) => {
                 let codes = pats
@@ -979,10 +1018,18 @@ impl<'a> Compiler<'a> {
                 // Compute the actual frame slot indices for each active
                 // binding. After a 'yield', named fields may occupy slots
                 // beyond index 0, so we cannot assume 0..slot_count.
+                // "current" is special: it is not a named frame variable,
+                // but lives at bound_vars.len() (the first local slot).
                 let binding_slots: Vec<usize> = step_env
                     .bindings
                     .iter()
-                    .map(|b| cx.frame_def.var_index(&b.id.name))
+                    .map(|b| {
+                        if b.id.name == "current" {
+                            cx.frame_def.bound_vars.len()
+                        } else {
+                            cx.frame_def.var_index(&b.id.name)
+                        }
+                    })
                     .collect();
 
                 // Create a comparator for the order expression's type.

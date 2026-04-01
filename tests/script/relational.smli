@@ -297,8 +297,6 @@ from p in [(1, 2), (3, 5)]
   yield case p of (x, y) => {x, y};
 > val it = [{x=1,y=2},{x=3,y=5}] : {x:int, y:int} list
 
-set("mode", "validate");
-> val it = () : unit
 
 (*) 'yield' uses 'case' to deconstruct a record
 from p in [{x = 1, y = 2}, {x = 3, y = 5}]
@@ -310,9 +308,6 @@ from p in [{x = 1, y = 2},{x = 3, y = 5}]
   yield case p of {x, y} => (x, y);
 > val it = [(1,2),(3,5)] : (int * int) list
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 from e in emps
   yield {x = e.id + e.deptno, y = e.id - e.deptno}
@@ -464,8 +459,6 @@ from e in emps
 > val it = [{deptno=10,id=100,name="Fred"}]
 >   : {deptno:int, id:int, name:string} list
 
-set("mode", "validate");
-> val it = () : unit
 
 from e in emps,
     d in depts on e.deptno = d.deptno
@@ -474,16 +467,11 @@ from e in emps,
 > val it = [121,133] : int list
 
 
-set("mode", "evaluate");
-> val it = () : unit
-
 from i in [1,2,3]
   yield current + 2
   yield current + 3;
 > val it = [6,7,8] : int list
 
-set("mode", "validate");
-> val it = () : unit
 
 from e in emps,
     d in depts on e.deptno = d.deptno
@@ -497,8 +485,6 @@ from e in emps,
   order (current mod 2, current);
 > val it = [110,132,121,133] : int list
 
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) "current" is not available in "skip", "take", "union", "intersect", "except"
 1 + current;
@@ -515,8 +501,6 @@ from i in [1, 2],
   j in [current + 10, current + 20];
 > val it = [{i=1,j=11},{i=1,j=21},{i=2,j=12},{i=2,j=22}] : {i:int, j:int} list
 
-set("mode", "validate");
-> val it = () : unit
 
 from i in [1,2,3,4,5]
   skip current;
@@ -528,9 +512,6 @@ from i in [1,2,3,4,5]
 > stdIn:2.8-2.15 Error: 'current' is only valid in a query
 >   raised at: stdIn:2.8-2.15
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 from i in [1,2,3,4,5]
   union [current + 10];
@@ -547,8 +528,6 @@ from i in [1,2,3,4,5]
 > stdIn:2.11-2.18 Error: 'current' is only valid in a query
 >   raised at: stdIn:2.11-2.18
 
-set("mode", "validate");
-> val it = () : unit
 
 (*) But "current" is available in a subquery
 from i in [1,2,3,4,5]
@@ -573,8 +552,6 @@ from i in [1,2,3,4,5]
 > val it = [4,5] : int list
 
 (* Ordinal ---------------------------------------------------- *)
-set("mode", "evaluate");
-> val it = () : unit
 
 1 + ordinal;
 > stdIn:1.5-1.12 Error: 'ordinal' is only valid in a query
@@ -886,6 +863,10 @@ from {} in bag [()],
   i in [1,2,3];
 > val it = [1,2,3] : int bag
 
+
+set("mode", "evaluate");
+> val it = () : unit
+
 (*) Variations of the above with '='
 from i in [1,2,3],
   _ = true;
@@ -906,9 +887,6 @@ from _ = "a",
   _ = 1;
 > val it = [()] : unit list
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (* Combinations of steps -------------------------------------- *)
 (*) 'yield' followed by 'order'
@@ -1009,6 +987,10 @@ from e in emps
   order current;
 > val it = [10,20,30] : int list
 
+
+set("mode", "evaluate");
+> val it = () : unit
+
 (*) anonymous 'yield' followed by 'distinct'
 from i in [1, 2, 3],
     j in [1, 2, 3]
@@ -1016,9 +998,6 @@ from i in [1, 2, 3],
   distinct;
 > val it = [2,3,4,5,6] : int list
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) singleton record 'yield' followed by 'yield'
 from i in [1, 2, 3],
@@ -1185,8 +1164,6 @@ from e in emps
 > val it = [{tens=3,units=0},{tens=3,units=0},{tens=2,units=0},{tens=1,units=0}]
 >   : {tens:int, units:int} list
 
-set("mode", "validate");
-> val it = () : unit
 
 (*) assignment to 'd' via a pattern
 from {deptno = d} in [{deptno=10}, {deptno=20}]
@@ -1194,9 +1171,6 @@ from {deptno = d} in [{deptno=10}, {deptno=20}]
   yield {tens = d div 10, units = d mod 10};
 > val it = [{tens=2,units=0},{tens=1,units=0}] : {tens:int, units:int} list
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) record whose only field is a record with only one field
 from x in [{a = {a = 1}}, {a = {a = 2}}]
@@ -1548,13 +1522,14 @@ from x in ["a", "b"]
 >    {x="b",y="d",z="e"},{x="b",y="d",z="f"}]
 >   : {x:string, y:string, z:string} list
 
-set("mode", "validate");
-> val it = () : unit
 
 (*) 'join' with '='
 from x in [1, 2]
   join y = 3;
 > val it = [{x=1,y=3},{x=2,y=3}] : {x:int, y:int} list
+
+set("mode", "validate");
+> val it = () : unit
 
 (*) 'join' with '=' and 'on'
 (*) (Was legal syntax until [MOREL-317].)
@@ -2632,8 +2607,6 @@ from (l, 2) in [(1, 2), (3, 4), (5, 2)]
   yield l;
 > val it = [1,5] : int list
 
-set("mode", "validate");
-> val it = () : unit
 
 (*) Record pattern
 from {b = b, a = a} in [{a=1,b=2}];
@@ -2653,6 +2626,9 @@ from {c = b, a = c, b = a} in [{a=1,b=2,c=3}];
 from {a = c, b = a, c = b} in [{a=1,b=2,c=3}];
 > val it = [{a=2,b=3,c=1}] : {a:int, b:int, c:int} list
 
+set("mode", "validate");
+> val it = () : unit
+
 (*) Record with wildcards
 from {a = a, ...} in [{a=1,b=2}];
 > val it = [1] : int list
@@ -2662,12 +2638,19 @@ from {a = c, b = true, c = a} in [{a=1,b=true,c=3}];
 > val it = [{a=3,c=1}] : {a:int, c:int} list
 from {a = c, b = true, c = a} in [{a=1,b=true,c=3},{a=1,b=true,c=4}] group c compute sum over a;
 > val it = [{c=1,sum=7}] : {c:int, sum:int} list
+
+set("mode", "evaluate");
+> val it = () : unit
+
 from {a = a, b = b, c = _} in [{a=1,b=true,c=3},{a=1,b=true,c=4}];
 > val it = [{a=1,b=true},{a=1,b=true}] : {a:int, b:bool} list
 from {a = a, b = b, c = _} in [{a=1,b=true,c=3},{a=1,b=true,c=4}], d in ["a", "b"];
 > val it =
 >   [{a=1,b=true,d="a"},{a=1,b=true,d="b"},{a=1,b=true,d="a"},{a=1,b=true,d="b"}]
 >   : {a:int, b:bool, d:string} list
+
+set("mode", "validate");
+> val it = () : unit
 from {a = a, b = b, ...} in [{a=1,b=true,c=3},{a=1,b=true,c=4}];
 > val it = [{a=1,b=true},{a=1,b=true}] : {a:int, b:bool} list
 from {a = a, c = c, ...} in [{a=1,b=true,c=3},{a=1,b=true,c=4}];
@@ -2676,12 +2659,19 @@ from {a, c, ...} in [{a=1,b=true,c=3},{a=1,b=true,c=4}];
 > val it = [{a=1,c=3},{a=1,c=4}] : {a:int, c:int} list
 from {b = y, ...} in [{a=1,b=2}];
 > val it = [2] : int list
+
+set("mode", "evaluate");
+> val it = () : unit
+
 from {b = y, a = (p, q)} in [{a=(1,true),b=2}];
 > val it = [{p=1,q=true,y=2}] : {p:int, q:bool, y:int} list
 from {b = y, a = (2, q)} in [{a=(1,true),b=2},{a=(2,false),b=3}];
 > val it = [{q=false,y=3}] : {q:bool, y:int} list
 from {b = y, a = x} in [{a=1,b=2}];
 > val it = [{x=1,y=2}] : {x:int, y:int} list
+
+set("mode", "validate");
+> val it = () : unit
 from {a = x, ...} in [{a=1,b=2,c=3}];
 > val it = [1] : int list
 from {a = x, b = y, ...} in [{a=1,b=2,c=3}];
@@ -2703,20 +2693,34 @@ listHeads [];
 listHeads [[1, 2], [3], [4, 5, 6]];
 > val it = [2,4,5] : int list
 
+
+set("mode", "evaluate");
+> val it = () : unit
+
 fun listFields (lists: 'a list) =
   from {a = x, b = y} in lists
   yield x + 1;
 > val listFields = fn : {a:int, b:'a} list -> int list
+
+set("mode", "validate");
+> val it = () : unit
 listFields [];
 > val it = [] : int list
 listFields [{a = 1, b = 2}, {a = 3, b = 0}, {a = 4, b = 5}];
 > val it = [2,4,5] : int list
+
+
+set("mode", "evaluate");
+> val it = () : unit
 
 (*) As above, using abbreviated record pattern
 fun listFields2 (lists: 'a list) =
   from {a, b} in lists
   yield a + 1;
 > val listFields2 = fn : {a:int, b:'a} list -> int list
+
+set("mode", "validate");
+> val it = () : unit
 listFields [];
 > val it = [] : int list
 listFields [{a = 1, b = 2}, {a = 3, b = 0}, {a = 4, b = 5}];
@@ -2741,6 +2745,10 @@ sumPairs2 [];
 sumPairs2 [(1, 2), (3, 4)];
 > val it = [4,10] : int list
 
+
+set("mode", "evaluate");
+> val it = () : unit
+
 (*) '=' in from
 from x = 1;
 > val it = [1] : int list
@@ -2755,6 +2763,9 @@ from x in [1, 2],
   where x = 2
   yield y;
 > val it = [3] : int list
+
+set("mode", "validate");
+> val it = () : unit
 from x in [1, 2],
     y = x + 1,
     z = y + 2
@@ -2976,13 +2987,15 @@ Sys.plan();
 >   "calcite(plan LogicalProject(j=[$1], s=[$2])\n  LogicalTableFunctionScan(invocation=[morelTable('#tabulate List (6, fn i2 => {i = i2, j = i2 + 3, s = #substring String (\"morel\", 0, i2)})', '{\n  \"fields\": [\n    {\n      \"type\": \"INTEGER\",\n      \"nullable\": false,\n      \"name\": \"i\"\n    },\n    {\n      \"type\": \"INTEGER\",\n      \"nullable\": false,\n      \"name\": \"j\"\n    },\n    {\n      \"type\": \"VARCHAR\",\n      \"nullable\": false,\n      \"precision\": -1,\n      \"name\": \"s\"\n    }\n  ],\n  \"nullable\": false\n}')], rowType=[RecordType(INTEGER i, INTEGER j, VARCHAR s)])\n)"
 >   : string
 
+
+set("mode", "evaluate");
+> val it = () : unit
+
 (*) List expression in Hybrid mode (0% Calcite), with various
 (*) row types: record, tuple, primitive
 List.filter (fn {i, j} => i mod 2 = 0) [{i = 1, j = 1}, {i = 2, j = 2}, {i = 3, j = 3}, {i = 4, j = 5}];
 > val it = [{i=2,j=2},{i=4,j=5}] : {i:int, j:int} list
 
-set("mode", "evaluate");
-> val it = () : unit
 
 List.filter (fn (i, j) => i mod 2 = 0) [(1, 1), (2, 2), (3, 3), (4, 5)];
 > val it = [(2,2),(4,5)] : (int * int) list

@@ -1383,7 +1383,9 @@ impl TypeResolver {
             ),
             StepKind::Skip(expr) => {
                 let v = self.unifier.variable();
-                let expr2 = self.deduce_expr_type(&*p.env, expr, &v)?;
+                // 'current' from the current query is not available in skip;
+                // only outer-query bindings (root_env) are in scope.
+                let expr2 = self.deduce_expr_type(&*p.root_env, expr, &v)?;
                 self.primitive_term(&PrimitiveType::Int, &v);
                 let step2 = StepKind::Skip(Box::new(expr2));
                 steps2.push(step2.spanned(&step.span));
@@ -1391,7 +1393,9 @@ impl TypeResolver {
             }
             StepKind::Take(expr) => {
                 let v = self.unifier.variable();
-                let expr2 = self.deduce_expr_type(&*p.env, expr, &v)?;
+                // 'current' from the current query is not available in take;
+                // only outer-query bindings (root_env) are in scope.
+                let expr2 = self.deduce_expr_type(&*p.root_env, expr, &v)?;
                 self.primitive_term(&PrimitiveType::Int, &v);
                 let step2 = StepKind::Take(Box::new(expr2));
                 steps2.push(step2.spanned(&step.span));
@@ -1496,7 +1500,14 @@ impl TypeResolver {
             None
         };
 
-        let step = StepKind::Scan(Box::new(pat2), Box::new(expr2), condition2);
+        // ScanEq steps must stay as ScanEq in the output so that the
+        // resolver can wrap the element expression in a singleton list.
+        // Normal scans (and join scans with a condition) become Scan.
+        let step = if eq {
+            StepKind::ScanEq(Box::new(pat2), Box::new(expr2))
+        } else {
+            StepKind::Scan(Box::new(pat2), Box::new(expr2), condition2)
+        };
         steps.push(step.spanned(span));
 
         Ok(Triple::new(p.root_env.clone(), env4, v, Some(c)))
