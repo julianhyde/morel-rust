@@ -505,7 +505,7 @@ impl Shell {
         // Successfully parsed, now evaluate
         let output = self.evaluate_node(&resolved);
         match &output {
-            Ok(s) => Ok(prefix_lines(">", s.as_str())),
+            Ok(s) => Ok(prefix_lines(">", &format!("{}{}", warning_prefix, s))),
             Err(_) => output,
         }
     }
@@ -592,7 +592,6 @@ impl Shell {
                     bindings.clear();
                     let mut session = self.session.borrow_mut();
                     session.type_bindings.clear();
-                    session.type_alias_map.clear();
 
                     // Reset type_env to initial state (FunTypeEnv).
                     let empty_type_env = EmptyTypeEnv {};
