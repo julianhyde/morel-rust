@@ -90,9 +90,32 @@ fn leading_comment_lines(code: &str) -> usize {
             // Line comment — consumes whole line.
             count += 1;
         } else if trimmed.starts_with("(*") {
-            // Opening of a block comment.
+            // Block comment starting at depth 0. Scan the whole line to handle
+            // inline comments like `(* foo *)` that open and close on the same
+            // line.
             depth += 1;
-            count += 1;
+            let mut s = trimmed.strip_prefix("(*").unwrap_or("");
+            loop {
+                if let Some(pos) = s.find("*)") {
+                    depth -= 1;
+                    s = &s[pos + 2..];
+                    if depth == 0 {
+                        // Comment closed on the same line. Count only if the
+                        // remainder is blank (pure comment line).
+                        if s.trim().is_empty() {
+                            count += 1;
+                        }
+                        break;
+                    }
+                } else if let Some(pos) = s.find("(*") {
+                    depth += 1;
+                    s = &s[pos + 2..];
+                } else {
+                    // Comment continues onto subsequent lines.
+                    count += 1;
+                    break;
+                }
+            }
         } else {
             break;
         }
