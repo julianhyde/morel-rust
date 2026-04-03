@@ -47,6 +47,59 @@ use std::io::{BufRead, BufReader, BufWriter, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+/// Counts the number of leading comment or blank lines in a Morel source
+/// string.  Matches the line offset computed by morel-java's `parser.zero()`
+/// (which sets `lineOffset = beginLine - 1` where `beginLine` is the line of
+/// the first non-comment token).
+///
+/// Morel has two comment forms:
+/// * Line comment: `(*) text...` — starts with `(*)`, runs to end of line.
+/// * Block comment: `(* text... *)` — may span lines and nest.
+fn leading_comment_lines(code: &str) -> usize {
+    let mut count = 0usize;
+    let mut depth = 0usize; // nesting depth of block comments
+    for line in code.lines() {
+        let trimmed = line.trim();
+        if depth > 0 {
+            // Inside a block comment: scan for `*)` or `(*`.
+            let mut s = trimmed;
+            loop {
+                if let Some(pos) = s.find("*)") {
+                    depth -= 1;
+                    s = &s[pos + 2..];
+                    if depth == 0 {
+                        // Comment closed mid-line. If the rest of the line is
+                        // blank, count it; otherwise stop.
+                        if s.trim().is_empty() {
+                            count += 1;
+                        }
+                        break;
+                    }
+                } else if let Some(pos) = s.find("(*") {
+                    depth += 1;
+                    s = &s[pos + 2..];
+                } else {
+                    // Entire line is inside block comment.
+                    count += 1;
+                    break;
+                }
+            }
+        } else if trimmed.is_empty() {
+            count += 1;
+        } else if trimmed.starts_with("(*)") {
+            // Line comment — consumes whole line.
+            count += 1;
+        } else if trimmed.starts_with("(*") {
+            // Opening of a block comment.
+            depth += 1;
+            count += 1;
+        } else {
+            break;
+        }
+    }
+    count
+}
+
 /// Main shell for Morel - Standard ML REPL.
 pub struct Shell {
     pub(crate) config: Config,
@@ -393,12 +446,16 @@ impl Shell {
         }
 
         // Successfully parsed, now validate.
+        // Compute the base line offset (number of leading comment/blank lines)
+        // so that span line numbers are reported relative to the first code
+        // token, matching the behavior of morel-java's parser.zero() call.
+        let base_line = leading_comment_lines(&actual_code);
         let resolved =
             match self.session.borrow_mut().deduce_type_inner(&statement) {
                 Ok(resolved) => resolved,
                 Err(Error::Compile(message, span)) => {
                     let pest_span = span.to_pest_span();
-                    let span2 = Span::from_pest_span(&pest_span, 0);
+                    let span2 = Span::from_pest_span(&pest_span, base_line);
                     let s = format!(
                         "{} Error: {}\n  raised at: {}\n",
                         span2.to_string(),
@@ -409,6 +466,18 @@ impl Shell {
                 }
                 Err(e) => return Err(e),
             };
+
+        // Collect any type-checker warnings (e.g. non-alphabetical record
+        // field order in 'order' expressions).
+        let mut warning_prefix = String::new();
+        for warning in &resolved.warnings {
+            let pest_span = warning.span.to_pest_span();
+            let span2 = Span::from_pest_span(&pest_span, resolved.base_line);
+            warning_prefix.push_str(&format!(
+                "{} Warning: {}\n  raised at: {}\n",
+                span2, warning.message, span2
+            ));
+        }
 
         // Successfully parsed, now evaluate
         let output = self.evaluate_node(&resolved);
@@ -427,12 +496,11 @@ impl Shell {
 
         // Output warnings first.
         for warning in &resolved.warnings {
-            // Format the span location.
-            // TODO: Compute line and column numbers properly from span.
-            let loc = "stdIn:2.9-2.27";
+            let pest_span = warning.span.to_pest_span();
+            let span2 = Span::from_pest_span(&pest_span, resolved.base_line);
             type_string.push_str(&format!(
-                "{}Warning: {}\n  raised at: {}\n",
-                loc, warning.message, loc
+                "{} Warning: {}\n  raised at: {}\n",
+                span2, warning.message, span2
             ));
         }
 

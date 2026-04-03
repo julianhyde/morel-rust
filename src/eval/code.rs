@@ -982,9 +982,9 @@ impl Span {
         let end = end_pos.line_col();
         Self::new(&format!(
             "stdIn:{}.{}-{}.{}",
-            start.0 - base_line,
+            start.0.saturating_sub(base_line),
             start.1,
-            end.0 - base_line,
+            end.0.saturating_sub(base_line),
             end.1
         ))
     }

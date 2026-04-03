@@ -517,13 +517,13 @@ set("mode", "evaluate");
 
 (*) "current" is not available in "skip", "take", "union", "intersect", "except"
 1 + current;
-> stdIn:2.5-2.12 Error: 'current' is only valid in a query
->   raised at: stdIn:2.5-2.12
+> stdIn:1.5-1.12 Error: 'current' is only valid in a query
+>   raised at: stdIn:1.5-1.12
 
 (*) "current" can't be used in the first step of a query
 from i in [current + 1, current + 2, current + 3];
-> stdIn:2.12-2.19 Error: 'current' is only valid in a query
->   raised at: stdIn:2.12-2.19
+> stdIn:1.12-1.19 Error: 'current' is only valid in a query
+>   raised at: stdIn:1.12-1.19
 
 (*) ... but it can be used in the second
 from i in [1, 2],
@@ -597,8 +597,8 @@ set("mode", "evaluate");
 
 (*) 'ordinal' cannot be used in the first step of a query
 from i in [ordinal, ordinal + 1, ordinal + 2];
-> stdIn:2.12-2.19 Error: 'ordinal' is only valid in a query
->   raised at: stdIn:2.12-2.19
+> stdIn:1.12-1.19 Error: 'ordinal' is only valid in a query
+>   raised at: stdIn:1.12-1.19
 
 (*) 'ordinal' is available in a subquery
 from i in [10,20,30]

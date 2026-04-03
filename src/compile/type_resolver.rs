@@ -424,16 +424,16 @@ impl TypeResolver {
             type_map.var_term_map.insert(v, term);
         }
 
-        // If the code begins with a comment, compute the offset of the first
-        // line of code after the comment. This allows us to report the correct
-        // position of errors when there are commented-out lines before them.
-        let pest_span = decl2.span.to_pest_span();
+        // Compute the base-line offset: how many lines of comments/blank lines
+        // precede the first code token.  We use `decl.span` (= statement.span)
+        // rather than `decl2.span` because for `fun` declarations the
+        // converted val-decl span starts after the `fun` keyword (col > 1).
+        // The statement span always starts at column 1 (at the leading keyword
+        // or opening parenthesis), so `line - 1` is exactly the number of
+        // leading comment/blank lines — matching morel-java's parser.zero().
+        let pest_span = decl.span.to_pest_span();
         let start = pest_span.start_pos();
-        let base_line = if start.line_col().1 == 1 {
-            start.line_col().0 - 1
-        } else {
-            0
-        };
+        let base_line = start.line_col().0.saturating_sub(1);
 
         // Extract bindings from the declaration
         let mut bindings = Vec::new();
