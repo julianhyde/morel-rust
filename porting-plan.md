@@ -171,7 +171,6 @@ finishes the rest.
 
 | Seq | Java issue | Description | Notes |
 |-----|------------|-------------|-------|
-| ~~B1~~ | #230 | Multi-arm `fn` expressions (`fn p1 => e1 \| p2 => e2`) | Parser, compiler, and eval all supported `Fn(Vec<Match>)`. Tests in match.smli. |
 | ~~B2~~ | #285 | Type aliases (`type t = ...`) | Resolver, evaluator, inliner, compiler, pretty-printer all updated. `type-alias.smli` uses validate mode and passes. Limitation: binding type shows as expanded type (e.g. `int` not `myInt`) since aliases expand through the unifier. |
 | ~~B3~~ | #249 | `with` operator for records (`{r with f = v}`) | Evaluate mode. Resolver + type_resolver fix. |
 | ~~B4~~ | #291 | `typeof` operator | TypeKind::Expression was parsed; added TypeToTermConverter handler. |
@@ -234,6 +233,18 @@ across several releases (#202, #217, #341, #347).
 | G4 | #323 | Datalog | Largest new feature. Depends on G3. Port `datalog.smli`. |
 
 ---
+
+## Features not yet ported
+
+| Java issue | Description | Notes |
+|------------|-------------|-------|
+| #55     | Exhaustive patterns | Must switch match.smli from "validate" to "evaluate" |
+| #230       | Multi-arm `fn` expressions (`fn p1 => e1 \| p2 => e2`) | Depends on #55 |
+
+## Decisions to revisit
+
+* Is OrdinalFilterRowSink really necessary? Maybe it will be redundant
+  after we switch to stack-based execution.
 
 ## Done: Features already ported
 
