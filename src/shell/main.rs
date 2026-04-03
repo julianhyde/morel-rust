@@ -189,6 +189,11 @@ impl Shell {
                 self.config.line_width = Some(val.expect_int());
                 Ok(())
             }
+            "matchCoverageEnabled" => {
+                self.session.borrow_mut().config.match_coverage_enabled =
+                    Some(val.expect_bool());
+                Ok(())
+            }
             "mode" => {
                 self.config.mode = val.expect_string().parse().ok();
                 Ok(())
@@ -226,6 +231,10 @@ impl Shell {
             }
             "lineWidth" => {
                 self.config.line_width = None;
+                Ok(())
+            }
+            "matchCoverageEnabled" => {
+                self.session.borrow_mut().config.match_coverage_enabled = None;
                 Ok(())
             }
             "mode" => {

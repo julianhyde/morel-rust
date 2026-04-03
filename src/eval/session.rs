@@ -133,6 +133,8 @@ impl Session {
         node: &Statement,
     ) -> Result<Resolved, Error> {
         let mut type_resolver = TypeResolver::new();
+        type_resolver.match_coverage_enabled =
+            self.config.match_coverage_enabled.unwrap_or(true);
 
         // Use the accumulated type environment from previous statements
         let resolved = type_resolver.deduce_type(&*self.type_env, node)?;
@@ -175,6 +177,7 @@ pub struct Config {
     pub directory: Option<Rc<PathBuf>>,
     pub hybrid: Option<bool>,
     pub inline_pass_count: Option<i32>,
+    pub match_coverage_enabled: Option<bool>,
     pub output: Option<Output>,
     pub script_directory: Option<Rc<PathBuf>>,
 }
@@ -184,8 +187,9 @@ impl Default for Config {
         Self {
             directory: None,
             hybrid: Some(false),
-            output: Some(Output::Classic),
             inline_pass_count: Some(5),
+            match_coverage_enabled: None,
+            output: Some(Output::Classic),
             script_directory: None,
         }
     }
@@ -203,6 +207,9 @@ impl Configurable for Config {
             }
             (Prop::InlinePassCount, PropVal::Int(i)) => {
                 self.inline_pass_count = Some(*i);
+            }
+            (Prop::MatchCoverageEnabled, PropVal::Bool(b)) => {
+                self.match_coverage_enabled = Some(*b);
             }
             (Prop::Output, PropVal::Output(x)) => {
                 self.output = Some(*x);
@@ -234,6 +241,13 @@ impl Configurable for Config {
             Prop::InlinePassCount => {
                 if let Some(i) = self.inline_pass_count {
                     PropVal::Int(i)
+                } else {
+                    prop.default_value()
+                }
+            }
+            Prop::MatchCoverageEnabled => {
+                if let Some(b) = self.match_coverage_enabled {
+                    PropVal::Bool(b)
                 } else {
                     prop.default_value()
                 }
