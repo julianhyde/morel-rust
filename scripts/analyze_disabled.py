@@ -437,7 +437,14 @@ def analyze(files: list[str] | None = None) -> None:
                 creation = proc.stdout.strip().split('\n')[0] if proc.stdout.strip() else 'unknown'
             except subprocess.CalledProcessError:
                 creation = 'unknown'
-            print(f"- **{name}**: created by `{creation}`")
+            line = f"- **{name}**: `{creation}`"
+            # Fold bullet lines that exceed 80 chars at a word boundary.
+            if len(line) > 80:
+                # Find a space to break at, before column 80
+                break_at = line.rfind(' ', 0, 80)
+                if break_at > 0:
+                    line = line[:break_at] + '\n  ' + line[break_at + 1:]
+            print(line)
 
 
 if __name__ == '__main__':
