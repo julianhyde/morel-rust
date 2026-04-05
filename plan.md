@@ -127,7 +127,7 @@ to compute the offset, or simply re-run the script (preferred).
 
 | #    | SHA        | Date         | Message |
 |-----|-----------|-------------|------------------------------------------------------------|
-| C01  | 0b3809b2   | 2019-04-04   | Fix bug where could not derive type if an expression in the environment had type record or list |
+| C01  | 0b3809b2   | 2019-04-04   | Fix bug where could not derive type if an expression in the environment had type record or list *(believed fully propagated)* |
 | C02  | ddc1da34   | 2019-04-07   | Relational expressions: "from", with "as", "where" and "yield" keywords |
 | C03  | ecbb9c18   | 2019-07-18   | [SMLJ-2] In 'from' expression, change 'as' to 'in' |
 | C04  | 7397c39d   | 2020-03-01   | [MOREL-12] In 'from' clause, allow initializers to reference previous variables |
