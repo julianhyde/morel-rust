@@ -234,7 +234,7 @@ to compute the offset, or simply re-run the script (preferred).
 | built-in.smli          | 4363-4453   | validate  | Relational.only [1, 2, 3];                              | C22    |
 | built-in.smli          | 4495-4536   | validate  | Relational.compare (SOME 1, NONE);                      | C44    |
 | closure.smli           | 135-146    | validate  | fact 5;                                                 | C23    |
-| closure.smli           | 154-159    | validate  | fun fact3 0 = 1                                         | C23    |
+| closure.smli           | ~~154-159~~ | ~~validate~~ | ~~fun fact3 0 = 1~~ *(enabled)*                    | C23    |
 | closure.smli           | 173-175    | validate  | baz4 (fn i => i - 1);                                   | C23    |
 | closure.smli           | 189-191    | validate  | baz5 (fn i => i - 1, 5);                                | C23    |
 | closure.smli           | 205-207    | validate  | baz6 (fn i => i - 1, 5);                                | C23    |
@@ -262,7 +262,7 @@ to compute the offset, or simply re-run the script (preferred).
 | logic.smli             | 218-225    | validate  | g3 (fn (i, j) => j - i = 2);                            | C33    |
 | logic.smli             | 243-269    | validate  | exists e in scott.emps where e.deptno = 20 into sum;    | C33    |
 | logic.smli             | 289-325    | validate  | forall i in [2, 3, 4, 12, 14] where i > 10;             | C33    |
-| match.smli             | 77-93     | validate  | fun ack 0 n = n + 1                                     | C20    |
+| match.smli             | ~~77-93~~ | ~~validate~~ | ~~fun ack 0 n = n + 1~~ *(enabled)*                  | C20    |
 | misc.smli              | 22-74     | validate  | * [MOREL-251] Add function `Sys.clearEnv ()`            | C35    |
 | misc.smli              | 160-180    | validate  | op x;                                                   | C53    |
 | misc.smli              | 190-192    | validate  | (op ::) (1,[2,3,4]);                                    | C53    |
@@ -287,7 +287,7 @@ to compute the offset, or simply re-run the script (preferred).
 | relational.smli        | 1285-1340   | validate  | from i in [1, 2, 3]                                     | C56    |
 | relational.smli        | 1368-1396   | validate  | from e in scott.emps                                    | C42    |
 | relational.smli        | ~~1415-1431~~ | ~~validate~~ | ~~range 0 5;~~ *(enabled)*                          | C02    |
-| relational.smli        | 1447-1466   | validate  | from d in depts, i in range 0 5;                        | C15    |
+| relational.smli        | ~~1447-1466~~ | ~~validate~~ | ~~from d in depts, i in range 0 5;~~ *(enabled)*   | C15    |
 | relational.smli        | 1496-1509   | validate  | from e in emps, d in depts                              | C03    |
 | relational.smli        | 1562-1580   | validate  | from e in emps, d in depts                              | C03    |
 | relational.smli        | 1603-1612   | commented | from e in emps                                          | C14    |
@@ -315,7 +315,7 @@ to compute the offset, or simply re-run the script (preferred).
 | relational.smli        | 3013-3110   | validate  | threes [1];                                             | C30    |
 | relational.smli        | 3157-3167   | validate  | let                                                     | C01    |
 | scott.smli             | 20-101    | validate  | Sys.set ("printLength", 64);                            | C28    |
-| simple.smli            | 416-428    | validate  | fun foo x                                               | C19    |
+| simple.smli            | ~~416-428~~ | ~~validate~~ | ~~fun foo x~~ *(enabled)*                           | C19    |
 | simple.smli            | 457-469    | validate  | val x: `order` = LESS;                                  | C47    |
 | simple.smli            | 496-1182   | validate  | "a" ^ (* block comment start                            | C55    |
 | such-that.smli         | 24-134    | validate  | from i where i > 0 andalso i < 10;                      | C26    |
@@ -395,8 +395,8 @@ to compute the offset, or simply re-run the script (preferred).
 | type.smli              | 377-390    | commented | let                                                     | C48    |
 | type.smli              | 399-431    | validate  | fn {a, b} => if b then a else a + 1;                    | C24    |
 | type.smli              | 446-487    | validate  | val f : ('a -> (int * int) list) -> ('a -> (int * int) list) -> 'a ->  | C48    |
-| type.smli              | 500-504    | validate  | fun f (a, b, c) = {x=c, y=a};                           | C31    |
-| type.smli              | 517-521    | validate  | fun f (a, b, c) = {x=c, y=a};                           | C31    |
+| type.smli              | ~~500-504~~ | ~~validate~~ | ~~fun f (a, b, c) = {x=c, y=a};~~ *(enabled)*      | C31    |
+| type.smli              | ~~517-521~~ | ~~validate~~ | ~~fun f (a, b, c) = {x=c, y=a};~~ *(enabled)*      | C31    |
 | type.smli              | 531-1006   | validate  | divides (10, 4): bool;                                  | C34    |
 | type.smli              | 1035-1041   | validate  | let                                                     | C48    |
 | type.smli              | 1058-1078   | commented | implementing proper typeof error handling               | C48    |

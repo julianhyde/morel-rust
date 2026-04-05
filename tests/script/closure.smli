@@ -150,15 +150,11 @@ set("mode", "evaluate");
 (*) Closure; function 'f' is captured in the function definition
 val f = fn x => x - 1;
 > val f = fn : int -> int
-set("mode", "validate");
-> val it = () : unit
 fun fact3 0 = 1
   | fact3 n = n * fact3 (f n);
 > val fact3 = fn : int -> int
 fact3 5;
 > val it = 120 : int
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) Closure; function 'f' is an argument to an enclosing function.
 fun baz4 f =

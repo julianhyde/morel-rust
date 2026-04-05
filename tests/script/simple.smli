@@ -412,9 +412,6 @@ and o' = 5;
 > val off = 4 : int
 > val o' = 5 : int
 
-set("mode", "validate");
-> val it = () : unit
-
 fun foo x
   x'
   x''
@@ -424,10 +421,6 @@ fun foo x
   Abc_
   `a b` = 1;
 > val foo = fn : 'a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h -> int
-
-
-set("mode", "evaluate");
-> val it = () : unit
 
 {x = 1,
  x' = 2,

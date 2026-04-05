@@ -496,14 +496,8 @@ set("mode", "evaluate");
 let val r = {a=[], b=[]} in r.b end;
 > val it = [] : 'a list
 
-set("mode", "validate");
-> val it = () : unit
 fun f (a, b, c) = {x=c, y=a};
 > val f = fn : 'a * 'b * 'c -> {x:'c, y:'a}
-
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) When printing a type, 'forall' is omitted. Sometimes that eliminates
 (*) type variables. The following tests make sure that type variables are
@@ -513,14 +507,8 @@ set("mode", "evaluate");
 let val r = {a=[], b=[]} in r.b end;
 > val it = [] : 'a list
 
-set("mode", "validate");
-> val it = () : unit
 fun f (a, b, c) = {x=c, y=a};
 > val f = fn : 'a * 'b * 'c -> {x:'c, y:'a}
-
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (* [MOREL-247] Cannot translate an expression that contains type annotations. *)
 fun divides (n: int, d: int): bool =

@@ -1436,9 +1436,6 @@ from e in emps, e2 in emps yield e.name ^ "-" ^ e2.name;
 >    "Shaggy-Shaggy","Shaggy-Scooby","Scooby-Fred","Scooby-Velma",
 >    "Scooby-Shaggy","Scooby-Scooby"] : string list
 
-set("mode", "validate");
-> val it = () : unit
-
 (*) cartesian product, missing yield
 from d in depts, i in range 0 5;
 > val it =
@@ -1455,10 +1452,6 @@ from d in depts, i in range 0 5;
 >    {d={deptno=40,name="Support"},i=1},{d={deptno=40,name="Support"},i=2},
 >    {d={deptno=40,name="Support"},i=3},{d={deptno=40,name="Support"},i=4}]
 >   : {d:{deptno:int, name:string}, i:int} list
-
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) 3-way comma join
 from x in ["a", "b"],
