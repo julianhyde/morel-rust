@@ -128,7 +128,7 @@ to compute the offset, or simply re-run the script (preferred).
 | #    | SHA        | Date         | Message |
 |-----|-----------|-------------|------------------------------------------------------------|
 | C01  | 0b3809b2   | 2019-04-04   | Fix bug where could not derive type if an expression in the environment had type record or list *(believed fully propagated)* |
-| C02  | ddc1da34   | 2019-04-07   | Relational expressions: "from", with "as", "where" and "yield" keywords |
+| C02  | ddc1da34   | 2019-04-07   | Relational expressions: "from", with "as", "where" and "yield" keywords *(believed fully propagated)* |
 | C03  | ecbb9c18   | 2019-07-18   | [SMLJ-2] In 'from' expression, change 'as' to 'in' |
 | C04  | 7397c39d   | 2020-03-01   | [MOREL-12] In 'from' clause, allow initializers to reference previous variables |
 | C05  | b1118b96   | 2020-03-02   | [MOREL-14] Tuple should equal record, and both equal unit when empty |
@@ -286,7 +286,7 @@ to compute the offset, or simply re-run the script (preferred).
 | relational.smli        | 1036-1258   | validate  | from i in [1,2]                                         | C43    |
 | relational.smli        | 1285-1340   | validate  | from i in [1, 2, 3]                                     | C56    |
 | relational.smli        | 1368-1396   | validate  | from e in scott.emps                                    | C42    |
-| relational.smli        | 1416-1431   | validate  | range 0 5;                                              | C02    |
+| relational.smli        | ~~1415-1431~~ | ~~validate~~ | ~~range 0 5;~~ *(enabled)*                          | C02    |
 | relational.smli        | 1447-1466   | validate  | from d in depts, i in range 0 5;                        | C15    |
 | relational.smli        | 1496-1509   | validate  | from e in emps, d in depts                              | C03    |
 | relational.smli        | 1562-1580   | validate  | from e in emps, d in depts                              | C03    |
