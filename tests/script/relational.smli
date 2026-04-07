@@ -586,9 +586,6 @@ from e in emps, i in bag [1]
 >   [{name="Fred",ordinal=0},{name="Velma",ordinal=1},{name="Shaggy",ordinal=2},
 >    {name="Scooby",ordinal=3}] : {name:string, ordinal:int} list
 
-set("mode", "validate");
-> val it = () : unit
-
 (*) A 'where' clause after 'yield ordinal' creates gaps in the ordinals.
 from e in emps
   order e.deptno
@@ -600,9 +597,6 @@ from e in emps
 >    {name="Scooby",ordinal=6},{name="Scooby",ordinal=7}]
 >   : {name:string, ordinal:int} list
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) Do the equivalent of 'take' using ordinal.
 from e in emps
