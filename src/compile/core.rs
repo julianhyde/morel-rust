@@ -17,7 +17,7 @@
 
 use crate::compile::inliner::Env;
 use crate::compile::type_env::Id;
-use crate::compile::types::Type;
+use crate::compile::types::{Label, Type};
 use crate::eval::code::Span;
 use crate::eval::val::Val;
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
@@ -88,6 +88,7 @@ impl Expr {
     /// Returns this expression's type.
     pub fn type_(&self) -> Box<Type> {
         match self {
+            // lint: sort until '#}' where '##Expr::'
             Expr::Aggregate(t, _, _) => t.clone(),
             Expr::Apply(t, _, _, _) => t.clone(),
             Expr::Case(t, _, _) => t.clone(),
@@ -407,14 +408,102 @@ impl Pat {
         consumer: &mut dyn FnMut(Box<Pat>, &Val),
     ) {
         match self {
+            // lint: sort until '#}' where '##Pat::'
+            Pat::As(_, _name, inner) => {
+                // Layered pattern 'p as inner_pat': bind 'p' to the
+                // whole value, then recurse into the inner pattern.
+                consumer(Box::new(self.clone()), val);
+                inner.bind_recurse(val, consumer);
+            }
+            Pat::Cons(_, head, tail) => {
+                // Composite cons pattern 'val h :: t = e': destructure
+                // 'val' (a Val::List) and recurse into head and tail.
+                if let Val::List(vs) = val
+                    && !vs.is_empty()
+                {
+                    head.bind_recurse(&vs[0], consumer);
+                    let rest = Val::List(vs[1..].to_vec());
+                    tail.bind_recurse(&rest, consumer);
+                }
+            }
+            Pat::Constructor(_, _name, inner) => {
+                // Constructor pattern, e.g. 'val SOME i = SOME 1'.
+                // The argument value is unwrapped from Val::Some/Inl/Inr.
+                if let Some(p) = inner {
+                    let inner_val = match val {
+                        Val::Some(v) => Some(v.as_ref()),
+                        Val::Inl(v) | Val::Inr(v) => Some(v.as_ref()),
+                        _ => None,
+                    };
+                    if let Some(iv) = inner_val {
+                        p.bind_recurse(iv, consumer);
+                    }
+                }
+            }
             Pat::Identifier(_, _name) => {
                 consumer(Box::new(self.clone()), val);
             }
-            Pat::Tuple(_, pats) if pats.is_empty() => {
-                // Unit pattern - no bindings to process
+            Pat::List(_, pats) => {
+                // Composite list pattern 'val [a, b, c] = e': destructure
+                // and recurse into each element. (Pattern length must match.)
+                if let Val::List(vs) = val
+                    && pats.len() == vs.len()
+                {
+                    for (p, v) in pats.iter().zip(vs.iter()) {
+                        p.bind_recurse(v, consumer);
+                    }
+                }
             }
-            _ => {
-                todo!("{:?}", self);
+            Pat::Literal(_, _) => {
+                // No bindings.
+            }
+            Pat::Record(t, fields, _) => {
+                // Composite record pattern 'val {a, b = p, ...} = e':
+                // for each labelled field, look up its index in the
+                // record type's alphabetical-key order, then recurse.
+                if let (Type::Record(_, type_fields), Val::List(vs)) =
+                    (t.as_ref(), val)
+                {
+                    let labels: Vec<&Label> = type_fields.keys().collect();
+                    let find = |needle: &str| {
+                        labels.iter().position(|l| {
+                            matches!(
+                                l,
+                                Label::String(s) if s == needle
+                            )
+                        })
+                    };
+                    for field in fields {
+                        match field {
+                            PatField::Labeled(name, sub_pat) => {
+                                if let Some(i) = find(name) {
+                                    sub_pat.bind_recurse(&vs[i], consumer);
+                                }
+                            }
+                            PatField::Anonymous(sub_pat) => {
+                                if let Some(name) = sub_pat.name()
+                                    && let Some(i) = find(&name)
+                                {
+                                    sub_pat.bind_recurse(&vs[i], consumer);
+                                }
+                            }
+                            PatField::Ellipsis => {}
+                        }
+                    }
+                }
+            }
+            Pat::Tuple(_, pats) => {
+                // Composite tuple pattern 'val (p1, p2, ...) = e':
+                // destructure 'val' (a Val::List) and recurse into
+                // each component. Empty tuple = unit, so nothing to do.
+                if let Val::List(vs) = val {
+                    for (p, v) in pats.iter().zip(vs.iter()) {
+                        p.bind_recurse(v, consumer);
+                    }
+                }
+            }
+            Pat::Wildcard(_) => {
+                // No bindings to introduce.
             }
         }
     }
@@ -427,6 +516,10 @@ impl Pat {
     ) {
         match self {
             // lint: sort until '#}' where '##Pat::'
+            Pat::As(t, name, inner) => {
+                (*consumer)((t, name.as_str()));
+                inner.for_each_id_pat(consumer);
+            }
             Pat::Cons(_, head, tail) => {
                 head.for_each_id_pat(consumer);
                 tail.for_each_id_pat(consumer);
@@ -437,6 +530,12 @@ impl Pat {
                 }
             }
             Pat::Identifier(t, name) => (*consumer)((t, name.as_str())),
+            Pat::List(_, pats) => {
+                pats.iter().for_each(|p| p.for_each_id_pat(consumer))
+            }
+            Pat::Literal(_, _) => {
+                // No identifiers to bind.
+            }
             Pat::Record(_, pat_fields, _) => {
                 for field in pat_fields {
                     match field {
@@ -449,7 +548,9 @@ impl Pat {
             Pat::Tuple(_, pats) => {
                 pats.iter().for_each(|p| p.for_each_id_pat(consumer))
             }
-            _ => todo!("{:?}", self),
+            Pat::Wildcard(_) => {
+                // No identifiers to bind.
+            }
         }
     }
 }
@@ -701,10 +802,7 @@ impl Display for FunBind {
     }
 }
 
-/// Function match.
-///
-/// E.g. `f 0: int = 1` are `f n = n * f (n - 1)`
-/// are each matches with one pattern. The first has a type.
+/// A single clause within a function binding.
 #[derive(Clone, Debug)]
 pub struct FunMatch {
     pub name: String,

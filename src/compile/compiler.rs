@@ -322,6 +322,15 @@ impl<'a> Compiler<'a> {
     pub fn compile_pat(&self, cx: &Context, pat: &Pat) -> Code {
         match pat {
             // lint: sort until '#}' where '##Pat::'
+            Pat::As(_, name, inner) => {
+                // 'p as inner_pat' binds 'p' to the value AND recurses
+                // into 'inner_pat'. Both apply to the same value, so
+                // emit a BindAnd that runs both pattern codes.
+                let slot = cx.frame_def.var_index(name);
+                let outer_code = Code::new_bind_slot(&cx.frame_def, slot);
+                let inner_code = self.compile_pat(cx, inner);
+                Code::BindAnd(vec![outer_code, inner_code])
+            }
             Pat::Cons(_, head, tail) => {
                 let head_code = self.compile_pat(cx, head);
                 let tail_code = self.compile_pat(cx, tail);
@@ -397,9 +406,6 @@ impl<'a> Compiler<'a> {
                 // no variables to bind;
                 // trivially succeeds
                 Code::BindWildcard
-            }
-            _ => {
-                todo!("compile_pat: {:?}", pat)
             }
         }
     }
