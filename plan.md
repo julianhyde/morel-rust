@@ -308,7 +308,7 @@ to compute the offset, or simply re-run the script (preferred).
 | relational.smli        | partial 2626-2717 | partial   | from {a = x, ...} (open record patterns enabled; remainder still validate) | C10    |
 | relational.smli        | 2726-2736   | validate  | flatMap explode ["ab", "", "def"];                      | C18    |
 | relational.smli        | ~~2747-2787~~ | ~~validate~~ | ~~employeesIn 10;~~ *(enabled)*                   | C04    |
-| relational.smli        | 2808-2872   | validate  | from t in triples order t.foo 1;                        | C09    |
+| relational.smli        | ~~2808-2872~~ | ~~validate~~ | ~~from t in triples order t.foo 1;~~ *(enabled)* | C09    |
 | relational.smli        | 2885-2892   | validate  | Sys.plan();                                             | C12    |
 | relational.smli        | 2908-2914   | validate  | Sys.plan();                                             | C12    |
 | relational.smli        | 2935-2994   | validate  | let                                                     | C01    |
