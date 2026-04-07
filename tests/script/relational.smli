@@ -618,9 +618,6 @@ from e in emps
 > val it = [{deptno=30,id=102,name="Shaggy"},{deptno=30,id=103,name="Scooby"}]
 >   : {deptno:int, id:int, name:string} list
 
-set("mode", "validate");
-> val it = () : unit
-
 (*) When there is a field called 'ordinal', it doesn't get used unless you quote it.
 from i in [3,1,4,5,3,5,8,9,7]
   yield {ordinal, i}
@@ -634,6 +631,9 @@ from i in [3,1,4,5,3,5,8,9,7]
   where `ordinal` > 1;
 > val it = [{i=8,ordinal=6},{i=9,ordinal=7},{i=7,ordinal=8}]
 >   : {i:int, ordinal:int} list
+
+set("mode", "validate");
+> val it = () : unit
 
 from e in scott.emps
   yield {e.ename, e.sal, rank = ordinal + 1};
