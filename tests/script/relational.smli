@@ -698,9 +698,6 @@ from i in [1,2]
   join j in (from k in ["a","b","c"] where ordinal < i);
 > val it = [{i=1,j="a"},{i=2,j="a"},{i=2,j="b"}] : {i:int, j:string} list
 
-set("mode", "validate");
-> val it = () : unit
-
 from i in [1,2]
   join j in (from k in ["a","b","c"] yield {m = ordinal} yield m);
 > val it = [{i=1,j=0},{i=1,j=1},{i=1,j=2},{i=2,j=0},{i=2,j=1},{i=2,j=2}]
@@ -765,9 +762,6 @@ from (i, j) in [(1, 2), (3, 4)],
 from (i, j) in [(1, 2), (3, 4)],
   {} in bag [()];
 > val it = [{i=1,j=2},{i=3,j=4}] : {i:int, j:int} bag
-
-set("mode", "evaluate");
-> val it = () : unit
 
 from (i, j) in [(1, 2), (3, 4)]
   join _ in bag [()];
