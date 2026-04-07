@@ -307,7 +307,7 @@ to compute the offset, or simply re-run the script (preferred).
 | relational.smli        | 2605-2614   | validate  | from {a = a, b = b, ...} in [{a=1,b=true,c=3},{a=1,b=true,c=4}]; | C11    |
 | relational.smli        | 2626-2717   | validate  | from {a = x, ...} in [{a=1,b=2,c=3}];                   | C10    |
 | relational.smli        | 2726-2736   | validate  | flatMap explode ["ab", "", "def"];                      | C18    |
-| relational.smli        | 2747-2787   | validate  | employeesIn 10;                                         | C04    |
+| relational.smli        | ~~2747-2787~~ | ~~validate~~ | ~~employeesIn 10;~~ *(enabled)*                   | C04    |
 | relational.smli        | 2808-2872   | validate  | from t in triples order t.foo 1;                        | C09    |
 | relational.smli        | 2885-2892   | validate  | Sys.plan();                                             | C12    |
 | relational.smli        | 2908-2914   | validate  | Sys.plan();                                             | C12    |
@@ -387,7 +387,7 @@ to compute the offset, or simply re-run the script (preferred).
 | type-inference.smli    | 1470-1475   | commented | :t                                                      | C52    |
 | type-inference.smli    | 1481-1483   | commented | :t from d in bag [{a=1,b=true}] yield d.a into Bag.length; | C52    |
 | type-inference.smli    | 1493-1522   | commented | :t                                                      | C52    |
-| type.smli              | 26-36     | validate  | ("a", true) = {1 = "a", 2 = true};                      | C05    |
+| type.smli              | ~~26-36~~ | ~~validate~~ | ~~("a", true) = {1 = "a", 2 = true};~~ *(enabled)* | C05    |
 | type.smli              | 149-169    | validate  | fun firstOrSecond (e1 :: e2 :: rest): int = e2          | C21    |
 | type.smli              | 206-304    | validate  | let                                                     | C48    |
 | type.smli              | 315-330    | validate  | len [];                                                 | C06    |

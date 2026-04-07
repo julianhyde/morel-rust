@@ -2700,30 +2700,20 @@ set("mode", "evaluate");
 (*) There's no flatMap in the standard library, so define one
 fun flatMap f l = List.concat (map f l);
 > val flatMap = fn : ('a -> 'b list) -> 'a list -> 'b list
-
-set("mode", "validate");
-> val it = () : unit
 flatMap explode ["ab", "", "def"];
 > val it = [#"a",#"b",#"d",#"e",#"f"] : char list
 
 (*) Here's another way to define flatMap
-fun flatMap2 f l = foldl List.at [] (map f l);
+fun flatMap2 f l = foldl (fn (x, y) => x @ y) [] (map f l);
 > val flatMap2 = fn : ('a -> 'b list) -> 'a list -> 'b list
 flatMap2 explode ["ab", "", "def"];
 > val it = [#"d",#"e",#"f",#"a",#"b"] : char list
-
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) A function that runs a query and returns the result
 fun employeesIn deptno =
   from e in emps
   where e.deptno = deptno;
 > val employeesIn = fn : int -> {deptno:int, id:int, name:string} list
-
-set("mode", "validate");
-> val it = () : unit
 
 employeesIn 10;
 > val it = [{deptno=10,id=100,name="Fred"}]
@@ -2763,10 +2753,6 @@ from deptno in [10, 25, 30],
 >   [{deptno=10,id=100,name="Fred"},{deptno=30,id=102,name="Shaggy"},
 >    {deptno=30,id=103,name="Scooby"}] : {deptno:int, id:int, name:string} list
 
-
-set("mode", "evaluate");
-> val it = () : unit
-
 (*) Function in yield
 let
   val intFns = from a in [2, 3, 4] yield {a, f = fn x => x + a}
@@ -2783,8 +2769,6 @@ val triples =
 > val triples = [{foo=fn,x=1,y=2},{foo=fn,x=2,y=6},{foo=fn,x=3,y=5}]
 >   : {foo:int -> int, x:int, y:int} list
 
-set("mode", "validate");
-> val it = () : unit
 from t in triples order t.foo 1;
 > val it = [{foo=fn,x=1,y=2},{foo=fn,x=2,y=6},{foo=fn,x=3,y=5}]
 >   : {foo:int -> int, x:int, y:int} list
@@ -2817,7 +2801,6 @@ from t1 in triples, t2 in triples
  (* (~1+2,2) < (~3+5,5) < (~2+6,6) *)
 
 (*) A deep nested loop
-(* TODO enable
 from e in
   (from e in
     (from e in
@@ -2843,13 +2826,9 @@ from e in
 >   [{deptno=10,id=100,name="Fred"},{deptno=20,id=101,name="Velma"},
 >    {deptno=30,id=102,name="Shaggy"},{deptno=30,id=103,name="Scooby"}]
 >   : {deptno:int, id:int, name:string} list
-*)
 
 (*) Hybrid
 Sys.set ("hybrid", false);
-> val it = () : unit
-
-set("mode", "evaluate");
 > val it = () : unit
 
 from r1 in
