@@ -1509,10 +1509,16 @@ from e in emps, d in depts
   group {} compute sum over 1;
 > val it = [16] : int list
 
+set("mode", "evaluate");
+> val it = () : unit
+
 (*) as above, count
 from e in emps, d in depts
   group {} compute count over ();
 > val it = [16] : int list
+
+set("mode", "validate");
+> val it = () : unit
 
 (*) join group where right variable is not referenced
 from e in emps, d in depts
