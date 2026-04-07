@@ -391,7 +391,7 @@ to compute the offset, or simply re-run the script (preferred).
 | type.smli              | 149-169    | validate  | fun firstOrSecond (e1 :: e2 :: rest): int = e2          | C21    |
 | type.smli              | 206-304    | validate  | let                                                     | C48    |
 | type.smli              | ~~315-330~~ | ~~validate~~ | ~~len [];~~ *(enabled)*                             | C06    |
-| type.smli              | 350-358    | validate  | map #2 [(1,2),(3,1)];                                   | C13    |
+| type.smli              | ~~350-358~~ | ~~validate~~ | ~~map #2 [(1,2),(3,1)];~~ *(enabled)*               | C13    |
 | type.smli              | 377-390    | commented | let                                                     | C48    |
 | type.smli              | 399-431    | validate  | fn {a, b} => if b then a else a + 1;                    | C24    |
 | type.smli              | 446-487    | validate  | val f : ('a -> (int * int) list) -> ('a -> (int * int) list) -> 'a ->  | C48    |
