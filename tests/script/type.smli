@@ -426,9 +426,6 @@ set("mode", "evaluate");
 from b in [SOME true, NONE];
 > val it = [SOME true,NONE] : bool option list
 
-set("mode", "validate");
-> val it = () : unit
-
 (*) If a function type is spread over several lines, put '->' at the start of
 (*) the next line.
 val f : ('a -> (int * int) list) -> ('a -> (int * int) list) -> 'a -> (int * int) list = fn a => fn b => fn c => [];
@@ -445,6 +442,9 @@ fun r0 (a, b, c, d, e, f, g, h, i, j, k, l, m, n, `o`, p, q, r, s, t, u, v, w, x
 >     'a * 'b * 'c * 'd * 'e * 'f * 'g * 'h * 'i * 'j * 'k * 'l * 'm * 'n * 'o *
 >     'p * 'q * 'r * 's * 't * 'u * 'v * 'w * 'x * 'y * 'z * 'ba * 'bb * 'bc
 >     -> {a:'a, b:'b, c:'c}
+
+set("mode", "validate");
+> val it = () : unit
 
 (*) Highly curried function with lots of type variables returns record type.
 fun r0 a b c d e f g h i j k l m n p q r s = {a=a,b=b,c=c};
