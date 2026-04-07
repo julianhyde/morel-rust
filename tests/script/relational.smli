@@ -2393,9 +2393,6 @@ from e in emps
   into sum;
 > val it = 90 : int
 
-set("mode", "validate");
-> val it = () : unit
-
 (*) Multiple 'into' is not allowed
 (* TODO: enable
 from e in emps
@@ -2410,9 +2407,6 @@ from e in emps
 from;
 > val it = [()] : unit list
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) Empty from with where
 from where true;
