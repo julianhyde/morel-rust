@@ -302,7 +302,7 @@ to compute the offset, or simply re-run the script (preferred).
 | relational.smli        | 2110-2350   | validate  | from e in emps                                          | C14    |
 | relational.smli        | 2381-2431   | validate  | from e in emps                                          | C14    |
 | relational.smli        | 2442-2458   | validate  | from e in emps                                          | C14    |
-| relational.smli        | 2499-2540   | validate  | from                                                    | C07    |
+| relational.smli        | 2499-2540   | partial   | from (5 of 7 test cases enabled; let-scoping and sum-over-literal remain) | C07    |
 | relational.smli        | 2582-2593   | validate  | from {a = a, ...} in [{a=1,b=2}];                       | C10    |
 | relational.smli        | 2605-2614   | validate  | from {a = a, b = b, ...} in [{a=1,b=true,c=3},{a=1,b=true,c=4}]; | C11    |
 | relational.smli        | 2626-2717   | validate  | from {a = x, ...} in [{a=1,b=2,c=3}];                   | C10    |
@@ -390,7 +390,7 @@ to compute the offset, or simply re-run the script (preferred).
 | type.smli              | ~~26-36~~ | ~~validate~~ | ~~("a", true) = {1 = "a", 2 = true};~~ *(enabled)* | C05    |
 | type.smli              | 149-169    | validate  | fun firstOrSecond (e1 :: e2 :: rest): int = e2          | C21    |
 | type.smli              | 206-304    | validate  | let                                                     | C48    |
-| type.smli              | 315-330    | validate  | len [];                                                 | C06    |
+| type.smli              | ~~315-330~~ | ~~validate~~ | ~~len [];~~ *(enabled)*                             | C06    |
 | type.smli              | 350-358    | validate  | map #2 [(1,2),(3,1)];                                   | C13    |
 | type.smli              | 377-390    | commented | let                                                     | C48    |
 | type.smli              | 399-431    | validate  | fn {a, b} => if b then a else a + 1;                    | C24    |
