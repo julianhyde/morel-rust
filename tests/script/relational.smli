@@ -2474,9 +2474,6 @@ in
 end;
 > val it = [{nine=9,ten=10}] : {nine:int, ten:int} list
 
-set("mode", "validate");
-> val it = () : unit
-
 (*) Empty from with empty group
 from
   group {};
@@ -2492,6 +2489,9 @@ from
   group {} compute {c = count over "a"};
 > val it = [{c=1}] : {c:int} list
 
+set("mode", "validate");
+> val it = () : unit
+
 (*) Empty from with group
 let
   val ten = 6 + 4
@@ -2502,6 +2502,9 @@ in
 end;
 > val it = [{sumEleven=11,ten=10}] : {sumEleven:int, ten:int} list
 
+set("mode", "evaluate");
+> val it = () : unit
+
 (*) Empty from with composite group
 from
   group {x = "a", y = 6};
@@ -2510,6 +2513,9 @@ from
 from
   group {z = "a", y = 6};
 > val it = [{y=6,z="a"}] : {y:int, z:string} list
+
+set("mode", "validate");
+> val it = () : unit
 
 (*) Empty from with group and yield
 from
