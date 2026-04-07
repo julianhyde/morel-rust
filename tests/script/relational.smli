@@ -403,9 +403,6 @@ from i in [1,2] unorder unorder;
 from i in [1,2,3,4] where i > 1 unorder where i < 4 unorder;
 > val it = [2,3] : int bag
 
-set("mode", "validate");
-> val it = () : unit
-
 from i in [1,2,3,4] where i > 1 unorder where i < 4 order DESC i;
 > val it = [3,2] : int list
 
@@ -417,9 +414,6 @@ from e in emps
 > val it = [{deptno=20,id=101,name="Velma"},{deptno=30,id=102,name="Shaggy"}]
 >   : {deptno:int, id:int, name:string} bag
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 exists i in [1,2,3,4] unorder where i > 3;
 > val it = true : bool
