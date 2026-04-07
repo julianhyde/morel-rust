@@ -814,6 +814,7 @@ fn comment_depth(code: &str) -> i32 {
     depth
 }
 
+#[derive(Clone, PartialEq, Debug)]
 pub enum MorelError {
     Runtime(BuiltInExn, Span),
 

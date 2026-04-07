@@ -91,17 +91,16 @@ pub enum Val {
     /// user-defined functions. Long-term, they should be handled by inlining.
     Code(Arc<Code>),
 
-    /// `Closure(frame_def, matches, bound_vals, span)` is a closure.
+    /// `Closure(frame_def, matches, bound_vals, no_match)` is a closure.
     /// It is evaluated similarly to `Fn(frame_def, matches)`, except
-    /// that the frame is pre-populated with the values. `span` is the
-    /// source location of the function literal that created this
-    /// closure, used to report a `Match` exception when an application
-    /// has no matching clause.
+    /// that the frame is pre-populated with the values. `no_match` is
+    /// the precomputed error to return when an application has no
+    /// matching clause.
     Closure(
         Arc<FrameDef>,
         Vec<(Code, Code)>,
         Vec<Val>,
-        Option<crate::eval::code::Span>,
+        Option<crate::shell::main::MorelError>,
     ),
 }
 
@@ -230,12 +229,12 @@ impl Val {
     ) -> Result<Val, MorelError> {
         match self {
             Val::Code(code) => code.eval_f1(r, f, arg),
-            Val::Closure(frame_def, matches, bound_vals, span) => {
+            Val::Closure(frame_def, matches, bound_vals, no_match) => {
                 CodeFrame::create_bind_and_eval(
                     frame_def,
                     matches,
                     bound_vals,
-                    span.as_ref(),
+                    no_match.as_ref(),
                     r,
                     arg,
                 )

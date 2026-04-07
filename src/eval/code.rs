@@ -133,31 +133,36 @@ pub enum Code {
     BindTuple(Vec<Code>),
     /// `BindWildcard` ignores its argument and always succeeds.
     BindWildcard,
-    /// `Case(codes, span)` evaluates `e`, iterates the (pattern, expression)
-    /// pairs until it can find the value to a pattern and finally evaluates
-    /// the expression. `span` is the source location of the case
-    /// expression itself, used to report a `Match` exception when no
-    /// pattern matches.
-    Case(Vec<Code>, Option<Span>),
+    /// `Case(codes, no_match)` evaluates `e`, iterates the (pattern,
+    /// expression) pairs until it can find the value to a pattern and
+    /// finally evaluates the expression. `no_match` is the error to
+    /// return when no pattern matches; precomputed at compile time
+    /// (typically `MorelError::Runtime(Match, span)` where `span` is
+    /// the case expression's source location).
+    Case(Vec<Code>, Option<MorelError>),
 
     /// `Constant(type, val)` returns the value `val`. The type lets us display
     /// the value more intelligently.
     Constant(Box<Type>, Val),
 
-    /// `CreateClosure(frame, matches, binds, span)` creates a [Val::Closure]
-    /// value that is similar to a function, but has a frame pre-populated
-    /// with one or more values. `span` is the source location of the
-    /// function literal, used to report a `Match` exception when an
+    /// `CreateClosure(frame, matches, binds, no_match)` creates a
+    /// [Val::Closure] value that is similar to a function, but has a
+    /// frame pre-populated with one or more values. `no_match` is the
+    /// error to attach to the resulting closure for use when an
     /// application of this closure has no matching clause.
-    CreateClosure(Arc<FrameDef>, Vec<(Code, Code)>, Vec<Code>, Option<Span>),
+    CreateClosure(
+        Arc<FrameDef>,
+        Vec<(Code, Code)>,
+        Vec<Code>,
+        Option<MorelError>,
+    ),
 
-    /// `Fn(frame, pat_expr_codes, span)` first creates a frame to contain the
-    /// required local variables, next iterates the (pattern, expression) pairs
-    /// until it can bind the argument to a pattern and finally evaluates the
-    /// expression. `span` is the source location of the function literal,
-    /// used to report a `Match` exception when an application of this
-    /// function has no matching clause.
-    Fn(Arc<FrameDef>, Vec<(Code, Code)>, Option<Span>),
+    /// `Fn(frame, pat_expr_codes, no_match)` first creates a frame to contain
+    /// the required local variables, next iterates the (pattern, expression)
+    /// pairs until it can bind the argument to a pattern and finally
+    /// evaluates the expression. `no_match` is the error to return when
+    /// no pattern matches.
+    Fn(Arc<FrameDef>, Vec<(Code, Code)>, Option<MorelError>),
 
     /// `From(steps)` evaluates a query expression with the given steps.
     From(Vec<QueryStep>),
@@ -307,7 +312,7 @@ impl Code {
             frame_def.clone(),
             pat_expr_codes.to_vec(),
             bind_codes.to_vec(),
-            span,
+            span.map(|s| MorelError::Runtime(BuiltInExn::Match, s)),
         )
     }
 
@@ -326,7 +331,11 @@ impl Code {
         for (pat_code, _) in pat_expr_codes {
             pat_code.assert_supports_eval_mode(&EvalMode::EagerV1);
         }
-        Code::Fn(frame_def.clone(), pat_expr_codes.to_vec(), span)
+        Code::Fn(
+            frame_def.clone(),
+            pat_expr_codes.to_vec(),
+            span.map(|s| MorelError::Runtime(BuiltInExn::Match, s)),
+        )
     }
 
     pub(crate) fn new_get_local(
@@ -353,7 +362,10 @@ impl Code {
                 &EvalMode::EagerV1
             })
         });
-        Code::Case(codes.to_vec(), span)
+        Code::Case(
+            codes.to_vec(),
+            span.map(|s| MorelError::Runtime(BuiltInExn::Match, s)),
+        )
     }
 
     pub(crate) fn new_native(
@@ -523,12 +535,12 @@ impl Code {
                 let arg = arg_code.eval_f0(r, f)?;
                 match &fn_ {
                     Val::Code(c) => c.eval_f1(r, f, &arg),
-                    Val::Closure(frame_def, matches, bound_vals, span) => {
+                    Val::Closure(frame_def, matches, bound_vals, no_match) => {
                         Frame::create_bind_and_eval(
                             frame_def,
                             matches,
                             bound_vals,
-                            span.as_ref(),
+                            no_match.as_ref(),
                             r,
                             &arg,
                         )
@@ -557,7 +569,7 @@ impl Code {
                     Err(e) => Err(e),
                 }
             }
-            Code::Case(codes, span) => {
+            Code::Case(codes, no_match) => {
                 let v = codes[0].eval_f0(r, f)?;
                 let mut i = 1;
                 while i < codes.len() {
@@ -569,13 +581,12 @@ impl Code {
                     }
                     i += 2;
                 }
-                Err(MorelError::Runtime(
-                    BuiltInExn::Match,
-                    span.clone().unwrap_or_else(|| Span::new("stdIn")),
-                ))
+                Err(no_match.clone().unwrap_or_else(|| {
+                    MorelError::Runtime(BuiltInExn::Match, Span::new("stdIn"))
+                }))
             }
             Code::Constant(_, c) => Ok(c.clone()),
-            Code::CreateClosure(frame_def, matches, bind_codes, span) => {
+            Code::CreateClosure(frame_def, matches, bind_codes, no_match) => {
                 let mut values = Vec::with_capacity(bind_codes.len());
                 for bind_code in bind_codes {
                     values.push(bind_code.eval_f0(r, f)?);
@@ -584,7 +595,7 @@ impl Code {
                     frame_def.clone(),
                     matches.clone(),
                     values,
-                    span.clone(),
+                    no_match.clone(),
                 ))
             }
             Code::Fn(_, _, _) | Code::Nth(_, _) => {
@@ -717,12 +728,12 @@ impl Code {
                 let arg = arg_code.eval_f0(r, f)?;
                 let closure = fun.expect_code().eval_f1(r, f, &arg)?;
                 match closure {
-                    Val::Closure(frame_def, matches, bound_vals, span) => {
+                    Val::Closure(frame_def, matches, bound_vals, no_match) => {
                         Frame::create_bind_and_eval(
                             &frame_def,
                             &matches,
                             &bound_vals,
-                            span.as_ref(),
+                            no_match.as_ref(),
                             r,
                             a0,
                         )
@@ -784,7 +795,7 @@ impl Code {
                 Self::eval_all_f1(r, f, codes, list)
             }
             Code::BindWildcard => Ok(Val::Bool(true)),
-            Code::Case(codes, span) => {
+            Code::Case(codes, no_match) => {
                 let mut i = 1;
                 while i < codes.len() {
                     let pat = &codes[i];
@@ -795,17 +806,16 @@ impl Code {
                     }
                     i += 2;
                 }
-                Err(MorelError::Runtime(
-                    BuiltInExn::Match,
-                    span.clone().unwrap_or_else(|| Span::new("stdIn")),
-                ))
+                Err(no_match.clone().unwrap_or_else(|| {
+                    MorelError::Runtime(BuiltInExn::Match, Span::new("stdIn"))
+                }))
             }
             Code::Constant(_, v) => Ok(v.clone()),
-            Code::Fn(frame_def, pat_expr_codes, span) => {
+            Code::Fn(frame_def, pat_expr_codes, no_match) => {
                 Frame::create_and_eval(
                     frame_def,
                     pat_expr_codes,
-                    span.as_ref(),
+                    no_match.as_ref(),
                     r,
                     a0,
                 )
@@ -1121,21 +1131,21 @@ impl<'a> Frame<'a> {
     fn create_and_eval(
         frame_def: &FrameDef,
         matches: &[(Code, Code)],
-        span: Option<&Span>,
+        no_match: Option<&MorelError>,
         r: &mut EvalEnv,
         arg: &Val,
     ) -> Result<Val, MorelError> {
         assert!(frame_def.bound_vars.is_empty());
         let mut val_vec: Vec<Val> =
             vec![Val::Char('a'); frame_def.local_vars.len()];
-        Self::eval(&mut val_vec, matches, span, r, arg)
+        Self::eval(&mut val_vec, matches, no_match, r, arg)
     }
 
     pub(crate) fn create_bind_and_eval(
         frame_def: &FrameDef,
         matches: &[(Code, Code)],
         bound_vals: &[Val],
-        span: Option<&Span>,
+        no_match: Option<&MorelError>,
         r: &mut EvalEnv,
         arg: &Val,
     ) -> Result<Val, MorelError> {
@@ -1144,13 +1154,13 @@ impl<'a> Frame<'a> {
             .cloned()
             .chain(std::iter::repeat_n(Val::Unit, frame_def.local_vars.len()))
             .collect();
-        Self::eval(&mut val_vec, matches, span, r, arg)
+        Self::eval(&mut val_vec, matches, no_match, r, arg)
     }
 
     fn eval(
         val_vec: &mut [Val],
         matches: &[(Code, Code)],
-        span: Option<&Span>,
+        no_match: Option<&MorelError>,
         r: &mut EvalEnv,
         arg: &Val,
     ) -> Result<Val, MorelError> {
@@ -1171,10 +1181,9 @@ impl<'a> Frame<'a> {
                 Err(e) => return Err(e),
             }
         }
-        Err(MorelError::Runtime(
-            BuiltInExn::Match,
-            span.cloned().unwrap_or_else(|| Span::new("stdIn")),
-        ))
+        Err(no_match.cloned().unwrap_or_else(|| {
+            MorelError::Runtime(BuiltInExn::Match, Span::new("stdIn"))
+        }))
     }
 
     pub(crate) fn assign(&mut self, ordinal: usize, a0: &Val) {
