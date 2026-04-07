@@ -776,14 +776,9 @@ from (i, j) in [(1, 2), (3, 4)]
   join () in bag [()];
 > val it = [{i=1,j=2},{i=3,j=4}] : {i:int, j:int} bag
 
-set("mode", "validate");
-> val it = () : unit
 from (i, j) in [(1, 2), (3, 4)]
   join {} in bag [()];
 > val it = [{i=1,j=2},{i=3,j=4}] : {i:int, j:int} bag
-
-set("mode", "evaluate");
-> val it = () : unit
 
 from (i, j) in [(1, 2), (3, 4)]
   join _ in bag ["a"];
