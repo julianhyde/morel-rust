@@ -485,9 +485,6 @@ set("mode", "evaluate");
      "d";
 > val it = "ad" : string
 
-set("mode", "validate");
-> val it = () : unit
-
 (* Test line comment inside block comment *)
 "a" ^ (* block comment start
        "b" ^ (*) this is a line comment, not end of block
@@ -614,6 +611,10 @@ in
   fact 5
 end;
 > val it = 120 : int
+
+set("mode", "validate");
+> val it = () : unit
+
 let
   fun plus x y = x + y
 in
