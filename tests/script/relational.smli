@@ -439,26 +439,16 @@ from e in emps
 > val it = [{deptno=10,id=100,name="Fred"}]
 >   : {deptno:int, id:int, name:string} list
 
-set("mode", "validate");
-> val it = () : unit
-
 from e in emps,
     d in depts on e.deptno = d.deptno
   yield e.id + d.deptno
   where current mod 2 = 1;
 > val it = [121,133] : int list
 
-
-set("mode", "evaluate");
-> val it = () : unit
-
 from i in [1,2,3]
   yield current + 2
   yield current + 3;
 > val it = [6,7,8] : int list
-
-set("mode", "validate");
-> val it = () : unit
 
 from e in emps,
     d in depts on e.deptno = d.deptno
@@ -483,9 +473,6 @@ from i in [current + 1, current + 2, current + 3];
 > stdIn:1.12-1.19 Error: 'current' is only valid in a query
 >   raised at: stdIn:1.12-1.19
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) ... but it can be used in the second
 from i in [1, 2],
@@ -517,9 +504,6 @@ from i in [1,2,3,4,5]
 > stdIn:2.11-2.18 Error: 'current' is only valid in a query
 >   raised at: stdIn:2.11-2.18
 
-set("mode", "validate");
-> val it = () : unit
-
 (*) But "current" is available in a subquery
 from i in [1,2,3,4,5]
   yield {i, js = (from j in ["a","b","c"] take current)};
@@ -541,6 +525,9 @@ from i in [1,2,3,4,5]
 from i in [1,2,3,4,5]
   where not (exists j in ["a","b","ccc","dd"] skip current);
 > val it = [4,5] : int list
+
+set("mode", "validate");
+> val it = () : unit
 
 (* Ordinal ---------------------------------------------------- *)
 
