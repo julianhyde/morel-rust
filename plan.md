@@ -288,8 +288,8 @@ to compute the offset, or simply re-run the script (preferred).
 | relational.smli        | 1368-1396   | validate  | from e in scott.emps                                    | C42    |
 | relational.smli        | ~~1415-1431~~ | ~~validate~~ | ~~range 0 5;~~ *(enabled)*                          | C02    |
 | relational.smli        | ~~1447-1466~~ | ~~validate~~ | ~~from d in depts, i in range 0 5;~~ *(enabled)*   | C15    |
-| relational.smli        | 1496-1509   | validate  | from e in emps, d in depts                              | C03    |
-| relational.smli        | 1562-1580   | validate  | from e in emps, d in depts                              | C03    |
+| relational.smli        | ~~1496-1509~~ | ~~validate~~ | ~~from e in emps, d in depts~~ *(enabled)*        | C03    |
+| relational.smli        | 1562-1580   | validate  | from e in emps, d in depts (group+compute; blocked: `sum over <expr>` unimplemented) | C03    |
 | relational.smli        | 1603-1612   | commented | from e in emps                                          | C14    |
 | relational.smli        | 1653-1729   | validate  | from e in emps                                          | C14    |
 | relational.smli        | 1739-1742   | validate  | from i in [2, 1, 2, 2, 2, 3] union [2, 2, 4] distinct;  | C39    |
@@ -298,7 +298,7 @@ to compute the offset, or simply re-run the script (preferred).
 | relational.smli        | 1823-1862   | validate  | from `o` in orders                                      | C39    |
 | relational.smli        | 1878-1881   | validate  | factorize 12;                                           | C44    |
 | relational.smli        | 1890-2048   | validate  | product (factorize 12);                                 | C44    |
-| relational.smli        | 2062-2085   | validate  | from e in emps, d in depts                              | C03    |
+| relational.smli        | 2062-2085   | validate  | from e in emps, d in depts (group+compute; blocked: `sum over <expr>` and `group record_key` unimplemented) | C03    |
 | relational.smli        | 2110-2350   | validate  | from e in emps                                          | C14    |
 | relational.smli        | 2381-2431   | validate  | from e in emps                                          | C14    |
 | relational.smli        | 2442-2458   | validate  | from e in emps                                          | C14    |

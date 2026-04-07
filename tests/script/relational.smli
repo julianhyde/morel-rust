@@ -1478,9 +1478,6 @@ from x in [1, 2]
   join y = 3;
 > val it = [{x=1,y=3},{x=2,y=3}] : {x:int, y:int} list
 
-set("mode", "validate");
-> val it = () : unit
-
 (*) join
 from e in emps, d in depts
   where e.deptno = d.deptno
@@ -1491,10 +1488,6 @@ from e in emps, d in depts
 >    {deptno=30,dname="Engineering",ename="Shaggy",id=102},
 >    {deptno=30,dname="Engineering",ename="Scooby",id=103}]
 >   : {deptno:int, dname:string, ename:string, id:int} list
-
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) as above, using abbreviated record syntax
 from e in emps, d in depts
