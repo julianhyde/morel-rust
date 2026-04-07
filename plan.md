@@ -303,9 +303,9 @@ to compute the offset, or simply re-run the script (preferred).
 | relational.smli        | 2381-2431   | validate  | from e in emps                                          | C14    |
 | relational.smli        | 2442-2458   | validate  | from e in emps                                          | C14    |
 | relational.smli        | 2499-2540   | partial   | from (5 of 7 test cases enabled; let-scoping and sum-over-literal remain) | C07    |
-| relational.smli        | 2582-2593   | validate  | from {a = a, ...} in [{a=1,b=2}];                       | C10    |
+| relational.smli        | ~~2582-2593~~ | ~~validate~~ | ~~from {a = a, ...} in [{a=1,b=2}];~~ *(enabled)* | C10    |
 | relational.smli        | 2605-2614   | validate  | from {a = a, b = b, ...} in [{a=1,b=true,c=3},{a=1,b=true,c=4}]; | C11    |
-| relational.smli        | 2626-2717   | validate  | from {a = x, ...} in [{a=1,b=2,c=3}];                   | C10    |
+| relational.smli        | partial 2626-2717 | partial   | from {a = x, ...} (open record patterns enabled; remainder still validate) | C10    |
 | relational.smli        | 2726-2736   | validate  | flatMap explode ["ab", "", "def"];                      | C18    |
 | relational.smli        | ~~2747-2787~~ | ~~validate~~ | ~~employeesIn 10;~~ *(enabled)*                   | C04    |
 | relational.smli        | 2808-2872   | validate  | from t in triples order t.foo 1;                        | C09    |
