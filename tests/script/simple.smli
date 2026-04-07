@@ -915,12 +915,12 @@ val _ = 3;
 val SOME i = SOME 1;
 > val i = 1 : int
 
-set("mode", "validate");
-> val it = () : unit
-
 val SOME i = NONE;
 > uncaught exception Bind
 >   raised at: stdIn:1.5-1.18
+
+set("mode", "validate");
+> val it = () : unit
 
 val SOME (q as (1, i), SOME true) = SOME ((1, 2), SOME true);
 > val q = (1,2) : int * int

@@ -402,65 +402,83 @@ impl Pat {
         }
     }
 
+    /// Walks this pattern over `val`, calling `consumer` for each variable
+    /// the pattern would bind. Returns `false` if the pattern fails to
+    /// match the value (e.g. literal mismatch, wrong constructor) — the
+    /// caller should raise the `Bind` exception in that case.
     pub(crate) fn bind_recurse(
         &self,
         val: &Val,
         consumer: &mut dyn FnMut(Box<Pat>, &Val),
-    ) {
+    ) -> bool {
         match self {
             // lint: sort until '#}' where '##Pat::'
             Pat::As(_, _name, inner) => {
                 // Layered pattern 'p as inner_pat': bind 'p' to the
                 // whole value, then recurse into the inner pattern.
                 consumer(Box::new(self.clone()), val);
-                inner.bind_recurse(val, consumer);
+                inner.bind_recurse(val, consumer)
             }
             Pat::Cons(_, head, tail) => {
-                // Composite cons pattern 'val h :: t = e': destructure
-                // 'val' (a Val::List) and recurse into head and tail.
+                // 'h :: t' matches a non-empty list.
                 if let Val::List(vs) = val
                     && !vs.is_empty()
                 {
-                    head.bind_recurse(&vs[0], consumer);
-                    let rest = Val::List(vs[1..].to_vec());
-                    tail.bind_recurse(&rest, consumer);
+                    head.bind_recurse(&vs[0], consumer)
+                        && tail.bind_recurse(
+                            &Val::List(vs[1..].to_vec()),
+                            consumer,
+                        )
+                } else {
+                    false
                 }
             }
-            Pat::Constructor(_, _name, inner) => {
-                // Constructor pattern, e.g. 'val SOME i = SOME 1'.
-                // The argument value is unwrapped from Val::Some/Inl/Inr.
-                if let Some(p) = inner {
-                    let inner_val = match val {
-                        Val::Some(v) => Some(v.as_ref()),
-                        Val::Inl(v) | Val::Inr(v) => Some(v.as_ref()),
-                        _ => None,
-                    };
-                    if let Some(iv) = inner_val {
-                        p.bind_recurse(iv, consumer);
-                    }
+            Pat::Constructor(_, name, inner) => {
+                // Constructor pattern. The expected variant depends on
+                // 'name': SOME / INL / INR for the built-in option/either
+                // types; NONE matches Val::Unit; user-defined constructors
+                // are not yet supported here.
+                let matched_inner = match (name.as_str(), val) {
+                    ("SOME", Val::Some(v)) => Some(v.as_ref()),
+                    ("INL", Val::Inl(v)) => Some(v.as_ref()),
+                    ("INR", Val::Inr(v)) => Some(v.as_ref()),
+                    ("NONE", Val::Unit) => None,
+                    _ => return false,
+                };
+                match (inner, matched_inner) {
+                    (Some(p), Some(v)) => p.bind_recurse(v, consumer),
+                    (None, None) => true,
+                    _ => false,
                 }
             }
             Pat::Identifier(_, _name) => {
                 consumer(Box::new(self.clone()), val);
+                true
             }
             Pat::List(_, pats) => {
-                // Composite list pattern 'val [a, b, c] = e': destructure
-                // and recurse into each element. (Pattern length must match.)
+                // 'val [a, b, c] = e' matches a list of exactly the
+                // pattern's length.
                 if let Val::List(vs) = val
                     && pats.len() == vs.len()
                 {
                     for (p, v) in pats.iter().zip(vs.iter()) {
-                        p.bind_recurse(v, consumer);
+                        if !p.bind_recurse(v, consumer) {
+                            return false;
+                        }
                     }
+                    true
+                } else {
+                    false
                 }
             }
-            Pat::Literal(_, _) => {
-                // No bindings.
+            Pat::Literal(_, lit) => {
+                // Literal pattern matches iff value equals the literal.
+                val == lit
             }
             Pat::Record(t, fields, _) => {
-                // Composite record pattern 'val {a, b = p, ...} = e':
-                // for each labelled field, look up its index in the
-                // record type's alphabetical-key order, then recurse.
+                // 'val {a, b = p, ...} = e': for each labelled field,
+                // look up its index in the record type's alphabetical-key
+                // order, then recurse.
                 if let (Type::Record(_, type_fields), Val::List(vs)) =
                     (t.as_ref(), val)
                 {
@@ -474,37 +492,42 @@ impl Pat {
                         })
                     };
                     for field in fields {
-                        match field {
-                            PatField::Labeled(name, sub_pat) => {
-                                if let Some(i) = find(name) {
-                                    sub_pat.bind_recurse(&vs[i], consumer);
-                                }
+                        let (name_opt, sub_pat) = match field {
+                            PatField::Labeled(name, p) => {
+                                (Some(name.clone()), p.as_ref())
                             }
-                            PatField::Anonymous(sub_pat) => {
-                                if let Some(name) = sub_pat.name()
-                                    && let Some(i) = find(&name)
-                                {
-                                    sub_pat.bind_recurse(&vs[i], consumer);
-                                }
-                            }
-                            PatField::Ellipsis => {}
+                            PatField::Anonymous(p) => (p.name(), p.as_ref()),
+                            PatField::Ellipsis => continue,
+                        };
+                        if let Some(name) = name_opt
+                            && let Some(i) = find(&name)
+                            && !sub_pat.bind_recurse(&vs[i], consumer)
+                        {
+                            return false;
                         }
                     }
+                    true
+                } else {
+                    false
                 }
             }
             Pat::Tuple(_, pats) => {
-                // Composite tuple pattern 'val (p1, p2, ...) = e':
-                // destructure 'val' (a Val::List) and recurse into
-                // each component. Empty tuple = unit, so nothing to do.
-                if let Val::List(vs) = val {
+                // 'val (p1, p2, ...) = e' matches a tuple of the same
+                // arity (or unit if pats is empty).
+                if let Val::List(vs) = val
+                    && pats.len() == vs.len()
+                {
                     for (p, v) in pats.iter().zip(vs.iter()) {
-                        p.bind_recurse(v, consumer);
+                        if !p.bind_recurse(v, consumer) {
+                            return false;
+                        }
                     }
+                    true
+                } else {
+                    matches!(val, Val::Unit) && pats.is_empty()
                 }
             }
-            Pat::Wildcard(_) => {
-                // No bindings to introduce.
-            }
+            Pat::Wildcard(_) => true,
         }
     }
 
@@ -658,7 +681,7 @@ impl Decl {
     /// ```
     pub(crate) fn for_each_binding<F>(&self, action: &mut F)
     where
-        F: FnMut(&Pat, &Expr, &Option<Box<Id>>),
+        F: FnMut(&Pat, &Expr, &Option<Box<Id>>, &Option<Span>),
     {
         match &self {
             Decl::NonRecVal(b) => call(action, b.deref()),
@@ -674,9 +697,9 @@ impl Decl {
 
         fn call<F>(action: &mut F, b: &ValBind)
         where
-            F: FnMut(&Pat, &Expr, &Option<Box<Id>>),
+            F: FnMut(&Pat, &Expr, &Option<Box<Id>>, &Option<Span>),
         {
-            action(&b.pat, &b.expr, &b.overload_pat);
+            action(&b.pat, &b.expr, &b.overload_pat, &b.span);
         }
     }
 
@@ -756,6 +779,10 @@ pub struct ValBind {
     pub t: Type,
     pub expr: Expr,
     pub overload_pat: Option<Box<Id>>,
+    /// Source span of the binding (the pattern + expression, not including
+    /// the leading 'val' keyword or trailing ';'). Used to report the
+    /// location of a 'Bind' exception when the pattern fails to match.
+    pub span: Option<Span>,
 }
 
 impl ValBind {
@@ -767,6 +794,7 @@ impl ValBind {
             t: t.clone(),
             expr: expr.clone(),
             overload_pat: None,
+            span: None,
         }
     }
 }
