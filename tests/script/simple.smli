@@ -672,8 +672,6 @@ set("mode", "evaluate");
 >   : {a:int, b:int, c:int, d:int, e:int, f:int, g:int, h:int, i:int, j:int,
 >      k:int, l:int, m:int, n:int, o_:int, p:int}
 
-set("mode", "validate");
-> val it = () : unit
 (*
 sml prints the following, but we cannot split types yet:
 
@@ -704,10 +702,6 @@ in
   (in_ 3 [1,2,3], in_ 4 [1,2,3])
 end;
 > val it = (true,false) : bool * bool
-
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) Lambda on unit
 fn () => 1;
