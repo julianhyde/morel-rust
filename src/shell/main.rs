@@ -823,9 +823,6 @@ pub enum MorelError {
     EarlyReturn,
 
     Other,
-
-    /// "Bind [nonexhaustive binding failure]"
-    Bind,
 }
 
 impl Display for MorelError {
@@ -842,7 +839,6 @@ impl Display for MorelError {
                 write!(f, "EarlyReturn (internal signal)")
             }
             MorelError::Other => write!(f, "Other error"),
-            MorelError::Bind => write!(f, "Bind error"),
         }
     }
 }

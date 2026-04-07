@@ -19,7 +19,7 @@ use crate::compile::core::{
     DatatypeBind, Decl, Expr, Match, Pat, PatField, Step, StepEnv, StepKind,
     TypeBind, ValBind,
 };
-use crate::compile::library::BuiltInFunction;
+use crate::compile::library::{BuiltInExn, BuiltInFunction};
 use crate::compile::pretty::Pretty;
 use crate::compile::type_env::{Binding, Id};
 use crate::compile::type_resolver::TypeMap;
@@ -36,7 +36,7 @@ use crate::eval::session::Session;
 use crate::eval::val::Val;
 use crate::shell::Shell;
 use crate::shell::config::Config as ShellConfig;
-use crate::shell::main::Environment;
+use crate::shell::main::{Environment, MorelError};
 use crate::shell::prop::Prop;
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -235,7 +235,11 @@ impl<'a> Compiler<'a> {
                   span: &Option<Span>| {
                 let pat_code = self.compile_pat(&cx1, pat);
                 let expr_code = Arc::new(self.compile_expr(&cx1, None, expr));
-                match_codes.push(Code::new_bind(&pat_code, &expr_code));
+                match_codes.push(Code::new_bind_with_span(
+                    &pat_code,
+                    &expr_code,
+                    span.clone(),
+                ));
 
                 // Special treatment for 'val id =' so that 'fun' declarations
                 // can be inlined.
@@ -625,7 +629,12 @@ impl<'a> Compiler<'a> {
                     // Fall through to default handling
                     let arg_code = self.compile_arg(cx, a);
                     let fn_code = self.compile_arg(cx, f);
-                    Code::new_apply(&fn_code, &arg_code, &[])
+                    Code::new_apply_with_span(
+                        &fn_code,
+                        &arg_code,
+                        &[],
+                        Some(span.clone()),
+                    )
                 }
                 Expr::Identifier(type_, name) => {
                     let arg_code = self.compile_arg(cx, a);
@@ -635,16 +644,22 @@ impl<'a> Compiler<'a> {
                         } else {
                             self.compile_arg(cx, f)
                         };
-                    Code::new_apply(
+                    Code::new_apply_with_span(
                         &fn_code,
                         &arg_code,
                         &cx.frame_def.bound_vars,
+                        Some(span.clone()),
                     )
                 }
                 _ => {
                     let arg_code = self.compile_arg(cx, a);
                     let fn_code = self.compile_arg(cx, f);
-                    Code::new_apply(&fn_code, &arg_code, &[])
+                    Code::new_apply_with_span(
+                        &fn_code,
+                        &arg_code,
+                        &[],
+                        Some(span.clone()),
+                    )
                 }
             },
             Expr::Case(_, expr, matches) => {
@@ -1565,17 +1580,14 @@ impl Action for ValDeclAction {
                     emits.push((p2, v2.clone()));
                 });
                 if !matched {
-                    let loc = self
-                        .span
-                        .as_ref()
-                        .map_or_else(|| "stdIn".to_string(), Span::to_string);
-                    r.emit_effect(Effect::EmitLine(
-                        "uncaught exception Bind".to_string(),
-                    ));
-                    r.emit_effect(Effect::EmitLine(format!(
-                        "  raised at: {}",
-                        loc
-                    )));
+                    // Format identically to MorelError::Runtime so that
+                    // every nonexhaustive-pattern failure (whether from
+                    // a 'val' decl, a function application, or a 'case'
+                    // expression) has the same shape.
+                    let loc =
+                        self.span.clone().unwrap_or_else(|| Span::new("stdIn"));
+                    let err = MorelError::Runtime(BuiltInExn::Bind, loc);
+                    r.emit_effect(Effect::EmitLine(err.to_string()));
                     return;
                 }
                 for (p2, v2) in emits {

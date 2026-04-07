@@ -15,7 +15,9 @@
 // language governing permissions and limitations under the
 // License.
 
-use crate::compile::library::{BuiltIn, BuiltInFunction, BuiltInRecord};
+use crate::compile::library::{
+    BuiltIn, BuiltInExn, BuiltInFunction, BuiltInRecord,
+};
 use crate::compile::type_env::Binding;
 use crate::compile::type_parser;
 use crate::compile::types::{Label, PrimitiveType, Type};
@@ -94,16 +96,19 @@ pub enum Effect {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Code {
     // lint: sort until '#}' where '##[A-Z][A-Za-z0-9]*\('
-    /// `Apply(fn_code, arg_code)` calls a function.
-    Apply(Box<Code>, Box<Code>),
-    /// `ApplyClosure(fn_code, arg_code, bind_codes)` calls a closure.
-    ApplyClosure(Box<Code>, Box<Code>, Vec<Code>),
-    /// `ApplyConstant(fn_code, arg_code)` calls a function whose code is known
-    /// at compile time.
-    ApplyConstant(Box<Code>, Box<Code>),
+    /// `Apply(fn_code, arg_code, span)` calls a function. `span` is the
+    /// source location of the call site, used to report a `Match`
+    /// exception when the callee has no clause that matches the argument.
+    Apply(Box<Code>, Box<Code>, Option<Span>),
+    /// `ApplyClosure(fn_code, arg_code, bind_codes, span)` calls a closure.
+    ApplyClosure(Box<Code>, Box<Code>, Vec<Code>, Option<Span>),
+    /// `ApplyConstant(fn_code, arg_code, span)` calls a function whose code is
+    /// known at compile time.
+    ApplyConstant(Box<Code>, Box<Code>, Option<Span>),
     /// `Bind(pat, expr)` binds the pattern to the expression; throws if the
-    /// value does not match.
-    Bind(Box<(Code, Code)>),
+    /// value does not match. The third element is the source span used to
+    /// report the location of a `Bind` exception when the pattern fails.
+    Bind(Box<(Code, Code, Option<Span>)>),
     /// `BindAnd(patterns)` applies every pattern to the same argument and
     /// succeeds only if all of them succeed. Used for layered patterns
     /// ('p as inner_pat'), where the outer name and the inner pattern
@@ -201,25 +206,36 @@ pub enum QueryStep {
 impl Code {
     // lint: sort until '#}' where '##pub'
     pub(crate) fn new_apply(f: &Code, a: &Code, refs: &[Binding]) -> Code {
+        Self::new_apply_with_span(f, a, refs, None)
+    }
+
+    pub(crate) fn new_apply_with_span(
+        f: &Code,
+        a: &Code,
+        refs: &[Binding],
+        span: Option<Span>,
+    ) -> Code {
         if !refs.is_empty() {
             let bind_codes: Vec<Code> = Vec::new();
             Code::ApplyClosure(
                 Box::new(f.clone()),
                 Box::new(a.clone()),
                 bind_codes,
+                span,
             )
         } else if let Code::Constant(_, Val::Code(c)) = f {
             Code::ApplyConstant(
                 Box::new(c.deref().clone()),
                 Box::new(a.clone()),
+                span,
             )
         } else {
-            Code::Apply(Box::new(f.clone()), Box::new(a.clone()))
+            Code::Apply(Box::new(f.clone()), Box::new(a.clone()), span)
         }
     }
 
     pub(crate) fn new_bind(pat_code: &Code, expr_code: &Code) -> Code {
-        Code::Bind(Box::new((pat_code.clone(), expr_code.clone())))
+        Code::Bind(Box::new((pat_code.clone(), expr_code.clone(), None)))
     }
 
     pub(crate) fn new_bind_cons(h: &Code, t: &Code) -> Code {
@@ -267,6 +283,14 @@ impl Code {
             code.assert_supports_eval_mode(&EvalMode::EagerV1)
         });
         Code::BindTuple(codes.to_vec())
+    }
+
+    pub(crate) fn new_bind_with_span(
+        pat_code: &Code,
+        expr_code: &Code,
+        span: Option<Span>,
+    ) -> Code {
+        Code::Bind(Box::new((pat_code.clone(), expr_code.clone(), span)))
     }
 
     pub(crate) fn new_constant(type_: &Type, v: Val) -> Code {
@@ -428,11 +452,11 @@ impl Code {
     fn supports_eval_mode(&self, mode: &EvalMode) -> bool {
         match self {
             // lint: sort until '#}' where '##Code::'
-            Code::Apply(_, _) => {
+            Code::Apply(_, _, _) => {
                 *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
             }
-            Code::ApplyClosure(_, _, _) => *mode == EvalMode::Eager0,
-            Code::ApplyConstant(_, _) => *mode == EvalMode::Eager0,
+            Code::ApplyClosure(_, _, _, _) => *mode == EvalMode::Eager0,
+            Code::ApplyConstant(_, _, _) => *mode == EvalMode::Eager0,
             Code::Bind(_) => *mode == EvalMode::Eager0,
             Code::BindAnd(_) => *mode == EvalMode::EagerV1,
             Code::BindCons(_, _) => {
@@ -498,10 +522,14 @@ impl Code {
     ) -> Result<Val, MorelError> {
         match &self {
             // lint: sort until '#}' where '##Code::'
-            Code::Apply(fn_code, arg_code) => {
+            Code::Apply(fn_code, arg_code, span) => {
                 let fn_ = fn_code.eval_f0(r, f)?;
                 let arg = arg_code.eval_f0(r, f)?;
-                match &fn_ {
+                let prev = r.current_call_span.take();
+                if span.is_some() {
+                    r.current_call_span = span.clone();
+                }
+                let result = match &fn_ {
                     Val::Code(c) => c.eval_f1(r, f, &arg),
                     Val::Closure(frame_def, matches, bound_vals) => {
                         Frame::create_bind_and_eval(
@@ -509,23 +537,40 @@ impl Code {
                         )
                     }
                     _ => panic!("Expected code"),
-                }
+                };
+                r.current_call_span = prev;
+                result
             }
-            Code::ApplyClosure(fn_code, arg_code, _bind_codes) => {
+            Code::ApplyClosure(fn_code, arg_code, _bind_codes, span) => {
                 let arg = arg_code.eval_f0(r, f)?;
                 let fun = fn_code.eval_f0(r, f)?;
-                fun.expect_code().eval_f1(r, f, &arg)
+                let prev = r.current_call_span.take();
+                if span.is_some() {
+                    r.current_call_span = span.clone();
+                }
+                let result = fun.expect_code().eval_f1(r, f, &arg);
+                r.current_call_span = prev;
+                result
             }
-            Code::ApplyConstant(fn_code, arg_code) => {
+            Code::ApplyConstant(fn_code, arg_code, span) => {
                 let arg = arg_code.eval_f0(r, f)?;
-                fn_code.eval_f1(r, f, &arg)
+                let prev = r.current_call_span.take();
+                if span.is_some() {
+                    r.current_call_span = span.clone();
+                }
+                let result = fn_code.eval_f1(r, f, &arg);
+                r.current_call_span = prev;
+                result
             }
             Code::Bind(b) => {
-                let (pat_code, expr_code) = &**b;
+                let (pat_code, expr_code, span) = &**b;
                 let v = expr_code.eval_f0(r, f)?;
                 match pat_code.eval_f1(r, f, &v) {
                     Ok(Val::Bool(true)) => Ok(Val::Unit),
-                    Ok(_) => Err(MorelError::Bind),
+                    Ok(_) => Err(MorelError::Runtime(
+                        BuiltInExn::Bind,
+                        span.clone().unwrap_or_else(|| Span::new("stdIn")),
+                    )),
                     Err(e) => Err(e),
                 }
             }
@@ -541,7 +586,12 @@ impl Code {
                     }
                     i += 2;
                 }
-                Err(MorelError::Bind)
+                Err(MorelError::Runtime(
+                    BuiltInExn::Match,
+                    r.current_call_span
+                        .clone()
+                        .unwrap_or_else(|| Span::new("stdIn")),
+                ))
             }
             Code::Constant(_, c) => Ok(c.clone()),
             Code::CreateClosure(frame_def, matches, bind_codes) => {
@@ -676,7 +726,7 @@ impl Code {
     ) -> Result<Val, MorelError> {
         match &self {
             // lint: sort until '#}' where '##Code::'
-            Code::Apply(fn_code, arg_code) => {
+            Code::Apply(fn_code, arg_code, _span) => {
                 let fun = fn_code.eval_f0(r, f)?;
                 let arg = arg_code.eval_f0(r, f)?;
                 let closure = fun.expect_code().eval_f1(r, f, &arg)?;
@@ -928,7 +978,7 @@ impl Display for Code {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
             // lint: sort until '#}' where '##Self::'
-            Self::ApplyConstant(fn_code, arg_code) => {
+            Self::ApplyConstant(fn_code, arg_code, _) => {
                 write!(f, "apply(fn {} arg {})", fn_code, arg_code)
             }
             Self::Bind(v) => write!(f, "bind({} = {})", v.0, v.1),
@@ -1122,7 +1172,12 @@ impl<'a> Frame<'a> {
                 Err(e) => return Err(e),
             }
         }
-        Err(MorelError::Bind)
+        Err(MorelError::Runtime(
+            BuiltInExn::Match,
+            r.current_call_span
+                .clone()
+                .unwrap_or_else(|| Span::new("stdIn")),
+        ))
     }
 
     pub(crate) fn assign(&mut self, ordinal: usize, a0: &Val) {
@@ -1139,6 +1194,11 @@ pub struct EvalEnv<'a> {
     pub shell: &'a Shell,
     effects: &'a mut Vec<Effect>,
     link_codes: Vec<Code>,
+    /// Span of the current pattern-matching call site, used to report
+    /// the location of a runtime `Match` exception when a function
+    /// application has no matching clause. The Apply variants set this
+    /// before invoking the callee and restore the previous value after.
+    pub current_call_span: Option<Span>,
 }
 
 impl<'a> EvalEnv<'a> {
@@ -1153,6 +1213,7 @@ impl<'a> EvalEnv<'a> {
             shell,
             effects,
             link_codes: link_codes.to_vec(),
+            current_call_span: None,
         }
     }
 }
