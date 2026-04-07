@@ -91,10 +91,18 @@ pub enum Val {
     /// user-defined functions. Long-term, they should be handled by inlining.
     Code(Arc<Code>),
 
-    /// `Closure(frame_def, matches, bound_vals)` is a closure.
+    /// `Closure(frame_def, matches, bound_vals, span)` is a closure.
     /// It is evaluated similarly to `Fn(frame_def, matches)`, except
-    /// that the frame is pre-populated with the values.
-    Closure(Arc<FrameDef>, Vec<(Code, Code)>, Vec<Val>),
+    /// that the frame is pre-populated with the values. `span` is the
+    /// source location of the function literal that created this
+    /// closure, used to report a `Match` exception when an application
+    /// has no matching clause.
+    Closure(
+        Arc<FrameDef>,
+        Vec<(Code, Code)>,
+        Vec<Val>,
+        Option<crate::eval::code::Span>,
+    ),
 }
 
 // REVIEW Should we use `Into` or `From` traits?
@@ -222,9 +230,14 @@ impl Val {
     ) -> Result<Val, MorelError> {
         match self {
             Val::Code(code) => code.eval_f1(r, f, arg),
-            Val::Closure(frame_def, matches, bound_vals) => {
+            Val::Closure(frame_def, matches, bound_vals, span) => {
                 CodeFrame::create_bind_and_eval(
-                    frame_def, matches, bound_vals, r, arg,
+                    frame_def,
+                    matches,
+                    bound_vals,
+                    span.as_ref(),
+                    r,
+                    arg,
                 )
             }
             Val::Fn(built_in_fn) => {
@@ -398,7 +411,7 @@ impl Hash for Val {
                 // Hash the pointer address
                 Arc::as_ptr(code).hash(state);
             }
-            Val::Closure(frame_def, matchers, vals) => {
+            Val::Closure(frame_def, matchers, vals, _) => {
                 19.hash(state);
                 Arc::as_ptr(frame_def).hash(state);
                 // Hash match count and vals
