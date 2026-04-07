@@ -1604,9 +1604,6 @@ in
 end;
 > val it = ["Shaggy","Scooby"] : string list
 
-set("mode", "validate");
-> val it = () : unit
-
 (*) elem (equivalent to SQL's IN)
 from e in emps
   where e.deptno elem (from d in depts
@@ -1638,6 +1635,9 @@ from e in emps
     yield d.deptno) = false
 yield e.name;
 > val it = ["Fred","Velma"] : string list
+
+set("mode", "validate");
+> val it = () : unit
 
 (* Set operations (union, intersect, except) ------------------ *)
 
