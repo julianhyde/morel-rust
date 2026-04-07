@@ -123,292 +123,284 @@ Count how many lines were inserted or deleted before the region
 to compute the offset, or simply re-run the script (preferred).
 
 
-## Propagated Commits
-
-Commits propagated since the baseline. Listed in commit order.
-"Partial" means some test cases in the region were enabled, but
-others remain in validate mode (e.g. blocked by an unrelated
-feature).
-
-| Commit  | morel-java                                    | Status  |
-|---------|-----------------------------------------------|---------|
-| e135a96 | C01 (no code change; tests already enabled)   | done    |
-| 003b5c5 | hydromatic/morel#7 (C02 recursive cross-stmt) | done    |
-| 2493eba | C02 (mark fully propagated in plan.md)        | done    |
-| 11d8119 | C02 follow-up: enable cross-statement tests   | done    |
-| dfc2c6c | hydromatic/morel#2 (`as` → `in` in `from`)    | partial |
-| 799a925 | hydromatic/morel#12 (lateral joins)           | done    |
-|         | hydromatic/morel#14 (tuple/record/unit eq)    | done    |
-| 85cfd19 | hydromatic/morel#17 (`from` with 0 sources)   | partial |
-|         | hydromatic/morel#16 (closed REPL types)       | done    |
-| 132a287 | hydromatic/morel#35 (open record patterns)    | partial |
-| d1281ec | hydromatic/morel#48 (`map #2 …`)              | done    |
-| 5f4f019 | hydromatic/morel#34 (functions in relations)  | done    |
-| b1dabe7 | hydromatic/morel#104 (top-level `flatMap`)    | partial |
-| 2a8c223 | C16 (closure and recursion test scenarios)    | partial |
-| e0b8fab | hydromatic/morel#228 (`Int` structure)        | done    |
-| 5f0aef5 | hydromatic/morel#265 (`current` keyword)      | partial |
-| a93b63c | hydromatic/morel#244 (simplify `order` syntax)| done    |
-| 398c124 | hydromatic/morel#287 (degenerate joins)       | partial |
-| b40dd0f | hydromatic/morel#306 (nested block comments)  | partial |
-| 940d216 | hydromatic/morel#203 (lambda with record arg) | partial |
-| afebfd1 | hydromatic/morel#291 (`typeof` operator)      | partial |
-| 9860c67 | hydromatic/morel#241 (forall and exists)      | partial |
-| 61d65a5 | hydromatic/morel#35 follow-up (literal pat)   | partial |
-| 247c6de | hydromatic/morel#17 follow-up (bare `from;`)  | done    |
-| 67fd170 | hydromatic/morel#228 follow-up (greater_int)  | partial |
-| 95ec3a2 | hydromatic/morel#52 (elem in 'where')         | partial |
-| fc2c96a | hydromatic/morel#276 (`ordinal` field name)   | partial |
-| 75655bf | hydromatic/morel#276 (degenerate joins #2)    | done    |
-| 63c9cd8 | hydromatic/morel#291 follow-up (multi-line ty)| partial |
-| b9ebcf6 | hydromatic/morel#52 follow-up (yield+ordinal) | partial |
-| 9c6dfbc | hydromatic/morel#306 follow-up (deep records) | partial |
-| 110939e | hydromatic/morel#2 follow-up (count over ()) | partial |
-
-
-
 ## Table A: morel-java Commits Referenced by Disabled Regions
 
 | #    | SHA        | Date         | Message |
 |-----|-----------|-------------|------------------------------------------------------------|
-| C01  | 0b3809b2   | 2019-04-04   | Fix bug where could not derive type if an expression in the environment had type record or list |
-| C02  | ecbb9c18   | 2019-07-18   | [SMLJ-2] In 'from' expression, change 'as' to 'in' |
-| C03  | 7397c39d   | 2020-03-01   | [MOREL-12] In 'from' clause, allow initializers to reference previous variables |
-| C04  | e50853a5   | 2020-03-22   | [MOREL-17] Allow `from` clause that defines 0 sources |
-| C05  | 98294833   | 2020-04-18   | Add examples of recursive queries and fixed-point algorithms |
-| C06  | 7e7468af   | 2021-01-23   | [MOREL-42] Add a "morel" Calcite UDF, to allow hybrid plans with a mixture of relational and non-relational |
-| C07  | 34137029   | 2021-06-26   | [MOREL-52] Allow multiple 'yield' steps in 'from' |
-| C08  | 520d323c   | 2021-08-30   | [MOREL-70] Polymorphic datatype |
-| C09  | bdfa8bb7   | 2021-12-19   | Add example of matching regular expressions using combinators |
-| C10  | e5ef07fb   | 2022-01-11   | [MOREL-96] Print control |
-| C11  | 38dc068a   | 2022-02-04   | [MOREL-104] Make functions top-level |
-| C12  | 8e7ea79a   | 2022-03-19   | [MOREL-55] Analyze match coverage, detecting redundant and exhaustive matches |
-| C13  | a7194e4c   | 2022-04-06   | [MOREL-138] Type annotations in patterns, function declarations and expressions |
-| C14  | 89e5c507   | 2023-07-29   | [MOREL-198] Idempotent mode for test scripts |
-| C15  | ac929a10   | 2023-07-29   | Add a test for various closure and recursion scenarios |
-| C16  | 6741f5b4   | 2023-11-21   | [MOREL-205] Pattern that uses nested type-constructors should not be considered redundant |
-| C17  | bfd37e83   | 2023-12-07   | [MOREL-202] Allow unbounded variables (`from` and `join` without `in`), and remove `suchthat` keyword |
-| C18  | 561ea6f0   | 2023-12-09   | [MOREL-209] File reader, and progressive types |
-| C19  | 295d60f3   | 2024-01-30   | Add function `Interactive.useSilently` |
-| C20  | da52b1ed   | 2024-12-13   | Improve formatting of function types |
-| C21  | 7954402c   | 2024-12-15   | [MOREL-273] Ordered and unordered queries |
-| C22  | 4a0b008a   | 2025-02-22   | [MOREL-237] Operator overloading (`over` and `inst` keywords) |
-| C23  | ee864834   | 2025-03-12   | [MOREL-241] Universal and existential quantification (`forall` and `exists`) and implication (`implies`) |
-| C24  | 380a9609   | 2025-03-22   | [MOREL-247] Cannot translate an expression that contains type annotations |
-| C25  | 89008ece   | 2025-04-10   | [MOREL-251] Add function `Sys.clearEnv ()` |
-| C26  | 9813940f   | 2025-04-29   | [MOREL-259] Tabular mode |
-| C27  | 52d01afc   | 2025-05-02   | [MOREL-264] `Char` structure |
-| C28  | ab5b9df9   | 2025-05-04   | [MOREL-255] In the `scott` sample database, map the `EMP` table to `emps` (and pluralize other table names) |
-| C29  | 25cc7d29   | 2025-05-05   | [MOREL-253] Allow set operators (`union`, `intersect`, `except`) as steps in a pipeline |
-| C30  | 000b878e   | 2025-05-23   | [MOREL-276] Add `ordinal` |
-| C31  | e07ffc0f   | 2025-05-25   | Throw if `ordinal` is used in an unordered step |
-| C32  | 042cc4aa   | 2025-05-26   | Reset `ordinal` each time a subquery is restarted |
-| C33  | 0fd5c8e7   | 2025-05-27   | [MOREL-282] Add built-in datatype `Descending`, and method `Relational.compare`, for type-based orderings |
-| C34  | 785de9b0   | 2025-06-07   | [MOREL-287] Degenerate joins |
-| C35  | 697184fd   | 2025-06-09   | [MOREL-288] Improve syntax of `group` and `compute` steps |
-| C36  | 4c402f51   | 2025-06-21   | [MOREL-289] Quoted type names |
-| C37  | 46332f0c   | 2025-06-25   | [MOREL-291] Add `typeof` operator, to extract the type of an expression |
-| C38  | e1a90401   | 2025-06-29   | [MOREL-285] Type abbreviations, also known as alias types, declared using the `type` keyword |
-| C39  | 2e822d35   | 2025-07-06   | [MOREL-298] Implementations of built-in functions should be in n-ary form, with a helper to curry them |
-| C40  | 065f4c0c   | 2025-07-27   | [MOREL-301] `Fn` structure |
-| C41  | afc11745   | 2025-10-20   | [MOREL-310] Add validation-mode to scripts, with syntax `:t`, to check the type of an expression without evaluating |
-| C42  | 88475799   | 2025-10-29   | [MOREL-311] Support `op` keyword (operator sections) |
-| C43  | eff94a5d   | 2025-12-12   | Implement queries with unbounded variables by inverting predicates (#217) |
-| C44  | 9c5bba8a   | 2026-01-27   | In a zero-field relation, `distinct` should give different result to `group {}` (#328) |
-| C45  | d0249a04   | 2026-02-05   | Invert `case` expressions with multiple arms (#341) |
+| C01  | 0b3809b2   | 2019-04-04   | Fix bug where could not derive type if an expression in the environment had type record or list *(believed fully propagated)* |
+| C02  | ddc1da34   | 2019-04-07   | Relational expressions: "from", with "as", "where" and "yield" keywords *(believed fully propagated)* |
+| C03  | ecbb9c18   | 2019-07-18   | [SMLJ-2] In 'from' expression, change 'as' to 'in' |
+| C04  | 7397c39d   | 2020-03-01   | [MOREL-12] In 'from' clause, allow initializers to reference previous variables |
+| C05  | b1118b96   | 2020-03-02   | [MOREL-14] Tuple should equal record, and both equal unit when empty |
+| C06  | 8a553d84   | 2020-03-03   | [MOREL-16] Ensure that types derived for REPL expressions have no free type variables |
+| C07  | e50853a5   | 2020-03-22   | [MOREL-17] Allow `from` clause that defines 0 sources |
+| C08  | 98294833   | 2020-04-18   | Add examples of recursive queries and fixed-point algorithms |
+| C09  | f7048c98   | 2020-05-04   | [MOREL-34] Functions in relations |
+| C10  | dba092ba   | 2020-05-05   | [MOREL-35] Record pattern in `from` mixes up fields if not in alphabetical order |
+| C11  | f3c23852   | 2020-05-08   | [MOREL-36] In record pattern, make labels optional, and disallow "..." anywhere but end |
+| C12  | 7e7468af   | 2021-01-23   | [MOREL-42] Add a "morel" Calcite UDF, to allow hybrid plans with a mixture of relational and non-relational |
+| C13  | 73992cd0   | 2021-05-20   | [MOREL-48] Deduce types when a function is applied to a record selector |
+| C14  | 34137029   | 2021-06-26   | [MOREL-52] Allow multiple 'yield' steps in 'from' |
+| C15  | 520d323c   | 2021-08-30   | [MOREL-70] Polymorphic datatype |
+| C16  | bdfa8bb7   | 2021-12-19   | Add example of matching regular expressions using combinators |
+| C17  | e5ef07fb   | 2022-01-11   | [MOREL-96] Print control |
+| C18  | 38dc068a   | 2022-02-04   | [MOREL-104] Make functions top-level |
+| C19  | 963717c7   | 2022-03-01   | [MOREL-105] Allow identifiers to contain prime characters (') |
+| C20  | 8e7ea79a   | 2022-03-19   | [MOREL-55] Analyze match coverage, detecting redundant and exhaustive matches |
+| C21  | a7194e4c   | 2022-04-06   | [MOREL-138] Type annotations in patterns, function declarations and expressions |
+| C22  | 89e5c507   | 2023-07-29   | [MOREL-198] Idempotent mode for test scripts |
+| C23  | ac929a10   | 2023-07-29   | Add a test for various closure and recursion scenarios |
+| C24  | 14d6007f   | 2023-10-31   | [MOREL-203] Cannot deduce type for 'from b in [SOME true, NONE]' |
+| C25  | 6741f5b4   | 2023-11-21   | [MOREL-205] Pattern that uses nested type-constructors should not be considered redundant |
+| C26  | bfd37e83   | 2023-12-07   | [MOREL-202] Allow unbounded variables (`from` and `join` without `in`), and remove `suchthat` keyword |
+| C27  | 561ea6f0   | 2023-12-09   | [MOREL-209] File reader, and progressive types |
+| C28  | 295d60f3   | 2024-01-30   | Add function `Interactive.useSilently` |
+| C29  | 75f4b542   | 2024-09-24   | [MOREL-228] Int structure |
+| C30  | 7954402c   | 2024-12-15   | [MOREL-273] Ordered and unordered queries |
+| C31  | 4448b9c5   | 2024-12-24   | Number type variables left-to-right |
+| C32  | 4a0b008a   | 2025-02-22   | [MOREL-237] Operator overloading (`over` and `inst` keywords) |
+| C33  | ee864834   | 2025-03-12   | [MOREL-241] Universal and existential quantification (`forall` and `exists`) and implication (`implies`) |
+| C34  | 380a9609   | 2025-03-22   | [MOREL-247] Cannot translate an expression that contains type annotations |
+| C35  | 89008ece   | 2025-04-10   | [MOREL-251] Add function `Sys.clearEnv ()` |
+| C36  | 9813940f   | 2025-04-29   | [MOREL-259] Tabular mode |
+| C37  | 52d01afc   | 2025-05-02   | [MOREL-264] `Char` structure |
+| C38  | ab5b9df9   | 2025-05-04   | [MOREL-255] In the `scott` sample database, map the `EMP` table to `emps` (and pluralize other table names) |
+| C39  | 25cc7d29   | 2025-05-05   | [MOREL-253] Allow set operators (`union`, `intersect`, `except`) as steps in a pipeline |
+| C40  | 8e9f5c1f   | 2025-05-22   | [MOREL-265] Add `current` keyword, representing the current row in a query |
+| C41  | 000b878e   | 2025-05-23   | [MOREL-276] Add `ordinal` |
+| C42  | e07ffc0f   | 2025-05-25   | Throw if `ordinal` is used in an unordered step |
+| C43  | 042cc4aa   | 2025-05-26   | Reset `ordinal` each time a subquery is restarted |
+| C44  | 0fd5c8e7   | 2025-05-27   | [MOREL-282] Add built-in datatype `Descending`, and method `Relational.compare`, for type-based orderings |
+| C45  | 19e00319   | 2025-05-29   | [MOREL-244] Simplify syntax of `order` step, and remove the `desc` keyword |
+| C46  | 785de9b0   | 2025-06-07   | [MOREL-287] Degenerate joins |
+| C47  | 4c402f51   | 2025-06-21   | [MOREL-289] Quoted type names |
+| C48  | 46332f0c   | 2025-06-25   | [MOREL-291] Add `typeof` operator, to extract the type of an expression |
+| C49  | e1a90401   | 2025-06-29   | [MOREL-285] Type abbreviations, also known as alias types, declared using the `type` keyword |
+| C50  | 2e822d35   | 2025-07-06   | [MOREL-298] Implementations of built-in functions should be in n-ary form, with a helper to curry them |
+| C51  | 065f4c0c   | 2025-07-27   | [MOREL-301] `Fn` structure |
+| C52  | afc11745   | 2025-10-20   | [MOREL-310] Add validation-mode to scripts, with syntax `:t`, to check the type of an expression without evaluating |
+| C53  | 88475799   | 2025-10-29   | [MOREL-311] Support `op` keyword (operator sections) |
+| C54  | eff94a5d   | 2025-12-12   | Implement queries with unbounded variables by inverting predicates (#217) |
+| C55  | 20d2b7b1   | 2026-01-06   | Allow nested block comments (#306) |
+| C56  | 9c5bba8a   | 2026-01-27   | In a zero-field relation, `distinct` should give different result to `group {}` (#328) |
+| C57  | d0249a04   | 2026-02-05   | Invert `case` expressions with multiple arms (#341) |
 
 ## Table B: Disabled Sections in morel-rust.1
 
 | File                   | Lines      | State     | Description                                             | Commit |
 |-----------------------|-----------|----------|--------------------------------------------------------|-------|
-| bag.smli               | 31-34     | commented | useSilently "scott.smli";                               | C21    |
-| bag.smli               | 49-52     | validate  | String.size 1;                                          | C21    |
-| bag.smli               | 93-95     | validate  | from i in intBag;                                       | C21    |
-| bag.smli               | 103-105    | validate  | from i in intBag where i > 1;                           | C21    |
-| bag.smli               | 113-115    | validate  | from i in intBag yield i;                               | C21    |
-| bag.smli               | 121-123    | validate  | from i in intBag yield i * 2;                           | C21    |
-| bag.smli               | 129-228    | validate  | from i in intBag yield {j=i*i, i};                      | C21    |
-| bag.smli               | 238-339    | validate  | from i in intList union intList;                        | C21    |
-| blog.smli              | 24-2345   | validate  | Sys.set ("printDepth", ~1);                             | C14    |
-| built-in.smli          | 67-134    | validate  | Interact;                                               | C14    |
-| built-in.smli          | 186-203    | validate  | Relational;                                             | C14    |
-| built-in.smli          | 243-279    | validate  | * The "option" datatype, declared as follows:           | C14    |
-| built-in.smli          | 407-410    | validate  | use;                                                    | C14    |
-| built-in.smli          | 424-428    | commented | Bag.nil;                                                | C14    |
-| built-in.smli          | 854-1022   | validate  | Fn;                                                     | C40    |
-| built-in.smli          | 1190-1192   | commented | Sys.plan ();                                            | C14    |
-| built-in.smli          | 1260-1268   | validate  | val p = String.isPrefix "he";                           | C39    |
-| built-in.smli          | 1797-1799   | commented | List.collate (fn (x, y) => if x < y then LESS else if x = y then EQUAL | C14    |
-| built-in.smli          | 2519-2526   | commented | fun testChar (p: char -> bool) =                        | C27    |
-| built-in.smli          | 2593-2595   | commented | testChar Char.isAscii;                                  | C27    |
-| built-in.smli          | 2603-2605   | commented | testChar Char.isLower;                                  | C27    |
-| built-in.smli          | 2613-2615   | commented | testChar Char.isUpper;                                  | C27    |
-| built-in.smli          | 2623-2625   | commented | testChar Char.isAlpha;                                  | C27    |
-| built-in.smli          | 2633-2635   | commented | testChar Char.isDigit;                                  | C27    |
-| built-in.smli          | 2644-2646   | commented | testChar Char.isHexDigit;                               | C27    |
-| built-in.smli          | 2655-2657   | commented | testChar Char.isAlphaNum;                               | C27    |
-| built-in.smli          | 2665-2667   | commented | testChar Char.isPrint;                                  | C27    |
-| built-in.smli          | 2676-2678   | commented | testChar Char.isSpace;                                  | C27    |
-| built-in.smli          | 2687-2689   | commented | testChar Char.isGraph;                                  | C27    |
-| built-in.smli          | 2698-2700   | commented | testChar Char.isPunct;                                  | C27    |
-| built-in.smli          | 2707-2709   | commented | testChar Char.isCntrl;                                  | C27    |
-| built-in.smli          | 2715-2717   | commented | testChar Char.isAscii;                                  | C27    |
-| built-in.smli          | 2754-2764   | commented | val p = Char.contains "abc";                            | C27    |
-| built-in.smli          | 2772-2782   | commented | val p = Char.notContains "abc";                         | C27    |
-| built-in.smli          | 3281-3285   | commented | Real.min (nan, 4.5);                                    | C14    |
-| built-in.smli          | 3300-3302   | commented | Real.max (nan, 4.5);                                    | C14    |
-| built-in.smli          | 4220-4232   | validate  | Relational.count (bag [1, 2, 3]);                       | C21    |
-| built-in.smli          | 4280-4301   | validate  | Relational.iterate                                      | C14    |
-| built-in.smli          | 4311-4318   | validate  | Relational.sum [1.0, 2.5, 3.5];                         | C14    |
-| built-in.smli          | 4324-4335   | validate  | Relational.max [1.0, 2.5, 3.5];                         | C14    |
-| built-in.smli          | 4341-4352   | validate  | Relational.min [1.0, 2.5, 3.5];                         | C14    |
-| built-in.smli          | 4358-4448   | validate  | Relational.only [1, 2, 3];                              | C14    |
-| built-in.smli          | 4490-4531   | validate  | Relational.compare (SOME 1, NONE);                      | C33    |
-| closure.smli           | 165-167    | validate  | baz4 (fn i => i - 1);                                   | C15    |
-| closure.smli           | 181-183    | validate  | baz5 (fn i => i - 1, 5);                                | C15    |
-| closure.smli           | 197-199    | validate  | baz6 (fn i => i - 1, 5);                                | C15    |
-| closure.smli           | 207-220    | validate  | val rec perm = fn n => if n = k then k else n * perm (n - 1); | C15    |
-| datatype.smli          | 84-91     | validate  | fun greater_alpha (x, y) = if x < y then y else x;      | C21    |
-| datatype.smli          | 128-318    | validate  | datatype foo = W | X | Y of int;                        | C08    |
-| datatype.smli          | 326-404    | validate  | f (SOME (SOME 3));                                      | C16    |
-| file.smli              | 22-111    | validate  | file;                                                   | C18    |
-| fixed-point.smli       | 136-242    | validate  | val pairs =                                             | C05    |
-| fixed-point.smli       | 254-372    | validate  | approx_sqrt 100.0 1.0;                                  | C05    |
-| fixed-point.smli       | 391-438    | validate  | fun shortest_path edges =                               | C05    |
-| foreign.smli           | 27-316    | validate  | scott;                                                  | C14    |
-| hybrid.smli            | 31-96     | validate  | from e in scott.emps                                    | C28    |
-| hybrid.smli            | 106-110    | validate  | Sys.plan();                                             | C14    |
-| hybrid.smli            | 119-124    | validate  | Sys.plan();                                             | C14    |
-| hybrid.smli            | 134-140    | validate  | Sys.plan();                                             | C14    |
-| hybrid.smli            | 149-155    | validate  | Sys.plan();                                             | C14    |
-| hybrid.smli            | 165-169    | validate  | Sys.plan();                                             | C14    |
-| hybrid.smli            | 178-315    | validate  | Sys.plan();                                             | C14    |
-| idempotent.smli        | 34-47     | validate  | val (x, y) = (5, 6);                                    | C14    |
-| logic.smli             | 22-133    | validate  | val emps = scott.emps;                                  | C28    |
-| logic.smli             | 156-179    | validate  | "SALES". *)                                             | C23    |
-| logic.smli             | 228-304    | validate  | exists e in scott.emps where e.deptno = 20 into sum;    | C23    |
-| match.smli             | 90-94     | validate  | * hydromatic/morel#151 "Tail call optimization" is fixed. *) | C12    |
-| misc.smli              | 22-74     | validate  | * [MOREL-251] Add function `Sys.clearEnv ()`            | C25    |
-| misc.smli              | 160-180    | validate  | op x;                                                   | C42    |
-| misc.smli              | 190-192    | validate  | (op ::) (1,[2,3,4]);                                    | C42    |
-| overload.smli          | 28-264    | validate  | * Example based on "A Second Look at Overloading" by Martin Odersky, P | C22    |
-| pretty.smli            | 22-73     | validate  | * [MOREL-259] Tabular mode                              | C26    |
-| regex-example.smli     | 25-235    | validate  | fun chars s =                                           | C09    |
-| relational.smli        | 147-152    | validate  | useSilently "scott.smli";                               | C19    |
-| relational.smli        | 524-537    | validate  | 1 + ordinal;                                            | C30    |
-| relational.smli        | 573-578    | validate  | from e in emps, i in bag [1]                            | C31    |
-| relational.smli        | 630-675    | validate  | from e in scott.emps                                    | C31    |
-| relational.smli        | 818-870    | validate  | from {} in [()],                                        | C34    |
-| relational.smli        | 890-901    | validate  | from e in emps                                          | C07    |
-| relational.smli        | 919-949    | validate  | from e in emps                                          | C07    |
-| relational.smli        | 976-990    | validate  | from e in emps                                          | C07    |
-| relational.smli        | 1000-1222   | validate  | from i in [1,2]                                         | C32    |
-| relational.smli        | 1249-1304   | validate  | from i in [1, 2, 3]                                     | C44    |
-| relational.smli        | 1332-1360   | validate  | from e in scott.emps                                    | C31    |
-| relational.smli        | 1505-1511   | validate  | from e in emps, d in depts                              | C02    |
-| relational.smli        | 1521-1529   | validate  | from e in emps, d in depts                              | C02    |
-| relational.smli        | 1552-1561   | commented | from e in emps                                          | C07    |
-| relational.smli        | 1634-1678   | validate  | fun mustBeList (list: 'a list) = list;                  | C07    |
-| relational.smli        | 1688-1691   | validate  | from i in [2, 1, 2, 2, 2, 3] union [2, 2, 4] distinct;  | C29    |
-| relational.smli        | 1705-1708   | validate  | from i in [2, 1, 2, 2, 2, 3] except distinct [2, 2, 4]; | C29    |
-| relational.smli        | 1744-1762   | validate  | from d in scott.depts yield d.deptno;                   | C21    |
-| relational.smli        | 1772-1811   | validate  | from `o` in orders                                      | C29    |
-| relational.smli        | 1827-1830   | validate  | factorize 12;                                           | C33    |
-| relational.smli        | 1839-1997   | validate  | product (factorize 12);                                 | C33    |
-| relational.smli        | 2011-2034   | validate  | from e in emps, d in depts                              | C02    |
-| relational.smli        | 2059-2299   | validate  | from e in emps                                          | C07    |
-| relational.smli        | 2330-2380   | validate  | from e in emps                                          | C07    |
-| relational.smli        | 2392-2398   | commented | from e in emps                                          | C07    |
-| relational.smli        | 2457-2468   | validate  | let                                                     | C01    |
-| relational.smli        | 2482-2489   | validate  | from                                                    | C04    |
-| relational.smli        | 2539-2542   | validate  | from {a = c, b = true, c = a} in [{a=1,b=true,c=3},{a=1,b=true,c=4}] g | C35    |
-| relational.smli        | 2575-2662   | validate  | fun listHeads (lists: 'a list) =                        | C21    |
-| relational.smli        | 2674-2681   | validate  | fun flatMap2 f l = foldl List.at [] (map f l);          | C11    |
-| relational.smli        | 2778-2803   | commented | from e in                                               | C03    |
-| relational.smli        | 2818-2825   | validate  | Sys.plan();                                             | C06    |
-| relational.smli        | 2841-2847   | validate  | Sys.plan();                                             | C06    |
-| relational.smli        | 2868-2927   | validate  | let                                                     | C01    |
-| relational.smli        | 2946-3043   | validate  | threes [1];                                             | C21    |
-| relational.smli        | 3090-3100   | validate  | let                                                     | C01    |
-| scott.smli             | 20-101    | validate  | Sys.set ("printLength", 64);                            | C19    |
-| simple.smli            | 450-462    | validate  | val x: `order` = LESS;                                  | C36    |
-| such-that.smli         | 24-134    | validate  | from i where i > 0 andalso i < 10;                      | C17    |
-| such-that.smli         | 152-347    | validate  | from dno, name, loc                                     | C17    |
-| such-that.smli         | 355-357    | commented | fun enumerate predicate =                               | C43    |
-| such-that.smli         | 410-783    | validate  | fun edge (x, y) = {x, y} elem edges;                    | C45    |
-| type-alias.smli        | 22-42     | validate  | type myInt = int;                                       | C38    |
-| type-alias.smli        | 49-55     | validate  | type intPair = int * int;                               | C38    |
-| type-alias.smli        | 61-74     | validate  | val y: int * int = x;                                   | C38    |
-| type-inference.smli    | 41-45     | commented | :t fn 1 => "a";                                         | C41    |
-| type-inference.smli    | 309-312    | commented | :t {a=1, b=true, a=3};                                  | C41    |
-| type-inference.smli    | 316-319    | commented | :t fn (e, job) => e.job = job;                          | C41    |
-| type-inference.smli    | 355-359    | commented | :t fn [] => 0;                                          | C41    |
-| type-inference.smli    | 510-520    | commented | :t from i in bag [1];                                   | C41    |
-| type-inference.smli    | 532-534    | commented | :t from {c, a, ...} in [{a=1.0,b=true,c=3},{a=1.5,b=true,c=4}]; | C41    |
-| type-inference.smli    | 536-541    | commented | :t                                                      | C41    |
-| type-inference.smli    | 543-545    | commented | :t from d in [{a=1,b=true}] yield d.a into sum;         | C41    |
-| type-inference.smli    | 548-552    | commented | :t                                                      | C41    |
-| type-inference.smli    | 555-559    | commented | :t                                                      | C41    |
-| type-inference.smli    | 565-569    | commented | :t                                                      | C41    |
-| type-inference.smli    | 572-575    | commented | :t from d in [{a=1,b=true}], i in [2] yield d yield a;  | C41    |
-| type-inference.smli    | 578-580    | commented | :t from {c, a, ...} in [{a=1.0,b=true,c=3},{a=1.5,b=true,c=4}]; | C41    |
-| type-inference.smli    | 582-584    | commented | :t from i in [1] group i compute count over i;          | C41    |
-| type-inference.smli    | 586-588    | commented | :t from i in bag [1] group i compute count over i;      | C41    |
-| type-inference.smli    | 590-598    | commented | :t from (r, s) in [(1.0, "a")]                          | C41    |
-| type-inference.smli    | 613-615    | commented | :t from a in [1], _ in bag [true];                      | C41    |
-| type-inference.smli    | 619-621    | commented | :t from a in bag [1], _ = ();                           | C41    |
-| type-inference.smli    | 654-656    | commented | :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} yield a; | C41    |
-| type-inference.smli    | 662-664    | commented | :t from d in [{a=1,b=true}], i in [2] yield (d.b, i) yield #1 current; | C41    |
-| type-inference.smli    | 666-668    | commented | :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} order a; | C41    |
-| type-inference.smli    | 670-672    | commented | :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} order current.a; | C41    |
-| type-inference.smli    | 700-702    | commented | :t from d in [{a=1,b=true}], i in [2] unorder order i;  | C41    |
-| type-inference.smli    | 706-710    | commented | :t from i in [1,2,3,4,5] yield i + ordinal;             | C41    |
-| type-inference.smli    | 713-715    | commented | :t from i in [1,2,3,4,5] yield substring("hello", 1, current); | C41    |
-| type-inference.smli    | 718-722    | commented | :t                                                      | C41    |
-| type-inference.smli    | 725-729    | commented | :t                                                      | C41    |
-| type-inference.smli    | 733-737    | commented | :t                                                      | C41    |
-| type-inference.smli    | 740-744    | commented | :t                                                      | C41    |
-| type-inference.smli    | 762-769    | commented | :t                                                      | C41    |
-| type-inference.smli    | 793-798    | commented | :t                                                      | C41    |
-| type-inference.smli    | 804-806    | commented | :t from d in bag [{a=1,b=true}] yield d.a into Bag.length; | C41    |
-| type-inference.smli    | 816-845    | commented | :t                                                      | C41    |
-| type-inference.smli    | 1191-1201   | commented | :t from i in bag [1];                                   | C41    |
-| type-inference.smli    | 1213-1215   | commented | :t from {c, a, ...} in [{a=1.0,b=true,c=3},{a=1.5,b=true,c=4}]; | C41    |
-| type-inference.smli    | 1217-1222   | commented | :t                                                      | C41    |
-| type-inference.smli    | 1224-1226   | commented | :t from d in [{a=1,b=true}] yield d.a into sum;         | C41    |
-| type-inference.smli    | 1229-1233   | commented | :t                                                      | C41    |
-| type-inference.smli    | 1236-1240   | commented | :t                                                      | C41    |
-| type-inference.smli    | 1246-1250   | commented | :t                                                      | C41    |
-| type-inference.smli    | 1253-1256   | commented | :t from d in [{a=1,b=true}], i in [2] yield d yield a;  | C41    |
-| type-inference.smli    | 1259-1261   | commented | :t from {c, a, ...} in [{a=1.0,b=true,c=3},{a=1.5,b=true,c=4}]; | C41    |
-| type-inference.smli    | 1263-1265   | commented | :t from i in [1] group i compute count over i;          | C41    |
-| type-inference.smli    | 1267-1269   | commented | :t from i in bag [1] group i compute count over i;      | C41    |
-| type-inference.smli    | 1271-1279   | commented | :t from (r, s) in [(1.0, "a")]                          | C41    |
-| type-inference.smli    | 1294-1296   | commented | :t from a in [1], _ in bag [true];                      | C41    |
-| type-inference.smli    | 1300-1302   | commented | :t from a in bag [1], _ = ();                           | C41    |
-| type-inference.smli    | 1335-1337   | commented | :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} yield a; | C41    |
-| type-inference.smli    | 1343-1345   | commented | :t from d in [{a=1,b=true}], i in [2] yield (d.b, i) yield #1 current; | C41    |
-| type-inference.smli    | 1347-1349   | commented | :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} order a; | C41    |
-| type-inference.smli    | 1351-1353   | commented | :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} order current.a; | C41    |
-| type-inference.smli    | 1381-1383   | commented | :t from d in [{a=1,b=true}], i in [2] unorder order i;  | C41    |
-| type-inference.smli    | 1387-1391   | commented | :t from i in [1,2,3,4,5] yield i + ordinal;             | C41    |
-| type-inference.smli    | 1394-1396   | commented | :t from i in [1,2,3,4,5] yield substring("hello", 1, current); | C41    |
-| type-inference.smli    | 1399-1403   | commented | :t                                                      | C41    |
-| type-inference.smli    | 1406-1410   | commented | :t                                                      | C41    |
-| type-inference.smli    | 1414-1418   | commented | :t                                                      | C41    |
-| type-inference.smli    | 1421-1425   | commented | :t                                                      | C41    |
-| type-inference.smli    | 1439-1446   | commented | :t                                                      | C41    |
-| type-inference.smli    | 1470-1475   | commented | :t                                                      | C41    |
-| type-inference.smli    | 1481-1483   | commented | :t from d in bag [{a=1,b=true}] yield d.a into Bag.length; | C41    |
-| type-inference.smli    | 1493-1522   | commented | :t                                                      | C41    |
-| type.smli              | 145-165    | validate  | fun firstOrSecond (e1 :: e2 :: rest): int = e2          | C13    |
-| type.smli              | 202-300    | validate  | let                                                     | C37    |
-| type.smli              | 361-374    | commented | let                                                     | C37    |
-| type.smli              | 387-415    | validate  | {a = fn x => case x of [] => NONE | (h :: t) => SOME (h, t), | C08    |
-| type.smli              | 447-471    | validate  | fun r0 a b c d e f g h i j k l m n p q r s = {a=a,b=b,c=c}; | C20    |
-| type.smli              | 503-978    | validate  | divides (10, 4): bool;                                  | C24    |
-| type.smli              | 1026-1046   | commented | implementing proper typeof error handling               | C37    |
-| wordle.smli            | 25-267    | validate  | Sys.set ("lineWidth", 78);                              | C10    |
+| bag.smli               | 31-34     | commented | useSilently "scott.smli";                               | C30    |
+| bag.smli               | 49-52     | validate  | String.size 1;                                          | C30    |
+| bag.smli               | 93-95     | validate  | from i in intBag;                                       | C30    |
+| bag.smli               | 103-105    | validate  | from i in intBag where i > 1;                           | C30    |
+| bag.smli               | 113-115    | validate  | from i in intBag yield i;                               | C30    |
+| bag.smli               | 121-123    | validate  | from i in intBag yield i * 2;                           | C30    |
+| bag.smli               | 129-228    | validate  | from i in intBag yield {j=i*i, i};                      | C30    |
+| bag.smli               | 238-339    | validate  | from i in intList union intList;                        | C30    |
+| blog.smli              | 24-2345   | validate  | Sys.set ("printDepth", ~1);                             | C22    |
+| built-in.smli          | 67-134    | validate  | Interact;                                               | C22    |
+| built-in.smli          | 186-203    | validate  | Relational;                                             | C22    |
+| built-in.smli          | 219-225    | validate  | from (i, j) in [(14, 3), (~14, 3), (14, ~3), (~14, ~3)] | C29    |
+| built-in.smli          | 248-284    | validate  | * The "option" datatype, declared as follows:           | C22    |
+| built-in.smli          | 412-415    | validate  | use;                                                    | C22    |
+| built-in.smli          | 429-433    | commented | Bag.nil;                                                | C22    |
+| built-in.smli          | 859-1027   | validate  | Fn;                                                     | C51    |
+| built-in.smli          | 1195-1197   | commented | Sys.plan ();                                            | C22    |
+| built-in.smli          | 1265-1273   | validate  | val p = String.isPrefix "he";                           | C50    |
+| built-in.smli          | 1802-1804   | commented | List.collate (fn (x, y) => if x < y then LESS else if x = y then EQUAL | C22    |
+| built-in.smli          | 2524-2531   | commented | fun testChar (p: char -> bool) =                        | C37    |
+| built-in.smli          | 2598-2600   | commented | testChar Char.isAscii;                                  | C37    |
+| built-in.smli          | 2608-2610   | commented | testChar Char.isLower;                                  | C37    |
+| built-in.smli          | 2618-2620   | commented | testChar Char.isUpper;                                  | C37    |
+| built-in.smli          | 2628-2630   | commented | testChar Char.isAlpha;                                  | C37    |
+| built-in.smli          | 2638-2640   | commented | testChar Char.isDigit;                                  | C37    |
+| built-in.smli          | 2649-2651   | commented | testChar Char.isHexDigit;                               | C37    |
+| built-in.smli          | 2660-2662   | commented | testChar Char.isAlphaNum;                               | C37    |
+| built-in.smli          | 2670-2672   | commented | testChar Char.isPrint;                                  | C37    |
+| built-in.smli          | 2681-2683   | commented | testChar Char.isSpace;                                  | C37    |
+| built-in.smli          | 2692-2694   | commented | testChar Char.isGraph;                                  | C37    |
+| built-in.smli          | 2703-2705   | commented | testChar Char.isPunct;                                  | C37    |
+| built-in.smli          | 2712-2714   | commented | testChar Char.isCntrl;                                  | C37    |
+| built-in.smli          | 2720-2722   | commented | testChar Char.isAscii;                                  | C37    |
+| built-in.smli          | 2759-2769   | commented | val p = Char.contains "abc";                            | C37    |
+| built-in.smli          | 2777-2787   | commented | val p = Char.notContains "abc";                         | C37    |
+| built-in.smli          | 3286-3290   | commented | Real.min (nan, 4.5);                                    | C22    |
+| built-in.smli          | 3305-3307   | commented | Real.max (nan, 4.5);                                    | C22    |
+| built-in.smli          | 4225-4237   | validate  | Relational.count (bag [1, 2, 3]);                       | C30    |
+| built-in.smli          | 4285-4306   | validate  | Relational.iterate                                      | C22    |
+| built-in.smli          | 4316-4323   | validate  | Relational.sum [1.0, 2.5, 3.5];                         | C22    |
+| built-in.smli          | 4329-4340   | validate  | Relational.max [1.0, 2.5, 3.5];                         | C22    |
+| built-in.smli          | 4346-4357   | validate  | Relational.min [1.0, 2.5, 3.5];                         | C22    |
+| built-in.smli          | 4363-4453   | validate  | Relational.only [1, 2, 3];                              | C22    |
+| built-in.smli          | 4495-4536   | validate  | Relational.compare (SOME 1, NONE);                      | C44    |
+| closure.smli           | 135-146    | validate  | fact 5;                                                 | C23    |
+| closure.smli           | ~~154-159~~ | ~~validate~~ | ~~fun fact3 0 = 1~~ *(enabled)*                    | C23    |
+| closure.smli           | 173-175    | validate  | baz4 (fn i => i - 1);                                   | C23    |
+| closure.smli           | 189-191    | validate  | baz5 (fn i => i - 1, 5);                                | C23    |
+| closure.smli           | 205-207    | validate  | baz6 (fn i => i - 1, 5);                                | C23    |
+| closure.smli           | 215-228    | validate  | val rec perm = fn n => if n = k then k else n * perm (n - 1); | C23    |
+| datatype.smli          | 84-107    | validate  | fun greater_alpha (x, y) = if x < y then y else x;      | C30    |
+| datatype.smli          | 128-318    | validate  | datatype foo = W | X | Y of int;                        | C15    |
+| datatype.smli          | 326-404    | validate  | f (SOME (SOME 3));                                      | C25    |
+| file.smli              | 22-111    | validate  | file;                                                   | C27    |
+| fixed-point.smli       | 136-242    | validate  | val pairs =                                             | C08    |
+| fixed-point.smli       | 254-372    | validate  | approx_sqrt 100.0 1.0;                                  | C08    |
+| fixed-point.smli       | 391-438    | validate  | fun shortest_path edges =                               | C08    |
+| foreign.smli           | 27-316    | validate  | scott;                                                  | C22    |
+| hybrid.smli            | 31-96     | validate  | from e in scott.emps                                    | C38    |
+| hybrid.smli            | 106-110    | validate  | Sys.plan();                                             | C22    |
+| hybrid.smli            | 119-124    | validate  | Sys.plan();                                             | C22    |
+| hybrid.smli            | 134-140    | validate  | Sys.plan();                                             | C22    |
+| hybrid.smli            | 149-155    | validate  | Sys.plan();                                             | C22    |
+| hybrid.smli            | 165-169    | validate  | Sys.plan();                                             | C22    |
+| hybrid.smli            | 178-315    | validate  | Sys.plan();                                             | C22    |
+| idempotent.smli        | 34-47     | validate  | val (x, y) = (5, 6);                                    | C22    |
+| logic.smli             | 22-133    | validate  | val emps = scott.emps;                                  | C38    |
+| logic.smli             | 156-179    | validate  | "SALES". *)                                             | C33    |
+| logic.smli             | 190-196    | validate  | g (fn i => i mod 2 = 0);                                | C33    |
+| logic.smli             | 205-209    | validate  | g2 (fn (i, j) => j - i = 2);                            | C33    |
+| logic.smli             | 218-225    | validate  | g3 (fn (i, j) => j - i = 2);                            | C33    |
+| logic.smli             | 243-269    | validate  | exists e in scott.emps where e.deptno = 20 into sum;    | C33    |
+| logic.smli             | 289-325    | validate  | forall i in [2, 3, 4, 12, 14] where i > 10;             | C33    |
+| match.smli             | ~~77-93~~ | ~~validate~~ | ~~fun ack 0 n = n + 1~~ *(enabled)*                  | C20    |
+| misc.smli              | 22-74     | validate  | * [MOREL-251] Add function `Sys.clearEnv ()`            | C35    |
+| misc.smli              | 160-180    | validate  | op x;                                                   | C53    |
+| misc.smli              | 190-192    | validate  | (op ::) (1,[2,3,4]);                                    | C53    |
+| overload.smli          | 28-264    | validate  | * Example based on "A Second Look at Overloading" by Martin Odersky, P | C32    |
+| pretty.smli            | 22-73     | validate  | * [MOREL-259] Tabular mode                              | C36    |
+| regex-example.smli     | 25-235    | validate  | fun chars s =                                           | C16    |
+| relational.smli        | 147-152    | validate  | useSilently "scott.smli";                               | C28    |
+| relational.smli        | 407-420    | validate  | from i in [1,2,3,4] where i > 1 unorder where i < 4 order DESC i; | C45    |
+| relational.smli        | 443-451    | validate  | from e in emps,                                         | C40    |
+| relational.smli        | 461-486    | validate  | from e in emps,                                         | C40    |
+| relational.smli        | 521-556    | validate  | from i in [1,2,3,4,5]                                   | C40    |
+| relational.smli        | 592-597    | validate  | from e in emps, i in bag [1]                            | C42    |
+| relational.smli        | 609-622    | validate  | from e in emps                                          | C14    |
+| relational.smli        | 641-700    | validate  | from i in [3,1,4,5,3,5,8,9,7]                           | C41    |
+| relational.smli        | 721-787    | validate  | from i in [1,2]                                         | C43    |
+| relational.smli        | 799-803    | validate  | from (i, j) in [(1, 2), (3, 4)]                         | C46    |
+| relational.smli        | 854-906    | validate  | from {} in [()],                                        | C46    |
+| relational.smli        | 926-937    | validate  | from e in emps                                          | C14    |
+| relational.smli        | 955-985    | validate  | from e in emps                                          | C14    |
+| relational.smli        | 1012-1026   | validate  | from e in emps                                          | C14    |
+| relational.smli        | 1036-1258   | validate  | from i in [1,2]                                         | C43    |
+| relational.smli        | 1285-1340   | validate  | from i in [1, 2, 3]                                     | C56    |
+| relational.smli        | 1368-1396   | validate  | from e in scott.emps                                    | C42    |
+| relational.smli        | ~~1415-1431~~ | ~~validate~~ | ~~range 0 5;~~ *(enabled)*                          | C02    |
+| relational.smli        | ~~1447-1466~~ | ~~validate~~ | ~~from d in depts, i in range 0 5;~~ *(enabled)*   | C15    |
+| relational.smli        | ~~1496-1509~~ | ~~validate~~ | ~~from e in emps, d in depts~~ *(enabled)*        | C03    |
+| relational.smli        | 1562-1580   | validate  | from e in emps, d in depts (group+compute; blocked: `sum over <expr>` unimplemented) | C03    |
+| relational.smli        | 1603-1612   | commented | from e in emps                                          | C14    |
+| relational.smli        | 1653-1729   | validate  | from e in emps                                          | C14    |
+| relational.smli        | 1739-1742   | validate  | from i in [2, 1, 2, 2, 2, 3] union [2, 2, 4] distinct;  | C39    |
+| relational.smli        | 1756-1759   | validate  | from i in [2, 1, 2, 2, 2, 3] except distinct [2, 2, 4]; | C39    |
+| relational.smli        | 1795-1813   | validate  | from d in scott.depts yield d.deptno;                   | C30    |
+| relational.smli        | 1823-1862   | validate  | from `o` in orders                                      | C39    |
+| relational.smli        | 1878-1881   | validate  | factorize 12;                                           | C44    |
+| relational.smli        | 1890-2048   | validate  | product (factorize 12);                                 | C44    |
+| relational.smli        | 2062-2085   | validate  | from e in emps, d in depts (group+compute; blocked: `sum over <expr>` and `group record_key` unimplemented) | C03    |
+| relational.smli        | 2110-2350   | validate  | from e in emps                                          | C14    |
+| relational.smli        | 2381-2431   | validate  | from e in emps                                          | C14    |
+| relational.smli        | 2442-2458   | validate  | from e in emps                                          | C14    |
+| relational.smli        | 2499-2540   | validate  | from                                                    | C07    |
+| relational.smli        | 2582-2593   | validate  | from {a = a, ...} in [{a=1,b=2}];                       | C10    |
+| relational.smli        | 2605-2614   | validate  | from {a = a, b = b, ...} in [{a=1,b=true,c=3},{a=1,b=true,c=4}]; | C11    |
+| relational.smli        | 2626-2717   | validate  | from {a = x, ...} in [{a=1,b=2,c=3}];                   | C10    |
+| relational.smli        | 2726-2736   | validate  | flatMap explode ["ab", "", "def"];                      | C18    |
+| relational.smli        | 2747-2787   | validate  | employeesIn 10;                                         | C04    |
+| relational.smli        | 2808-2872   | validate  | from t in triples order t.foo 1;                        | C09    |
+| relational.smli        | 2885-2892   | validate  | Sys.plan();                                             | C12    |
+| relational.smli        | 2908-2914   | validate  | Sys.plan();                                             | C12    |
+| relational.smli        | 2935-2994   | validate  | let                                                     | C01    |
+| relational.smli        | 3013-3110   | validate  | threes [1];                                             | C30    |
+| relational.smli        | 3157-3167   | validate  | let                                                     | C01    |
+| scott.smli             | 20-101    | validate  | Sys.set ("printLength", 64);                            | C28    |
+| simple.smli            | ~~416-428~~ | ~~validate~~ | ~~fun foo x~~ *(enabled)*                           | C19    |
+| simple.smli            | 457-469    | validate  | val x: `order` = LESS;                                  | C47    |
+| simple.smli            | 496-1182   | validate  | "a" ^ (* block comment start                            | C55    |
+| such-that.smli         | 24-134    | validate  | from i where i > 0 andalso i < 10;                      | C26    |
+| such-that.smli         | 152-347    | validate  | from dno, name, loc                                     | C26    |
+| such-that.smli         | 355-357    | commented | fun enumerate predicate =                               | C54    |
+| such-that.smli         | 410-783    | validate  | fun edge (x, y) = {x, y} elem edges;                    | C57    |
+| type-alias.smli        | 22-42     | validate  | type myInt = int;                                       | C49    |
+| type-alias.smli        | 49-55     | validate  | type intPair = int * int;                               | C49    |
+| type-alias.smli        | 61-74     | validate  | val y: int * int = x;                                   | C49    |
+| type-inference.smli    | 41-45     | commented | :t fn 1 => "a";                                         | C52    |
+| type-inference.smli    | 309-312    | commented | :t {a=1, b=true, a=3};                                  | C52    |
+| type-inference.smli    | 316-319    | commented | :t fn (e, job) => e.job = job;                          | C52    |
+| type-inference.smli    | 355-359    | commented | :t fn [] => 0;                                          | C52    |
+| type-inference.smli    | 510-520    | commented | :t from i in bag [1];                                   | C52    |
+| type-inference.smli    | 532-534    | commented | :t from {c, a, ...} in [{a=1.0,b=true,c=3},{a=1.5,b=true,c=4}]; | C52    |
+| type-inference.smli    | 536-541    | commented | :t                                                      | C52    |
+| type-inference.smli    | 543-545    | commented | :t from d in [{a=1,b=true}] yield d.a into sum;         | C52    |
+| type-inference.smli    | 548-552    | commented | :t                                                      | C52    |
+| type-inference.smli    | 555-559    | commented | :t                                                      | C52    |
+| type-inference.smli    | 565-569    | commented | :t                                                      | C52    |
+| type-inference.smli    | 572-575    | commented | :t from d in [{a=1,b=true}], i in [2] yield d yield a;  | C52    |
+| type-inference.smli    | 578-580    | commented | :t from {c, a, ...} in [{a=1.0,b=true,c=3},{a=1.5,b=true,c=4}]; | C52    |
+| type-inference.smli    | 582-584    | commented | :t from i in [1] group i compute count over i;          | C52    |
+| type-inference.smli    | 586-588    | commented | :t from i in bag [1] group i compute count over i;      | C52    |
+| type-inference.smli    | 590-598    | commented | :t from (r, s) in [(1.0, "a")]                          | C52    |
+| type-inference.smli    | 613-615    | commented | :t from a in [1], _ in bag [true];                      | C52    |
+| type-inference.smli    | 619-621    | commented | :t from a in bag [1], _ = ();                           | C52    |
+| type-inference.smli    | 654-656    | commented | :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} yield a; | C52    |
+| type-inference.smli    | 662-664    | commented | :t from d in [{a=1,b=true}], i in [2] yield (d.b, i) yield #1 current; | C52    |
+| type-inference.smli    | 666-668    | commented | :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} order a; | C52    |
+| type-inference.smli    | 670-672    | commented | :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} order current.a; | C52    |
+| type-inference.smli    | 700-702    | commented | :t from d in [{a=1,b=true}], i in [2] unorder order i;  | C52    |
+| type-inference.smli    | 706-710    | commented | :t from i in [1,2,3,4,5] yield i + ordinal;             | C52    |
+| type-inference.smli    | 713-715    | commented | :t from i in [1,2,3,4,5] yield substring("hello", 1, current); | C52    |
+| type-inference.smli    | 718-722    | commented | :t                                                      | C52    |
+| type-inference.smli    | 725-729    | commented | :t                                                      | C52    |
+| type-inference.smli    | 733-737    | commented | :t                                                      | C52    |
+| type-inference.smli    | 740-744    | commented | :t                                                      | C52    |
+| type-inference.smli    | 762-769    | commented | :t                                                      | C52    |
+| type-inference.smli    | 793-798    | commented | :t                                                      | C52    |
+| type-inference.smli    | 804-806    | commented | :t from d in bag [{a=1,b=true}] yield d.a into Bag.length; | C52    |
+| type-inference.smli    | 816-845    | commented | :t                                                      | C52    |
+| type-inference.smli    | 1191-1201   | commented | :t from i in bag [1];                                   | C52    |
+| type-inference.smli    | 1213-1215   | commented | :t from {c, a, ...} in [{a=1.0,b=true,c=3},{a=1.5,b=true,c=4}]; | C52    |
+| type-inference.smli    | 1217-1222   | commented | :t                                                      | C52    |
+| type-inference.smli    | 1224-1226   | commented | :t from d in [{a=1,b=true}] yield d.a into sum;         | C52    |
+| type-inference.smli    | 1229-1233   | commented | :t                                                      | C52    |
+| type-inference.smli    | 1236-1240   | commented | :t                                                      | C52    |
+| type-inference.smli    | 1246-1250   | commented | :t                                                      | C52    |
+| type-inference.smli    | 1253-1256   | commented | :t from d in [{a=1,b=true}], i in [2] yield d yield a;  | C52    |
+| type-inference.smli    | 1259-1261   | commented | :t from {c, a, ...} in [{a=1.0,b=true,c=3},{a=1.5,b=true,c=4}]; | C52    |
+| type-inference.smli    | 1263-1265   | commented | :t from i in [1] group i compute count over i;          | C52    |
+| type-inference.smli    | 1267-1269   | commented | :t from i in bag [1] group i compute count over i;      | C52    |
+| type-inference.smli    | 1271-1279   | commented | :t from (r, s) in [(1.0, "a")]                          | C52    |
+| type-inference.smli    | 1294-1296   | commented | :t from a in [1], _ in bag [true];                      | C52    |
+| type-inference.smli    | 1300-1302   | commented | :t from a in bag [1], _ = ();                           | C52    |
+| type-inference.smli    | 1335-1337   | commented | :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} yield a; | C52    |
+| type-inference.smli    | 1343-1345   | commented | :t from d in [{a=1,b=true}], i in [2] yield (d.b, i) yield #1 current; | C52    |
+| type-inference.smli    | 1347-1349   | commented | :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} order a; | C52    |
+| type-inference.smli    | 1351-1353   | commented | :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} order current.a; | C52    |
+| type-inference.smli    | 1381-1383   | commented | :t from d in [{a=1,b=true}], i in [2] unorder order i;  | C52    |
+| type-inference.smli    | 1387-1391   | commented | :t from i in [1,2,3,4,5] yield i + ordinal;             | C52    |
+| type-inference.smli    | 1394-1396   | commented | :t from i in [1,2,3,4,5] yield substring("hello", 1, current); | C52    |
+| type-inference.smli    | 1399-1403   | commented | :t                                                      | C52    |
+| type-inference.smli    | 1406-1410   | commented | :t                                                      | C52    |
+| type-inference.smli    | 1414-1418   | commented | :t                                                      | C52    |
+| type-inference.smli    | 1421-1425   | commented | :t                                                      | C52    |
+| type-inference.smli    | 1439-1446   | commented | :t                                                      | C52    |
+| type-inference.smli    | 1470-1475   | commented | :t                                                      | C52    |
+| type-inference.smli    | 1481-1483   | commented | :t from d in bag [{a=1,b=true}] yield d.a into Bag.length; | C52    |
+| type-inference.smli    | 1493-1522   | commented | :t                                                      | C52    |
+| type.smli              | 26-36     | validate  | ("a", true) = {1 = "a", 2 = true};                      | C05    |
+| type.smli              | 149-169    | validate  | fun firstOrSecond (e1 :: e2 :: rest): int = e2          | C21    |
+| type.smli              | 206-304    | validate  | let                                                     | C48    |
+| type.smli              | 315-330    | validate  | len [];                                                 | C06    |
+| type.smli              | 350-358    | validate  | map #2 [(1,2),(3,1)];                                   | C13    |
+| type.smli              | 377-390    | commented | let                                                     | C48    |
+| type.smli              | 399-431    | validate  | fn {a, b} => if b then a else a + 1;                    | C24    |
+| type.smli              | 446-487    | validate  | val f : ('a -> (int * int) list) -> ('a -> (int * int) list) -> 'a ->  | C48    |
+| type.smli              | ~~500-504~~ | ~~validate~~ | ~~fun f (a, b, c) = {x=c, y=a};~~ *(enabled)*      | C31    |
+| type.smli              | ~~517-521~~ | ~~validate~~ | ~~fun f (a, b, c) = {x=c, y=a};~~ *(enabled)*      | C31    |
+| type.smli              | 531-1006   | validate  | divides (10, 4): bool;                                  | C34    |
+| type.smli              | 1035-1041   | validate  | let                                                     | C48    |
+| type.smli              | 1058-1078   | commented | implementing proper typeof error handling               | C48    |
+| wordle.smli            | 25-267    | validate  | Sys.set ("lineWidth", 78);                              | C17    |
 
 ## Files Missing from morel-rust.1 (present only in morel-java)
 
