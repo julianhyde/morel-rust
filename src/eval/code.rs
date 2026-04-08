@@ -1438,9 +1438,14 @@ impl EagerF0 {
 #[derive(Copy, Clone, PartialEq, Debug, strum_macros::Display)]
 pub enum EagerF1 {
     // lint: sort until '#}'
+    InteractUse,
+    InteractUseSilently,
     SysShow,
     SysUnset,
 }
+
+// 'Interact' sorts after 'Int*' but before 'L*' as a name; here the
+// enum has no Int* variants so the order is fine.
 
 impl EagerF1 {
     fn plan(&self) -> String {
@@ -1466,6 +1471,18 @@ impl EagerF1 {
 
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
+            InteractUse | InteractUseSilently => {
+                // morel-rust does not yet implement file evaluation;
+                // both forms are no-ops, but they still print the
+                // '[opening <file>]' line that morel-java prints
+                // before reading the file (matched by tests like
+                // 'useSilently "scott.smli"'). The file's contents
+                // are not actually loaded; this is enough since
+                // `scott` is already available as a built-in.
+                let path = a0.expect_string();
+                r.emit_effect(Effect::EmitLine(format!("[opening {}]", path)));
+                Ok(Val::Unit)
+            }
             SysShow => {
                 // Return SOME(value) or NONE for the given property.
                 let prop_name = a0.expect_string();
@@ -2846,6 +2863,8 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::IntToInt.implements(&mut b, IntToInt);
     Eager1::IntToLarge.implements(&mut b, IntToLarge);
     Eager1::IntToString.implements(&mut b, IntToString);
+    EagerF1::InteractUse.implements(&mut b, InteractUse);
+    EagerF1::InteractUseSilently.implements(&mut b, InteractUseSilently);
     EagerF2::LPAll.implements(&mut b, LPAll);
     EagerF2::LPAllEq.implements(&mut b, LPAllEq);
     EagerF2::LPApp.implements(&mut b, LPApp);
