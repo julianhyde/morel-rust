@@ -1268,15 +1268,15 @@ Sys.plan ();
 > val it = "apply2(fnValue String.isPrefix, constant(), constant())" : string
 
 (*) Partial evaluation
-val startsWithHe = String.isPrefix "he";
-> val startsWithHe = fn : string -> bool
+val p = String.isPrefix "he";
+> val p = fn : string -> bool
 Sys.plan ();
 > val it =
 >   "createClosure(captures(constant(he)), body(apply2(fnValue String.isPrefix, get(0), get(1))))"
 >   : string
-startsWithHe "hello";
+p "hello";
 > val it = true : bool
-startsWithHe "goodbye";
+p "goodbye";
 > val it = false : bool
 
 (*) val isSubstring : string -> string -> bool
@@ -4591,11 +4591,11 @@ Sys.env ();
 >    ("emps","{empno:int, ename:string, mgr:int} list"),
 >    ("f","real -> int * int * int * int"),("it","(string * string) list"),
 >    ("nan","real"),("nil","forall 'a. 'a bag"),("nil","forall 'a. 'a list"),
->    ("noneInt","int option"),("print","'a -> unit"),
+>    ("noneInt","int option"),("p","string -> bool"),("print","'a -> unit"),
 >    ("scott",
 >     "{bonuses:{comm:real, ename:string, job:string, sal:real} bag, depts:{deptno:int, dname:string, loc:string} bag, emps:{comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag, salgrades:{grade:int, hisal:real, losal:real} bag}"),
->    ("startsWithHe","string -> bool"),("ten","(bool,int) either"),
->    ("true","bool"),("yes","(bool,int) either")] : (string * string) list
+>    ("ten","(bool,int) either"),("true","bool"),("yes","(bool,int) either")]
+>   : (string * string) list
 
 env;
 > val it = fn : unit -> (string * string) list
@@ -4645,11 +4645,11 @@ env ();
 >    ("emps","{empno:int, ename:string, mgr:int} list"),
 >    ("f","real -> int * int * int * int"),("it","(string * string) list"),
 >    ("nan","real"),("nil","forall 'a. 'a bag"),("nil","forall 'a. 'a list"),
->    ("noneInt","int option"),("print","'a -> unit"),
+>    ("noneInt","int option"),("p","string -> bool"),("print","'a -> unit"),
 >    ("scott",
 >     "{bonuses:{comm:real, ename:string, job:string, sal:real} bag, depts:{deptno:int, dname:string, loc:string} bag, emps:{comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag, salgrades:{grade:int, hisal:real, losal:real} bag}"),
->    ("startsWithHe","string -> bool"),("ten","(bool,int) either"),
->    ("true","bool"),("yes","(bool,int) either")] : (string * string) list
+>    ("ten","(bool,int) either"),("true","bool"),("yes","(bool,int) either")]
+>   : (string * string) list
 
 (*) val plan : unit -> string
 Sys.plan;
