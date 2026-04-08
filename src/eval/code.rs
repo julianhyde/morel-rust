@@ -647,9 +647,14 @@ impl Code {
             Code::Native2(eager, code0, code1) => {
                 let v0 = code0.eval_f0(r, f)?;
                 let v1 = code1.eval_f0(r, f)?;
+                // If v1 is a span string (the marker for "no second
+                // argument was supplied at the call site"), then either
+                // v0 is a 2-tuple to unpack into the two parameters, or
+                // this is a partial application that should yield a
+                // closure capturing v0.
                 // If v0 is a list and v1 is a span string, it means we're
-                // applying the function to a single tuple/record argument that
-                // should be unpacked.
+                // applying the function to a single tuple/record argument
+                // that should be unpacked.
                 if let (Val::List(list), Val::String(_)) = (&v0, &v1)
                     && list.len() == 2
                 {
@@ -687,6 +692,8 @@ impl Code {
             Code::NativeF2(eager, code0, code1) => {
                 let v0 = code0.eval_f0(r, f)?;
                 let v1 = code1.eval_f0(r, f)?;
+                // See Code::Native2 for an explanation of the span-string
+                // marker. Same handling: tuple unpack or partial apply.
                 eager.apply(r, f, v0, v1)
             }
             Code::NativeF3(eager, code0, code1, code2) => {
@@ -1556,6 +1563,7 @@ pub enum Eager1 {
     EitherIsRight,
     EitherPartition,
     EitherProj,
+    FnId,
     GeneralIgnore,
     IntAbs,
     IntFromInt,
@@ -1677,6 +1685,7 @@ impl Eager1 {
             EitherIsRight => Val::Bool(Either::is_right(&a0)),
             EitherPartition => Either::partition(a0.expect_list()),
             EitherProj => Either::proj(&a0),
+            FnId => a0,
             GeneralIgnore => Val::Unit,
             IntAbs => Val::Int(a0.expect_int().abs()),
             IntFromInt => a0,
@@ -1796,7 +1805,9 @@ pub enum Eager2 {
     CharLt,
     CharNe,
     CharNotContains,
-    GeneralO,
+    FnConst,
+    FnEqual,
+    FnNotEqual,
     IntCompare,
     IntDiv,
     IntEq,
@@ -1897,7 +1908,9 @@ impl Eager2 {
                 &a0.expect_string(),
                 a1.expect_char(),
             )),
-            GeneralO => Val::Unit,
+            FnConst => a0,
+            FnEqual => Val::Bool(a0 == a1),
+            FnNotEqual => Val::Bool(a0 != a1),
             IntCompare => {
                 Val::Order(Int::compare(a0.expect_int(), a1.expect_int()))
             }
@@ -2044,6 +2057,10 @@ pub enum EagerF2 {
     EitherMap,
     EitherMapLeft,
     EitherMapRight,
+    FnApply,
+    FnFlip,
+    FnO,
+    FnUncurry,
     LPAll,
     LPAllEq,
     LPApp,
@@ -2156,6 +2173,30 @@ impl EagerF2 {
             }
             EitherMapLeft => Either::map_left(r, f, &a0, &a1),
             EitherMapRight => Either::map_right(r, f, &a0, &a1),
+            // Fn.apply (f, x) — tupled call: a0 = f, a1 = x.
+            FnApply => a0.apply_f1(r, f, &a1),
+            // Fn.flip f (b, a) — curried 2-arg: a0 = f, a1 = (b, a).
+            // Result is f (a, b).
+            FnFlip => {
+                let tuple = a1.expect_list();
+                let swapped =
+                    Val::List(vec![tuple[1].clone(), tuple[0].clone()]);
+                a0.apply_f1(r, f, &swapped)
+            }
+            // Fn.o (f, g) x — curried 2-arg: a0 = (f, g), a1 = x.
+            // Result is f (g x).
+            FnO => {
+                let pair = a0.expect_list();
+                let inner = pair[1].apply_f1(r, f, &a1)?;
+                pair[0].apply_f1(r, f, &inner)
+            }
+            // Fn.uncurry f (x, y) — curried 2-arg: a0 = f, a1 = (x, y).
+            // Result is f x y.
+            FnUncurry => {
+                let tuple = a1.expect_list();
+                let g = a0.apply_f1(r, f, &tuple[0])?;
+                g.apply_f1(r, f, &tuple[1])
+            }
             LPAll => {
                 let tuple = a1.expect_list();
                 let result = ListPair::all(
@@ -2324,6 +2365,8 @@ pub enum EagerF3 {
     BagTabulate,
     BagTake,
     EitherFold,
+    FnCurry,
+    FnRepeat,
     LPAppEq,
     LPFoldl,
     LPFoldr,
@@ -2383,6 +2426,27 @@ impl EagerF3 {
             EitherFold => {
                 let tuple = a0.expect_list();
                 Either::fold(r, f, &tuple[0], &tuple[1], &a1, &a2)
+            }
+            // Fn.curry f x y: a0 = f, a1 = x, a2 = y. Result is f (x, y).
+            FnCurry => {
+                let tuple = Val::List(vec![a1, a2]);
+                a0.apply_f1(r, f, &tuple)
+            }
+            // Fn.repeat n f x: a0 = n, a1 = f, a2 = x. Apply f to x n times.
+            // Domain exception if n < 0.
+            FnRepeat => {
+                let n = a0.expect_int();
+                if n < 0 {
+                    return Err(MorelError::Runtime(
+                        BuiltInExn::Domain,
+                        Span::new("stdIn"),
+                    ));
+                }
+                let mut acc = a2;
+                for _ in 0..n {
+                    acc = a1.apply_f1(r, f, &acc)?;
+                }
+                Ok(acc)
             }
             LPAppEq => {
                 let tuple = a1.expect_list();
@@ -2822,6 +2886,16 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     EagerF2::EitherMapRight.implements(&mut b, EitherMapRight);
     Eager1::EitherPartition.implements(&mut b, EitherPartition);
     Eager1::EitherProj.implements(&mut b, EitherProj);
+    EagerF2::FnApply.implements(&mut b, FnApply);
+    Eager2::FnConst.implements(&mut b, FnConst);
+    EagerF3::FnCurry.implements(&mut b, FnCurry);
+    Eager2::FnEqual.implements(&mut b, FnEqual);
+    EagerF2::FnFlip.implements(&mut b, FnFlip);
+    Eager1::FnId.implements(&mut b, FnId);
+    Eager2::FnNotEqual.implements(&mut b, FnNotEqual);
+    EagerF2::FnO.implements(&mut b, FnO);
+    EagerF3::FnRepeat.implements(&mut b, FnRepeat);
+    EagerF2::FnUncurry.implements(&mut b, FnUncurry);
     Custom::GEq.implements(&mut b, GEq);
     Custom::GGe.implements(&mut b, GGe);
     Custom::GGt.implements(&mut b, GGt);
@@ -2833,7 +2907,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Custom::GPlus.implements(&mut b, GPlus);
     Custom::GTimes.implements(&mut b, GTimes);
     Eager1::GeneralIgnore.implements(&mut b, GeneralIgnore);
-    Eager2::GeneralO.implements(&mut b, GeneralO);
+    EagerF2::FnO.implements(&mut b, GeneralO);
     Eager1::IntAbs.implements(&mut b, IntAbs);
     Eager2::IntCompare.implements(&mut b, IntCompare);
     Eager2::IntDiv.implements(&mut b, IntDiv);
