@@ -906,18 +906,12 @@ Fn.repeat;
 > val it = fn : int -> ('a -> 'a) -> 'a -> 'a
 Fn.repeat 5 (fn i => i + 1);
 > val it = fn : int -> int
-(* TODO: storing a closure in `it` and applying it in a later statement
-   currently fails ("CreateClosure does not support eval mode EagerV1").
-   Re-enable when cross-statement closure storage works.
 it 8;
 > val it = 13 : int
-*)
 Fn.repeat 0 (fn i => i + 1);
 > val it = fn : int -> int
-(* TODO: see above
 it 8;
 > val it = 8 : int
-*)
 (* TODO: morel-java raises Domain eagerly when n < 0 at the 2-arg
    partial application step. morel-rust treats this as a normal partial
    application returning a closure, and only raises Domain if the

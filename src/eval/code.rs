@@ -488,7 +488,9 @@ impl Code {
             Code::Constant(_, _) => {
                 *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
             }
-            Code::CreateClosure(_, _, _, _) => *mode == EvalMode::EagerF0,
+            Code::CreateClosure(_, _, _, _) => {
+                *mode == EvalMode::EagerF0 || *mode == EvalMode::EagerV1
+            }
             Code::Fn(_, _, _) => *mode == EvalMode::EagerV1,
             Code::From(_) => *mode == EvalMode::EagerF0,
             Code::FromRowSink(_) => *mode == EvalMode::EagerF0,
@@ -551,7 +553,7 @@ impl Code {
             Code::ApplyClosure(fn_code, arg_code, _bind_codes) => {
                 let arg = arg_code.eval_f0(r, f)?;
                 let fun = fn_code.eval_f0(r, f)?;
-                fun.expect_code().eval_f1(r, f, &arg)
+                fun.apply_f1(r, f, &arg)
             }
             Code::ApplyConstant(fn_code, arg_code) => {
                 let arg = arg_code.eval_f0(r, f)?;
@@ -624,13 +626,29 @@ impl Code {
                 sink.result(r, f)
             }
             Code::GetLocal(frame_def, slot) => {
-                debug_assert!(
-                    f.has_def(frame_def),
-                    "bad frame in GetLocal({}, {})",
-                    frame_def.description,
-                    slot
+                // Normal case: the runtime frame matches `frame_def` and
+                // we can read directly from the slot.
+                if f.has_def(frame_def) {
+                    return Ok(f.vals[*slot].clone());
+                }
+                // Cross-statement fallback: this GetLocal was emitted in
+                // a previous statement's compilation context. The frame
+                // shape no longer matches at runtime (e.g. when the
+                // current statement self-shadows the same name). Look
+                // up the binding by name in the shell environment.
+                let binding_name = if *slot < frame_def.bound_vars.len() {
+                    &frame_def.bound_vars[*slot].id.name
+                } else {
+                    let local_idx = *slot - frame_def.bound_vars.len();
+                    &frame_def.local_vars[local_idx].id.name
+                };
+                if let Some(v) = r.shell.get_val(binding_name) {
+                    return Ok(v.clone());
+                }
+                panic!(
+                    "bad frame in GetLocal({}, {}) and no shell binding for {}",
+                    frame_def.description, slot, binding_name
                 );
-                Ok(f.vals[*slot].clone())
             }
             Code::Let(codes, result_code) => {
                 // REVIEW: Could codes and result_code be merged into one vec?
@@ -818,6 +836,27 @@ impl Code {
                 }))
             }
             Code::Constant(_, v) => Ok(v.clone()),
+            Code::CreateClosure(frame_def, matches, bind_codes, no_match) => {
+                // Build the closure's bound values from the current
+                // frame, then immediately apply it to `a0`. This is
+                // used by `ValDeclAction`, which wraps an expression
+                // in a unit-arg fn and calls eval_f1 — when the wrapped
+                // expression captures variables (e.g. a previously-
+                // defined `it`), the wrapper compiles to a
+                // CreateClosure rather than a plain Fn.
+                let mut values = Vec::with_capacity(bind_codes.len());
+                for bind_code in bind_codes {
+                    values.push(bind_code.eval_f0(r, f)?);
+                }
+                Frame::create_bind_and_eval(
+                    frame_def,
+                    matches,
+                    &values,
+                    no_match.as_ref(),
+                    r,
+                    a0,
+                )
+            }
             Code::Fn(frame_def, pat_expr_codes, no_match) => {
                 Frame::create_and_eval(
                     frame_def,
