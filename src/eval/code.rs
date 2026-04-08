@@ -1013,6 +1013,22 @@ impl Display for Code {
                 Val::Unit => write!(f, "constant([NONE])"),
                 _ => write!(f, "constant({})", v),
             },
+            Self::CreateClosure(_, matches, bind_codes, _) => {
+                write!(f, "createClosure(captures(")?;
+                let mut first = true;
+                for c in bind_codes {
+                    if !first {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", c)?;
+                    first = false;
+                }
+                write!(f, "), body(")?;
+                if let Some((_, body)) = matches.first() {
+                    write!(f, "{}", body)?;
+                }
+                write!(f, "))")
+            }
             Self::Fn(_, matches, _) => {
                 write!(f, "fn(")?;
                 let mut first = true;
