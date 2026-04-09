@@ -612,9 +612,6 @@ in
 end;
 > val it = 120 : int
 
-set("mode", "validate");
-> val it = () : unit
-
 let
   fun plus x y = x + y
 in
@@ -623,6 +620,9 @@ end;
 > val it = fn : int -> int
 it 3;
 > val it = 5 : int
+
+set("mode", "validate");
+> val it = () : unit
 
 fun strTimes s 0 l = l
   | strTimes s i l = strTimes ("a" ^ s) (i - 1) (s :: l);
@@ -707,14 +707,8 @@ end;
 fn () => 1;
 > val it = fn : unit -> int
 
-set("mode", "validate");
-> val it = () : unit
 it ();
 > val it = 1 : int
-
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) Multiple functions
 let
