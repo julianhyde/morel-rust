@@ -414,7 +414,7 @@ in `simple.smli`.
 
 | Bug                                                                   | Symptom                                                                                  | Found in commit |
 |-----------------------------------------------------------------------|------------------------------------------------------------------------------------------|-----------------|
-| Parser rejects `;` between let-bindings                               | `let val x = 1; val y = 2 in x + y end` fails parse with "expected ... or decl"          | 8cd4fcf         |
+| Parser rejects `;` between let-bindings (hydromatic/morel-rust#35)    | `let val x = 1; val y = 2 in x + y end` fails parse with "expected ... or decl"          | 8cd4fcf         |
 | Multi-clause `fun` with literal in non-first arg position             | `fun strTimes s 0 l = l \| strTimes s i l = ...` panics "variable v0 not found in frame" | 8cd4fcf         |
 | Recursive `fun` with `let` body referencing the recursive name        | `fun fixp f a = let val a2 = f a in fixp f a2 end` panics "variable fixp not found"      | 8cd4fcf         |
 | Inliner fails on let-shadowed `fun`                                   | `let fun f x = 1 + x val x = f 2 fun f y = x + y in f x end` fails type resolution       | 8cd4fcf         |
