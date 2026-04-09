@@ -402,6 +402,36 @@ to compute the offset, or simply re-run the script (preferred).
 | type.smli              | 1058-1078   | commented | implementing proper typeof error handling               | C48    |
 | wordle.smli            | 25-267    | validate  | Sys.set ("lineWidth", 78);                              | C17    |
 
+## Known bugs (morel-rust.1)
+
+Bugs that are not directly traceable to a single morel-java
+commit, and therefore do not appear in Table B. Each row was
+introduced or rediscovered while propagating a feature; the
+"Found" column points to the commit on this branch where the
+bug was hit. Fixing any of these bugs may unblock additional
+test regions in Table B and in the local-port validate wrappers
+in `simple.smli`.
+
+| Bug                                                                   | Symptom                                                                                  | Found in commit |
+|-----------------------------------------------------------------------|------------------------------------------------------------------------------------------|-----------------|
+| Parser rejects `;` between let-bindings                               | `let val x = 1; val y = 2 in x + y end` fails parse with "expected ... or decl"          | 8cd4fcf         |
+| Multi-clause `fun` with literal in non-first arg position             | `fun strTimes s 0 l = l \| strTimes s i l = ...` panics "variable v0 not found in frame" | 8cd4fcf         |
+| Recursive `fun` with `let` body referencing the recursive name        | `fun fixp f a = let val a2 = f a in fixp f a2 end` panics "variable fixp not found"      | 8cd4fcf         |
+| Inliner fails on let-shadowed `fun`                                   | `let fun f x = 1 + x val x = f 2 fun f y = x + y in f x end` fails type resolution       | 8cd4fcf         |
+| Polymorphic-arithmetic int defaulting                                 | `fn (a, b) => a + b` types as `'a * 'a -> 'a` instead of `int * int -> int`              | 972731e         |
+| `o` infix operator parses but type-resolver hits `todo!()`            | `plusOne o timesTwo` panics "Compose not yet implemented"                                | 972731e         |
+| `op ::` not supported                                                 | `(op ::) (1, [2, 3, 4])` panics "binary operator '::' with type Int not supported"       | 8cd4fcf         |
+| `Code::CreateClosure` shape-based recursive-reentry detection         | shape-based ID; revisit when propagating tail-call optimisation (#151)                   | cb38ceb         |
+
+Local-port validate wrappers in simple.smli that are blocked
+by the bugs above and therefore are not in Table B:
+
+- **624-654**: `strTimes` — multi-clause fun with literal in
+  non-first position.
+- **722-870**: closure / pattern-shadowing test cases — let-shadowed
+  fun, parser `;` between let-bindings.
+- **884-905, 916-945, 956-1010, 1115-…**: various; not yet bisected.
+
 ## Files Missing from morel-rust.1 (present only in morel-java)
 
 - **datalog.smli**: `62581437 2025-11-29 Datalog (#323)`
