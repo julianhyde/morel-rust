@@ -867,24 +867,25 @@ impl Code {
                 )
             }
             Code::Link(slot, name) => {
-                if *slot < r.link_codes.len() {
-                    let code = r.link_codes[*slot].clone();
-                    code.eval_f1(r, f, a0)
-                } else {
-                    // Cross-statement call: resolve via the shell environment.
-                    // When a recursive function defined in a previous statement
-                    // is called from a later statement, the link_codes from
-                    // that earlier statement are no longer in scope. The shell
-                    // environment holds the evaluated function value.
-                    let val = r
-                        .shell
-                        .get_val(name)
-                        .unwrap_or_else(|| {
-                            panic!("link '{}' not found in environment", name)
-                        })
-                        .clone();
-                    val.expect_code().eval_f1(r, f, a0)
+                // Resolve the link via the shell-wide LinkTable.
+                // The slot is an absolute index that was assigned
+                // when the recursive binding was compiled and
+                // remains valid for the lifetime of the shell
+                // (see crate::eval::link_table::LinkTable).
+                let code = r.shell.link_table.borrow().get(*slot);
+                if let Some(code) = code {
+                    return code.eval_f1(r, f, a0);
                 }
+                // Last-resort fallback: if the slot has somehow
+                // not been filled (it should always be, by the
+                // time the runtime can reach it), look up the
+                // binding by name in the shell environment. This
+                // path also catches calls to top-level bindings
+                // that the inliner chose not to substitute.
+                let val = r.shell.get_val(name).cloned().unwrap_or_else(|| {
+                    panic!("link '{}' not found in environment", name)
+                });
+                val.apply_f1(r, f, a0)
             }
             Code::Nth(_, slot) => Ok(a0.expect_list()[*slot].clone()),
             _ => {
@@ -1261,7 +1262,6 @@ pub struct EvalEnv<'a> {
     pub session: &'a Session,
     pub shell: &'a Shell,
     effects: &'a mut Vec<Effect>,
-    link_codes: Vec<Code>,
 }
 
 impl<'a> EvalEnv<'a> {
@@ -1269,13 +1269,11 @@ impl<'a> EvalEnv<'a> {
         session: &'a Session,
         shell: &'a Shell,
         effects: &'a mut Vec<Effect>,
-        link_codes: &[Code],
     ) -> Self {
         EvalEnv {
             session,
             shell,
             effects,
-            link_codes: link_codes.to_vec(),
         }
     }
 }
