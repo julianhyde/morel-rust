@@ -1011,6 +1011,18 @@ impl Code {
 
 /// Captures the bound values for a [`Code::CreateClosure`].
 ///
+/// TODO(hydromatic/morel#151): when tail-call optimisation is
+/// propagated, the recursive-reentry shortcut below should be
+/// folded into the trampoline. With a trampoline loop, a
+/// recursive tail call to a let-bound closure would never
+/// re-enter `CreateClosure::eval_*` for the same closure — the
+/// loop would reuse the current frame in place. The
+/// `f.has_def(frame_def)` check here is also a shape-based
+/// approximation of closure identity (two distinct closures
+/// with identical frame shapes would be misclassified); a
+/// trampoline can carry an exact identity instead. Revisit when
+/// importing the morel-java tail-call work.
+///
 /// Normally we walk `bind_codes`, evaluating each one in the
 /// current frame to read the value the closure captures from its
 /// surrounding scope. This is correct when `CreateClosure` is
