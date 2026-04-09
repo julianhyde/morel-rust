@@ -589,10 +589,7 @@ impl Code {
             }
             Code::Constant(_, c) => Ok(c.clone()),
             Code::CreateClosure(frame_def, matches, bind_codes, no_match) => {
-                let mut values = Vec::with_capacity(bind_codes.len());
-                for bind_code in bind_codes {
-                    values.push(bind_code.eval_f0(r, f)?);
-                }
+                let values = capture_bound_vals(frame_def, bind_codes, r, f)?;
                 Ok(Val::Closure(
                     frame_def.clone(),
                     matches.clone(),
@@ -840,14 +837,11 @@ impl Code {
                 // Build the closure's bound values from the current
                 // frame, then immediately apply it to `a0`. This is
                 // used by `ValDeclAction`, which wraps an expression
-                // in a unit-arg fn and calls eval_f1 — when the wrapped
-                // expression captures variables (e.g. a previously-
-                // defined `it`), the wrapper compiles to a
-                // CreateClosure rather than a plain Fn.
-                let mut values = Vec::with_capacity(bind_codes.len());
-                for bind_code in bind_codes {
-                    values.push(bind_code.eval_f0(r, f)?);
-                }
+                // in a unit-arg fn and calls eval_f1 — when the
+                // wrapped expression captures variables (e.g. a
+                // previously-defined `it`), the wrapper compiles to
+                // a CreateClosure rather than a plain Fn.
+                let values = capture_bound_vals(frame_def, bind_codes, r, f)?;
                 Frame::create_bind_and_eval(
                     frame_def,
                     matches,
@@ -1013,6 +1007,51 @@ impl Code {
             results.into_iter().map(Val::List).collect();
         Ok(Val::List(final_results))
     }
+}
+
+/// Captures the bound values for a [`Code::CreateClosure`].
+///
+/// Normally we walk `bind_codes`, evaluating each one in the
+/// current frame to read the value the closure captures from its
+/// surrounding scope. This is correct when `CreateClosure` is
+/// reached from the scope that originally contained the closure
+/// (e.g. the first time `let val rec fact4 = ... in ... end`
+/// runs inside `baz4`).
+///
+/// However, when the closure is invoked **recursively from
+/// inside its own body**, control reaches `CreateClosure` again
+/// — once per recursive call. At that point the current frame
+/// is the closure's *own* frame, not the scope that originally
+/// constructed it. The `bind_codes` reference the *original*
+/// scope's frame layout via `Code::GetLocal`, so re-evaluating
+/// them in the closure's own frame would either read from the
+/// wrong slots or hit a frame-shape mismatch.
+///
+/// Fortunately, when we are in the closure's own frame, the
+/// values we want are *already there*: a `Val::Closure` is
+/// always entered through [`Frame::create_bind_and_eval`], which
+/// pre-loads `bound_vals` into slots `0..bound_vars.len()`. So
+/// if `f.has_def(frame_def)` we can simply clone those slots
+/// instead of re-evaluating `bind_codes`. This is what makes
+/// recursive let-bound closures (like the `fact4` helper inside
+/// `baz4` in `closure.smli`) work without rebuilding their
+/// captured environment from a now-vanished outer frame.
+fn capture_bound_vals(
+    frame_def: &Arc<FrameDef>,
+    bind_codes: &[Code],
+    r: &mut EvalEnv,
+    f: &mut Frame,
+) -> Result<Vec<Val>, MorelError> {
+    if f.has_def(frame_def) {
+        // Recursive re-entry: the captured values are already in
+        // the current frame's bound slots; reuse them.
+        return Ok(f.vals[..frame_def.bound_vars.len()].to_vec());
+    }
+    let mut values = Vec::with_capacity(bind_codes.len());
+    for bind_code in bind_codes {
+        values.push(bind_code.eval_f0(r, f)?);
+    }
+    Ok(values)
 }
 
 fn code_or_span(codes: &[Box<Code>], span: &Span, n: usize) -> Box<Code> {
