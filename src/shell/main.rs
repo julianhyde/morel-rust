@@ -162,8 +162,16 @@ impl Environment {
         self.bindings.insert(name, value.clone());
     }
 
+    /// Returns a new environment with the given bindings merged on top
+    /// of `self`. New bindings shadow existing ones with the same name;
+    /// any existing binding whose name is not mentioned in `bindings`
+    /// is preserved. (Previously, `bind_all` returned an environment
+    /// containing only the new bindings — silently dropping every
+    /// outer binding — which broke any compilation step that walks
+    /// into a let body or function body, since the recursive name
+    /// would no longer be visible.)
     pub fn bind_all(&self, bindings: &[Binding]) -> Self {
-        let mut env = Self::new();
+        let mut env = self.clone();
         for b in bindings {
             if b.value.is_some() {
                 env.bind(b.id.name.clone(), b.value.as_ref().unwrap());

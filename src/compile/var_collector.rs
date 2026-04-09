@@ -20,6 +20,7 @@ use crate::compile::from_builder::agg_implicit_label;
 use crate::compile::type_env::Binding;
 use crate::compile::types::{Label, Type};
 use crate::eval::frame::FrameDef;
+use crate::eval::val::Val;
 use crate::shell::main::Environment;
 use std::collections::HashSet;
 
@@ -99,9 +100,17 @@ impl<'a> VarCollector<'a> {
         for binding in &self.refs {
             let name = &binding.id.name;
             // Include this binding if not defined locally, not a recursive
-            // function, and not already seen.
+            // function (a `Val::Code` in the env, typically a `Code::Link`
+            // for a `fun` / `val rec`), and not already seen. Other env
+            // entries — outer-scope `val` bindings holding plain data —
+            // are NOT filtered: an inner function parameter that happens
+            // to share a name with such an outer binding still needs to
+            // be captured into the closure's frame, otherwise the
+            // shadowing parameter would be invisible to the body.
+            let env_recursive_fn =
+                matches!(self.rec_fns.get(name), Some(Val::Code(_)));
             if !defined_vars.contains(name)
-                && self.rec_fns.get(name).is_none()
+                && !env_recursive_fn
                 && seen_refs.insert(name.clone())
             {
                 result.push(binding.clone());

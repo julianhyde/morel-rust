@@ -763,6 +763,17 @@ impl Code {
                     _ => panic!("Expected closure"),
                 }
             }
+            Code::ApplyConstant(_, _) => {
+                // Eval the call (which produces a function value such
+                // as a Val::Closure), then apply that function to the
+                // outer argument `a0`. Reached when an `ApplyConstant`
+                // is itself the callee of an outer call — typically
+                // `(plus 3) 4` where `plus 3` compiles to
+                // `ApplyConstant(plus, 3)` and the outer `_ 4` calls
+                // `eval_f1` on that.
+                let result = self.eval_f0(r, f)?;
+                result.apply_f1(r, f, a0)
+            }
             Code::BindAnd(codes) => {
                 // Apply each pattern to the same argument; succeed only
                 // if all of them succeed.
