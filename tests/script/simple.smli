@@ -621,9 +621,6 @@ end;
 it 3;
 > val it = 5 : int
 
-set("mode", "validate");
-> val it = () : unit
-
 fun strTimes s 0 l = l
   | strTimes s i l = strTimes ("a" ^ s) (i - 1) (s :: l);
 > val strTimes = fn : string -> int -> string list -> string list
@@ -650,9 +647,6 @@ strTimes "" 20 [];
 >    "aaaaaaaaaaaa","aaaaaaaaaaa","aaaaaaaaaa","aaaaaaaaa","aaaaaaaa",...]
 >   : string list
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 [{a="aaaaaaaaaaaaaaaaaaaaaa",b="bbbbbbbbbbbbbb",c="cccccccccccccccccc",d="ddddddddd"}];
 > val it =
