@@ -713,6 +713,19 @@ in
 end;
 > val it = 1 : int
 
+(*) A `val` binding may reference earlier `val`s in the same `let`.
+(*) Previously failed type-checking with "identifier 'ten' not found"
+(*) because each decl in a let block was processed against the
+(*) original outer environment, not against an env extended with
+(*) the previous decls' bindings.
+let
+  val ten = 6 + 4
+  val eleven = ten + 1
+in
+  eleven
+end;
+> val it = 11 : int
+
 set("mode", "validate");
 > val it = () : unit
 
