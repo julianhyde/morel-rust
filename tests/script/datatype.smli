@@ -124,8 +124,6 @@ end;
 > val it = ("x",2) : string * int
 
 (*) A datatype whose constructor overwrites another datatype's constructor
-set("mode", "validate");
-> val it = () : unit
 datatype foo = W | X | Y of int;
 > datatype foo = W | X | Y of int
 X;
@@ -174,6 +172,9 @@ Node(Empty, 2, Node(Node(Empty, 3, Empty), 4, Empty));
 > val it = Node (Empty,2,Node (Node (Empty,3,Empty),4,Empty)) : inttree
 height it;
 > val it = 3 : int
+
+set("mode", "validate");
+> val it = () : unit
 
 (*) Recursive
 datatype 'x tree = Empty | Node of 'x tree * 'x * 'x tree;
