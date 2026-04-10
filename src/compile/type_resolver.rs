@@ -28,9 +28,10 @@ use crate::compile::types::Label;
 use crate::compile::types::{PrimitiveType, Subst, Type, TypeVariable};
 use crate::shell::error::Error;
 use crate::syntax::ast::{
-    Decl, DeclKind, Expr, ExprKind, FunBind, LabeledExpr, LiteralKind, Match,
-    MorelNode, Pat, PatField, PatKind, Span, Statement, StatementKind, Step,
-    StepKind, Type as AstType, TypeField, TypeKind, TypeScheme, ValBind,
+    DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunBind, LabeledExpr,
+    LiteralKind, Match, MorelNode, Pat, PatField, PatKind, Span, Statement,
+    StatementKind, Step, StepKind, Type as AstType, TypeField, TypeKind,
+    TypeScheme, ValBind,
 };
 use crate::unify::unifier::{
     Action, NullTracer, Op, OpDef, Sequence, Substitution, Term, Unifier, Var,
@@ -239,7 +240,16 @@ impl<'a> TermToTypeConverter<'a> {
                         let args = vec![*self.term_type(&sequence.terms[0])];
                         Box::new(Type::Data(op_name.to_string(), args))
                     }
-                    _ => todo!("{:?}", term),
+                    _ => {
+                        // User-defined datatype: convert each
+                        // argument term back to a Type.
+                        let args: Vec<Type> = sequence
+                            .terms
+                            .iter()
+                            .map(|t| *self.term_type(t))
+                            .collect();
+                        Box::new(Type::Data(op_name.to_string(), args))
+                    }
                 }
             }
             Term::Variable(v) => {
@@ -322,8 +332,14 @@ pub struct TypeResolver {
     /// annotation so that repeated occurrences resolve to the same variable.
     decl_type_vars: BTreeMap<String, Var>,
 
-    /// User-defined type aliases, populated from `type` declarations.
+    /// User-defined type aliases, populated from `type` declarations
+    /// and `datatype` declarations.
     pub type_aliases: HashMap<String, Type>,
+
+    /// Constructor bindings from `datatype` declarations, stored
+    /// here during `deduce_datatype_decl_type` and merged into
+    /// `Resolved::bindings` at the end of `deduce_type`.
+    datatype_bindings: Vec<TypeBinding>,
 
     /// Whether to check pattern coverage (exhaustiveness and redundancy).
     /// Controlled by the `matchCoverageEnabled` property; default is true.
@@ -373,6 +389,7 @@ impl TypeResolver {
             fn_op,
             decl_type_vars: BTreeMap::new(),
             type_aliases: HashMap::new(),
+            datatype_bindings: Vec::new(),
             match_coverage_enabled: true,
             int_op,
             preferred_vars: Vec::new(),
@@ -488,6 +505,8 @@ impl TypeResolver {
         // Extract bindings from the declaration
         let mut bindings = Vec::new();
         Self::collect_bindings_from_decl(&decl2, &type_map, &mut bindings);
+        // Merge in constructor bindings from datatype declarations.
+        bindings.append(&mut self.datatype_bindings);
 
         // Check pattern coverage (exhaustiveness and redundancy), unless
         // disabled by the matchCoverageEnabled property.
@@ -643,6 +662,10 @@ impl TypeResolver {
                         self.type_aliases.insert(tb.name.clone(), rhs_type);
                     }
                 }
+                Ok(decl.clone())
+            }
+            DeclKind::Datatype(datatype_binds) => {
+                self.deduce_datatype_decl_type(env, datatype_binds, term_map)?;
                 Ok(decl.clone())
             }
             _ => todo!("{:?}", decl.kind),
@@ -802,6 +825,81 @@ impl TypeResolver {
             PatKind::Tuple(pat_list.to_vec())
                 .spanned(&Span::sum(pat_list, |p| p.span.clone()).unwrap())
         }
+    }
+
+    /// Deduces the types of a `datatype` declaration.
+    ///
+    /// For each `DatatypeBind` in the declaration, registers the
+    /// datatype's name as a type alias so that self-referential
+    /// constructor types (e.g. `'a tree` in
+    /// `Node of 'a tree * 'a * 'a tree`) resolve correctly, then
+    /// registers each constructor in `term_map` so that later
+    /// expressions can reference it.
+    ///
+    /// For mutually recursive datatypes (`datatype ... and ...`),
+    /// all names are registered first (Phase 1) so that any bind
+    /// can reference any sibling's type.
+    fn deduce_datatype_decl_type(
+        &mut self,
+        _env: &dyn TypeEnv,
+        datatype_binds: &[DatatypeBind],
+        term_map: &mut Vec<(String, Term)>,
+    ) -> Result<(), Error> {
+        // Phase 1: Register each datatype's name as a type alias
+        // so that constructor types can reference it (including
+        // self-references and mutual references).
+        for db in datatype_binds {
+            let type_var_types: Vec<Type> = (0..db.type_vars.len())
+                .map(|i| Type::Variable(TypeVariable::new(i)))
+                .collect();
+            let data_type = Type::Data(db.name.clone(), type_var_types);
+            self.type_aliases.insert(db.name.clone(), data_type);
+        }
+
+        // Phase 2: For each datatype, process constructors and
+        // register them in term_map.
+        for db in datatype_binds {
+            let param_count = db.type_vars.len();
+            let type_var_types: Vec<Type> = (0..param_count)
+                .map(|i| Type::Variable(TypeVariable::new(i)))
+                .collect();
+            let data_type = Type::Data(db.name.clone(), type_var_types);
+
+            for con in &db.constructors {
+                // Build the constructor's type:
+                //   nullary  → datatype  (e.g. Empty : 'a tree)
+                //   with arg → Fn(arg_type, datatype)
+                let con_type = if let Some(ast_type) = &con.type_ {
+                    let arg_core = ast_type_to_core_type(ast_type)
+                        .unwrap_or(Type::Primitive(PrimitiveType::Unit));
+                    Type::Fn(Box::new(arg_core), Box::new(data_type.clone()))
+                } else {
+                    data_type.clone()
+                };
+
+                // Wrap in Forall if the datatype has type
+                // parameters. This makes the constructor
+                // polymorphic (e.g. `Empty : forall 1 'a tree`).
+                let scheme = if param_count > 0 {
+                    Type::Forall(Box::new(con_type), param_count)
+                } else {
+                    con_type
+                };
+
+                // Convert to a term and register.
+                let v = self.variable();
+                self.type_term(&scheme, &Subst::Empty, &v);
+                term_map.push((con.name.clone(), Term::Variable(v)));
+
+                // Store for cross-statement propagation.
+                self.datatype_bindings.push(TypeBinding {
+                    name: con.name.clone(),
+                    resolved_type: scheme,
+                    kind: BindingKind::Constructor,
+                });
+            }
+        }
+        Ok(())
     }
 
     fn deduce_val_decl_type(

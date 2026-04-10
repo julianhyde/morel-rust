@@ -18,7 +18,7 @@
 use crate::compile::type_env::{
     BindType, EmptyTypeEnv, FunTypeEnv, SimpleTypeEnv, TypeEnv, TypeEnvBuilder,
 };
-use crate::compile::type_resolver::{Resolved, TypeResolver};
+use crate::compile::type_resolver::{BindingKind, Resolved, TypeResolver};
 use crate::compile::types::Type;
 use crate::eval::code::Code;
 use crate::eval::val::Val;
@@ -159,7 +159,9 @@ impl Session {
         // memory growth from shadowed values.
         let mut has_new_bindings = false;
         for binding in &resolved.bindings {
-            if binding.kind == crate::compile::type_resolver::BindingKind::Val {
+            if binding.kind == BindingKind::Val
+                || binding.kind == BindingKind::Constructor
+            {
                 self.type_bindings.insert(
                     binding.name.clone(),
                     binding.resolved_type.clone(),

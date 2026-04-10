@@ -23,7 +23,7 @@ use crate::compile::library::{BuiltInExn, BuiltInFunction};
 use crate::compile::pretty::Pretty;
 use crate::compile::type_env::{Binding, Id};
 use crate::compile::type_resolver::TypeMap;
-use crate::compile::types::{Label, PrimitiveType, Type};
+use crate::compile::types::{Label, PrimitiveType, Type, ordinal_names};
 use crate::compile::var_collector::VarCollector;
 use crate::eval::code::{
     Code, Effect, EvalEnv, EvalMode, Frame, Impl, QueryStep, Span,
@@ -336,10 +336,17 @@ impl<'a> Compiler<'a> {
 
     fn compile_datatype_decl(
         &self,
-        _datatype_binds: &[DatatypeBind],
+        datatype_binds: &[DatatypeBind],
         _bindings: &mut [Binding],
-        _actions: Option<&mut Vec<Box<dyn Action>>>,
+        actions: Option<&mut Vec<Box<dyn Action>>>,
     ) {
+        if let Some(actions) = actions {
+            for db in datatype_binds {
+                actions.push(Box::new(DatatypeDeclAction {
+                    datatype_bind: db.clone(),
+                }));
+            }
+        }
     }
 
     /// Creates a context.
@@ -1830,6 +1837,44 @@ impl Action for TypeDeclAction {
         r.emit_effect(Effect::EmitLine(format!(
             "type {} = {}",
             self.name, self.type_
+        )));
+    }
+}
+
+/// Action emitted for a `datatype` declaration. At evaluation
+/// time it emits one line per datatype bind:
+/// `datatype 'a tree = Empty | Node of 'a tree * 'a * 'a tree`.
+struct DatatypeDeclAction {
+    datatype_bind: DatatypeBind,
+}
+
+impl Action for DatatypeDeclAction {
+    fn apply(&self, r: &mut EvalEnv, _f: &mut Frame) {
+        let db = &self.datatype_bind;
+        let type_vars = if db.type_vars.is_empty() {
+            String::new()
+        } else if db.type_vars.len() == 1 {
+            format!("'a ")
+        } else {
+            let vars: Vec<String> = ordinal_names(db.type_vars.len());
+            format!("({}) ", vars.join(","))
+        };
+        let cons: Vec<String> = db
+            .constructors
+            .iter()
+            .map(|c| {
+                if let Some(t) = &c.type_ {
+                    format!("{} of {}", c.name, t)
+                } else {
+                    c.name.clone()
+                }
+            })
+            .collect();
+        r.emit_effect(Effect::EmitLine(format!(
+            "datatype {}{} = {}",
+            type_vars,
+            db.name,
+            cons.join(" | ")
         )));
     }
 }
