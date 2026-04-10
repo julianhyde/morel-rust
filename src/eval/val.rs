@@ -66,7 +66,9 @@ pub enum Val {
     /// constructor application. Nullary constructors carry
     /// `Val::Unit`. For example, `Y 0` of `datatype foo = ... |
     /// Y of int` becomes `Constructor("Y", Box::new(Int(0)))`.
-    Constructor(String, Box<Val>),
+    /// The name is `Arc<str>` so that cloning a constructor
+    /// value does not copy the string.
+    Constructor(Arc<str>, Box<Val>),
 
     /// Wrapper that indicates that a value should be printed with its name
     /// and type.

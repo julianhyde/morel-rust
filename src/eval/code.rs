@@ -123,7 +123,7 @@ pub enum Code {
     /// constructor value. It succeeds if `a0` is
     /// `Val::Constructor(name, inner)` and the inner value matches
     /// `pat_code`.
-    BindConstructor2(String, Option<Box<Code>>),
+    BindConstructor2(Arc<str>, Option<Box<Code>>),
     /// `BindList(patterns)` succeeds if the argument is a list the same length
     /// as `patterns` and each element successfully binds.
     BindList(Vec<Code>),
@@ -154,8 +154,9 @@ pub enum Code {
     /// to a value via `eval_f1`, wraps it in
     /// `Val::Constructor(name, Box::new(arg))`. Used as the
     /// runtime representation of value-carrying user-defined
-    /// datatype constructors.
-    ConstructorWrap(String),
+    /// datatype constructors. The name is `Arc<str>` so that
+    /// cloning the code and resulting values is cheap.
+    ConstructorWrap(Arc<str>),
 
     /// `CreateClosure(frame, matches, binds, no_match)` creates a
     /// [Val::Closure] value that is similar to a function, but has a
@@ -269,7 +270,7 @@ impl Code {
         if !is_builtin {
             // User-defined constructor: use BindConstructor2.
             return Code::BindConstructor2(
-                name.to_string(),
+                Arc::from(name),
                 t.clone().map(Box::new),
             );
         }
@@ -1545,7 +1546,7 @@ impl EagerF0 {
                 }
 
                 // Add user-defined variables from type_bindings.
-                for (name, ty) in &r.session.type_bindings {
+                for (name, (ty, _is_con)) in &r.session.type_bindings {
                     pairs.push((name.clone(), format!("{}", ty)));
                 }
 

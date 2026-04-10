@@ -43,9 +43,11 @@ pub struct Session {
     pub out: Option<Vec<String>>,
     /// The accumulated type environment (bindings from previous statements).
     pub type_env: Rc<dyn TypeEnv>,
-    /// Accumulated type bindings from all statements. When a name is redefined,
-    /// the HashMap::insert naturally overwrites the old binding.
-    pub type_bindings: HashMap<String, Type>,
+    /// Accumulated type bindings from all statements. When a name is
+    /// redefined, HashMap::insert naturally overwrites the old binding.
+    /// The bool indicates whether this is a constructor (true) or a
+    /// regular value (false).
+    pub type_bindings: HashMap<String, (Type, bool)>,
     /// Accumulated type aliases from `type` declarations across all
     /// statements. Each new `TypeResolver` is seeded with this map so
     /// that aliases defined in one statement are visible in later ones.
@@ -162,9 +164,10 @@ impl Session {
             if binding.kind == BindingKind::Val
                 || binding.kind == BindingKind::Constructor
             {
+                let is_con = binding.kind == BindingKind::Constructor;
                 self.type_bindings.insert(
                     binding.name.clone(),
-                    binding.resolved_type.clone(),
+                    (binding.resolved_type.clone(), is_con),
                 );
                 has_new_bindings = true;
             }
@@ -306,15 +309,20 @@ impl Configurable for Config {
 /// and converts them to terms on-demand.
 pub struct ResolvedTypeEnv {
     pub parent: Rc<dyn TypeEnv>,
-    pub bindings: HashMap<String, Type>,
+    /// `(type, is_constructor)`.
+    pub bindings: HashMap<String, (Type, bool)>,
 }
 
 impl TypeEnv for ResolvedTypeEnv {
     fn get(&self, name: &str, t: &mut TypeResolver) -> Option<BindType> {
-        if let Some(type_) = self.bindings.get(name) {
-            // Convert the type to a term using the current TypeResolver
+        if let Some((type_, is_con)) = self.bindings.get(name) {
             let term = t.type_to_term(type_);
-            Some(BindType::Val(Term::Variable(term)))
+            let term = Term::Variable(term);
+            Some(if *is_con {
+                BindType::Constructor(term)
+            } else {
+                BindType::Val(term)
+            })
         } else {
             self.parent.get(name, t)
         }

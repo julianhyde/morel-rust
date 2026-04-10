@@ -1886,10 +1886,15 @@ impl Action for DatatypeDeclAction {
             let val = if con.type_.is_some() {
                 // Value-carrying: a Code that wraps arg in
                 // Val::Constructor(name, arg).
-                Val::Code(Arc::new(Code::ConstructorWrap(con.name.clone())))
+                Val::Code(Arc::new(Code::ConstructorWrap(Arc::from(
+                    con.name.as_str(),
+                ))))
             } else {
                 // Nullary: just the tagged value.
-                Val::Constructor(con.name.clone(), Box::new(Val::Unit))
+                Val::Constructor(
+                    Arc::from(con.name.as_str()),
+                    Box::new(Val::Unit),
+                )
             };
             r.emit_effect(Effect::AddBinding(Binding::of_name_value(
                 &con.name,
