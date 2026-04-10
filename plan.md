@@ -432,6 +432,66 @@ by the bugs above and therefore are not in Table B:
   fun, parser `;` between let-bindings.
 - **884-905, 916-945, 956-1010, 1115-…**: various; not yet bisected.
 
+### Aggregate `f over e` is mishandled in the type-resolver and runtime
+
+References morel-java commit `0b3809b2` (C01, *Fix bug where could
+not derive type if an expression in the environment had type
+record or list*). Blocks the validate-mode regions
+`relational.smli 2451-2462`, `2862-2921`, and `3084-3094`. The
+let-chaining sub-bug (which is what most C01 reproductions
+trip over first) was fixed in `3d2369e`; the rest of C01 is
+this bug.
+
+There are two intertwined defects in `f over e`. Per
+morel-java, `f over e` is morally `f (List.map (fn row => e)
+elements)`, where `elements` is the surrounding query step's
+element collection.
+
+**Type-resolver side.** `ExprKind::Aggregate` in
+`type_resolver.rs` currently:
+
+1. Type-checks `e` in the *post-group* env (`group_env` —
+   outer scope + group keys + `elements`), which does **not**
+   include the previous step's row variables. Per morel-java,
+   `e` should be type-checked in the union of (a) the
+   surrounding query's env, (b) the group key fields, and
+   (c) the previous step's row variables — i.e. the env that
+   `from r in elements yield <e>` would have. The fix is to
+   carry an `over_env` separately on `Triple` (the type-
+   checker state for query steps): for a non-group compute
+   step `over_env == env`; for a group step, `over_env` is
+   the *pre-group* `env` plus the group key fields.
+2. Constrains `f`'s input type to the raw element collection
+   type (`list(elem_type)`), which only happens to type-check
+   correctly when `e == row`. Per morel-java, `f` is applied
+   to the *projected* collection, so `f`'s input is
+   `list(e_type)`, not `list(elem_type)`. The two coincide
+   for `sum over i` and `count over ()` (which is why no
+   existing test catches this) but break for examples like
+   `f over substring("hello", 0, i)` with
+   `f : string list -> int`.
+
+**Runtime side.** `Expr::Aggregate` in `compile_expr` in
+`compiler.rs` reads the `elements` slot and passes it
+**directly** to `f`, ignoring `e` entirely. So even when the
+type-resolver is fixed, programs like
+`from i in [1,2,3] group {} compute {s = sum over (i + 10)}`
+silently produce the wrong answer (`6` instead of `36`). The
+correct compilation is morally `f (List.map (fn row => e)
+elements)`, which requires building a closure for the
+projection at compile time and capturing whatever free
+variables `e` has.
+
+A first attempt at the type-resolver side (commits `036eab3`,
+`999660f`, `260bf72` on this branch — not in HEAD) showed that
+fixing only the type-resolver side without the runtime side
+turns a loud compile-time failure into a silent miscalculation
+at runtime, which is **worse** than the original behavior. The
+two sides must land together. Both halves must also handle the
+"collection kind" question — `elements` is `list` for ordered
+queries and `bag` for unordered, and `f`'s projected input
+should match.
+
 ## Files Missing from morel-rust.1 (present only in morel-java)
 
 - **datalog.smli**: `62581437 2025-11-29 Datalog (#323)`
