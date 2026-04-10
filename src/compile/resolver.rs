@@ -870,9 +870,13 @@ impl<'a> Resolver<'a> {
                 .constructors
                 .iter()
                 .map(|con| {
-                    let core_type = con.type_.as_ref().and_then(
-                        crate::compile::type_resolver::ast_type_to_core_type,
-                    );
+                    let tvs = &datatype_bind.type_vars;
+                    let core_type = con.type_.as_ref().and_then(|t| {
+                        crate::compile::type_resolver
+                            ::ast_type_to_core_type_with_vars(
+                                t, tvs,
+                            )
+                    });
                     CoreConBind {
                         name: con.name.clone(),
                         type_: core_type,

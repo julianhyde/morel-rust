@@ -23,7 +23,7 @@ use crate::compile::library::{BuiltInExn, BuiltInFunction};
 use crate::compile::pretty::Pretty;
 use crate::compile::type_env::{Binding, Id};
 use crate::compile::type_resolver::TypeMap;
-use crate::compile::types::{Label, PrimitiveType, Type, ordinal_names};
+use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::compile::var_collector::VarCollector;
 use crate::eval::code::{
     Code, Effect, EvalEnv, EvalMode, Frame, Impl, QueryStep, Span,
@@ -1853,11 +1853,15 @@ impl Action for DatatypeDeclAction {
         let db = &self.datatype_bind;
         let type_vars = if db.type_vars.is_empty() {
             String::new()
-        } else if db.type_vars.len() == 1 {
-            format!("'a ")
         } else {
-            let vars: Vec<String> = ordinal_names(db.type_vars.len());
-            format!("({}) ", vars.join(","))
+            let vars: Vec<String> = (0..db.type_vars.len())
+                .map(|i| format!("'{}", (b'a' + i as u8) as char))
+                .collect();
+            if vars.len() == 1 {
+                format!("{} ", vars[0])
+            } else {
+                format!("({}) ", vars.join(","))
+            }
         };
         let cons: Vec<String> = db
             .constructors
@@ -1876,6 +1880,22 @@ impl Action for DatatypeDeclAction {
             db.name,
             cons.join(" | ")
         )));
+
+        // Register each constructor as a runtime binding.
+        for con in &db.constructors {
+            let val = if con.type_.is_some() {
+                // Value-carrying: a Code that wraps arg in
+                // Val::Constructor(name, arg).
+                Val::Code(Arc::new(Code::ConstructorWrap(con.name.clone())))
+            } else {
+                // Nullary: just the tagged value.
+                Val::Constructor(con.name.clone(), Box::new(Val::Unit))
+            };
+            r.emit_effect(Effect::AddBinding(Binding::of_name_value(
+                &con.name,
+                &Some(val),
+            )));
+        }
     }
 }
 

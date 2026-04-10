@@ -62,6 +62,12 @@ pub enum Val {
     /// `Inr(v)` represents the `Either` value `INR v`.
     Inr(Box<Val>),
 
+    /// `Constructor(name, v)` represents a user-defined datatype
+    /// constructor application. Nullary constructors carry
+    /// `Val::Unit`. For example, `Y 0` of `datatype foo = ... |
+    /// Y of int` becomes `Constructor("Y", Box::new(Int(0)))`.
+    Constructor(String, Box<Val>),
+
     /// Wrapper that indicates that a value should be printed with its name
     /// and type.
     ///
@@ -284,6 +290,13 @@ impl Display for Val {
             Val::Char(c) => {
                 write!(f, "#\"{}\"", parser::string_to_string(&c.to_string()))
             }
+            Val::Constructor(name, v) => {
+                if **v == Val::Unit {
+                    write!(f, "{}", name)
+                } else {
+                    write!(f, "{} {}", name, v)
+                }
+            }
             Val::Fn(func) => write!(f, "{:?}", func),
             Val::Inl(v) => write!(f, "INL {}", v),
             Val::Inr(v) => write!(f, "INR {}", v),
@@ -374,6 +387,11 @@ impl Hash for Val {
             }
             Val::Inr(v) => {
                 12.hash(state);
+                v.hash(state);
+            }
+            Val::Constructor(name, v) => {
+                20.hash(state);
+                name.hash(state);
                 v.hash(state);
             }
             Val::Typed(boxed) => {

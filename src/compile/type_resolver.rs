@@ -870,8 +870,11 @@ impl TypeResolver {
                 //   nullary  → datatype  (e.g. Empty : 'a tree)
                 //   with arg → Fn(arg_type, datatype)
                 let con_type = if let Some(ast_type) = &con.type_ {
-                    let arg_core = ast_type_to_core_type(ast_type)
-                        .unwrap_or(Type::Primitive(PrimitiveType::Unit));
+                    let arg_core = ast_type_to_core_type_with_vars(
+                        ast_type,
+                        &db.type_vars,
+                    )
+                    .unwrap_or(Type::Primitive(PrimitiveType::Unit));
                     Type::Fn(Box::new(arg_core), Box::new(data_type.clone()))
                 } else {
                     data_type.clone()
@@ -3445,10 +3448,8 @@ impl TypeResolver {
                 // 'a -> option 'a". And then "SOME x" has the type "int option"
                 // if and only if "x" has type "int".
                 let term = match env.get(name, self) {
-                    Some(BindType::Constructor(term)) => term,
-                    Some(BindType::Val(_)) => {
-                        todo!("not a constructor '{}'", name);
-                    }
+                    Some(BindType::Constructor(term))
+                    | Some(BindType::Val(term)) => term,
                     None => {
                         todo!("constructor '{}' not found", name);
                     }
@@ -3805,6 +3806,72 @@ impl TypeSchemeResolver for TypeResolver {
 /// type-alias.smli exercises (primitive ids, tuples, function types,
 /// applications of `list`/`bag`/`option`) are supported; anything
 /// else returns `None` and the alias is silently dropped.
+/// Like [`ast_type_to_core_type`], but also resolves type
+/// variables (e.g. `'x`) from a list of type parameter names.
+/// Used when converting constructor argument types in a datatype
+/// declaration, where the type parameters are known.
+pub(crate) fn ast_type_to_core_type_with_vars(
+    ast_type: &AstType,
+    type_vars: &[String],
+) -> Option<Type> {
+    match &ast_type.kind {
+        TypeKind::Var(name) => {
+            let index = type_vars.iter().position(|v| v == name)?;
+            Some(Type::Variable(TypeVariable::new(index)))
+        }
+        TypeKind::Tuple(types) => {
+            let cores: Vec<Type> = types
+                .iter()
+                .filter_map(|t| ast_type_to_core_type_with_vars(t, type_vars))
+                .collect();
+            if cores.len() == types.len() {
+                Some(Type::Tuple(cores))
+            } else {
+                None
+            }
+        }
+        TypeKind::Fn(t1, t2) => {
+            let c1 = ast_type_to_core_type_with_vars(t1, type_vars)?;
+            let c2 = ast_type_to_core_type_with_vars(t2, type_vars)?;
+            Some(Type::Fn(Box::new(c1), Box::new(c2)))
+        }
+        TypeKind::App(args, t) => {
+            if let TypeKind::Id(name) = &t.kind
+                && args.len() == 1
+            {
+                let arg_core =
+                    ast_type_to_core_type_with_vars(&args[0], type_vars)?;
+                return Some(match name.as_str() {
+                    "list" => Type::List(Box::new(arg_core)),
+                    "bag" => Type::Bag(Box::new(arg_core)),
+                    _ => Type::Data(name.clone(), vec![arg_core]),
+                });
+            }
+            if let TypeKind::Id(name) = &t.kind {
+                let arg_cores: Vec<Type> = args
+                    .iter()
+                    .filter_map(|a| {
+                        ast_type_to_core_type_with_vars(a, type_vars)
+                    })
+                    .collect();
+                if arg_cores.len() == args.len() {
+                    return Some(Type::Data(name.clone(), arg_cores));
+                }
+            }
+            None
+        }
+        TypeKind::Id(name) => {
+            // Try the base function first (handles primitives
+            // and known built-in types). If that fails, treat as
+            // a user-defined datatype reference with no type
+            // parameters (e.g. `inttree`).
+            ast_type_to_core_type(ast_type)
+                .or_else(|| Some(Type::Data(name.clone(), vec![])))
+        }
+        _ => ast_type_to_core_type(ast_type),
+    }
+}
+
 pub(crate) fn ast_type_to_core_type(ast_type: &AstType) -> Option<Type> {
     match &ast_type.kind {
         TypeKind::Id(name) => PrimitiveType::parse_name(name)
