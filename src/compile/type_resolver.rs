@@ -65,6 +65,11 @@ pub struct TypeMap {
     pub var_term_map: HashMap<Var, Term>,
     // Reference to operator definitions for looking up operator names.
     pub op_defs: Rc<Vec<OpDef>>,
+    /// Constructor sets for user-defined datatypes. Maps datatype
+    /// name → list of constructor names. Used by the coverage
+    /// checker to determine whether a set of constructor patterns
+    /// is exhaustive.
+    pub datatype_constructors: HashMap<String, Vec<String>>,
 }
 
 impl TypeMap {
@@ -76,6 +81,7 @@ impl TypeMap {
             node_var_map: node_var_map.clone(),
             var_term_map: HashMap::new(),
             op_defs,
+            datatype_constructors: HashMap::new(),
         }
     }
 
@@ -341,6 +347,11 @@ pub struct TypeResolver {
     /// `Resolved::bindings` at the end of `deduce_type`.
     datatype_bindings: Vec<TypeBinding>,
 
+    /// Constructor sets from datatype declarations in previous
+    /// statements. Seeded by `Session::deduce_type_inner` so that
+    /// the coverage checker can see them.
+    pub prior_datatype_constructors: HashMap<String, Vec<String>>,
+
     /// Whether to check pattern coverage (exhaustiveness and redundancy).
     /// Controlled by the `matchCoverageEnabled` property; default is true.
     pub match_coverage_enabled: bool,
@@ -390,6 +401,7 @@ impl TypeResolver {
             decl_type_vars: BTreeMap::new(),
             type_aliases: HashMap::new(),
             datatype_bindings: Vec::new(),
+            prior_datatype_constructors: HashMap::new(),
             match_coverage_enabled: true,
             int_op,
             preferred_vars: Vec::new(),
@@ -507,6 +519,20 @@ impl TypeResolver {
         Self::collect_bindings_from_decl(&decl2, &type_map, &mut bindings);
         // Merge in constructor bindings from datatype declarations.
         bindings.append(&mut self.datatype_bindings);
+
+        // Seed with constructor sets from previous statements, then
+        // add any new ones from this statement.
+        type_map.datatype_constructors =
+            self.prior_datatype_constructors.clone();
+        if let DeclKind::Datatype(datatype_binds) = &decl.kind {
+            for db in datatype_binds {
+                let con_names: Vec<String> =
+                    db.constructors.iter().map(|c| c.name.clone()).collect();
+                type_map
+                    .datatype_constructors
+                    .insert(db.name.clone(), con_names);
+            }
+        }
 
         // Check pattern coverage (exhaustiveness and redundancy), unless
         // disabled by the matchCoverageEnabled property.

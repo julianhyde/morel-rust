@@ -48,10 +48,16 @@ pub struct Session {
     /// The bool indicates whether this is a constructor (true) or a
     /// regular value (false).
     pub type_bindings: HashMap<String, (Type, bool)>,
-    /// Accumulated type aliases from `type` declarations across all
-    /// statements. Each new `TypeResolver` is seeded with this map so
-    /// that aliases defined in one statement are visible in later ones.
+    /// Accumulated type aliases from `type` and `datatype` declarations
+    /// across all statements. Each new `TypeResolver` is seeded with
+    /// this map so that aliases defined in one statement are visible in
+    /// later ones.
     pub type_aliases: HashMap<String, Type>,
+    /// Accumulated constructor sets from `datatype` declarations.
+    /// Each new `TypeMap` is seeded with this map so that the match
+    /// coverage checker knows the constructor set of previously
+    /// declared datatypes.
+    pub datatype_constructors: HashMap<String, Vec<String>>,
     // Debug ID to track session instances
     // pub debug_id: usize,
 }
@@ -80,6 +86,7 @@ impl Session {
             type_env: Rc::new(type_env) as Rc<dyn TypeEnv>,
             type_bindings: HashMap::new(),
             type_aliases: HashMap::new(),
+            datatype_constructors: HashMap::new(),
             // debug_id: id,
         }
     }
@@ -146,6 +153,8 @@ impl Session {
         // so that 'type myInt = int' in one statement and 'val x: myInt = 5'
         // in the next can both refer to the alias.
         type_resolver.type_aliases = self.type_aliases.clone();
+        type_resolver.prior_datatype_constructors =
+            self.datatype_constructors.clone();
 
         // Use the accumulated type environment from previous statements
         let resolved = type_resolver.deduce_type(&*self.type_env, node)?;
@@ -153,6 +162,12 @@ impl Session {
         // Capture any new aliases introduced by this statement.
         for (name, t) in &type_resolver.type_aliases {
             self.type_aliases.insert(name.clone(), t.clone());
+        }
+
+        // Capture any new constructor sets from datatype declarations.
+        for (name, cons) in &resolved.type_map.datatype_constructors {
+            self.datatype_constructors
+                .insert(name.clone(), cons.clone());
         }
 
         // Update the accumulated environment with new bindings from this
