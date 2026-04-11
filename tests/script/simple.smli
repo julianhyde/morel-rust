@@ -446,8 +446,6 @@ val `val` = "yes, you can use keywords as identifiers";
 val x: `int` = 1;
 > val x = 1 : int
 
-set("mode", "validate");
-> val it = () : unit
 val x: `order` = LESS;
 > val x = LESS : order
 fun f (x: `order` list) = List.length x;
@@ -459,9 +457,6 @@ fun compareInt (x: int, y: int) : `order` =
   else if x > y then GREATER
   else EQUAL;
 > val compareInt = fn : int * int -> order
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (* Comments ------------------------------------------------------- *)
 

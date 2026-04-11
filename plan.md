@@ -167,6 +167,8 @@ feature).
 |         | hydromatic/morel#27 / `20d08bdb` (`List`/`String` structures, `structure.name` references) | done |
 |         | hydromatic/morel#96 / `e5ef07fb` (print control: `printDepth`, `printLength`, `lineWidth`) | done |
 |         | hydromatic/morel#138 / `a7194e4c` (type annotations in patterns, fun decls, expressions) | done |
+|         | `295d60f3` (Interactive.useSilently, scott.smli) | done |
+|         | `da52b1ed` (improve formatting of function types) | done |
 
 
 
