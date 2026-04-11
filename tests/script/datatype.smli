@@ -316,15 +316,14 @@ stdIn:4.1-4.11 Error: operator and operand don't agree [tycon mismatch]
 val it = 3 : int
 *)
 
-(*) Pattern matching on the same type constructor, nested.
 set("mode", "evaluate");
 > val it = () : unit
+
+(*) Pattern matching on the same type constructor, nested.
 fun f (SOME (SOME i)) = i + 1
   | f (SOME NONE) = 0
   | f NONE = ~1;
 > val f = fn : int option option -> int
-set("mode", "validate");
-> val it = () : unit
 f (SOME (SOME 3));
 > val it = 4 : int
 f (SOME (SOME 2));
@@ -333,6 +332,9 @@ f (SOME NONE);
 > val it = 0 : int
 f NONE;
 > val it = ~1 : int
+
+set("mode", "validate");
+> val it = () : unit
 
 (*) Test cases from [MOREL-126].
 fun f ((SOME i) :: nil) = i + 1
