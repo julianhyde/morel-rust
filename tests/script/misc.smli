@@ -186,12 +186,8 @@ set("mode", "evaluate");
 > val it = 1.5 : real
 (op ^) ("foo","bar");
 > val it = "foobar" : string
-set("mode", "validate");
-> val it = () : unit
 (op ::) (1,[2,3,4]);
 > val it = [1,2,3,4] : int list
-set("mode", "evaluate");
-> val it = () : unit
 (op @) ([1,2],[3,4]);
 > val it = [1,2,3,4] : int list
 
