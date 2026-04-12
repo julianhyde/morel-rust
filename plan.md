@@ -169,6 +169,10 @@ feature).
 |         | hydromatic/morel#138 / `a7194e4c` (type annotations in patterns, fun decls, expressions) | done |
 |         | `295d60f3` (Interactive.useSilently, scott.smli) | done |
 |         | `da52b1ed` (improve formatting of function types) | done |
+|         | hydromatic/morel#70 / `520d323c` (polymorphic datatype — non-generic tests enabled) | partial |
+|         | hydromatic/morel#289 / `4c402f51` (quoted type names) | done |
+|         | hydromatic/morel#205 / `6741f5b4` (nested constructor patterns — partial, `nil`-in-pattern remains) | partial |
+|         | hydromatic/morel#311 / `88475799` (`op` keyword — `op ::` implemented) | partial |
 
 
 
