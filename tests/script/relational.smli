@@ -2760,13 +2760,7 @@ from e in
         (from e in
           (from e in
             (from e in
-              (from e in
-                (from e in
-                  (from e in
-                    (from e in emps
-                     yield e)
-                   yield e)
-                 yield e)
+              (from e in emps
                yield e)
              yield e)
            yield e)
