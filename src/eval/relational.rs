@@ -37,25 +37,42 @@ impl Relational {
 
     /// Internal comparison function that returns a Rust Ordering.
     fn compare_vals(a: &Val, b: &Val) -> Ordering {
-        // For simplicity, delegate to Val's equality check and manual ordering.
-        // A full implementation would handle all Val types systematically.
-        if a == b {
-            return Ordering::Equal;
-        }
-
-        // For now, use a basic ordering based on discriminant.
-        // TODO: Implement proper structural comparison for all types.
         match (a, b) {
+            // lint: sort until '#}' where '##\(Val::'
             (Val::Bool(a), Val::Bool(b)) => a.cmp(b),
             (Val::Char(a), Val::Char(b)) => a.cmp(b),
+            (Val::Constructor(na, a), Val::Constructor(nb, b)) => {
+                if na == nb {
+                    // Same user-defined constructor: compare inner values.
+                    if na.as_ref() == "DESC" {
+                        // Descending: reverse the comparison of inner values.
+                        Self::compare_vals(b, a)
+                    } else {
+                        Self::compare_vals(a, b)
+                    }
+                } else {
+                    // Different constructors: compare by name (alphabetical
+                    // as an approximation of declaration order).
+                    na.cmp(nb)
+                }
+            }
+            (Val::Inl(_), Val::Inr(_)) => Ordering::Less,
+            (Val::Inl(a), Val::Inl(b)) => Self::compare_vals(a, b),
+            (Val::Inr(_), Val::Inl(_)) => Ordering::Greater,
+            (Val::Inr(a), Val::Inr(b)) => Self::compare_vals(a, b),
             (Val::Int(a), Val::Int(b)) => a.cmp(b),
+            (Val::List(a), Val::List(b)) => Self::compare_lists(a, b),
+            (Val::Order(a), Val::Order(b)) => a.cmp(b),
             (Val::Real(a), Val::Real(b)) => {
                 a.partial_cmp(b).unwrap_or(Ordering::Equal)
             }
+            // Option: NONE (Unit) < SOME.
+            (Val::Some(_), Val::Unit) => Ordering::Greater,
+            (Val::Some(a), Val::Some(b)) => Self::compare_vals(a, b),
             (Val::String(a), Val::String(b)) => a.cmp(b),
-            (Val::List(a), Val::List(b)) => Self::compare_lists(a, b),
+            (Val::Unit, Val::Some(_)) => Ordering::Less,
             (Val::Unit, Val::Unit) => Ordering::Equal,
-            _ => Ordering::Equal, // Default for unimplemented comparisons
+            _ => Ordering::Equal,
         }
     }
 

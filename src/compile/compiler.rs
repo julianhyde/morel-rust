@@ -591,6 +591,15 @@ impl<'a> Compiler<'a> {
             Expr::Apply(result_type, f, a, span) => match f.as_ref() {
                 Expr::Literal(_t, Val::Fn(f)) => {
                     let impl_ = f.get_impl();
+                    // For 1-arg functions (E1, EF1), always compile the
+                    // argument as a single Code — even if it's a tuple
+                    // expression. The function takes one argument; a
+                    // source-level tuple IS that argument.
+                    if matches!(impl_, Impl::E1(_) | Impl::EF1(_)) {
+                        let arg = self.compile_arg(cx, a);
+                        let codes: Vec<Box<Code>> = vec![Box::new(arg)];
+                        return Code::new_native(impl_, &codes, span);
+                    }
                     // Detect partial application of a curried 2-arg
                     // built-in (e.g., `List.map f`, `Fn.o (f, g)`): the
                     // call's result type is itself a function type.

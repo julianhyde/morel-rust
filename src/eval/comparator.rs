@@ -116,8 +116,17 @@ impl ReverseComparator {
 
 impl Comparator for ReverseComparator {
     fn compare(&self, a: &Val, b: &Val) -> Ordering {
-        // Reverse the comparison by swapping arguments.
-        self.inner.compare(b, a)
+        // Unwrap DESC constructor wrappers and reverse the
+        // comparison by swapping arguments.
+        let a_inner = match a {
+            Val::Constructor(n, v) if n.as_ref() == "DESC" => v,
+            _ => a,
+        };
+        let b_inner = match b {
+            Val::Constructor(n, v) if n.as_ref() == "DESC" => v,
+            _ => b,
+        };
+        self.inner.compare(b_inner, a_inner)
     }
 }
 
