@@ -37,6 +37,21 @@ comment OR preceded by `set("mode","validate")` with no intervening
 corresponding content is in *evaluate* mode in morel-java; regions
 disabled in both repos are excluded.
 
+## Prioritized next-10 propagation list
+
+| # | SHA | Issue | Description | B rows |
+|---|-----|-------|-------------|--------|
+| 1 | `8e7ea79a` | morel#55 | Match coverage | 1 |
+| 2 | `3c73f2fe` | morel#230 | `fn` multi-branch | 1 |
+| 3 | `89008ece` | morel#251 | Sys.clearEnv | 1 |
+| 4 | `98294833` | — | Fixed-point examples | 2 |
+| 5 | `9c5bba8a` | #328 | distinct vs group {} | 1 |
+| 6 | `e07ffc0f` | — | ordinal in unordered | 3 |
+| 7 | `52d01afc` | morel#264 | Char structure | 16 |
+| 8 | `25cc7d29` | morel#253 | Set operators | 3 |
+| 9 | `afc11745` | morel#310 | `:t` validation mode | 62 |
+| 10 | `380a9609` | morel#247 | Type annotation xlat | 1 |
+
 ## How to proceed
 
 ### Picking the next commit
