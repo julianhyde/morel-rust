@@ -2489,9 +2489,9 @@ fun mustBeList (list: 'a list) = list;
 fun sumPairs pairs =
   from (l, r) in mustBeList pairs
   yield l + r;
-> val sumPairs = fn : ('a * 'a) list -> 'a list
+> val sumPairs = fn : (int * int) list -> int list
 sumPairs [];
-> val it = [] : 'a list
+> val it = [] : int list
 sumPairs [(1, 2), (3, 4)];
 > val it = [3,7] : int list
 
@@ -2594,6 +2594,8 @@ listHeads2 [];
 listHeads2 [[1, 2], [3], [4, 5, 6]];
 > val it = [4,5,8] : int list
 
+set("mode", "evaluate");
+> val it = () : unit
 fun sumPairs2 (pairs: 'a list) =
   from p as (l, r) in pairs
   yield (#1 p) + l + r;
@@ -2604,8 +2606,6 @@ sumPairs2 [(1, 2), (3, 4)];
 > val it = [4,10] : int list
 
 (*) '=' in from
-set("mode", "evaluate");
-> val it = () : unit
 from x = 1;
 > val it = [1] : int list
 from x = 1 yield x + 2;

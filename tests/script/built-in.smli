@@ -880,26 +880,22 @@ Fn.apply (fn a => a + 3, 5);
 > val it = 8 : int
 Fn.curry;
 > val it = fn : ('a * 'b -> 'c) -> 'a -> 'b -> 'c
-(* TODO: Should be `int -> int -> int`; morel-rust does not yet
-   default polymorphic overloads of `+` to int. *)
 Fn.curry (fn (a, b) => a + b);
-> val it = fn : 'a -> 'a -> 'a
+> val it = fn : int -> int -> int
 Fn.curry (fn (a, b) => a + b) 3 5;
 > val it = 8 : int
 Fn.curry (fn (a, b) => a + b) 3;
 > val it = fn : int -> int
 Fn.uncurry;
 > val it = fn : ('a -> 'b -> 'c) -> 'a * 'b -> 'c
-(* TODO: Should be `int * int -> int`; see Fn.curry note above. *)
 Fn.uncurry (fn a => fn b => a + b);
-> val it = fn : 'a * 'a -> 'a
+> val it = fn : int * int -> int
 Fn.uncurry (fn a => fn b => a + b) (3, 5);
 > val it = 8 : int
 Fn.flip;
 > val it = fn : ('a * 'b -> 'c) -> 'b * 'a -> 'c
-(* TODO: Should be `int * int -> int`; see Fn.curry note above. *)
 Fn.flip (fn (a, b) => a - b);
-> val it = fn : 'a * 'a -> 'a
+> val it = fn : int * int -> int
 Fn.flip (fn (a, b) => a - b) (5, 3);
 > val it = ~2 : int
 Fn.repeat;

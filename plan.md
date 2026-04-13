@@ -435,7 +435,7 @@ in `simple.smli`.
 | Multi-clause `fun` with literal in non-first arg position             | `fun strTimes s 0 l = l \| strTimes s i l = ...` panics "variable v0 not found in frame" | 8cd4fcf         |
 | Recursive `fun` with `let` body referencing the recursive name        | `fun fixp f a = let val a2 = f a in fixp f a2 end` panics "variable fixp not found"      | 8cd4fcf         |
 | Inliner fails on let-shadowed `fun`                                   | `let fun f x = 1 + x val x = f 2 fun f y = x + y in f x end` fails type resolution       | 8cd4fcf         |
-| Polymorphic-arithmetic int defaulting                                 | `fn (a, b) => a + b` types as `'a * 'a -> 'a` instead of `int * int -> int`              | 972731e         |
+| ~~Polymorphic-arithmetic int defaulting~~                             | Fixed. `fn (a, b) => a + b` now defaults to `int * int -> int`.                          | 972731e         |
 | `o` infix operator parses but type-resolver hits `todo!()`            | `plusOne o timesTwo` panics "Compose not yet implemented"                                | 972731e         |
 | `op ::` not supported                                                 | `(op ::) (1, [2, 3, 4])` panics "binary operator '::' with type Int not supported"       | 8cd4fcf         |
 | `Code::CreateClosure` shape-based recursive-reentry detection         | shape-based ID; revisit when propagating tail-call optimisation (#151)                   | cb38ceb         |
