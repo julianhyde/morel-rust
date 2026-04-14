@@ -455,7 +455,8 @@ in `simple.smli`.
 | Inliner fails on let-shadowed `fun`                                   | `let fun f x = 1 + x val x = f 2 fun f y = x + y in f x end` fails type resolution       | 8cd4fcf         |
 | ~~Polymorphic-arithmetic int defaulting~~                             | Fixed. `fn (a, b) => a + b` now defaults to `int * int -> int`.                          | 972731e         |
 | `o` infix operator parses but type-resolver hits `todo!()`            | `plusOne o timesTwo` panics "Compose not yet implemented"                                | 972731e         |
-| `op ::` not supported                                                 | `(op ::) (1, [2, 3, 4])` panics "binary operator '::' with type Int not supported"       | 8cd4fcf         |
+| ~~`op ::` not supported~~                                             | Fixed in a6101fc.                                                                        | 8cd4fcf         |
+| Multi-clause fun with global-name local var                           | `fun len [] = 0 \| len (_::tl) = 1 + len tl; len [1]` fails: `tl` resolves to `List.tl` | af6699e         |
 | `Code::CreateClosure` shape-based recursive-reentry detection         | shape-based ID; revisit when propagating tail-call optimisation (#151)                   | cb38ceb         |
 
 Local-port validate wrappers in simple.smli that are blocked
