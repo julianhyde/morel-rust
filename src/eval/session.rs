@@ -170,10 +170,14 @@ impl Session {
                 .insert(name.clone(), cons.clone());
         }
 
-        // Update the accumulated environment with new bindings from this
-        // statement. We store bindings in a single HashMap; when a name is
-        // redefined, HashMap::insert overwrites the old binding, preventing
-        // memory growth from shadowed values.
+        Ok(resolved)
+    }
+
+    /// Commits the bindings from a resolved statement into the
+    /// persistent type environment. Call this AFTER evaluating the
+    /// statement, so that `Sys.env()` during evaluation does not
+    /// see the current statement's own bindings (e.g. `it`).
+    pub fn commit_bindings(&mut self, resolved: &Resolved) {
         let mut has_new_bindings = false;
         for binding in &resolved.bindings {
             if binding.kind == BindingKind::Val
@@ -201,8 +205,6 @@ impl Session {
                 bindings: self.type_bindings.clone(),
             }) as Rc<dyn TypeEnv>;
         }
-
-        Ok(resolved)
     }
 }
 
