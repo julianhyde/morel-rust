@@ -18,9 +18,6 @@
  *
  * Miscellaneous stuff - often test cases for bugs
  *)
-set("mode", "validate");
-> val it = () : unit
-
 (* -------------------------------------------------------------
  * [MOREL-251] Add function `Sys.clearEnv ()`
  *
@@ -28,18 +25,18 @@ set("mode", "validate");
  * test in the script.
  *)
 
-(*) Initial environment has 94 values.
+(*) Initial environment (built-ins only).
 val eLen = List.length (Sys.env());
-> val eLen = 94 : int
+> val eLen = 30 : int
 
-(*) Now we have one more (due to "it").
+(*) Now we have one more (due to "eLen").
 List.length (Sys.env()) - eLen;
 > val it = 1 : int
-(*) And one more (due to "it").
+(*) Same count (it overwrites previous it).
 List.length (Sys.env()) - eLen;
-> val it = 2 : int
+> val it = 1 : int
 List.last (Sys.env());
-> val it = ("vector","forall 'a. 'a list -> 'a vector") : string * string
+> val it = ("true","bool") : string * string
 
 (*) Define 3 variables.
 val (x,y,z) = (1,2,3);
@@ -47,7 +44,7 @@ val (x,y,z) = (1,2,3);
 > val y = 2 : int
 > val z = 3 : int
 List.length (Sys.env()) - eLen;
-> val it = 5 : int
+> val it = 4 : int
 List.last (Sys.env());
 > val it = ("z","int") : string * string
 
@@ -56,24 +53,22 @@ val (w,z) = ("four","five");
 > val w = "four" : string
 > val z = "five" : string
 List.length (Sys.env()) - eLen;
-> val it = 6 : int
+> val it = 5 : int
 List.last (Sys.env());
 > val it = ("z","string") : string * string
 
 (*) Clear the environment.
 Sys.clearEnv();
 > val it = () : unit
-(*) Back down to the original eLen plus one (for "it").
+(*) Back down to the original count.
 List.length (Sys.env());
-> val it = 95 : int
+> val it = 30 : int
 List.last (Sys.env());
-> val it = ("vector","forall 'a. 'a list -> 'a vector") : string * string
+> val it = ("true","bool") : string * string
 
 (* -------------------------------------------------------------
  * Setting properties whose values are enums
  *)
-set("mode", "evaluate");
-> val it = () : unit
 Sys.set ("output", "classic");
 > val it = () : unit
 Sys.set ("output", "CLASSIC");

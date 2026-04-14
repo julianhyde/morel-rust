@@ -188,6 +188,9 @@ feature).
 |         | hydromatic/morel#289 / `4c402f51` (quoted type names) | done |
 |         | hydromatic/morel#205 / `6741f5b4` (nested constructor patterns — partial, `nil`-in-pattern remains) | partial |
 |         | hydromatic/morel#311 / `88475799` (`op` keyword — `op ::` implemented) | partial |
+|         | hydromatic/morel#55 / `8e7ea79a` (match coverage) | done |
+|         | hydromatic/morel#230 / `3c73f2fe` (`fn` multi-branch) | done |
+|         | hydromatic/morel#251 / `89008ece` (Sys.clearEnv) | done |
 
 
 
