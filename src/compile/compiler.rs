@@ -1230,7 +1230,8 @@ impl<'a> Compiler<'a> {
                 let slot_count = step_env.bindings.len();
 
                 // Compile aggregate expression and determine slot layout.
-                let (aggregate_code, elements_slot, agg_output_slots) =
+                let (aggregate_code, elements_slot,
+                    agg_output_slots, agg_is_record) =
                     if let Some(agg_expr) = aggregate_expr {
                         let agg_code = self.compile_expr(cx, None, agg_expr);
 
@@ -1238,17 +1239,20 @@ impl<'a> Compiler<'a> {
                         let els = cx.frame_def.try_var_index("elements");
 
                         // Slots for aggregate output fields, in field order.
-                        let out_slots: Vec<usize> =
+                        let (out_slots, is_record): (Vec<usize>, bool) =
                             if let Type::Record(_, fields) =
                                 agg_expr.type_().as_ref()
                             {
-                                fields
-                                    .keys()
-                                    .map(|label| {
-                                        cx.frame_def
-                                            .var_index(&label.to_string())
-                                    })
-                                    .collect()
+                                (
+                                    fields
+                                        .keys()
+                                        .map(|label| {
+                                            cx.frame_def
+                                                .var_index(&label.to_string())
+                                        })
+                                        .collect(),
+                                    true,
+                                )
                             } else {
                                 // Scalar aggregate: output goes to the frame
                                 // slot of the agg binding (which follows key
@@ -1261,12 +1265,12 @@ impl<'a> Compiler<'a> {
                                         cx.frame_def.try_var_index(&b.id.name)
                                     })
                                     .unwrap_or(key_slot_count);
-                                vec![slot]
+                                (vec![slot], false)
                             };
 
-                        (Some(agg_code), els, out_slots)
+                        (Some(agg_code), els, out_slots, is_record)
                     } else {
-                        (None, None, vec![])
+                        (None, None, vec![], false)
                     };
 
                 RowSinkFactory::new(move || {
@@ -1275,6 +1279,7 @@ impl<'a> Compiler<'a> {
                         aggregate_code.clone(),
                         elements_slot,
                         agg_output_slots.clone(),
+                        agg_is_record,
                         slot_count,
                         key_slots.clone(),
                         key_is_record,
