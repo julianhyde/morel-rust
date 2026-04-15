@@ -2154,6 +2154,11 @@ impl TypeResolver {
                 }
             }
         } else {
+            // Non-record yield (tuple, scalar): the previous row
+            // bindings are no longer in scope. Build the new
+            // environment from the root (outer) env, not the
+            // current step env.
+            envs = p.root_env.builder();
             let label = expr
                 .implicit_label_opt()
                 .unwrap_or_else(|| ExprKind::Current.clause().to_string());
