@@ -304,8 +304,8 @@ end;
 :t {c=1, b=true};
 > val it : {b:bool, c:int}
 :t {a=1, b=true, a=3};
-> stdIn:1.17-1.18 Error: duplicate field 'a' in record
->   raised at: stdIn:1.17-1.18
+> stdIn:1.17 Error: duplicate field 'a' in record
+>   raised at: stdIn:1.17
 
 (*) Incomplete record type
 (* TODO
@@ -529,32 +529,32 @@ yield i div 10;
 :t
 from p in [{r=1.0, s="a"}]
 group p.r compute {x = p.r};
-> stdIn:2.24-2.25 Error: unbound variable or constructor: p
->   raised at: stdIn:2.24-2.25
+> stdIn:2.24 Error: unbound variable or constructor: p
+>   raised at: stdIn:2.24
 :t from d in [{a=1,b=true}] yield d.a into sum;
 > val it : int
 
 :t
 from a in [1], b in [true] yield (b,a) where c;
-> stdIn:1.46-1.47 Error: unbound variable or constructor: c
->   raised at: stdIn:1.46-1.47
+> stdIn:1.46 Error: unbound variable or constructor: c
+>   raised at: stdIn:1.46
 
 :t
 from a in [1], b in [true] yield (b,a) where b;
-> stdIn:1.46-1.47 Error: unbound variable or constructor: b
->   raised at: stdIn:1.46-1.47
+> stdIn:1.46 Error: unbound variable or constructor: b
+>   raised at: stdIn:1.46
 
 :t from a in [1], b in [true] yield {b,a} where b;
 > val it : {a:int, b:bool} list
 
 :t
 from d in [{a=1,b=true}], i in [2] yield {d} yield a;
-> stdIn:1.52-1.53 Error: unbound variable or constructor: a
->   raised at: stdIn:1.52-1.53
+> stdIn:1.52 Error: unbound variable or constructor: a
+>   raised at: stdIn:1.52
 
 :t from d in [{a=1,b=true}], i in [2] yield d yield a;
-> stdIn:1.50-1.51 Error: unbound variable or constructor: a
->   raised at: stdIn:1.50-1.51
+> stdIn:1.50 Error: unbound variable or constructor: a
+>   raised at: stdIn:1.50
 
 :t from {c, a, ...} in [{a=1.0,b=true,c=3},{a=1.5,b=true,c=4}];
 > val it : {a:real, c:int} list
@@ -1176,32 +1176,32 @@ yield i div 10;
 :t
 from p in [{r=1.0, s="a"}]
 group p.r compute {x = p.r};
-> stdIn:2.24-2.25 Error: unbound variable or constructor: p
->   raised at: stdIn:2.24-2.25
+> stdIn:2.24 Error: unbound variable or constructor: p
+>   raised at: stdIn:2.24
 :t from d in [{a=1,b=true}] yield d.a into sum;
 > val it : int
 
 :t
 from a in [1], b in [true] yield (b,a) where c;
-> stdIn:1.46-1.47 Error: unbound variable or constructor: c
->   raised at: stdIn:1.46-1.47
+> stdIn:1.46 Error: unbound variable or constructor: c
+>   raised at: stdIn:1.46
 
 :t
 from a in [1], b in [true] yield (b,a) where b;
-> stdIn:1.46-1.47 Error: unbound variable or constructor: b
->   raised at: stdIn:1.46-1.47
+> stdIn:1.46 Error: unbound variable or constructor: b
+>   raised at: stdIn:1.46
 
 :t from a in [1], b in [true] yield {b,a} where b;
 > val it : {a:int, b:bool} list
 
 :t
 from d in [{a=1,b=true}], i in [2] yield {d} yield a;
-> stdIn:1.52-1.53 Error: unbound variable or constructor: a
->   raised at: stdIn:1.52-1.53
+> stdIn:1.52 Error: unbound variable or constructor: a
+>   raised at: stdIn:1.52
 
 :t from d in [{a=1,b=true}], i in [2] yield d yield a;
-> stdIn:1.50-1.51 Error: unbound variable or constructor: a
->   raised at: stdIn:1.50-1.51
+> stdIn:1.50 Error: unbound variable or constructor: a
+>   raised at: stdIn:1.50
 
 :t from {c, a, ...} in [{a=1.0,b=true,c=3},{a=1.5,b=true,c=4}];
 > val it : {a:real, c:int} list

@@ -1151,8 +1151,8 @@ tup .1;
 > val it = "a string literal to reset the line counter after the comment"
 >   : string
 val a = p + 1;
-> stdIn:1.9-1.10 Error: unbound variable or constructor: p
->   raised at: stdIn:1.9-1.10
+> stdIn:1.9 Error: unbound variable or constructor: p
+>   raised at: stdIn:1.9
 val a = pq + 1;
 > stdIn:1.9-1.11 Error: unbound variable or constructor: pq
 >   raised at: stdIn:1.9-1.11
