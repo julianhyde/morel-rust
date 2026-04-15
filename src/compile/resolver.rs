@@ -763,18 +763,18 @@ impl<'a> Resolver<'a> {
                     // Already wrapped by get_type_with_alias
                     return resolved;
                 }
-                if let TypeKind::Id(name) = &ann_type.kind {
-                    if let Some(ann_id) = ann_type.id {
-                        let var = Var { id: ann_id };
-                        if self.type_map.var_alias_map.contains_key(&var) {
-                            let inner_type = resolved.type_().clone();
-                            let alias_type = Box::new(Type::Alias(
-                                name.clone(),
-                                inner_type,
-                                vec![],
-                            ));
-                            return resolved.with_type(alias_type);
-                        }
+                if let TypeKind::Id(name) = &ann_type.kind
+                    && let Some(ann_id) = ann_type.id
+                {
+                    let var = Var { id: ann_id };
+                    if self.type_map.var_alias_map.contains_key(&var) {
+                        let inner_type = resolved.type_().clone();
+                        let alias_type = Box::new(Type::Alias(
+                            name.clone(),
+                            inner_type,
+                            vec![],
+                        ));
+                        return resolved.with_type(alias_type);
                     }
                 }
                 resolved
@@ -859,28 +859,19 @@ impl<'a> Resolver<'a> {
         match &expr.kind {
             ExprKind::List(elems) if !elems.is_empty() => {
                 // Check if the first element has an alias annotation.
-                if let ExprKind::Annotated(_, ann_type) = &elems[0].kind {
-                    if let TypeKind::Id(name) = &ann_type.kind {
-                        if let Some(ann_id) = ann_type.id {
-                            let var = Var { id: ann_id };
-                            if self
-                                .type_map
-                                .var_alias_map
-                                .contains_key(&var)
-                            {
-                                // Wrap the list's element type in alias.
-                                if let Type::List(elem_type) = &*pat.type_()
-                                {
-                                    return Some(Type::List(Box::new(
-                                        Type::Alias(
-                                            name.clone(),
-                                            elem_type.clone(),
-                                            vec![],
-                                        ),
-                                    )));
-                                }
-                            }
-                        }
+                if let ExprKind::Annotated(_, ann_type) = &elems[0].kind
+                    && let TypeKind::Id(name) = &ann_type.kind
+                    && let Some(ann_id) = ann_type.id
+                {
+                    let var = Var { id: ann_id };
+                    if self.type_map.var_alias_map.contains_key(&var)
+                        && let Type::List(elem_type) = &*pat.type_()
+                    {
+                        return Some(Type::List(Box::new(Type::Alias(
+                            name.clone(),
+                            elem_type.clone(),
+                            vec![],
+                        ))));
                     }
                 }
                 None
