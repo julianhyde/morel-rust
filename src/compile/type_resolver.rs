@@ -1441,7 +1441,16 @@ impl TypeResolver {
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Elements => {
-                self.check_in_compute(env, &expr.span)?;
+                if self.compute_stack.is_empty() {
+                    return Err(Error::Compile(
+                        format!(
+                            "'{}' is only valid in a '{}' clause",
+                            ExprKind::Elements.clause(),
+                            StepKind::Compute(Expr::empty()).clause()
+                        ),
+                        expr.span.clone(),
+                    ));
+                }
                 let step_env = self.compute_stack.last().unwrap();
                 self.equiv(&Term::Variable(step_env.clone().c.unwrap()), v);
                 self.reg_expr(&expr.kind, &expr.span, expr.id, &v)
