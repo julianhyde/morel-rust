@@ -37,12 +37,10 @@ Sys.set ("lineWidth", 78);
 > val it : int
 :t 1.0 / 0.0;
 > val it : real
-(* TODO
 :t fn 1 => "a";
-> stdIn:1.14-1.25 Warning: match nonexhaustive
->   raised at: stdIn:1.14-1.25
+> stdIn:1.1-1.12 Warning: match nonexhaustive
+>   raised at: stdIn:1.1-1.12
 > val it : int -> string
-*)
 
 (*) Type tests
 :t #"h";
@@ -351,12 +349,10 @@ end;
 > val it : int list
 :t 1 :: 2 :: [];
 > val it : int list
-(* TODO
 :t fn [] => 0;
-> stdIn:1.14-1.24 Warning: match nonexhaustive
->   raised at: stdIn:1.14-1.24
+> stdIn:1.1-1.11 Warning: match nonexhaustive
+>   raised at: stdIn:1.1-1.11
 > val it : 'a list -> int
-*)
 
 :t val x = 1
 and y = ("hello", "world");
@@ -532,24 +528,18 @@ yield i div 10;
 :t from {c, a, ...} in [{a=1.0,b=true,c=3},{a=1.5,b=true,c=4}];
 > val it : {a:real, c:int} list
 *)
-(* TODO error handling
 :t
 from p in [{r=1.0, s="a"}]
 group p.r compute {x = p.r};
-> stdIn:2.24 Error: unbound variable or constructor: p
->   raised at: stdIn:2.24
-*)
-(* TODO add sum
+> stdIn:2.24-2.25 Error: unbound variable or constructor: p
+>   raised at: stdIn:2.24-2.25
 :t from d in [{a=1,b=true}] yield d.a into sum;
 > val it : int
-*)
 
-(* TODO err handling
 :t
 from a in [1], b in [true] yield (b,a) where c;
-> stdIn:1.46 Error: unbound variable or constructor: c
->   raised at: stdIn:1.46
-*)
+> stdIn:1.46-1.47 Error: unbound variable or constructor: c
+>   raised at: stdIn:1.46-1.47
 
 (* TODO err handling
 :t
@@ -561,32 +551,23 @@ from a in [1], b in [true] yield (b,a) where b;
 :t from a in [1], b in [true] yield {b,a} where b;
 > val it : {a:int, b:bool} list
 
-(* TODO err handling
 :t
 from d in [{a=1,b=true}], i in [2] yield {d} yield a;
-> stdIn:1.52 Error: unbound variable or constructor: a
->   raised at: stdIn:1.52
-*)
+> stdIn:1.52-1.53 Error: unbound variable or constructor: a
+>   raised at: stdIn:1.52-1.53
 
-(* TODO err handling
 :t from d in [{a=1,b=true}], i in [2] yield d yield a;
-> stdIn:1.63 Error: unbound variable or constructor: a
->   raised at: stdIn:1.63
-*)
+> stdIn:1.50-1.51 Error: unbound variable or constructor: a
+>   raised at: stdIn:1.50-1.51
 
-(* TODO ...
 :t from {c, a, ...} in [{a=1.0,b=true,c=3},{a=1.5,b=true,c=4}];
 > val it : {a:real, c:int} list
-*)
-(* TODO count
 :t from i in [1] group i compute count over i;
 > val it : {count:int, i:int} list
-*)
 (* TODO bag input
 :t from i in bag [1] group i compute count over i;
 > val it : {count:int, i:int} bag
 *)
-(* TODO sum
 :t from (r, s) in [(1.0, "a")]
   group r compute {x = 1 + sum over size s};
 > val it : {r:real, x:int} list
@@ -595,7 +576,6 @@ from d in [{a=1,b=true}], i in [2] yield {d} yield a;
                    y = 0,
                    z = concat over s};
 > val it : {r:real, x:int, y:int, z:string} list
-*)
 :t from p in [{r=1.0, s="a"}]
   group p.r compute {x = r};
 > val it : {r:real, x:real} list
@@ -650,26 +630,18 @@ from d in [{a=1,b=true}], i in [2] yield {d} yield a;
 > val it : {d:{a:int, b:bool}} list
 :t from d in [{a=1,b=true}], i in [2] yield {d} where true;
 > val it : {d:{a:int, b:bool}} list
-(* TODO type inference
 :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} yield a;
 > val it : int list
-*)
 :t from d in [{a=1,b=true}], i in [2] yield i yield 3;
 > val it : int list
 :t from d in [{a=1,b=true}], i in [2] yield d;
 > val it : {a:int, b:bool} list
-(* TODO current
 :t from d in [{a=1,b=true}], i in [2] yield (d.b, i) yield #1 current;
 > val it : bool list
-*)
-(* TODO type inference
 :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} order a;
 > val it : {a:int, b:bool} list
-*)
-(* TODO current
 :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} order current.a;
 > val it : {a:int, b:bool} list
-*)
 :t from d in [{a=1,b=true}], i in [2] yield d where true;
 > val it : {a:int, b:bool} list
 :t from d in [{a=1,b=true}], i in [2] yield d distinct;
@@ -696,23 +668,17 @@ from d in [{a=1,b=true}], i in [2] yield {d} yield a;
 > val it : {d:{a:int, b:bool}, i:int} bag
 :t from d in [{a=1,b=true}], i in [2] unorder unorder;
 > val it : {d:{a:int, b:bool}, i:int} bag
-(* TODO type inference
 :t from d in [{a=1,b=true}], i in [2] unorder order i;
 > val it : {d:{a:int, b:bool}, i:int} list
-*)
 
 (*) current/ordinal
-(* TODO ordinal
 :t from i in [1,2,3,4,5] yield i + ordinal;
 > val it : int list
 :t from i in bag [1,2,3,4,5] order DESC i yield i + ordinal;
 > val it : int list
-*)
 
-(* TODO current
 :t from i in [1,2,3,4,5] yield substring("hello", 1, current);
 > val it : string list
-*)
 
 (* TODO error handling / bag / ordinal
 :t
@@ -1215,24 +1181,18 @@ yield i div 10;
 :t from {c, a, ...} in [{a=1.0,b=true,c=3},{a=1.5,b=true,c=4}];
 > val it : {a:real, c:int} list
 *)
-(* TODO error handling
 :t
 from p in [{r=1.0, s="a"}]
 group p.r compute {x = p.r};
-> stdIn:2.24 Error: unbound variable or constructor: p
->   raised at: stdIn:2.24
-*)
-(* TODO add sum
+> stdIn:2.24-2.25 Error: unbound variable or constructor: p
+>   raised at: stdIn:2.24-2.25
 :t from d in [{a=1,b=true}] yield d.a into sum;
 > val it : int
-*)
 
-(* TODO err handling
 :t
 from a in [1], b in [true] yield (b,a) where c;
-> stdIn:1.46 Error: unbound variable or constructor: c
->   raised at: stdIn:1.46
-*)
+> stdIn:1.46-1.47 Error: unbound variable or constructor: c
+>   raised at: stdIn:1.46-1.47
 
 (* TODO err handling
 :t
@@ -1244,32 +1204,23 @@ from a in [1], b in [true] yield (b,a) where b;
 :t from a in [1], b in [true] yield {b,a} where b;
 > val it : {a:int, b:bool} list
 
-(* TODO err handling
 :t
 from d in [{a=1,b=true}], i in [2] yield {d} yield a;
-> stdIn:1.52 Error: unbound variable or constructor: a
->   raised at: stdIn:1.52
-*)
+> stdIn:1.52-1.53 Error: unbound variable or constructor: a
+>   raised at: stdIn:1.52-1.53
 
-(* TODO err handling
 :t from d in [{a=1,b=true}], i in [2] yield d yield a;
-> stdIn:1.63 Error: unbound variable or constructor: a
->   raised at: stdIn:1.63
-*)
+> stdIn:1.50-1.51 Error: unbound variable or constructor: a
+>   raised at: stdIn:1.50-1.51
 
-(* TODO ...
 :t from {c, a, ...} in [{a=1.0,b=true,c=3},{a=1.5,b=true,c=4}];
 > val it : {a:real, c:int} list
-*)
-(* TODO count
 :t from i in [1] group i compute count over i;
 > val it : {count:int, i:int} list
-*)
 (* TODO bag input
 :t from i in bag [1] group i compute count over i;
 > val it : {count:int, i:int} bag
 *)
-(* TODO sum
 :t from (r, s) in [(1.0, "a")]
   group r compute {x = 1 + sum over size s};
 > val it : {r:real, x:int} list
@@ -1278,7 +1229,6 @@ from d in [{a=1,b=true}], i in [2] yield {d} yield a;
                    y = 0,
                    z = concat over s};
 > val it : {r:real, x:int, y:int, z:string} list
-*)
 :t from p in [{r=1.0, s="a"}]
   group p.r compute {x = r};
 > val it : {r:real, x:real} list
@@ -1333,26 +1283,18 @@ from d in [{a=1,b=true}], i in [2] yield {d} yield a;
 > val it : {d:{a:int, b:bool}} list
 :t from d in [{a=1,b=true}], i in [2] yield {d} where true;
 > val it : {d:{a:int, b:bool}} list
-(* TODO type inference
 :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} yield a;
 > val it : int list
-*)
 :t from d in [{a=1,b=true}], i in [2] yield i yield 3;
 > val it : int list
 :t from d in [{a=1,b=true}], i in [2] yield d;
 > val it : {a:int, b:bool} list
-(* TODO current
 :t from d in [{a=1,b=true}], i in [2] yield (d.b, i) yield #1 current;
 > val it : bool list
-*)
-(* TODO type inference
 :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} order a;
 > val it : {a:int, b:bool} list
-*)
-(* TODO current
 :t from d in [{a=1,b=true}], i in [2] yield {d.a,d.b} order current.a;
 > val it : {a:int, b:bool} list
-*)
 :t from d in [{a=1,b=true}], i in [2] yield d where true;
 > val it : {a:int, b:bool} list
 :t from d in [{a=1,b=true}], i in [2] yield d distinct;
@@ -1379,23 +1321,17 @@ from d in [{a=1,b=true}], i in [2] yield {d} yield a;
 > val it : {d:{a:int, b:bool}, i:int} bag
 :t from d in [{a=1,b=true}], i in [2] unorder unorder;
 > val it : {d:{a:int, b:bool}, i:int} bag
-(* TODO type inference
 :t from d in [{a=1,b=true}], i in [2] unorder order i;
 > val it : {d:{a:int, b:bool}, i:int} list
-*)
 
 (*) current/ordinal
-(* TODO ordinal
 :t from i in [1,2,3,4,5] yield i + ordinal;
 > val it : int list
 :t from i in bag [1,2,3,4,5] order DESC i yield i + ordinal;
 > val it : int list
-*)
 
-(* TODO current
 :t from i in [1,2,3,4,5] yield substring("hello", 1, current);
 > val it : string list
-*)
 
 (* TODO error handling / bag / ordinal
 :t

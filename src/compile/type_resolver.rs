@@ -1458,7 +1458,13 @@ impl TypeResolver {
                         self.equiv(&term, v);
                     }
                     None => {
-                        todo!("identifier '{}' not found", name);
+                        return Err(Error::Compile(
+                            format!(
+                                "unbound variable or constructor: {}",
+                                name
+                            ),
+                            expr.span.clone(),
+                        ));
                     }
                 }
                 self.reg_expr(&expr.kind, &expr.span, expr.id, v)
@@ -1587,7 +1593,13 @@ impl TypeResolver {
                         self.equiv(&term, v);
                     }
                     None => {
-                        todo!("identifier '{}' not found", op_name);
+                        return Err(Error::Compile(
+                            format!(
+                                "unbound variable or constructor: {}",
+                                op_name
+                            ),
+                            expr.span.clone(),
+                        ));
                     }
                 }
                 // Numeric operators (+, -, *, ~) prefer `int` when
