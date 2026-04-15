@@ -902,7 +902,8 @@ pub struct GroupRowSink {
     /// True when the aggregate is a record type and its Val::List
     /// should be destructured into individual output slots.
     agg_is_record: bool,
-    slot_count: usize,
+    /// Frame slot indices of the scan bindings for row accumulation.
+    scan_slots: Vec<usize>,
     /// Frame slots for the key fields. Each slot receives one element of the
     /// key value. For scalar keys (e.g. `group i`), one slot receives the
     /// value directly. For record/tuple keys, each slot receives the
@@ -925,7 +926,7 @@ impl GroupRowSink {
         elements_slot: Option<usize>,
         agg_output_slots: Vec<usize>,
         agg_is_record: bool,
-        slot_count: usize,
+        scan_slots: Vec<usize>,
         key_slots: Vec<usize>,
         key_is_record: bool,
         row_sink: Box<dyn RowSink>,
@@ -936,7 +937,7 @@ impl GroupRowSink {
             elements_slot,
             agg_output_slots,
             agg_is_record,
-            slot_count,
+            scan_slots,
             key_slots,
             key_is_record,
             row_sink,
@@ -964,12 +965,12 @@ impl RowSink for GroupRowSink {
         let key = self.key_code.eval_f0(r, f)?;
 
         // Extract the current row values from frame slots.
-        let row_val = if self.slot_count == 1 {
-            // Atom case: single binding.
-            f.vals[0].clone()
+        let row_val = if self.scan_slots.len() == 1 {
+            f.vals[self.scan_slots[0]].clone()
         } else {
-            // Tuple case: create tuple from slots 0..slot_count.
-            Val::List(f.vals[0..self.slot_count].to_vec())
+            Val::List(
+                self.scan_slots.iter().map(|&s| f.vals[s].clone()).collect(),
+            )
         };
 
         // Add to the appropriate group.
@@ -1049,7 +1050,9 @@ pub struct ComputeRowSink {
     /// Frame slot to write accumulated rows before evaluating compute.
     /// None if the compute expression does not reference `elements`.
     elements_slot: Option<usize>,
-    slot_count: usize,
+    /// Frame slot indices of the scan bindings. Used to read the
+    /// current row values for accumulation into `elements`.
+    scan_slots: Vec<usize>,
     rows: Vec<Val>,
 }
 
@@ -1057,12 +1060,12 @@ impl ComputeRowSink {
     pub fn new(
         compute_code: Code,
         elements_slot: Option<usize>,
-        slot_count: usize,
+        scan_slots: Vec<usize>,
     ) -> Self {
         Self {
             compute_code,
             elements_slot,
-            slot_count,
+            scan_slots,
             rows: Vec::new(),
         }
     }
@@ -1085,10 +1088,15 @@ impl RowSink for ComputeRowSink {
     ) -> Result<(), MorelError> {
         // Accumulate rows only if `elements` is needed.
         if self.elements_slot.is_some() {
-            let row_val = if self.slot_count == 1 {
-                f.vals[0].clone()
+            let row_val = if self.scan_slots.len() == 1 {
+                f.vals[self.scan_slots[0]].clone()
             } else {
-                Val::List(f.vals[0..self.slot_count].to_vec())
+                Val::List(
+                    self.scan_slots
+                        .iter()
+                        .map(|&s| f.vals[s].clone())
+                        .collect(),
+                )
             };
             self.rows.push(row_val);
         }

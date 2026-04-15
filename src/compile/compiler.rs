@@ -574,10 +574,18 @@ impl<'a> Compiler<'a> {
                 // slot 0 (single-binding identity), elements already
                 // contain the right values.
                 let e_code = self.compile_expr(cx, None, e);
-                let mapped_code = if matches!(&e_code, Code::GetLocal(_, 0)) {
+                let trivial_slot =
+                    cx.compute_scan_slots.first().copied().unwrap_or(0);
+                let mapped_code = if matches!(
+                    &e_code, Code::GetLocal(_, s) if *s == trivial_slot
+                ) {
                     elements_code
                 } else {
-                    Box::new(Code::MapElements(elements_code, Box::new(e_code)))
+                    Box::new(Code::MapElements(
+                        elements_code,
+                        Box::new(e_code),
+                        cx.compute_scan_slots.clone(),
+                    ))
                 };
 
                 if let Expr::Literal(_t, Val::Fn(func)) = f.as_ref() {
@@ -1053,15 +1061,24 @@ impl<'a> Compiler<'a> {
                 // rows and return a scalar (not a list).
                 assert!(steps.len() == 1, "Compute must be the last step");
 
-                let compute_code = self.compile_expr(cx, None, compute_expr);
+                let scan_slots: Vec<usize> = step_env
+                    .bindings
+                    .iter()
+                    .filter_map(|b| cx.frame_def.try_var_index(&b.id.name))
+                    .collect();
+
+                // Set scan slots so Aggregate/MapElements knows
+                // which frame slots to write element values into.
+                let mut cx2 = cx.clone();
+                cx2.compute_scan_slots = scan_slots.clone();
+                let compute_code = self.compile_expr(&cx2, None, compute_expr);
                 let elements_slot = cx.frame_def.try_var_index("elements");
-                let slot_count = step_env.bindings.len();
 
                 RowSinkFactory::new(move || {
                     Box::new(ComputeRowSink::new(
                         compute_code.clone(),
                         elements_slot,
-                        slot_count,
+                        scan_slots.clone(),
                     ))
                 })
             }
@@ -1192,8 +1209,12 @@ impl<'a> Compiler<'a> {
                         }
                     };
 
-                // Count how many input bindings (for accumulating rows).
-                let slot_count = step_env.bindings.len();
+                // Scan slot indices for row accumulation.
+                let scan_slots: Vec<usize> = step_env
+                    .bindings
+                    .iter()
+                    .filter_map(|b| cx.frame_def.try_var_index(&b.id.name))
+                    .collect();
 
                 // Compile aggregate expression and determine slot layout.
                 let (
@@ -1202,7 +1223,9 @@ impl<'a> Compiler<'a> {
                     agg_output_slots,
                     agg_is_record,
                 ) = if let Some(agg_expr) = aggregate_expr {
-                    let agg_code = self.compile_expr(cx, None, agg_expr);
+                    let mut cx2 = cx.clone();
+                    cx2.compute_scan_slots = scan_slots.clone();
+                    let agg_code = self.compile_expr(&cx2, None, agg_expr);
 
                     // Slot where rows_val is written before aggregate eval.
                     let els = cx.frame_def.try_var_index("elements");
@@ -1245,7 +1268,7 @@ impl<'a> Compiler<'a> {
                         elements_slot,
                         agg_output_slots.clone(),
                         agg_is_record,
-                        slot_count,
+                        scan_slots.clone(),
                         key_slots.clone(),
                         key_is_record,
                         next_factory.create(),
@@ -1901,6 +1924,11 @@ pub struct Context {
 
     /// Definition of the current stack frame.
     frame_def: Arc<FrameDef>,
+
+    /// Scan slot indices for the current compute step's scan
+    /// bindings. Used by Aggregate/MapElements to know which
+    /// frame slots to write element values into.
+    compute_scan_slots: Vec<usize>,
 }
 
 impl Context {
@@ -1908,6 +1936,7 @@ impl Context {
         Self {
             env,
             frame_def: Arc::new(FrameDef::new(&[], &[])),
+            compute_scan_slots: vec![0],
         }
     }
 
@@ -1915,6 +1944,7 @@ impl Context {
         Self {
             env: self.env.bind_all(bindings),
             frame_def: self.frame_def.clone(),
+            compute_scan_slots: self.compute_scan_slots.clone(),
         }
     }
 
@@ -1962,6 +1992,7 @@ impl Context {
         Context {
             env: self.env.clone(),
             frame_def,
+            compute_scan_slots: vec![0],
         }
     }
 }
