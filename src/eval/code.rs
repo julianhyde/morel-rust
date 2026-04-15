@@ -90,6 +90,9 @@ pub enum Effect {
     SetShellProp(String, Val),
     /// Unsets a shell property.
     UnsetShellProp(String),
+    /// Loads and executes a file. The bool indicates whether
+    /// output should be silent (true = useSilently).
+    UseFile(String, bool),
 }
 
 /// Generated code that can be evaluated.
@@ -1687,16 +1690,16 @@ impl EagerF1 {
 
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
-            InteractUse | InteractUseSilently => {
-                // morel-rust does not yet implement file evaluation;
-                // both forms are no-ops, but they still print the
-                // '[opening <file>]' line that morel-java prints
-                // before reading the file (matched by tests like
-                // 'useSilently "scott.smli"'). The file's contents
-                // are not actually loaded; this is enough since
-                // `scott` is already available as a built-in.
+            InteractUse => {
                 let path = a0.expect_string();
                 r.emit_effect(Effect::EmitLine(format!("[opening {}]", path)));
+                r.emit_effect(Effect::UseFile(path, false));
+                Ok(Val::Unit)
+            }
+            InteractUseSilently => {
+                let path = a0.expect_string();
+                r.emit_effect(Effect::EmitLine(format!("[opening {}]", path)));
+                r.emit_effect(Effect::UseFile(path, true));
                 Ok(Val::Unit)
             }
             SysShow => {
