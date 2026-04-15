@@ -652,12 +652,10 @@ impl TypeResolver {
                 x
             }
             Err(x) => {
-                let string = self.terms_to_string();
-                panic!(
-                    "Unification failed: {}\n\
-                        term pairs: {}\n",
-                    x, string
-                )
+                return Err(Error::Compile(
+                    format!("Cannot deduce type: {}", x.reason()),
+                    decl.span.clone(),
+                ));
             }
         };
 
