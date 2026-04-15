@@ -1828,10 +1828,7 @@ pub enum Eager1 {
     RealToString,
     RelationalCount,
     RelationalEmpty,
-    RelationalMax,
-    RelationalMin,
     RelationalNonEmpty,
-    RelationalOnly,
     RelationalSum,
     StringConcat,
     StringExplode,
@@ -1953,10 +1950,7 @@ impl Eager1 {
             RealToString => Val::String(Real::to_string(a0.expect_real())),
             RelationalCount => Val::Int(a0.expect_list().len() as i32),
             RelationalEmpty => Val::Bool(a0.expect_list().is_empty()),
-            RelationalMax => Relational::max(a0.expect_list()),
-            RelationalMin => Relational::min(a0.expect_list()),
             RelationalNonEmpty => Val::Bool(!a0.expect_list().is_empty()),
-            RelationalOnly => Relational::only(a0.expect_list()),
             RelationalSum => {
                 Val::Int(a0.expect_list().iter().map(Val::expect_int).sum())
             }
@@ -2304,6 +2298,9 @@ pub enum EagerF2 {
     RealRound,
     RealSign,
     RealTrunc,
+    RelationalMax,
+    RelationalMin,
+    RelationalOnly,
     StringCollate,
     StringConcatWith,
     StringFields,
@@ -2503,6 +2500,15 @@ impl EagerF2 {
             RealRound => Real::round(a0.expect_real(), &a1.expect_span()),
             RealSign => Real::sign(a0.expect_real(), &a1.expect_span()),
             RealTrunc => Real::trunc(a0.expect_real(), &a1.expect_span()),
+            RelationalMax => {
+                Relational::max(a0.expect_list(), &a1.expect_span())
+            }
+            RelationalMin => {
+                Relational::min(a0.expect_list(), &a1.expect_span())
+            }
+            RelationalOnly => {
+                Relational::only(a0.expect_list(), &a1.expect_span())
+            }
             StringCollate => {
                 let tuple = a1.expect_list();
                 if tuple.len() != 2 {
@@ -3280,10 +3286,10 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager2::RelationalCompare.implements(&mut b, RelationalCompare);
     Eager1::RelationalCount.implements(&mut b, RelationalCount);
     Eager1::RelationalEmpty.implements(&mut b, RelationalEmpty);
-    Eager1::RelationalMax.implements(&mut b, RelationalMax);
-    Eager1::RelationalMin.implements(&mut b, RelationalMin);
+    EagerF2::RelationalMax.implements(&mut b, RelationalMax);
+    EagerF2::RelationalMin.implements(&mut b, RelationalMin);
     Eager1::RelationalNonEmpty.implements(&mut b, RelationalNonEmpty);
-    Eager1::RelationalOnly.implements(&mut b, RelationalOnly);
+    EagerF2::RelationalOnly.implements(&mut b, RelationalOnly);
     Eager1::RelationalSum.implements(&mut b, RelationalSum);
     Eager2::StringCaret.implements(&mut b, StringCaret);
     EagerF2::StringCollate.implements(&mut b, StringCollate);
