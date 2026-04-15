@@ -36,7 +36,7 @@ use crate::syntax::ast::{
 use crate::unify::unifier::{
     Action, NullTracer, Op, OpDef, Sequence, Substitution, Term, Unifier, Var,
 };
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::zip;
@@ -556,6 +556,13 @@ pub struct TypeResolver {
     /// variable → alias name so that the reconstructed type preserves
     /// the alias (e.g. `myInt` instead of `int`).
     var_alias_map: HashMap<Var, String>,
+
+    /// Errors from record selector actions, populated during unification.
+    field_errors: Rc<RefCell<Vec<(String, Span)>>>,
+
+    /// Record selectors to validate after unification.
+    /// Each entry is (record_var, field_name, span).
+    field_selectors: Vec<(Var, String, Span)>,
 }
 
 impl Default for TypeResolver {
@@ -601,6 +608,47 @@ impl TypeResolver {
             int_op,
             preferred_vars: Vec::new(),
             var_alias_map: HashMap::new(),
+            field_errors: Rc::new(RefCell::new(Vec::new())),
+            field_selectors: Vec::new(),
+        }
+    }
+
+    /// Formats a record/tuple type name for error messages.
+    fn type_name(
+        op_defs: &[OpDef],
+        sequence: &Sequence,
+        field_list: &[String],
+    ) -> String {
+        let is_tuple = field_list.len() >= 2
+            && field_list
+                .iter()
+                .enumerate()
+                .all(|(i, l)| l == &(i + 1).to_string());
+        if is_tuple {
+            let type_names: Vec<String> = sequence
+                .terms
+                .iter()
+                .map(|t| match t {
+                    Term::Sequence(s) => op_defs[s.op.0 as usize].name.clone(),
+                    Term::Variable(_) => "'a".to_string(),
+                })
+                .collect();
+            type_names.join(" * ")
+        } else {
+            let parts: Vec<String> = field_list
+                .iter()
+                .zip(sequence.terms.iter())
+                .map(|(label, term)| {
+                    let type_name = match term {
+                        Term::Sequence(s) => {
+                            op_defs[s.op.0 as usize].name.clone()
+                        }
+                        Term::Variable(_) => "'a".to_string(),
+                    };
+                    format!("{}:{}", label, type_name)
+                })
+                .collect();
+            format!("{{{}}}", parts.join(", "))
         }
     }
 
@@ -654,6 +702,12 @@ impl TypeResolver {
                 ));
             }
         };
+
+        // Check for field-not-found errors from record selectors
+        // (populated during unification by ActionImpl::accept).
+        if let Some((msg, span)) = self.field_errors.borrow().first() {
+            return Err(Error::Compile(msg.clone(), span.clone()));
+        }
 
         // Create a map with the results of unification.
         let mut type_map =
@@ -2858,6 +2912,9 @@ impl TypeResolver {
             field_name: String,
             v_field: Var,
             op_defs: Rc<Vec<OpDef>>,
+            errors: Rc<RefCell<Vec<(String, Span)>>>,
+            span: Span,
+            found: RefCell<bool>,
         }
         impl Action for ActionImpl {
             fn accept(
@@ -2871,17 +2928,40 @@ impl TypeResolver {
                 // So now we can deduce the type of the field (v_field).
                 // If, say, v_rec is "{a: int, b: real}" and field_name = "b"
                 // (selector is "#b") we can deduce that v_field is "real".
-                if let Term::Sequence(sequence) = term
-                    && let Some(field_list) =
+                if let Term::Sequence(sequence) = term {
+                    if let Some(field_list) =
                         TypeResolver::field_list(&self.op_defs, sequence)
-                    && let Some(i) =
-                        field_list.iter().position(|f| *f == self.field_name)
-                {
-                    let result2 = substitution
-                        .resolve_term(&Term::Variable(self.v_field));
-                    let term = sequence.terms.get(i).unwrap();
-                    let term2 = substitution.resolve_term(term);
-                    term_pairs.push((result2, term2));
+                    {
+                        if let Some(i) = field_list
+                            .iter()
+                            .position(|f| *f == self.field_name)
+                        {
+                            let result2 = substitution
+                                .resolve_term(&Term::Variable(self.v_field));
+                            let term = sequence.terms.get(i).unwrap();
+                            let term2 = substitution.resolve_term(term);
+                            term_pairs.push((result2, term2));
+                            *self.found.borrow_mut() = true;
+                            // Clear any previous error — a successful
+                            // lookup supersedes earlier failures.
+                            self.errors
+                                .borrow_mut()
+                                .retain(|(_, s)| s != &self.span);
+                        } else if !*self.found.borrow() {
+                            self.errors.borrow_mut().push((
+                                format!(
+                                    "no field '{}' in type '{}'",
+                                    self.field_name,
+                                    TypeResolver::type_name(
+                                        &self.op_defs,
+                                        sequence,
+                                        &field_list,
+                                    )
+                                ),
+                                self.span.clone(),
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -2891,7 +2971,17 @@ impl TypeResolver {
                 field_name: field_name.to_string(),
                 v_field: *v_field,
                 op_defs: self.unifier.op_defs.clone(),
+                errors: self.field_errors.clone(),
+                span: span.clone(),
+                found: RefCell::new(false),
             }),
+        ));
+
+        // Record for post-unification validation.
+        self.field_selectors.push((
+            *v_rec,
+            field_name.to_string(),
+            span.clone(),
         ));
 
         // Create a record selector expression
@@ -2924,6 +3014,12 @@ impl TypeResolver {
                 let ordinal = label_expr_map.len() + 1;
                 Label::Ordinal(ordinal)
             };
+            if label_expr_map.contains_key(&label) {
+                return Err(Error::Compile(
+                    format!("duplicate field '{}' in record", label),
+                    labeled_expr.expr.span.clone(),
+                ));
+            }
             label_expr_map.insert(label, labeled_expr.clone());
         }
 

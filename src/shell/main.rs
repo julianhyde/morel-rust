@@ -643,7 +643,13 @@ impl Shell {
 
     /// Evaluates a parsed AST node.
     fn evaluate_node(&mut self, resolved: &Resolved) -> ShellResult<String> {
-        let decl = resolver::resolve(resolved);
+        let (decl, resolve_errors) = resolver::resolve(resolved);
+        if let Some((msg, span)) = resolve_errors.first() {
+            return Ok(format!(
+                "{} Error: {}\n  raised at: {}\n",
+                span, msg, span
+            ));
+        }
 
         let env = Env::empty();
         let mut map: BTreeMap<&str, (Type, Option<Val>)> = BTreeMap::new();

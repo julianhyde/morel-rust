@@ -514,7 +514,6 @@ from i in [1,2,3,4,5]
   where not (exists j in ["a","b","ccc","dd"] skip current);
 > val it = [4,5] : int list
 
-
 (* Ordinal ---------------------------------------------------- *)
 
 1 + ordinal;
@@ -525,8 +524,6 @@ from i in [1,2,3,4,5]
 from i in [ordinal, ordinal + 1, ordinal + 2];
 > stdIn:1.12-1.19 Error: 'ordinal' is only valid in a query
 >   raised at: stdIn:1.12-1.19
-
-
 
 (*) 'ordinal' is available in a subquery
 from i in [10,20,30]
