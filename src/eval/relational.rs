@@ -92,15 +92,9 @@ impl Relational {
 
     /// Returns the greatest element of the list.
     /// Throws Empty exception if the list is empty.
-    pub(crate) fn max(
-        list: &[Val],
-        span: &Span,
-    ) -> Result<Val, MorelError> {
+    pub(crate) fn max(list: &[Val], span: &Span) -> Result<Val, MorelError> {
         if list.is_empty() {
-            return Err(MorelError::Runtime(
-                BuiltInExn::Empty,
-                span.clone(),
-            ));
+            return Err(MorelError::Runtime(BuiltInExn::Empty, span.clone()));
         }
         Ok(list
             .iter()
@@ -111,15 +105,9 @@ impl Relational {
 
     /// Returns the least element of the list.
     /// Throws Empty exception if the list is empty.
-    pub(crate) fn min(
-        list: &[Val],
-        span: &Span,
-    ) -> Result<Val, MorelError> {
+    pub(crate) fn min(list: &[Val], span: &Span) -> Result<Val, MorelError> {
         if list.is_empty() {
-            return Err(MorelError::Runtime(
-                BuiltInExn::Empty,
-                span.clone(),
-            ));
+            return Err(MorelError::Runtime(BuiltInExn::Empty, span.clone()));
         }
         Ok(list
             .iter()
@@ -130,20 +118,11 @@ impl Relational {
 
     /// Returns the sole element of the list.
     /// Throws Size if more than one element, Empty if empty.
-    pub(crate) fn only(
-        list: &[Val],
-        span: &Span,
-    ) -> Result<Val, MorelError> {
+    pub(crate) fn only(list: &[Val], span: &Span) -> Result<Val, MorelError> {
         match list.len() {
-            0 => Err(MorelError::Runtime(
-                BuiltInExn::Empty,
-                span.clone(),
-            )),
+            0 => Err(MorelError::Runtime(BuiltInExn::Empty, span.clone())),
             1 => Ok(list[0].clone()),
-            _ => Err(MorelError::Runtime(
-                BuiltInExn::Size,
-                span.clone(),
-            )),
+            _ => Err(MorelError::Runtime(BuiltInExn::Size, span.clone())),
         }
     }
 }

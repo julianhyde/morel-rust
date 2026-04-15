@@ -643,7 +643,13 @@ impl Shell {
 
     /// Evaluates a parsed AST node.
     fn evaluate_node(&mut self, resolved: &Resolved) -> ShellResult<String> {
-        let decl = resolver::resolve(resolved);
+        let (decl, resolve_errors) = resolver::resolve(resolved);
+        if let Some((msg, span)) = resolve_errors.first() {
+            return Ok(format!(
+                "{} Error: {}\n  raised at: {}\n",
+                span, msg, span
+            ));
+        }
 
         let env = Env::empty();
         let mut map: BTreeMap<&str, (Type, Option<Val>)> = BTreeMap::new();
@@ -730,9 +736,8 @@ impl Shell {
                                 // "> " prefix; strip it since the outer
                                 // process_statement will re-add it.
                                 for line in output.lines() {
-                                    let stripped = line
-                                        .strip_prefix("> ")
-                                        .unwrap_or(line);
+                                    let stripped =
+                                        line.strip_prefix("> ").unwrap_or(line);
                                     result.push_str(stripped);
                                     result.push('\n');
                                 }
@@ -824,11 +829,12 @@ impl Shell {
         file_path: &Path,
         silent: bool,
     ) -> ShellResult<String> {
-        let content = fs::read_to_string(file_path)
-            .map_err(|_| Error::FileNotFound(format!(
+        let content = fs::read_to_string(file_path).map_err(|_| {
+            Error::FileNotFound(format!(
                 "use failed: File not found: {}",
                 file_path.display(),
-            )))?;
+            ))
+        })?;
         // Save shell mode — the loaded file might change it (e.g.
         // set("mode", "validate")) but we don't want that to persist
         // after the use returns.

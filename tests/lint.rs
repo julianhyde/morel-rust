@@ -526,8 +526,7 @@ fn test_smli_coverage() {
     // Read all .smli files from tests/script/
     let script_dir = Path::new("tests/script");
     // Helper scripts loaded by other tests, not standalone tests.
-    let helper_scripts: HashSet<&str> =
-        HashSet::from(["use-1"]);
+    let helper_scripts: HashSet<&str> = HashSet::from(["use-1"]);
     let smli_files: HashSet<String> = fs::read_dir(script_dir)
         .expect("Failed to read tests/script directory")
         .filter_map(Result::ok)
