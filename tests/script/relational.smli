@@ -514,8 +514,6 @@ from i in [1,2,3,4,5]
   where not (exists j in ["a","b","ccc","dd"] skip current);
 > val it = [4,5] : int list
 
-set("mode", "validate");
-> val it = () : unit
 
 (* Ordinal ---------------------------------------------------- *)
 
@@ -529,8 +527,6 @@ from i in [ordinal, ordinal + 1, ordinal + 2];
 >   raised at: stdIn:1.12-1.19
 
 
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) 'ordinal' is available in a subquery
 from i in [10,20,30]

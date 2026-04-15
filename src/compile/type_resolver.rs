@@ -512,6 +512,10 @@ pub struct TypeResolver {
     /// Stack of `compute` clauses.
     compute_stack: Vec<Triple>,
 
+    /// Nesting depth of `from`/`exists`/`forall` queries. Used to
+    /// validate that `ordinal` only appears inside a query.
+    query_depth: usize,
+
     /// Cached operators for common type-constructors.
     list_op: Op,
     bag_op: Op,
@@ -586,6 +590,7 @@ impl TypeResolver {
             warnings: Vec::new(),
             node_var_map: HashMap::new(),
             compute_stack: Vec::new(),
+            query_depth: 0,
             actions: Vec::new(),
             terms: Vec::new(),
             next_id: 0,
@@ -1628,6 +1633,12 @@ impl TypeResolver {
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Ordinal => {
+                if self.query_depth == 0 {
+                    return Err(Error::Compile(
+                        "'ordinal' is only valid in a query".to_string(),
+                        expr.span.clone(),
+                    ));
+                }
                 // 'ordinal' is a row counter with type int.
                 self.primitive_term(&PrimitiveType::Int, v);
                 self.reg_expr(&expr.kind, &expr.span, expr.id, v)
@@ -1777,6 +1788,12 @@ impl TypeResolver {
             let p_next =
                 self.deduce_step_type(&step, &p, &mut field_vars, &mut steps2)?;
             p = p_next;
+            if i == 0 {
+                self.query_depth += 1;
+            }
+        }
+        if !steps.is_empty() {
+            self.query_depth -= 1;
         }
 
         // "forall" query must have "require" as the last step.
