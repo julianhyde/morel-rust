@@ -861,11 +861,10 @@ forall d in [{a=1,b=true}];
   where i > 1;
 > val it : int list
 
-(* TODO
 :t from i in [1, 2, 3]
   where i;
-> unification failed: conflict: bool != int
-*)
+> stdIn:1.1-2.10 Error: Cannot deduce type: conflict: bool vs int
+>   raised at: stdIn:1.1-2.10
 
 :t from i in [1, 2, 3]
   where i > 1
@@ -1541,11 +1540,10 @@ forall d in [{a=1,b=true}];
   where i > 1;
 > val it : int list
 
-(* TODO
 :t from i in [1, 2, 3]
   where i;
-> unification failed: conflict: bool != int
-*)
+> stdIn:1.1-2.10 Error: Cannot deduce type: conflict: bool vs int
+>   raised at: stdIn:1.1-2.10
 
 :t from i in [1, 2, 3]
   where i > 1
