@@ -721,12 +721,10 @@ from i in bag [1,2,3,4,5] yield i + ordinal;
 >   raised at: stdIn:1.37-1.44
 *)
 
-(* TODO error handling
 :t
 from i in [1,2,3,4,5] take current;
 > stdIn:1.28-1.35 Error: 'current' is only valid in a query
 >   raised at: stdIn:1.28-1.35
-*)
 
 (*) Records in queries
 (* TODO error handling
@@ -1016,11 +1014,13 @@ forall d in [{a=1,b=true}];
 
 :t from i in [1,2]
   group i + 1 compute {length elements};
-> error: cannot derive label for group expression
+> stdIn:2.9-2.14 Error: cannot derive label for group expression
+>   raised at: stdIn:2.9-2.14
 
 :t from i in [1,2]
   group i compute {length elements};
-> error: cannot derive label for compute expression
+> stdIn:2.20-2.35 Error: cannot derive label for compute expression
+>   raised at: stdIn:2.20-2.35
 
 :t from i in [1, 2, 2, 3]
   group i compute {n = List.length elements};
@@ -1036,17 +1036,20 @@ forall d in [{a=1,b=true}];
 
 :t from (i,j) in [(1,2),(3,4)]
   group j compute {j = length elements};
-> error: Duplicate field name 'j' in group
+> stdIn:2.19-2.40 Error: Duplicate field name 'j' in group
+>   raised at: stdIn:2.19-2.40
 
 :t from i in [1, 2, 3]
   group {} compute elements;
 > val it : int list list
 
 :t elements;
-> error: 'elements' is only valid in a 'compute' clause
+> stdIn:1.1-1.9 Error: 'elements' is only valid in a 'compute' clause
+>   raised at: stdIn:1.1-1.9
 
 :t from i in [1, 2, 3] group elements;
-> error: 'elements' is only valid in a 'compute' clause
+> stdIn:1.27-1.35 Error: 'elements' is only valid in a 'compute' clause
+>   raised at: stdIn:1.27-1.35
 
 (*) Compute operation ---------------------------------
 
@@ -1402,12 +1405,10 @@ from i in bag [1,2,3,4,5] yield i + ordinal;
 >   raised at: stdIn:1.37-1.44
 *)
 
-(* TODO error handling
 :t
 from i in [1,2,3,4,5] take current;
 > stdIn:1.28-1.35 Error: 'current' is only valid in a query
 >   raised at: stdIn:1.28-1.35
-*)
 
 (*) Records in queries
 (* TODO error handling
@@ -1672,11 +1673,13 @@ forall d in [{a=1,b=true}];
 
 :t from i in [1,2]
   group i + 1 compute {length elements};
-> error: cannot derive label for group expression
+> stdIn:2.9-2.14 Error: cannot derive label for group expression
+>   raised at: stdIn:2.9-2.14
 
 :t from i in [1,2]
   group i compute {length elements};
-> error: cannot derive label for compute expression
+> stdIn:2.20-2.35 Error: cannot derive label for compute expression
+>   raised at: stdIn:2.20-2.35
 
 :t from i in [1, 2, 2, 3]
   group i compute {n = List.length elements};
@@ -1692,17 +1695,20 @@ forall d in [{a=1,b=true}];
 
 :t from (i,j) in [(1,2),(3,4)]
   group j compute {j = length elements};
-> error: Duplicate field name 'j' in group
+> stdIn:2.19-2.40 Error: Duplicate field name 'j' in group
+>   raised at: stdIn:2.19-2.40
 
 :t from i in [1, 2, 3]
   group {} compute elements;
 > val it : int list list
 
 :t elements;
-> error: 'elements' is only valid in a 'compute' clause
+> stdIn:1.1-1.9 Error: 'elements' is only valid in a 'compute' clause
+>   raised at: stdIn:1.1-1.9
 
 :t from i in [1, 2, 3] group elements;
-> error: 'elements' is only valid in a 'compute' clause
+> stdIn:1.27-1.35 Error: 'elements' is only valid in a 'compute' clause
+>   raised at: stdIn:1.27-1.35
 
 (*) Compute operation ---------------------------------
 
