@@ -1004,7 +1004,16 @@ impl TypeResolver {
                 self.deduce_datatype_decl_type(env, datatype_binds, term_map)?;
                 Ok(decl.clone())
             }
-            _ => todo!("{:?}", decl.kind),
+            DeclKind::Over(name) => {
+                // Register the name as an overloaded operator.
+                // At this point we don't know the type; instances
+                // will be added by subsequent `val inst` decls.
+                // We bind to a fresh variable so the name is in
+                // scope for later decls.
+                let v = self.variable();
+                term_map.push((name.clone(), Term::Variable(v)));
+                Ok(decl.clone())
+            }
         }
     }
 
@@ -1277,6 +1286,10 @@ impl TypeResolver {
                 self.deduce_val_bind_type(&*env2, &val_bind, term_map, &var)?;
             val_binds2.push(val_bind2);
         }
+
+        // For 'val inst', keep each instance in term_map under
+        // the same name. The Let handler will see all of them.
+        // Instance selection happens at the use site.
 
         Ok(DeclKind::Val(rec, inst, val_binds2))
     }
