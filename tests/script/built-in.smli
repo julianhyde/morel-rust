@@ -416,12 +416,10 @@ vector;
 (* Bag --------------------------------------------------------- *)
 
 (*) val nil : 'a bag
-(* TODO
 Bag.nil;
 > val it = [] : 'a bag
 Sys.plan ();
 > val it = "constant([])" : string
-*)
 
 (*) val null : 'a bag -> bool
 Bag.null;
