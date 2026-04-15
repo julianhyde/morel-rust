@@ -1063,6 +1063,13 @@ elements;
 > stdIn:1.1-1.9 Error: 'elements' is only valid in a 'compute' clause
 >   raised at: stdIn:1.1-1.9
 
+(*) ... even after a user binding of that name
+val `elements` = 1;
+> val elements = 1 : int
+elements;
+> stdIn:1.1-1.9 Error: 'elements' is only valid in a 'compute' clause
+>   raised at: stdIn:1.1-1.9
+
 length elements;
 > stdIn:1.8-1.16 Error: 'elements' is only valid in a 'compute' clause
 >   raised at: stdIn:1.8-1.16
