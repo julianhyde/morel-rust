@@ -4320,50 +4320,52 @@ set("mode", "evaluate");
 > val it = () : unit
 Relational.max [1, 2, 3];
 > val it = 3 : int
-set("mode", "validate");
-> val it = () : unit
 Relational.max [1.0, 2.5, 3.5];
 > val it = 3.5 : real
 Relational.max ["a", "bc", "ab"];
 > val it = "bc" : string
 Relational.max [false, true];
 > val it = true : bool
+set("mode", "validate");
+> val it = () : unit
 Sys.plan ();
 > val it =
 >   "apply(fnValue Relational.max, argCode tuple(constant(false), constant(true)))"
 >   : string
-
 set("mode", "evaluate");
 > val it = () : unit
+
 Relational.min [1, 2, 3];
 > val it = 1 : int
-set("mode", "validate");
-> val it = () : unit
 Relational.min [1.0, 2.5, 3.5];
 > val it = 1.0 : real
 Relational.min ["a", "bc", "ab"];
 > val it = "a" : string
 Relational.min [false, true];
 > val it = false : bool
+set("mode", "validate");
+> val it = () : unit
 Sys.plan ();
 > val it =
 >   "apply(fnValue Relational.min, argCode tuple(constant(false), constant(true)))"
 >   : string
-
 set("mode", "evaluate");
 > val it = () : unit
+
 Relational.only [2];
 > val it = 2 : int
-set("mode", "validate");
-> val it = () : unit
 Relational.only [1, 2, 3];
 > uncaught exception Size
 >   raised at: stdIn:1.1-1.26
 Relational.only [];
 > uncaught exception Empty
 >   raised at: stdIn:1.1-1.19
+set("mode", "validate");
+> val it = () : unit
 Sys.plan ();
 > val it = "apply(fnValue Relational.only, argCode tuple)" : string
+set("mode", "evaluate");
+> val it = () : unit
 
 1 elem [1, 2, 3];
 > val it = true : bool
@@ -4387,6 +4389,8 @@ bag [1, 2] elem [bag [0], bag [], bag [1, 2]];
 > val it = true : bool
 (1, 2) elem [(0, 1), (2, 3)];
 > val it = false : bool
+set("mode", "validate");
+> val it = () : unit
 Sys.plan ();
 > val it =
 >   "apply2(fnValue elem, tuple(constant(1), constant(2)), tuple(tuple(constant(0), constant(1)), tuple(constant(2), constant(3))))"
@@ -4409,6 +4413,8 @@ bag [] elem bag [bag [0], bag [], bag [1, 2]];
 > val it = true : bool
 (1, 2) elem bag [(0, 1), (2, 3)];
 > val it = false : bool
+set("mode", "evaluate");
+> val it = () : unit
 
 1 notelem [1, 2, 3];
 > val it = false : bool
@@ -4424,6 +4430,8 @@ bag [] elem bag [bag [0], bag [], bag [1, 2]];
 > val it = false : bool
 (1, 2) notelem [(0, 1), (2, 3)];
 > val it = true : bool
+set("mode", "validate");
+> val it = () : unit
 Sys.plan ();
 > val it =
 >   "apply2(fnValue notelem, tuple(constant(1), constant(2)), tuple(tuple(constant(0), constant(1)), tuple(constant(2), constant(3))))"
