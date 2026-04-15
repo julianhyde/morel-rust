@@ -1015,12 +1015,10 @@ from i in [1, 2, 3]
   group i compute {l = length elements};
 > val it = [{i=1,l=1},{i=2,l=1},{i=3,l=1}] : {i:int, l:int} list
 
-(* TODO: group/compute/elements followed by order panics
 from i in [1, 2, 3]
   group i compute elements order i;
 > val it = [{elements=[1],i=1},{elements=[2],i=2},{elements=[3],i=3}]
 >   : {elements:int list, i:int} list
-*)
 
 from (i, j) in [("a", 1), ("b", 4), ("a", 3)]
   group {i} compute {c = length elements} order i;

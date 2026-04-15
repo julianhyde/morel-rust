@@ -899,6 +899,9 @@ pub struct GroupRowSink {
     /// Frame slots to write the aggregate output fields into.
     /// For a record aggregate with N fields, this has N entries.
     agg_output_slots: Vec<usize>,
+    /// True when the aggregate is a record type and its Val::List
+    /// should be destructured into individual output slots.
+    agg_is_record: bool,
     slot_count: usize,
     /// Frame slots for the key fields. Each slot receives one element of the
     /// key value. For scalar keys (e.g. `group i`), one slot receives the
@@ -921,6 +924,7 @@ impl GroupRowSink {
         aggregate_code: Option<Code>,
         elements_slot: Option<usize>,
         agg_output_slots: Vec<usize>,
+        agg_is_record: bool,
         slot_count: usize,
         key_slots: Vec<usize>,
         key_is_record: bool,
@@ -931,6 +935,7 @@ impl GroupRowSink {
             aggregate_code,
             elements_slot,
             agg_output_slots,
+            agg_is_record,
             slot_count,
             key_slots,
             key_is_record,
@@ -1015,23 +1020,15 @@ impl RowSink for GroupRowSink {
                 // Destructure aggregate result into output slots.
                 // - Record aggregate (Val::List): one field per slot.
                 // - Scalar aggregate: goes directly to agg_output_slots[0].
-                match &agg_val {
-                    Val::List(fields)
-                        if !self.agg_output_slots.is_empty()
-                            && self.agg_output_slots.len() == fields.len() =>
-                    {
-                        for (i, slot) in
-                            self.agg_output_slots.iter().enumerate()
-                        {
-                            f.vals[*slot] = fields[i].clone();
-                        }
+                if self.agg_is_record {
+                    // Record aggregate: destructure into output slots.
+                    let fields = agg_val.expect_list();
+                    for (i, slot) in self.agg_output_slots.iter().enumerate() {
+                        f.vals[*slot] = fields[i].clone();
                     }
-                    _ => {
-                        // Scalar aggregate result.
-                        if let Some(&slot) = self.agg_output_slots.first() {
-                            f.vals[slot] = agg_val;
-                        }
-                    }
+                } else if let Some(&slot) = self.agg_output_slots.first() {
+                    // Scalar aggregate result.
+                    f.vals[slot] = agg_val;
                 }
             }
 
