@@ -98,9 +98,7 @@ impl Expr {
             }
             Expr::Aggregate(_, left, _) => left.implicit_label(),
             Expr::Identifier(_, name) => Some(name.clone()),
-            Expr::Literal(_, Val::Fn(f)) => {
-                Some(f.name().to_string())
-            }
+            Expr::Literal(_, Val::Fn(f)) => Some(f.name().to_string()),
             _ => None,
         }
     }

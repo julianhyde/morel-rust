@@ -2468,8 +2468,7 @@ impl TypeResolver {
                 // Multiple compute fields. Sort into BTreeMap order
                 // (alphabetical by label) so that evaluation order
                 // matches the record type's field order.
-                let mut sorted_exprs: Vec<_> =
-                    labeled_exprs.iter().collect();
+                let mut sorted_exprs: Vec<_> = labeled_exprs.iter().collect();
                 sorted_exprs.sort_by_key(|le| {
                     le.get_label()
                         .or_else(|| le.expr.implicit_label_opt())
@@ -2574,8 +2573,11 @@ impl TypeResolver {
     ) -> Result<Triple, Error> {
         field_vars.clear();
 
-        // Bind 'elements' to the current collection
-        let mut compute_env_builder = p.root_env.builder();
+        // Bind 'elements' to the current collection.
+        // Use p.env so that scan variables from preceding steps
+        // (e.g. `r` in `from r in elements`) are visible in the
+        // 'over' expression.
+        let mut compute_env_builder = p.env.builder();
         compute_env_builder.push(
             ExprKind::Elements.clause().to_string(),
             Term::Variable(p.c.unwrap()),

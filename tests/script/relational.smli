@@ -1024,7 +1024,6 @@ from (i, j) in [("a", 1), ("b", 4), ("a", 3)]
   group {i} compute {c = length elements} order i;
 > val it = [{c=2,i="a"},{c=1,i="b"}] : {c:int, i:string} list
 
-(* TODO: from r in elements with nested compute not yet supported
 from (i, j) in [("a", 1), ("b", 4), ("a", 3)]
   group {i} compute {s = from r in elements compute sum over r.j} order i;
 > val it = [{i="a",s=4},{i="b",s=4}] : {i:string, s:int} list
@@ -1033,7 +1032,6 @@ from (i, j) in [("a", 1), ("b", 4), ("a", 3)]
   group {i} compute {s = from r in elements where r.j < 2 compute sum over r.j}
   order DESC i;
 > val it = [{i="b",s=0},{i="a",s=1}] : {i:string, s:int} list
-*)
 
 from (i, j) in [("a", 1), ("b", 4), ("a", 3)]
   group {i} compute {elements, c = (length elements) - 1} order i;

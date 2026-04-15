@@ -517,9 +517,7 @@ impl FromBuilder {
                     } else if aggregate_expr.is_some() {
                         // Scalar key via field access (e.g.
                         // `group e.deptno`): derive binding name.
-                        if let Some(name) =
-                            key_expr.implicit_label()
-                        {
+                        if let Some(name) = key_expr.implicit_label() {
                             new_bindings.push(Binding::new(
                                 Id::new(&name, 0),
                                 key_expr.type_().clone(),

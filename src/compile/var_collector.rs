@@ -317,8 +317,7 @@ impl Step {
                         .iter()
                         .any(|b| b.id.name == binding.id.name)
                     {
-                        collector
-                            .add_def(Binding::of_name(&binding.id.name));
+                        collector.add_def(Binding::of_name(&binding.id.name));
                     }
                 }
 
