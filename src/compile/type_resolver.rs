@@ -421,16 +421,13 @@ impl<'a> TermToTypeConverter<'a> {
         // Follow the chain from v; if any intermediate var has alias,
         // use it.
         let mut current = *v;
-        loop {
-            match self.type_map.var_term_map.get(&current) {
-                Some(Term::Variable(next)) => {
-                    if let Some(name) = self.type_map.var_alias_map.get(next) {
-                        return Some(name.clone());
-                    }
-                    current = *next;
-                }
-                _ => break,
+        while let Some(Term::Variable(next)) =
+            self.type_map.var_term_map.get(&current)
+        {
+            if let Some(name) = self.type_map.var_alias_map.get(next) {
+                return Some(name.clone());
             }
+            current = *next;
         }
         // Resolve v to its concrete term and check if any alias var
         // resolves to the same term. This handles cases where the
