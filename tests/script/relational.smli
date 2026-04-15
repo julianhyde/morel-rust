@@ -1033,6 +1033,7 @@ from (i, j) in [("a", 1), ("b", 4), ("a", 3)]
   group {i} compute {s = from r in elements where r.j < 2 compute sum over r.j}
   order DESC i;
 > val it = [{i="b",s=0},{i="a",s=1}] : {i:string, s:int} list
+*)
 
 from (i, j) in [("a", 1), ("b", 4), ("a", 3)]
   group {i} compute {elements, c = (length elements) - 1} order i;
@@ -1040,8 +1041,6 @@ from (i, j) in [("a", 1), ("b", 4), ("a", 3)]
 >   [{c=1,elements=[{i="a",j=1},{i="a",j=3}],i="a"},
 >    {c=0,elements=[{i="b",j=4}],i="b"}]
 >   : {c:int, elements:{i:string, j:int} list, i:string} list
-
-*)
 
 from (i, j) in [("a", 1), ("b", 4), ("a", 3)]
   group i compute elements order i;

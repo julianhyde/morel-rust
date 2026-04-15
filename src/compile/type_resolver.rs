@@ -2465,10 +2465,19 @@ impl TypeResolver {
             let result = if let ExprKind::Record(_with, labeled_exprs) =
                 &compute.kind
             {
-                // Multiple compute fields.
+                // Multiple compute fields. Sort into BTreeMap order
+                // (alphabetical by label) so that evaluation order
+                // matches the record type's field order.
+                let mut sorted_exprs: Vec<_> =
+                    labeled_exprs.iter().collect();
+                sorted_exprs.sort_by_key(|le| {
+                    le.get_label()
+                        .or_else(|| le.expr.implicit_label_opt())
+                        .unwrap_or_default()
+                });
                 let mut labeled_exprs2 = Vec::new();
                 let start = field_vars.len();
-                for labeled_expr in labeled_exprs {
+                for labeled_expr in &sorted_exprs {
                     let v_field = self.variable();
                     let expr2 = self.deduce_expr_type(
                         &*group_env,

@@ -1150,81 +1150,52 @@ impl<'a> Compiler<'a> {
                 // (e.g. yield, order) can reference them by name.  For groups
                 // without an aggregate (GROUP alone), the key tuple is stored
                 // in slot 0 as a whole, matching the old behaviour.
+                // Determine key slots by looking up field names in
+                // the frame. Works the same with or without aggregate.
                 let (key_slots, key_is_record): (Vec<usize>, bool) =
-                    if aggregate_expr.is_some() {
-                        match key_expr.type_().as_ref() {
-                            Type::Record(_, fields) if fields.is_empty() => {
-                                (vec![], false)
-                            }
-                            Type::Primitive(PrimitiveType::Unit) => {
-                                (vec![], false)
-                            }
-                            Type::Record(_, fields) => {
-                                // Record key with aggregate: each field maps to
-                                // its named frame slot (the slot had the same
-                                // name in the upstream scan).
-                                let slots: Vec<usize> = fields
-                                    .keys()
-                                    .filter_map(|label| {
-                                        cx.frame_def
-                                            .try_var_index(&label.to_string())
-                                    })
-                                    .collect();
-                                if slots.len() == fields.len() {
-                                    (slots, true)
-                                } else {
-                                    // Fallback: field not in frame, use slot 0.
-                                    (vec![0], false)
-                                }
-                            }
-                            Type::Tuple(types) => {
-                                ((0..types.len()).collect(), true)
-                            }
-                            _ => (vec![0], false),
+                    match key_expr.type_().as_ref() {
+                        Type::Record(_, fields) if fields.is_empty() => {
+                            (vec![], false)
                         }
-                    } else {
-                        // No aggregate: determine key slots from the step env.
-                        match key_expr.type_().as_ref() {
-                            Type::Record(_, fields) if fields.is_empty() => {
-                                (vec![], false)
+                        Type::Primitive(PrimitiveType::Unit) => {
+                            (vec![], false)
+                        }
+                        Type::Record(_, fields) => {
+                            let slots: Vec<usize> = fields
+                                .keys()
+                                .filter_map(|label| {
+                                    cx.frame_def
+                                        .try_var_index(&label.to_string())
+                                })
+                                .collect();
+                            if slots.len() == fields.len() {
+                                (slots, true)
+                            } else {
+                                (vec![0], false)
                             }
-                            Type::Primitive(PrimitiveType::Unit) => {
-                                (vec![], false)
-                            }
-                            Type::Record(_, fields) => {
-                                // Record key: unpack each field into its named
-                                // frame slot (same logic as aggregate case).
-                                let slots: Vec<usize> = fields
-                                    .keys()
-                                    .filter_map(|label| {
-                                        cx.frame_def
-                                            .try_var_index(&label.to_string())
-                                    })
-                                    .collect();
-                                if slots.len() == fields.len() {
-                                    (slots, true)
+                        }
+                        Type::Tuple(types) => {
+                            ((0..types.len()).collect(), true)
+                        }
+                        _ => {
+                            // Scalar key: look up its named slot
+                            // from the step env's first binding.
+                            if let Some(b) =
+                                first_step.env.bindings.first()
+                            {
+                                if let Some(slot) = cx
+                                    .frame_def
+                                    .try_var_index(&b.id.name)
+                                {
+                                    (vec![slot], false)
                                 } else {
                                     (vec![0], false)
                                 }
-                            }
-                            _ => {
-                                // Scalar key: find its named slot.
-                                if let Some(b) = step_env.bindings.first() {
-                                    if let Some(slot) =
-                                        cx.frame_def.try_var_index(&b.id.name)
-                                    {
-                                        (vec![slot], false)
-                                    } else {
-                                        (vec![0], false)
-                                    }
-                                } else {
-                                    (vec![0], false)
-                                }
+                            } else {
+                                (vec![0], false)
                             }
                         }
                     };
-
-                let key_slot_count = key_slots.len();
 
                 // Count how many input bindings (for accumulating rows).
                 let slot_count = step_env.bindings.len();
@@ -1257,17 +1228,15 @@ impl<'a> Compiler<'a> {
                                 true,
                             )
                         } else {
-                            // Scalar aggregate: output goes to the frame
-                            // slot of the agg binding (which follows key
-                            // bindings in the group step's own output env).
-                            let slot = first_step
-                                .env
-                                .bindings
-                                .get(key_slot_count)
-                                .and_then(|b| {
-                                    cx.frame_def.try_var_index(&b.id.name)
-                                })
-                                .unwrap_or(key_slot_count);
+                            // Scalar aggregate: look up the
+                            // aggregate's implicit label by name.
+                            let label = agg_expr
+                                .implicit_label()
+                                .unwrap_or_else(|| "agg".to_string());
+                            let slot = cx
+                                .frame_def
+                                .try_var_index(&label)
+                                .unwrap_or(0);
                             (vec![slot], false)
                         };
 
