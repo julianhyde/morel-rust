@@ -1023,14 +1023,10 @@ impl RowSink for GroupRowSink {
                 if self.agg_is_record {
                     // Record aggregate: destructure into output slots.
                     let fields = agg_val.expect_list();
-                    for (i, slot) in
-                        self.agg_output_slots.iter().enumerate()
-                    {
+                    for (i, slot) in self.agg_output_slots.iter().enumerate() {
                         f.vals[*slot] = fields[i].clone();
                     }
-                } else if let Some(&slot) =
-                    self.agg_output_slots.first()
-                {
+                } else if let Some(&slot) = self.agg_output_slots.first() {
                     // Scalar aggregate result.
                     f.vals[slot] = agg_val;
                 }

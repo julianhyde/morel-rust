@@ -1230,48 +1230,51 @@ impl<'a> Compiler<'a> {
                 let slot_count = step_env.bindings.len();
 
                 // Compile aggregate expression and determine slot layout.
-                let (aggregate_code, elements_slot,
-                    agg_output_slots, agg_is_record) =
-                    if let Some(agg_expr) = aggregate_expr {
-                        let agg_code = self.compile_expr(cx, None, agg_expr);
+                let (
+                    aggregate_code,
+                    elements_slot,
+                    agg_output_slots,
+                    agg_is_record,
+                ) = if let Some(agg_expr) = aggregate_expr {
+                    let agg_code = self.compile_expr(cx, None, agg_expr);
 
-                        // Slot where rows_val is written before aggregate eval.
-                        let els = cx.frame_def.try_var_index("elements");
+                    // Slot where rows_val is written before aggregate eval.
+                    let els = cx.frame_def.try_var_index("elements");
 
-                        // Slots for aggregate output fields, in field order.
-                        let (out_slots, is_record): (Vec<usize>, bool) =
-                            if let Type::Record(_, fields) =
-                                agg_expr.type_().as_ref()
-                            {
-                                (
-                                    fields
-                                        .keys()
-                                        .map(|label| {
-                                            cx.frame_def
-                                                .var_index(&label.to_string())
-                                        })
-                                        .collect(),
-                                    true,
-                                )
-                            } else {
-                                // Scalar aggregate: output goes to the frame
-                                // slot of the agg binding (which follows key
-                                // bindings in the group step's own output env).
-                                let slot = first_step
-                                    .env
-                                    .bindings
-                                    .get(key_slot_count)
-                                    .and_then(|b| {
-                                        cx.frame_def.try_var_index(&b.id.name)
+                    // Slots for aggregate output fields, in field order.
+                    let (out_slots, is_record): (Vec<usize>, bool) =
+                        if let Type::Record(_, fields) =
+                            agg_expr.type_().as_ref()
+                        {
+                            (
+                                fields
+                                    .keys()
+                                    .map(|label| {
+                                        cx.frame_def
+                                            .var_index(&label.to_string())
                                     })
-                                    .unwrap_or(key_slot_count);
-                                (vec![slot], false)
-                            };
+                                    .collect(),
+                                true,
+                            )
+                        } else {
+                            // Scalar aggregate: output goes to the frame
+                            // slot of the agg binding (which follows key
+                            // bindings in the group step's own output env).
+                            let slot = first_step
+                                .env
+                                .bindings
+                                .get(key_slot_count)
+                                .and_then(|b| {
+                                    cx.frame_def.try_var_index(&b.id.name)
+                                })
+                                .unwrap_or(key_slot_count);
+                            (vec![slot], false)
+                        };
 
-                        (Some(agg_code), els, out_slots, is_record)
-                    } else {
-                        (None, None, vec![], false)
-                    };
+                    (Some(agg_code), els, out_slots, is_record)
+                } else {
+                    (None, None, vec![], false)
+                };
 
                 RowSinkFactory::new(move || {
                     Box::new(GroupRowSink::new(
