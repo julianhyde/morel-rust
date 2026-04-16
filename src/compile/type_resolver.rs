@@ -563,6 +563,13 @@ pub struct TypeResolver {
     /// Record selectors to validate after unification.
     /// Each entry is (record_var, field_name, span).
     field_selectors: Vec<(Var, String, Span)>,
+
+    /// Overloaded operator instances. Maps name to list of
+    /// candidate terms (the types of each `val inst` binding).
+    overloads: HashMap<String, Vec<Term>>,
+
+    /// Constraints to pass to the unifier for overload resolution.
+    overload_constraints: Vec<crate::unify::unifier::Constraint>,
 }
 
 impl Default for TypeResolver {
@@ -610,6 +617,8 @@ impl TypeResolver {
             var_alias_map: HashMap::new(),
             field_errors: Rc::new(RefCell::new(Vec::new())),
             field_selectors: Vec::new(),
+            overloads: HashMap::new(),
+            overload_constraints: Vec::new(),
         }
     }
 
@@ -680,10 +689,11 @@ impl TypeResolver {
             .map(|(var, term)| (term.clone(), Term::Variable(*var)))
             .collect();
 
-        let substitution = match self.unifier.unify(
+        let substitution = match self.unifier.unify_with_constraints(
             term_pairs.as_ref(),
             &NullTracer,
             self.actions.as_ref(),
+            &self.overload_constraints,
         ) {
             Ok(x) => {
                 if false {
@@ -1284,12 +1294,19 @@ impl TypeResolver {
             let var = *v_supplier.get_or_init(|| self.variable());
             let val_bind2 =
                 self.deduce_val_bind_type(&*env2, &val_bind, term_map, &var)?;
+            // If this is an 'val inst' binding, store the
+            // binding's var as a candidate for the overloaded
+            // operator's instance set.
+            if inst {
+                if let PatKind::Identifier(name) = &val_bind2.pat.kind {
+                    self.overloads
+                        .entry(name.clone())
+                        .or_default()
+                        .push(Term::Variable(var));
+                }
+            }
             val_binds2.push(val_bind2);
         }
-
-        // For 'val inst', keep each instance in term_map under
-        // the same name. The Let handler will see all of them.
-        // Instance selection happens at the use site.
 
         Ok(DeclKind::Val(rec, inst, val_binds2))
     }
@@ -1521,6 +1538,19 @@ impl TypeResolver {
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Identifier(name) => {
+                // If the name is overloaded, add a constraint
+                // that v must match one of the candidate types.
+                if let Some(candidates) = self.overloads.get(name).cloned() {
+                    self.overload_constraints.push(
+                        crate::unify::unifier::Constraint {
+                            var: *v,
+                            candidates,
+                        },
+                    );
+                    return Ok(
+                        self.reg_expr(&expr.kind, &expr.span, expr.id, v)
+                    );
+                }
                 let lookup_result =
                     if let Some(bare_name) = name.strip_prefix("op ") {
                         // Try "op <name>" first, then fall back to bare name
