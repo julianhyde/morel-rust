@@ -100,6 +100,22 @@ impl TypeMap {
         self.get_type_inner(id, true)
     }
 
+    /// Resolves a unification variable directly to a Type. Used
+    /// to capture overload instance types after deduction.
+    pub fn var_to_type(&self, var: &Var) -> Option<Type> {
+        let term = self
+            .var_term_map
+            .get(var)
+            .cloned()
+            .unwrap_or(Term::Variable(*var));
+        let mut c = TermToTypeConverter {
+            type_map: self,
+            var_map: BTreeMap::new(),
+            with_alias: false,
+        };
+        Some(*c.term_type(&term))
+    }
+
     fn get_type_inner(&self, id: i32, with_alias: bool) -> Option<Box<Type>> {
         if let Some(var) = self.node_var_map.get(&id) {
             let mut c = TermToTypeConverter {
@@ -568,6 +584,15 @@ pub struct TypeResolver {
     /// candidate terms (the types of each `val inst` binding).
     overloads: HashMap<String, Vec<Term>>,
 
+    /// New overload instances added by THIS statement (not seeded
+    /// from previous). Used by Session to persist them.
+    pub new_overloads: HashMap<String, Vec<Var>>,
+
+    /// Seeded overload instance types from previous statements.
+    /// At the start of each statement, these are converted to
+    /// fresh Terms in the current unifier.
+    pub seed_overloads: HashMap<String, Vec<Type>>,
+
     /// Constraints to pass to the unifier for overload resolution.
     overload_constraints: Vec<crate::unify::unifier::Constraint>,
 }
@@ -618,6 +643,8 @@ impl TypeResolver {
             field_errors: Rc::new(RefCell::new(Vec::new())),
             field_selectors: Vec::new(),
             overloads: HashMap::new(),
+            new_overloads: HashMap::new(),
+            seed_overloads: HashMap::new(),
             overload_constraints: Vec::new(),
         }
     }
@@ -677,6 +704,20 @@ impl TypeResolver {
         statement: &Statement,
     ) -> Result<Resolved, Error> {
         self.terms.clear();
+
+        // Seed overloads from previous statements: convert each
+        // accumulated instance Type to a fresh Term in the
+        // current unifier.
+        let seed = std::mem::take(&mut self.seed_overloads);
+        for (name, types) in seed {
+            for t in types {
+                let v = self.type_to_term(&t);
+                self.overloads
+                    .entry(name.clone())
+                    .or_default()
+                    .push(Term::Variable(v));
+            }
+        }
 
         let decl = ensure_decl(statement);
         let mut term_map = Vec::new();
@@ -1303,6 +1344,10 @@ impl TypeResolver {
                         .entry(name.clone())
                         .or_default()
                         .push(Term::Variable(var));
+                    self.new_overloads
+                        .entry(name.clone())
+                        .or_default()
+                        .push(var);
                 }
             }
             val_binds2.push(val_bind2);
