@@ -1649,6 +1649,10 @@ impl TypeResolver {
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Let(decl_list, expr) => {
+                // Save overload state so let-bound `over`/`val inst`
+                // declarations don't leak to outer scope.
+                let saved_overloads = self.overloads.clone();
+                let saved_new_overloads = self.new_overloads.clone();
                 // Each successive decl must see the bindings of the
                 // previous decls. We track the accumulated bindings
                 // in `term_map` and rebuild a running env that starts
@@ -1674,6 +1678,9 @@ impl TypeResolver {
                 }
                 let env2 = env.bind_all(term_map.as_ref());
                 let expr2 = self.deduce_expr_type(&*env2, expr, v)?;
+                // Restore overload state.
+                self.overloads = saved_overloads;
+                self.new_overloads = saved_new_overloads;
                 let x = ExprKind::Let(decl_list2, Box::new(expr2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }

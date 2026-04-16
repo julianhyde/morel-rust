@@ -67,6 +67,8 @@ demo (3,"four");
 (* ---------------------------------------------------------------------------
  * Two overloads, bool -> bool and int -> int. We call with bool argument,
    expect bool result. *)
+set("mode", "evaluate");
+> val it = () : unit
 let
   over o1
   val inst o1 = fn i: int => i
@@ -104,8 +106,10 @@ let
 in
   o1 "a string"
 end;
-> 0.0-0.0 Error: Cannot deduce type: no valid overloads
->   raised at: 0.0-0.0
+> stdIn:1.1-7.4 Error: Cannot deduce type: no valid overloads
+>   raised at: stdIn:1.1-7.4
+set("mode", "validate");
+> val it = () : unit
 
 (* As previous, but at top level. *)
 over o1a;
