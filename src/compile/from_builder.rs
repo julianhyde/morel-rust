@@ -488,16 +488,26 @@ impl FromBuilder {
             // Scalar keys (Identifier) do not replace bindings here—they
             // stay as the scan's binding, which is already in the frame.
             match &key_expr {
+                Expr::Tuple(t, _)
+                    if matches!(
+                        t.as_ref(),
+                        Type::Primitive(PrimitiveType::Unit)
+                    ) =>
+                {
+                    // Empty key (group {}): no key fields, but we need
+                    // to clear scan bindings so output is unit (when
+                    // there is no aggregate).
+                }
                 Expr::Identifier(t, name) => {
-                    // Scalar key: push binding only when there is an
+                    // Scalar key: push binding when there is an
                     // aggregate (so the collect step sees the key field).
-                    // For pure group-only (no aggregate), the binding
-                    // carries forward from the scan step unchanged.
+                    // For pure group-only (no aggregate), bindings
+                    // carry forward from the scan step unchanged.
                     if aggregate_expr.is_some() {
                         new_bindings
                             .push(Binding::new(Id::new(name, 0), t.clone()));
+                        has_key_bindings = true;
                     }
-                    has_key_bindings = true;
                 }
                 _ => {
                     if let Type::Record(_, key_fields) =
@@ -557,8 +567,19 @@ impl FromBuilder {
                 }
             }
 
+            // For empty key (group {}) without aggregate, clear bindings
+            // so compute_result_type produces unit.
+            let empty_key = matches!(
+                key_expr.type_().as_ref(),
+                Type::Primitive(PrimitiveType::Unit)
+            );
+            if empty_key && aggregate_expr.is_none() {
+                self.bindings.clear();
+                self.atom = false;
+            }
+
             // Replace self.bindings when there is something new to set.
-            if !new_bindings.is_empty() {
+            if has_key_bindings || aggregate_expr.is_some() {
                 self.bindings = new_bindings.clone();
                 if aggregate_expr.is_some() {
                     // atom=true only for a pure scalar aggregate
@@ -566,7 +587,7 @@ impl FromBuilder {
                     self.atom = !has_key_bindings && has_scalar_agg;
                 } else {
                     // No aggregate: atom=true for scalar keys (single
-                    // binding), false for record keys.
+                    // binding), false for record/empty keys.
                     self.atom = new_bindings.len() == 1 && !has_record_key;
                 }
             }
