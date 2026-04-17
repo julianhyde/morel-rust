@@ -27,11 +27,9 @@ Sys.set ("printLength", 64);
 Sys.set ("stringDepth", ~1);
 > val it = () : unit
 
-(*
 useSilently "scott.smli";
 > [opening scott.smli]
 > val it = () : unit
-*)
 
 (*) constants
 bag [1,2,3];
@@ -43,11 +41,13 @@ bag [(1,true),(2,false)];
 bag [[1],[2],[3]];
 > val it = [[1],[2],[3]] : int list bag
 
+set("mode", "validate");
+> val it = () : unit
 (*) check that we get good error messages when we apply a list function to
 (*) a bag, and vice versa
 String.size 1;
-> stdIn:1.1-1.14 Error: Cannot deduce type: conflict: int vs string
->   raised at: stdIn:1.1-1.14
+> 0.0-0.0 Error: Cannot deduce type: conflict: int vs string
+>   raised at: 0.0-0.0
 List.length List.nil;
 > val it = 0 : int
 Bag.length Bag.nil;
@@ -59,6 +59,8 @@ Bag.length List.nil;
 > val it = 0 : int
 *)
 
+set("mode", "evaluate");
+> val it = () : unit
 (*) assign to variables
 val intList = [1,2,1,3];
 > val intList = [1,2,1,3] : int list
@@ -108,9 +110,9 @@ from i in intList yield {j=i*i, i};
 from i in intBag yield {j=i*i, i};
 > val it = [{i=1,j=1},{i=2,j=4},{i=1,j=1},{i=3,j=9}] : {i:int, j:int} bag
 
-(*) group is ordered iff its input is ordered
 set("mode", "validate");
 > val it = () : unit
+(*) group is ordered iff its input is ordered
 from i in intList group {};
 > val it = [()] : unit list
 from i in intBag group {};
@@ -140,6 +142,8 @@ from r in recList group r.i compute {bs = (fn x => x) over r.b};
 from r in recBag group r.i compute {bs = (fn x => x) over r.b};
 > val it = [{bs=[true,false],i=1},{bs=[false],i=2}] : {bs:bool bag, i:int} bag
 
+set("mode", "evaluate");
+> val it = () : unit
 (*) distinct is ordered iff its input is ordered
 from i in intList distinct;
 > val it = [1,2,3] : int list
@@ -155,10 +159,14 @@ from i in intList order ();
 > val it = [1,2,1,3] : int list
 from i in intBag order ();
 > val it = [1,2,1,3] : int list
+set("mode", "validate");
+> val it = () : unit
 from r in recList group r.i compute {bs = (fn x => x) over r.b} order DESC i;
 > val it = [{bs=[false],i=2},{bs=[true,false],i=1}] : {bs:bool list, i:int} list
 from r in recBag group r.i compute {bs = (fn x => x) over r.b} order DESC i;
 > val it = [{bs=[false],i=2},{bs=[true,false],i=1}] : {bs:bool bag, i:int} list
+set("mode", "evaluate");
+> val it = () : unit
 
 (*) unorder's output is unordered
 from i in intList unorder;
@@ -175,11 +183,17 @@ from i in intList unorder order DESC i unorder;
 > val it = [3,2,1,1] : int bag
 
 (*) ordinal is valid only for ordered collections
+set("mode", "validate");
+> val it = () : unit
 from i in intBag yield i + ordinal;
 > stdIn:1.28-1.35 Error: cannot use 'ordinal' in unordered query
 >   raised at: stdIn:1.28-1.35
+set("mode", "evaluate");
+> val it = () : unit
 from i in intList yield i + ordinal;
 > val it = [1,3,3,6] : int list
+set("mode", "validate");
+> val it = () : unit
 from i in intBag order DESC i where i > 1 yield i + ordinal;
 > val it = [3,3] : int list
 from i in intBag where i > ordinal;
@@ -191,6 +205,8 @@ from i in intBag order ordinal;
 from i in intList order ordinal;
 > val it = [1,2,1,3] : int list
 
+set("mode", "evaluate");
+> val it = () : unit
 (*) join's output is list if all inputs are lists, otherwise bag
 from i in intList, j in intList where i = j;
 > val it = [{i=1,j=1},{i=1,j=1},{i=2,j=2},{i=1,j=1},{i=1,j=1},{i=3,j=3}]
@@ -210,16 +226,12 @@ from h in [] join i in intList, j in intList where i = j;
 from h in bag [] join i in intList, j in intList where i = j;
 > val it = [] : {h:'a, i:int, j:int} bag
 
-set("mode", "evaluate");
+set("mode", "validate");
 > val it = () : unit
-
 fun doubleList list = List.map (fn i => i * 2) list;
 > val doubleList = fn : int list -> int list
 fun doubleBag bag = Bag.map (fn i => i * 2) bag;
 > val doubleBag = fn : int bag -> int bag
-
-set("mode", "validate");
-> val it = () : unit
 
 (*) union's output is bag if any input is a bag
 from i in intList union intList;
@@ -320,15 +332,8 @@ from i in intList skip 1 take 1;
 from i in intBag skip 1 take 1;
 > val it = [2] : int bag
 
-
-set("mode", "evaluate");
-> val it = () : unit
-
 (*) dummy
 from message in ["the end"];
 > val it = ["the end"] : string list
-
-set("mode", "validate");
-> val it = () : unit
 
 (*) End bag.smli

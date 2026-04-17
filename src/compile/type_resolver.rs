@@ -2292,22 +2292,24 @@ impl TypeResolver {
         let mut terms = vec![Term::Variable(p.c.unwrap())];
         let mut exprs2 = Vec::new();
 
-        // Deduce each argument expression and unify with element type
+        // Deduce each argument expression and unify with element type.
+        // Each argument may be a list or bag.
         for expr in exprs {
             let c_arg = self.variable();
             let expr2 = self.deduce_expr_type(&*p.root_env, expr, &c_arg)?;
             exprs2.push(expr2);
 
             // Extract the element type from this collection and unify with
-            // the common element type.
+            // the common element type. The collection may be list or bag.
             let v_arg = self.variable();
-            self.list_term(Term::Variable(v_arg), &c_arg);
+            self.may_be_bag_or_list(&c_arg, &v_arg);
             self.equiv(&Term::Variable(v_arg), &element_type);
 
             terms.push(Term::Variable(c_arg));
         }
 
-        // Result collection has the same element type
+        // Result collection has the same element type. Use list here;
+        // the FromBuilder will override to bag if any input is bag.
         let c_result = self.variable();
         self.list_term(Term::Variable(element_type), &c_result);
 
