@@ -644,8 +644,6 @@ from e in scott.emps
 >    {dname="SALES",ename="BLAKE",i=11},{dname="SALES",ename="TURNER",i=12},
 >    {dname="SALES",ename="JAMES",i=13}]
 >   : {dname:string, ename:string, i:int} list
-set("mode", "validate");
-> val it = () : unit
 
 (* Morel's order step does not provide stable sorts, but you
    can achieve stable sorts using `ordinal`. Note that employees
@@ -662,9 +660,7 @@ from e in scott.emps
 >    {empno=7499,job="SALESMAN"},{empno=7521,job="SALESMAN"},
 >    {empno=7654,job="SALESMAN"},{empno=7844,job="SALESMAN"}]
 >   : {empno:int, job:string} list
-
-
-set("mode", "evaluate");
+set("mode", "validate");
 > val it = () : unit
 
 (*) Ordinal in subquery
@@ -872,8 +868,6 @@ from e in emps
 > val it = [{d=20},{d=30},{d=30}] : {d:int} list
 
 (*) same as previous, using 'current'
-set("mode", "validate");
-> val it = () : unit
 from e in emps
   yield {d = e.deptno}
   where current.d > 10;
