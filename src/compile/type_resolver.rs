@@ -596,6 +596,11 @@ pub struct TypeResolver {
     /// or `real`. Matches Standard ML semantics: numeric operators prefer
     /// `int`.
     preferred_vars: Vec<Var>,
+    /// Collection variables in aggregate inputs that should default to
+    /// list (if ordered=true) or bag (if ordered=false) when
+    /// unconstrained after unification. Each entry is
+    /// (collection_var, element_var, ordered).
+    preferred_collection_vars: Vec<(Var, Var, bool)>,
 
     /// Maps unifier variables to type alias names. When a type annotation
     /// references an alias (e.g. `val x: myInt = 5`), we record the
@@ -670,6 +675,7 @@ impl TypeResolver {
             match_coverage_enabled: true,
             int_op,
             preferred_vars: Vec::new(),
+            preferred_collection_vars: Vec::new(),
             var_alias_map: HashMap::new(),
             field_errors: Rc::new(RefCell::new(Vec::new())),
             field_selectors: Vec::new(),
@@ -831,6 +837,40 @@ impl TypeResolver {
                 }
             }
             self.preferred_vars.clear();
+        }
+
+        // Default unconstrained aggregate-input collection variables
+        // to list (ordered) or bag (unordered).
+        if !self.preferred_collection_vars.is_empty() {
+            for &(pv, elem_var, ordered) in &self.preferred_collection_vars {
+                let mut current = pv;
+                loop {
+                    match type_map.var_term_map.get(&current).cloned() {
+                        None => {
+                            // Unconstrained: default based on ordering.
+                            let op = if ordered {
+                                self.list_op
+                            } else {
+                                self.bag_op
+                            };
+                            let term = Term::Sequence(
+                                self.unifier
+                                    .apply1(op, Term::Variable(elem_var)),
+                            );
+                            type_map.var_term_map.insert(current, term);
+                            break;
+                        }
+                        Some(Term::Variable(next)) => {
+                            current = next;
+                        }
+                        Some(Term::Sequence(_)) => {
+                            // Already bound; leave it.
+                            break;
+                        }
+                    }
+                }
+            }
+            self.preferred_collection_vars.clear();
         }
 
         // Compute the base-line offset: how many lines of comments/blank lines
@@ -1442,11 +1482,20 @@ impl TypeResolver {
                 // the pre-group environment, not the post-group environment.
                 let v_e = self.variable();
                 let e2 = self.deduce_expr_type(&*step_env.env, e, &v_e)?;
-                // f has type: list(type_of_e) -> v.
-                // The aggregate function operates on a list of the `over`
-                // expression values, not on the full pre-group collection.
+                // f has type: collection(type_of_e) -> v.
+                // The aggregate input may be list or bag. Built-in
+                // aggregates like `count` (typed `'a list -> int`)
+                // will constrain it to list. User-provided functions
+                // like `(fn x => x)` leave it unconstrained; in that
+                // case we default to list or bag based on whether the
+                // query is ordered.
                 let v_elements = self.variable();
-                self.list_term(Term::Variable(v_e), &v_elements);
+                self.may_be_bag_or_list(&v_elements, &v_e);
+                self.preferred_collection_vars.push((
+                    v_elements,
+                    v_e,
+                    step_env.ordered,
+                ));
                 let v_fn = self.variable();
                 self.fn_term(&v_elements, v, &v_fn);
                 let f2 = self.deduce_expr_type(env, f, &v_fn)?;
