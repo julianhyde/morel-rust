@@ -625,6 +625,8 @@ from e in scott.emps
    the join with the unordered `scott.depts` table, but we can
    restore the same order by sorting on `i` (which is assigned
    in a previous step from `ordinal`). *)
+set("mode", "evaluate");
+> val it = () : unit
 from e in scott.emps
   order e.deptno
   yield {i = ordinal, e}
@@ -642,6 +644,8 @@ from e in scott.emps
 >    {dname="SALES",ename="BLAKE",i=11},{dname="SALES",ename="TURNER",i=12},
 >    {dname="SALES",ename="JAMES",i=13}]
 >   : {dname:string, ename:string, i:int} list
+set("mode", "validate");
+> val it = () : unit
 
 (* Morel's order step does not provide stable sorts, but you
    can achieve stable sorts using `ordinal`. Note that employees
@@ -1733,12 +1737,11 @@ from i in [2, 1, 2, 2, 2, 3] except [2, 2, 4], [2];
 from i in [2, 1, 2, 2, 2, 3] except [2, 2, 4], [2, 2, 2];
 > val it = [1,3] : int list
 
-set("mode", "validate");
-> val it = () : unit
-
 (*) Hybrid union/intersect/except (list and bag) yields bag
 from d in scott.depts yield d.deptno;
 > val it = [10,20,30,40] : int bag
+set("mode", "validate");
+> val it = () : unit
 from i in [10, 15, 20] union (from d in scott.depts yield d.deptno);
 > val it = [10,15,20,10,20,30,40] : int bag
 from i in [10, 15, 20] intersect (from d in scott.depts yield d.deptno);
