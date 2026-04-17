@@ -272,6 +272,9 @@ struct Triple {
     env: Rc<dyn TypeEnv>,
     v: Var,
     c: Option<Var>,
+    /// Whether the collection is ordered (list) or unordered (bag).
+    /// Used to validate that `ordinal` is only used in ordered queries.
+    ordered: bool,
 }
 
 impl Triple {
@@ -286,15 +289,38 @@ impl Triple {
             env,
             v,
             c,
+            ordered: true,
         }
     }
 
     fn with_env(&self, env: &Rc<dyn TypeEnv>) -> Self {
-        Self::new(self.root_env.clone(), env.clone(), self.v, self.c)
+        Self {
+            root_env: self.root_env.clone(),
+            env: env.clone(),
+            v: self.v,
+            c: self.c,
+            ordered: self.ordered,
+        }
     }
 
     fn with_c(&self, c: Var) -> Self {
-        Self::new(self.root_env.clone(), self.env.clone(), self.v, Some(c))
+        Self {
+            root_env: self.root_env.clone(),
+            env: self.env.clone(),
+            v: self.v,
+            c: Some(c),
+            ordered: self.ordered,
+        }
+    }
+
+    fn with_ordered(&self, ordered: bool) -> Self {
+        Self {
+            root_env: self.root_env.clone(),
+            env: self.env.clone(),
+            v: self.v,
+            c: self.c,
+            ordered,
+        }
     }
 }
 
@@ -522,6 +548,10 @@ pub struct TypeResolver {
     /// Nesting depth of `from`/`exists`/`forall` queries. Used to
     /// validate that `ordinal` only appears inside a query.
     query_depth: usize,
+    /// Whether the current query step is ordered (list). Set during
+    /// step processing, checked by `ExprKind::Ordinal` to reject
+    /// `ordinal` in unordered queries.
+    query_ordered: bool,
 
     /// Cached operators for common type-constructors.
     list_op: Op,
@@ -621,6 +651,7 @@ impl TypeResolver {
             node_var_map: HashMap::new(),
             compute_stack: Vec::new(),
             query_depth: 0,
+            query_ordered: true,
             actions: Vec::new(),
             terms: Vec::new(),
             next_id: 0,
@@ -1800,6 +1831,12 @@ impl TypeResolver {
                         expr.span.clone(),
                     ));
                 }
+                if !self.query_ordered {
+                    return Err(Error::Compile(
+                        "cannot use 'ordinal' in unordered query".to_string(),
+                        expr.span.clone(),
+                    ));
+                }
                 // 'ordinal' is a row counter with type int.
                 self.primitive_term(&PrimitiveType::Int, v);
                 self.reg_expr(&expr.kind, &expr.span, expr.id, v)
@@ -1946,6 +1983,7 @@ impl TypeResolver {
                 _ => {}
             }
 
+            self.query_ordered = p.ordered;
             let p_next =
                 self.deduce_step_type(&step, &p, &mut field_vars, &mut steps2)?;
             p = p_next;
@@ -2034,7 +2072,7 @@ impl TypeResolver {
                 // 'order' always produces an ordered (list) collection.
                 let c = self.unifier.variable();
                 self.list_term(Term::Variable(p.v), &c);
-                Ok(p.with_c(c))
+                Ok(p.with_c(c).with_ordered(true))
             }
             StepKind::Require(expr) => {
                 let v = self.unifier.variable();
@@ -2094,7 +2132,7 @@ impl TypeResolver {
                 let c = self.variable();
                 self.bag_term(Term::Variable(p.v), &c);
                 steps2.push(StepKind::Unorder.spanned(&step.span));
-                Ok(p.with_c(c))
+                Ok(p.with_c(c).with_ordered(false))
             }
             StepKind::Where(expr) => {
                 let v = self.unifier.variable();
@@ -2191,7 +2229,17 @@ impl TypeResolver {
         };
         steps.push(step.spanned(span));
 
-        Ok(Triple::new(p.root_env.clone(), env4, v, Some(c)))
+        // Determine ordering: ordered iff previous state is ordered
+        // AND this scan's input is a list (not bag).
+        let scan_ordered = if eq {
+            p.ordered
+        } else {
+            p.ordered && self.var_is_list(&c0)
+        };
+
+        let mut triple = Triple::new(p.root_env.clone(), env4, v, Some(c));
+        triple.ordered = scan_ordered;
+        Ok(triple)
     }
 
     /// Deduces a Yield step's type (e.g., "yield i + 4").
@@ -3456,6 +3504,25 @@ impl TypeResolver {
         }
         self.actions
             .push((*c, Rc::new(MayBeBagOrListAction { v, list_op, bag_op })));
+    }
+
+    /// Checks whether a variable's term (in self.terms) is a list.
+    /// Returns false if it's a bag or unknown.
+    fn var_is_list(&self, v: &Var) -> bool {
+        for (var, term) in self.terms.iter().rev() {
+            if var == v {
+                if let Term::Sequence(seq) = term {
+                    return seq.op == self.list_op;
+                }
+                // Variable mapped to another variable or non-sequence;
+                // follow the chain.
+                if let Term::Variable(v2) = term {
+                    return self.var_is_list(v2);
+                }
+                return true; // assume list if unknown
+            }
+        }
+        true // assume list if not found
     }
 
     /// If `c_from` resolves to a bag, forces `c_to` to also be a bag
