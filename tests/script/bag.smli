@@ -183,19 +183,15 @@ from i in intList unorder order DESC i unorder;
 > val it = [3,2,1,1] : int bag
 
 (*) ordinal is valid only for ordered collections
-set("mode", "validate");
-> val it = () : unit
 from i in intBag yield i + ordinal;
 > stdIn:1.28-1.35 Error: cannot use 'ordinal' in unordered query
 >   raised at: stdIn:1.28-1.35
-set("mode", "evaluate");
-> val it = () : unit
 from i in intList yield i + ordinal;
 > val it = [1,3,3,6] : int list
-set("mode", "validate");
-> val it = () : unit
 from i in intBag order DESC i where i > 1 yield i + ordinal;
 > val it = [3,3] : int list
+set("mode", "validate");
+> val it = () : unit
 from i in intBag where i > ordinal;
 > stdIn:1.28-1.35 Error: cannot use 'ordinal' in unordered query
 >   raised at: stdIn:1.28-1.35
