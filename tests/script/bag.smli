@@ -123,8 +123,6 @@ from i in intList group i;
 > val it = [1,2,3] : int list
 from i in intBag group i;
 > val it = [1,2,3] : int bag
-set("mode", "validate");
-> val it = () : unit
 from r in recList group r.i;
 > val it = [1,2] : int list
 from r in recBag group r.i;
@@ -137,6 +135,8 @@ from r in recList group r.i compute count over ();
 > val it = [{count=2,i=1},{count=1,i=2}] : {count:int, i:int} list
 from r in recBag group r.i compute count over ();
 > val it = [{count=2,i=1},{count=1,i=2}] : {count:int, i:int} bag
+set("mode", "validate");
+> val it = () : unit
 from r in recList group r.i compute {bs = (fn x => x) over r.b};
 > val it = [{bs=[true,false],i=1},{bs=[false],i=2}] : {bs:bool list, i:int} list
 from r in recBag group r.i compute {bs = (fn x => x) over r.b};

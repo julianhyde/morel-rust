@@ -515,7 +515,7 @@ impl FromBuilder {
                                 has_record_key = true;
                             }
                         }
-                    } else if aggregate_expr.is_some() {
+                    } else {
                         // Scalar key via field access (e.g.
                         // `group e.deptno`): derive binding name.
                         if let Some(name) = key_expr.implicit_label() {
@@ -557,22 +557,17 @@ impl FromBuilder {
                 }
             }
 
-            // Only replace self.bindings when there is something new to set:
-            // - always for aggregate (record or scalar agg fields)
-            // - for record keys, so named frame slots are created
-            // - not for pure scalar-key groups (bindings carry from scan)
-            if aggregate_expr.is_some() || has_record_key {
-                if !new_bindings.is_empty() {
-                    self.bindings = new_bindings;
-                }
-                // atom=true only for a pure scalar aggregate with no key
-                // fields. Record keys and record aggregates produce non-atom.
+            // Replace self.bindings when there is something new to set.
+            if !new_bindings.is_empty() {
+                self.bindings = new_bindings.clone();
                 if aggregate_expr.is_some() {
+                    // atom=true only for a pure scalar aggregate
+                    // with no key fields.
                     self.atom = !has_key_bindings && has_scalar_agg;
                 } else {
-                    // No aggregate, but record key: result is a record list,
-                    // so atom must be false (regardless of binding count).
-                    self.atom = false;
+                    // No aggregate: atom=true for scalar keys (single
+                    // binding), false for record keys.
+                    self.atom = new_bindings.len() == 1 && !has_record_key;
                 }
             }
         }
