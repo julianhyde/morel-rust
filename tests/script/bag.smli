@@ -110,15 +110,11 @@ from i in intList yield {j=i*i, i};
 from i in intBag yield {j=i*i, i};
 > val it = [{i=1,j=1},{i=2,j=4},{i=1,j=1},{i=3,j=9}] : {i:int, j:int} bag
 
-set("mode", "validate");
-> val it = () : unit
 (*) group is ordered iff its input is ordered
 from i in intList group {};
 > val it = [()] : unit list
 from i in intBag group {};
 > val it = [()] : unit bag
-set("mode", "evaluate");
-> val it = () : unit
 from i in intList group i;
 > val it = [1,2,3] : int list
 from i in intBag group i;
