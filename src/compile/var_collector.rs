@@ -300,6 +300,13 @@ impl Step {
                     collector.add_def(Binding::of_name("elements"));
                 }
             }
+            StepKind::Except(_, exprs)
+            | StepKind::Intersect(_, exprs)
+            | StepKind::Union(_, exprs) => {
+                for expr in exprs {
+                    expr.collect_vars(collector);
+                }
+            }
             StepKind::Group(_, None) => {
                 // Add group key field names as frame slot defs so that
                 // the collection code can read them.
