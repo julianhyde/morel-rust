@@ -2210,10 +2210,9 @@ impl TypeResolver {
         let step = StepKind::Yield(Box::new(expr2.clone()));
         steps2.push(step.spanned(span));
 
-        // Output is ordered iff input is ordered. Yield behaves like a
-        // 'map' function with these overloaded forms:
-        //  * map: 'a -> 'b -> 'a list -> 'b list
-        //  * map: 'a -> 'b -> 'a bag -> 'b bag
+        // Output collection type. We initially produce list; the
+        // FromBuilder uses its `ordered` flag to determine if the actual
+        // output should be bag.
         let c6 = self.variable();
         self.list_term(Term::Variable(v6), &c6);
 
@@ -3455,6 +3454,95 @@ impl TypeResolver {
         }
         self.actions
             .push((*c, Rc::new(MayBeBagOrListAction { v, list_op, bag_op })));
+    }
+
+    /// If `c_from` resolves to a bag, forces `c_to` to also be a bag
+    /// (with element type `v_to`). If `c_from` is a list, does nothing.
+    /// This implements the rule: if ANY input is unordered, the output
+    /// is unordered.
+    fn if_bag_force_bag(&mut self, c_from: &Var, c_to: &Var, v_to: &Var) {
+        let bag_op = self.bag_op;
+        let c_to = *c_to;
+        let v_to = *v_to;
+
+        struct IfBagAction {
+            c_to: Var,
+            v_to: Var,
+            bag_op: Op,
+        }
+        impl Action for IfBagAction {
+            fn accept(
+                &self,
+                _variable: &Var,
+                term: &Term,
+                substitution: &Substitution,
+                term_pairs: &mut Vec<(Term, Term)>,
+            ) {
+                if let Term::Sequence(seq) = term
+                    && seq.op == self.bag_op
+                {
+                    let c_to_seq = Sequence {
+                        op: self.bag_op,
+                        terms: Rc::from(vec![Term::Variable(self.v_to)]),
+                    };
+                    let c_to_term =
+                        substitution.resolve_term(&Term::Variable(self.c_to));
+                    term_pairs.push((c_to_term, Term::Sequence(c_to_seq)));
+                }
+            }
+        }
+        self.actions
+            .push((*c_from, Rc::new(IfBagAction { c_to, v_to, bag_op })));
+    }
+
+    /// Constrains `c_to` to have the same collection kind (list or bag) as
+    /// `c_from`, with element type `v_to`. Unlike
+    /// `is_list_or_bag_matching_input`, this does NOT unify the element types
+    /// of the two collections — it only copies the kind.
+    fn match_collection_kind(&mut self, c_from: &Var, c_to: &Var, v_to: &Var) {
+        let list_op = self.list_op;
+        let bag_op = self.bag_op;
+        let c_to = *c_to;
+        let v_to = *v_to;
+
+        struct MatchKindAction {
+            c_to: Var,
+            v_to: Var,
+            list_op: Op,
+            bag_op: Op,
+        }
+        impl Action for MatchKindAction {
+            fn accept(
+                &self,
+                _variable: &Var,
+                term: &Term,
+                substitution: &Substitution,
+                term_pairs: &mut Vec<(Term, Term)>,
+            ) {
+                if let Term::Sequence(seq) = term
+                    && (seq.op == self.list_op || seq.op == self.bag_op)
+                    && seq.terms.len() == 1
+                {
+                    // Build c_to = kind(v_to) using the same op as c_from.
+                    let c_to_seq = Sequence {
+                        op: seq.op,
+                        terms: Rc::from(vec![Term::Variable(self.v_to)]),
+                    };
+                    let c_to_term =
+                        substitution.resolve_term(&Term::Variable(self.c_to));
+                    term_pairs.push((c_to_term, Term::Sequence(c_to_seq)));
+                }
+            }
+        }
+        self.actions.push((
+            *c_from,
+            Rc::new(MatchKindAction {
+                c_to,
+                v_to,
+                list_op,
+                bag_op,
+            }),
+        ));
     }
 
     /// Constrains `c2` to have the same collection kind (list or bag) as `c1`,
