@@ -263,23 +263,34 @@ impl<'a> Resolver<'a> {
                     // (returns bool), Compute (returns scalar), or
                     // Into (returns fn result) have non-collection
                     // output types.
-                    let is_collection_from =
-                        if let CoreExpr::From(t, steps) = &pe.expr {
-                            matches!(t.as_ref(), Type::List(_) | Type::Bag(_))
-                                && !steps.iter().any(|s| {
-                                    matches!(
-                                        s.kind,
-                                        CoreStepKind::Exists
-                                            | CoreStepKind::Compute(_)
-                                    )
-                                })
-                        } else {
-                            false
-                        };
-                    let t = if is_collection_from {
-                        pe.expr.type_().as_ref().clone()
-                    } else {
-                        *pe.pat.type_()
+                    // Use the expr's type when it's a collection and
+                    // differs from the pat's type in list/bag wrapping.
+                    // This handles both From expressions (with ordered
+                    // flag from FromBuilder) and simplified queries
+                    // (where build_simplify returns the scan expression
+                    // directly, e.g. `from i in intBag yield i` →
+                    // `intBag`).
+                    let expr_type = pe.expr.type_();
+                    let pat_type = pe.pat.type_();
+                    let t = match (expr_type.as_ref(), pat_type.as_ref()) {
+                        (Type::Bag(_), Type::List(_)) => {
+                            expr_type.as_ref().clone()
+                        }
+                        (Type::List(_) | Type::Bag(_), _)
+                            if matches!(pe.expr, CoreExpr::From(_, _))
+                                && !pe.expr.steps().is_some_and(|steps| {
+                                    steps.iter().any(|s| {
+                                        matches!(
+                                            s.kind,
+                                            CoreStepKind::Exists
+                                                | CoreStepKind::Compute(_)
+                                        )
+                                    })
+                                }) =>
+                        {
+                            expr_type.as_ref().clone()
+                        }
+                        _ => *pat_type,
                     };
                     CoreValBind {
                         pat: pe.pat.clone().with_type(Box::new(t.clone())),

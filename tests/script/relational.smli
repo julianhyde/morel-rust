@@ -808,16 +808,11 @@ from {} in [()],
 from {} in bag [()],
   i in bag [1,2,3];
 > val it = [1,2,3] : int bag
-
-set("mode", "validate");
-> val it = () : unit
 from {} in bag [()],
   i in [1,2,3];
 > val it = [1,2,3] : int bag
 
 (*) Variations of the above with '='
-set("mode", "evaluate");
-> val it = () : unit
 from i in [1,2,3],
   _ = true;
 > val it = [1,2,3] : int list
