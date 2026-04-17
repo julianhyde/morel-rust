@@ -335,6 +335,9 @@ impl Step {
                     collector.add_def(Binding::of_name("elements"));
                 }
             }
+            StepKind::Order(expr) => {
+                expr.collect_vars(collector);
+            }
             StepKind::Scan(pat, expr, condition) => {
                 expr.collect_vars(collector);
                 pat.collect_vars(collector);
