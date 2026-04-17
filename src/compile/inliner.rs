@@ -92,6 +92,11 @@ impl Expr {
     fn visit(&self, env: &Env, x: &dyn Transformer) -> Expr {
         match &self {
             // lint: sort until '#}' where '##Expr::'
+            Expr::Aggregate(t, a0, a1) => Expr::Aggregate(
+                t.clone(),
+                Box::new(x.transform_expr(env, a0)),
+                Box::new(x.transform_expr(env, a1)),
+            ),
             Expr::Apply(result_type, f, a, span) => {
                 let f2 = x.transform_expr(env, f);
                 let a2 = x.transform_expr(env, a);
@@ -201,6 +206,19 @@ impl Expr {
     fn visit_step(env: &Env, x: &dyn Transformer, step: &Step) -> Step {
         let kind = match &step.kind {
             // lint: sort until '#}' where '##StepKind::'
+            StepKind::Except(distinct, exprs) => {
+                let exprs2 = Self::visit_list(env, x, exprs);
+                StepKind::Except(*distinct, exprs2)
+            }
+            StepKind::Group(_, _) => step.kind.clone(),
+            StepKind::Intersect(distinct, exprs) => {
+                let exprs2 = Self::visit_list(env, x, exprs);
+                StepKind::Intersect(*distinct, exprs2)
+            }
+            StepKind::Order(expr) => {
+                let expr2 = x.transform_expr(env, expr);
+                StepKind::Order(Box::new(expr2))
+            }
             StepKind::Scan(pat, expr, condition) => {
                 let pat2 = x.transform_pat(env, pat);
                 let expr2 = x.transform_expr(env, expr);
@@ -208,6 +226,10 @@ impl Expr {
                     .as_ref()
                     .map(|c| Box::new(x.transform_expr(env, c)));
                 StepKind::Scan(Box::new(pat2), Box::new(expr2), condition2)
+            }
+            StepKind::Union(distinct, exprs) => {
+                let exprs2 = Self::visit_list(env, x, exprs);
+                StepKind::Union(*distinct, exprs2)
             }
             StepKind::Where(expr) => {
                 let expr2 = x.transform_expr(env, expr);
