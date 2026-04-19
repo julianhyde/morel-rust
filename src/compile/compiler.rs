@@ -576,14 +576,15 @@ impl<'a> Compiler<'a> {
 
                 // Compile the `over` expression and determine whether it
                 // needs per-element mapping. If `e` is a trivial read of
-                // slot 0 (single-binding identity), elements already
-                // contain the right values.
+                // the sole scan slot (single-binding identity), elements
+                // already contain the right values.
                 let e_code = self.compile_expr(cx, None, e);
-                let trivial_slot =
-                    cx.compute_scan_slots.first().copied().unwrap_or(0);
-                let mapped_code = if matches!(
-                    &e_code, Code::GetLocal(_, s) if *s == trivial_slot
-                ) {
+                let mapped_code = if cx.compute_scan_slots.len() == 1
+                    && matches!(
+                        &e_code,
+                        Code::GetLocal(_, s)
+                            if *s == cx.compute_scan_slots[0]
+                    ) {
                     elements_code
                 } else {
                     Box::new(Code::MapElements(
