@@ -111,8 +111,11 @@ fn main() {
         x = &args[2..];
     };
     let mut shell_args = x.to_vec();
-    shell_args.insert(0, "--echo".to_string());
+    shell_args.insert(0, "--prompt".to_string());
     shell_args.insert(0, "--banner".to_string());
+    if std::io::IsTerminal::is_terminal(&stdin()) {
+        shell_args.insert(0, "--tty".to_string());
+    }
 
     let mut main = ShellMain::new(&shell_args);
     match main.run(stdin(), stdout()) {
