@@ -29,94 +29,153 @@ mod unify;
 fn print_help() {
     println!("morel-rust version {}", env!("CARGO_PKG_VERSION"));
     println!();
-    println!("Usage: morel [OPTIONS] [FILE] [ARGS...]");
+    println!("Usage: morel [OPTIONS] [FILES...]");
+    println!("       morel -c COMMAND");
+    println!("       morel test [FILES...]");
+    println!("       morel -h | --help");
     println!();
     println!("Options:");
-    println!("  -h, --help       Print this help message and exit");
-    println!("  -c COMMAND       Execute a single command and exit");
+    println!("  -h, --help         Print this help message and exit");
+    println!("  -c COMMAND         Execute a single command and exit");
+    println!(
+        "  --idempotent       Force idempotent mode for all files and stdin"
+    );
+    println!(
+        "  --no-idempotent    Force non-idempotent mode for all files / stdin"
+    );
+    println!("  --directory=DIR    Set the working directory");
+    println!(
+        "  --                 End of options; remaining args are file names"
+    );
     println!();
     println!("Arguments:");
-    println!("  FILE             Run the specified morel script file");
-    println!("  ARGS...          Additional arguments passed to the script");
+    println!(
+        "  FILES...           Morel script files to run. Use '-' for stdin."
+    );
+    println!("                     With no files (and no --idempotent/");
+    println!(
+        "                     --no-idempotent), an interactive REPL reads"
+    );
+    println!("                     from standard input.");
+    println!();
+    println!("Modes:");
+    println!(
+        "  By default, each file runs in idempotent mode if its suffix is"
+    );
+    println!(
+        "  '.smli', otherwise in normal (transcript) mode. --idempotent /"
+    );
+    println!("  --no-idempotent override the per-file default.");
+    println!();
+    println!("  Idempotent mode: echoes input and prefixes results with '> '.");
+    println!(
+        "  Output reproduces the .smli test-file format (round-trip-safe)."
+    );
+    println!();
+    println!(
+        "  Normal mode: echoes input only (no '> ' prefix); a transcript."
+    );
     println!();
     println!("Examples:");
-    println!("  morel                     Start interactive REPL");
-    println!("  morel -c \"1 + 2\"          Execute a single command");
-    println!("  morel script.smli         Run a script file");
-    println!("  morel test [files...]     Run script tests");
+    println!("  morel                         Interactive REPL");
+    println!("  morel -c \"1 + 2\"              Execute a single command");
+    println!("  morel script.sml              Run script, transcript mode");
+    println!("  morel script.smli             Run script, idempotent mode");
+    println!(
+        "  morel a.sml b.smli            Run two scripts (mode per suffix)"
+    );
+    println!("  morel --idempotent < file     Run stdin in idempotent mode");
+    println!("  morel --no-idempotent x.smli  Override suffix rule");
+    println!("  morel test [files...]         Run script tests");
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // Check for the help flag.
-    if args.len() > 1 && (args[1] == "-h" || args[1] == "--help") {
-        print_help();
-        exit(1);
-    }
-
-    // Check if we're running script tests.
-    if args.len() > 1 && args[1] == "test" {
-        let test_args = args[2..].to_vec();
-        match ScriptTest::main(&test_args) {
-            Ok(()) => {
-                println!("All tests completed successfully");
+    // Quick dispatch for special subcommands.
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "-h" | "--help" => {
+                print_help();
                 exit(0);
             }
-            Err(e) => {
-                eprintln!("Test error: {}", e);
-                exit(1);
+            "test" => {
+                let test_args = args[2..].to_vec();
+                match ScriptTest::main(&test_args) {
+                    Ok(()) => {
+                        println!("All tests completed successfully");
+                        exit(0);
+                    }
+                    Err(e) => {
+                        eprintln!("Test error: {}", e);
+                        exit(1);
+                    }
+                }
             }
+            "-c" => {
+                if args.len() < 3 {
+                    eprintln!("-c requires a command argument");
+                    exit(1);
+                }
+                let command = &args[2];
+                let mut main = ShellMain::new(&[]);
+                match main.run_command(command, stdout()) {
+                    Ok(()) => exit(0),
+                    Err(e) => {
+                        eprintln!("Error executing command: {}", e);
+                        exit(1);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
-    // Check if we're executing a single command with -c.
-    if args.len() > 2 && args[1] == "-c" {
-        let command = &args[2];
-        let mut main = ShellMain::new(&[]);
-        match main.run_command(command, stdout()) {
-            Ok(()) => {
-                exit(0);
+    // Parse flags and files. Flags may be interleaved with files; a bare
+    // '--' ends flag parsing.
+    let mut force_idempotent: Option<bool> = None;
+    let mut directory: Option<String> = None;
+    let mut files: Vec<String> = Vec::new();
+    let mut end_of_flags = false;
+    for arg in &args[1..] {
+        if end_of_flags {
+            files.push(arg.clone());
+            continue;
+        }
+        match arg.as_str() {
+            "--" => end_of_flags = true,
+            "--idempotent" => force_idempotent = Some(true),
+            "--no-idempotent" => force_idempotent = Some(false),
+            _ if arg.starts_with("--directory=") => {
+                directory =
+                    Some(arg.strip_prefix("--directory=").unwrap().to_string());
             }
-            Err(e) => {
-                eprintln!("Error executing command: {}", e);
+            _ if arg.starts_with("--") => {
+                eprintln!("Unknown option: {}", arg);
                 exit(1);
             }
+            _ => files.push(arg.clone()),
         }
     }
 
-    // Check if we're running a specific file
-    if args.len() > 1
-        && args[1] != "--"
-        && !args[1].starts_with("--")
-        && args[1] != "-c"
-    {
-        let file_path = &args[1];
-        let shell_args = args[2..].to_vec();
-
-        let mut main = ShellMain::new(&shell_args);
-        match main.run_file(file_path, stdout()) {
-            Ok(()) => {
-                exit(0);
-            }
-            Err(e) => {
-                eprintln!("Error running file: {}", e);
-                exit(1);
-            }
+    if files.is_empty() && force_idempotent.is_none() {
+        run_interactive(directory.as_deref());
+    } else {
+        if files.is_empty() {
+            files.push("-".to_string());
         }
+        run_scripts(&files, force_idempotent, directory.as_deref());
     }
+}
 
-    let mut x = &args[1..];
-    if args.len() > 1 && args[1] == "--" {
-        x = &args[2..];
-    };
-    let mut shell_args = x.to_vec();
-    shell_args.insert(0, "--prompt".to_string());
-    shell_args.insert(0, "--banner".to_string());
+fn run_interactive(directory: Option<&str>) {
+    let mut shell_args = vec!["--prompt".to_string(), "--banner".to_string()];
     if std::io::IsTerminal::is_terminal(&stdin()) {
-        shell_args.insert(0, "--tty".to_string());
+        shell_args.push("--tty".to_string());
     }
-
+    if let Some(dir) = directory {
+        shell_args.push(format!("--directory={}", dir));
+    }
     let mut main = ShellMain::new(&shell_args);
     match main.run(stdin(), stdout()) {
         Ok(()) => {
@@ -127,6 +186,42 @@ fn main() {
             exit(1);
         }
     }
+}
+
+fn run_scripts(
+    files: &[String],
+    force_idempotent: Option<bool>,
+    directory: Option<&str>,
+) {
+    let mut shell_args: Vec<String> = Vec::new();
+    if let Some(dir) = directory {
+        shell_args.push(format!("--directory={}", dir));
+    }
+    let mut shell = ShellMain::new(&shell_args);
+    // Script mode: no banner, no prompts, echo input lines (transcript).
+    shell.config.banner = Some(false);
+    shell.config.prompt = Some(false);
+    shell.config.stdin_is_tty = Some(false);
+    shell.config.echo = Some(true);
+
+    for file in files {
+        let idempotent = match force_idempotent {
+            Some(force) => force,
+            None => file.ends_with(".smli"),
+        };
+        shell.config.idempotent = Some(idempotent);
+
+        let result = if file == "-" {
+            shell.run(stdin(), stdout())
+        } else {
+            shell.run_file(file, stdout())
+        };
+        if let Err(e) = result {
+            eprintln!("Error running {}: {}", file, e);
+            exit(1);
+        }
+    }
+    exit(0);
 }
 
 #[cfg(test)]
