@@ -153,8 +153,13 @@ impl Expr {
                 Expr::Fn(t.clone(), match_list2, span.clone())
             }
             Expr::From(t, steps) => {
-                let steps2 =
-                    steps.iter().map(|s| Self::visit_step(env, x, s)).collect();
+                let mut step_env = env.clone();
+                let mut steps2 = Vec::with_capacity(steps.len());
+                for s in steps {
+                    let (s2, env2) = Self::visit_step(&step_env, x, s);
+                    steps2.push(s2);
+                    step_env = env2;
+                }
                 Expr::From(t.clone(), steps2)
             }
             Expr::Identifier(t, id) => {
@@ -203,21 +208,21 @@ impl Expr {
         expr_list.iter().map(|e| x.transform_expr(env, e)).collect()
     }
 
-    fn visit_step(env: &Env, x: &dyn Transformer, step: &Step) -> Step {
-        let kind = match &step.kind {
+    fn visit_step(env: &Env, x: &dyn Transformer, step: &Step) -> (Step, Env) {
+        let (kind, env2) = match &step.kind {
             // lint: sort until '#}' where '##StepKind::'
             StepKind::Except(distinct, exprs) => {
                 let exprs2 = Self::visit_list(env, x, exprs);
-                StepKind::Except(*distinct, exprs2)
+                (StepKind::Except(*distinct, exprs2), env.clone())
             }
-            StepKind::Group(_, _) => step.kind.clone(),
+            StepKind::Group(_, _) => (step.kind.clone(), env.clone()),
             StepKind::Intersect(distinct, exprs) => {
                 let exprs2 = Self::visit_list(env, x, exprs);
-                StepKind::Intersect(*distinct, exprs2)
+                (StepKind::Intersect(*distinct, exprs2), env.clone())
             }
             StepKind::Order(expr) => {
                 let expr2 = x.transform_expr(env, expr);
-                StepKind::Order(Box::new(expr2))
+                (StepKind::Order(Box::new(expr2)), env.clone())
             }
             StepKind::Scan(pat, expr, condition) => {
                 let pat2 = x.transform_pat(env, pat);
@@ -225,26 +230,39 @@ impl Expr {
                 let condition2 = condition
                     .as_ref()
                     .map(|c| Box::new(x.transform_expr(env, c)));
-                StepKind::Scan(Box::new(pat2), Box::new(expr2), condition2)
+                // Shadow names bound by the scan pattern so that
+                // subsequent steps (e.g. Where, Yield) do not inline
+                // outer-scope constants for variables of the same name.
+                let mut scan_env = env.clone();
+                pat.for_each_id_pat(&mut |(t, name)| {
+                    scan_env = scan_env.child_none(name, t);
+                });
+                (
+                    StepKind::Scan(Box::new(pat2), Box::new(expr2), condition2),
+                    scan_env,
+                )
             }
             StepKind::Union(distinct, exprs) => {
                 let exprs2 = Self::visit_list(env, x, exprs);
-                StepKind::Union(*distinct, exprs2)
+                (StepKind::Union(*distinct, exprs2), env.clone())
             }
             StepKind::Where(expr) => {
                 let expr2 = x.transform_expr(env, expr);
-                StepKind::Where(Box::new(expr2))
+                (StepKind::Where(Box::new(expr2)), env.clone())
             }
             StepKind::Yield(expr) => {
                 let expr2 = x.transform_expr(env, expr);
-                StepKind::Yield(Box::new(expr2))
+                (StepKind::Yield(Box::new(expr2)), env.clone())
             }
-            _ => step.kind.clone(), // For other step kinds, just clone
+            _ => (step.kind.clone(), env.clone()),
         };
-        Step {
-            kind,
-            env: step.env.clone(),
-        }
+        (
+            Step {
+                kind,
+                env: step.env.clone(),
+            },
+            env2,
+        )
     }
 }
 

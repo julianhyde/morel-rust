@@ -578,6 +578,17 @@ impl FromBuilder {
                 self.atom = false;
             }
 
+            // For empty key (group {}) without aggregate, clear bindings
+            // so compute_result_type produces unit.
+            let empty_key = matches!(
+                key_expr.type_().as_ref(),
+                Type::Primitive(PrimitiveType::Unit)
+            );
+            if empty_key && aggregate_expr.is_none() {
+                self.bindings.clear();
+                self.atom = false;
+            }
+
             // Replace self.bindings when there is something new to set.
             if has_key_bindings || aggregate_expr.is_some() {
                 self.bindings = new_bindings.clone();
