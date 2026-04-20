@@ -46,7 +46,7 @@ enum CliAction {
     Error(String),
 }
 
-/// Parses command-line arguments (excluding argv[0]) into a `CliAction`.
+/// Parses command-line arguments (excluding `argv\[0\]`) into a `CliAction`.
 fn parse_args(args: &[String]) -> CliAction {
     // Special subcommands take precedence and consume the rest of argv.
     if let Some(first) = args.first() {
