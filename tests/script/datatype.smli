@@ -173,15 +173,11 @@ Node(Empty, 2, Node(Node(Empty, 3, Empty), 4, Empty));
 height it;
 > val it = 3 : int
 
-
 (*) Recursive
 datatype 'x tree = Empty | Node of 'x tree * 'x * 'x tree;
 > datatype 'a tree = Empty | Node of 'a tree * 'a * 'a tree
-
-set("mode", "validate");
-> val it = () : unit
-fun greater (x, y) = if x < y then y else x;
-> val greater = fn : 'a * 'a -> 'a
+fun greater (x: int, y) = if x < y then y else x;
+> val greater = fn : int * int -> int
 fun height Empty = 0
   | height (Node (lft, _, rht)) = 1 + greater (height lft, height rht);
 > val height = fn : 'a tree -> int
@@ -208,10 +204,6 @@ Empty;
 Node (Empty, true, "yes", Empty);
 > val it = Node (Empty,true,"yes",Empty) : (string,bool) tree
 
-
-set("mode", "evaluate");
-> val it = () : unit
-
 datatype ('a, 'b) Union = A of 'a | B of 'b;
 > datatype ('a,'b) Union = A of 'a | B of 'b
 
@@ -221,7 +213,6 @@ A 1;
 > val it = A 1 : (int,'a) Union
 B true;
 > val it = B true : ('a,bool) Union
-
 
 set("mode", "evaluate");
 > val it = () : unit
@@ -338,8 +329,21 @@ stdIn:4.1-4.11 Error: operator and operand don't agree [tycon mismatch]
 val it = 3 : int
 *)
 
-set("mode", "evaluate");
-> val it = () : unit
+(*) Pretty-printing SOME with a record argument.
+(SOME {a=1}, SOME {a=true});
+> val it = (SOME {a=1},SOME {a=true}) : {a:int} option * {a:bool} option
+(SOME {}, SOME {a=1,b=true}, SOME {a=true});
+> val it = (SOME (),SOME {a=1,b=true},SOME {a=true})
+>   : unit option * {a:int, b:bool} option * {a:bool} option
+
+(*) Pretty-printing a user-defined datatype with record arguments.
+datatype 'a my_option = MY_NONE | MY_SOME of 'a;
+> datatype 'a my_option = MY_NONE | MY_SOME of 'a
+(MY_SOME 1, MY_SOME "a");
+> val it = (MY_SOME 1,MY_SOME "a") : int my_option * string my_option
+(MY_SOME {a=1}, MY_SOME {a=true, b=1});
+> val it = (MY_SOME {a=1},MY_SOME {a=true,b=1})
+>   : {a:int} my_option * {a:bool, b:int} my_option
 
 (*) Pattern matching on the same type constructor, nested.
 fun f (SOME (SOME i)) = i + 1
@@ -355,14 +359,11 @@ f (SOME NONE);
 f NONE;
 > val it = ~1 : int
 
-set("mode", "validate");
-> val it = () : unit
-
 (*) Test cases from [MOREL-126].
 fun f ((SOME i) :: nil) = i + 1
   | f nil = 0;
-> 0.0-0.0 Warning: match nonexhaustive
->   raised at: 0.0-0.0
+> stdIn:1.5-2.14 Warning: match nonexhaustive
+>   raised at: stdIn:1.5-2.14
 > val f = fn : int option list -> int
 f [];
 > val it = 0 : int
@@ -371,8 +372,8 @@ f [SOME 5];
 
 fun f [(SOME i)] = i
   | f [] = 0;
-> 0.0-0.0 Warning: match nonexhaustive
->   raised at: 0.0-0.0
+> stdIn:1.5-2.13 Warning: match nonexhaustive
+>   raised at: stdIn:1.5-2.13
 > val f = fn : int option list -> int
 f [];
 > val it = 0 : int
