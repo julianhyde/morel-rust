@@ -26,9 +26,9 @@ use crate::compile::type_resolver::TypeMap;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::compile::var_collector::VarCollector;
 use crate::eval::code::{
-    self, Code, Effect, EvalEnv, EvalMode, Frame, Impl, QueryStep, Span,
+    self, CmpRef, Code, Effect, EvalEnv, EvalMode, Frame, Impl, QueryStep, Span,
 };
-use crate::eval::comparator::comparator_for;
+use crate::eval::comparator::{self, comparator_for};
 use crate::eval::frame::FrameDef;
 use crate::eval::link_table::LinkTable;
 use crate::eval::order::Order;
@@ -41,7 +41,7 @@ use crate::shell::main::{Environment, MorelError};
 use crate::shell::prop::Prop;
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 /// Compiles a declaration to code that can be evaluated.
@@ -102,6 +102,18 @@ impl<'a> Compiler<'a> {
             type_map,
             link_table,
         }
+    }
+
+    /// Looks up the ordinal (0-based position) of a constructor within its
+    /// datatype declaration. Returns `None` for built-in types.
+    fn constructor_ordinal(&self, type_: &Type, name: &str) -> Option<usize> {
+        if let Type::Data(datatype_name, _) = type_
+            && let Some(constructors) =
+                self.type_map.datatype_constructors.get(datatype_name)
+        {
+            return constructors.iter().position(|c| c == name);
+        }
+        None
     }
 
     fn compile_statement(
@@ -296,6 +308,14 @@ impl<'a> Compiler<'a> {
                     code: expr_code.clone(),
                     pat: pat.clone(),
                     span: span.clone(),
+                    constructor_arg_types: self
+                        .type_map
+                        .constructor_arg_types
+                        .clone(),
+                    datatype_constructors: self
+                        .type_map
+                        .datatype_constructors
+                        .clone(),
                 });
             },
         );
@@ -394,7 +414,8 @@ impl<'a> Compiler<'a> {
             }
             Pat::Constructor(type_, name, p) => {
                 let code = p.clone().map(|p2| self.compile_pat(cx, &p2));
-                Code::new_bind_constructor(type_, name, &code)
+                let ordinal = self.constructor_ordinal(type_, name);
+                Code::new_bind_constructor(type_, name, ordinal, &code)
             }
             Pat::Identifier(_, name) => {
                 let slot = cx.frame_def.var_index(name);
@@ -610,6 +631,28 @@ impl<'a> Compiler<'a> {
                     // expression. The function takes one argument; a
                     // source-level tuple IS that argument.
                     if matches!(impl_, Impl::E1(_) | Impl::EF1(_)) {
+                        // Intercept Relational.max/min to use
+                        // type-directed comparators.
+                        if *f == BuiltInFunction::RelationalMax
+                            || *f == BuiltInFunction::RelationalMin
+                        {
+                            let elem_type = match a.type_().as_ref() {
+                                Type::List(e) => *e.clone(),
+                                Type::Bag(e) => *e.clone(),
+                                _ => *a.type_(),
+                            };
+                            let cmp = CmpRef(comparator::comparator_for_with(
+                                &elem_type,
+                                &self.type_map.datatype_constructors,
+                                &self.type_map.constructor_arg_types,
+                            ));
+                            let arg = self.compile_arg(cx, a);
+                            return if *f == BuiltInFunction::RelationalMax {
+                                Code::Max(cmp, Box::new(arg))
+                            } else {
+                                Code::Min(cmp, Box::new(arg))
+                            };
+                        }
                         let arg = self.compile_arg(cx, a);
                         let codes: Vec<Box<Code>> = vec![Box::new(arg)];
                         return Code::new_native(impl_, &codes, span);
@@ -727,7 +770,33 @@ impl<'a> Compiler<'a> {
                             None,
                         );
                     }
-                    let codes = self.compile_args_boxed(cx, a);
+                    // Intercept Relational.compare to use a
+                    // type-directed comparator.
+                    if *f == BuiltInFunction::RelationalCompare {
+                        let args = self.compile_args_boxed(cx, a);
+                        let elem_type = match a.type_().as_ref() {
+                            Type::Tuple(ts) if !ts.is_empty() => ts[0].clone(),
+                            _ => *a.type_(),
+                        };
+                        let cmp = CmpRef(comparator::comparator_for_with(
+                            &elem_type,
+                            &self.type_map.datatype_constructors,
+                            &self.type_map.constructor_arg_types,
+                        ));
+                        return Code::Compare(
+                            cmp,
+                            args[0].clone(),
+                            args[1].clone(),
+                        );
+                    }
+                    // For 1-argument impls (E1/EF1), compile the
+                    // argument as a single value (not destructured).
+                    // E.g. `SOME {a=1,b=true}` passes the whole record.
+                    let codes = if matches!(impl_, Impl::E1(_) | Impl::EF1(_)) {
+                        vec![Box::new(self.compile_arg(cx, a))]
+                    } else {
+                        self.compile_args_boxed(cx, a)
+                    };
                     Code::new_native(impl_, &codes, span)
                 }
                 // Handle curried application of EF3 functions like
@@ -1827,6 +1896,10 @@ struct ValDeclAction {
     /// report the location of a 'Bind' exception when the pattern fails
     /// to match the value at run time.
     span: Option<Span>,
+    /// Constructor argument types for the pretty printer.
+    constructor_arg_types: HashMap<String, Type>,
+    /// Datatype constructor names for the pretty printer.
+    datatype_constructors: HashMap<String, Vec<String>>,
 }
 
 impl Action for ValDeclAction {
@@ -1839,7 +1912,11 @@ impl Action for ValDeclAction {
                 r.emit_effect(Effect::EmitLine(e.to_string()));
             }
             Ok(o) => {
-                let pretty = Self::get_pretty(&r.shell.config);
+                let pretty = Self::get_pretty(
+                    &r.shell.config,
+                    &self.constructor_arg_types,
+                    &self.datatype_constructors,
+                );
                 // Collect bindings into a buffer first; we will only emit
                 // them if the pattern matches the value (otherwise we
                 // raise the 'Bind' exception).
@@ -1880,7 +1957,11 @@ impl Action for ValDeclAction {
 }
 
 impl ValDeclAction {
-    fn get_pretty(shell_config: &ShellConfig) -> Pretty {
+    fn get_pretty(
+        shell_config: &ShellConfig,
+        constructor_arg_types: &HashMap<String, Type>,
+        datatype_constructors: &HashMap<String, Vec<String>>,
+    ) -> Pretty {
         Pretty::new(
             shell_config
                 .line_width
@@ -1897,6 +1978,8 @@ impl ValDeclAction {
             shell_config
                 .string_depth
                 .unwrap_or_else(|| Prop::StringDepth.default_value().as_int()),
+            constructor_arg_types.clone(),
+            datatype_constructors.clone(),
         )
     }
 }
@@ -1970,19 +2053,14 @@ impl Action for DatatypeDeclAction {
         )));
 
         // Register each constructor as a runtime binding.
-        for con in &db.constructors {
+        for (ordinal, con) in db.constructors.iter().enumerate() {
             let val = if con.type_.is_some() {
                 // Value-carrying: a Code that wraps arg in
-                // Val::Constructor(name, arg).
-                Val::Code(Arc::new(Code::ConstructorWrap(Arc::from(
-                    con.name.as_str(),
-                ))))
+                // Val::Constructor(ordinal, arg).
+                Val::Code(Arc::new(Code::ConstructorWrap(ordinal)))
             } else {
                 // Nullary: just the tagged value.
-                Val::Constructor(
-                    Arc::from(con.name.as_str()),
-                    Box::new(Val::Unit),
-                )
+                Val::Constructor(ordinal, Box::new(Val::Unit))
             };
             r.emit_effect(Effect::AddBinding(Binding::of_name_value(
                 &con.name,

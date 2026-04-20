@@ -65,14 +65,18 @@ pub struct TypeMap {
     pub var_term_map: HashMap<Var, Term>,
     // Reference to operator definitions for looking up operator names.
     pub op_defs: Rc<Vec<OpDef>>,
+    /// Maps unifier variables to type alias names. Used during
+    /// type reconstruction to wrap resolved types in `Type::Alias`.
+    pub var_alias_map: HashMap<Var, String>,
     /// Constructor sets for user-defined datatypes. Maps datatype
     /// name → list of constructor names. Used by the coverage
     /// checker to determine whether a set of constructor patterns
     /// is exhaustive.
     pub datatype_constructors: HashMap<String, Vec<String>>,
-    /// Maps unifier variables to type alias names. Used during
-    /// type reconstruction to wrap resolved types in `Type::Alias`.
-    pub var_alias_map: HashMap<Var, String>,
+    /// Constructor argument types. Maps constructor name → argument
+    /// type. Used by the pretty printer to format record arguments
+    /// with field names.
+    pub constructor_arg_types: HashMap<String, Type>,
 }
 
 impl TypeMap {
@@ -84,8 +88,9 @@ impl TypeMap {
             node_var_map: node_var_map.clone(),
             var_term_map: HashMap::new(),
             op_defs,
-            datatype_constructors: HashMap::new(),
             var_alias_map: HashMap::new(),
+            datatype_constructors: HashMap::new(),
+            constructor_arg_types: HashMap::new(),
         }
     }
 
@@ -600,6 +605,8 @@ pub struct TypeResolver {
     /// statements. Seeded by `Session::deduce_type_inner` so that
     /// the coverage checker can see them.
     pub prior_datatype_constructors: HashMap<String, Vec<String>>,
+    /// Constructor arg types from previous statements.
+    pub prior_constructor_arg_types: HashMap<String, Type>,
 
     /// Whether to check pattern coverage (exhaustiveness and redundancy).
     /// Controlled by the `matchCoverageEnabled` property; default is true.
@@ -687,6 +694,7 @@ impl TypeResolver {
             type_aliases: HashMap::new(),
             datatype_bindings: Vec::new(),
             prior_datatype_constructors: HashMap::new(),
+            prior_constructor_arg_types: HashMap::new(),
             match_coverage_enabled: true,
             int_op,
             preferred_vars: Vec::new(),
@@ -913,6 +921,8 @@ impl TypeResolver {
         // add any new ones from this statement.
         type_map.datatype_constructors =
             self.prior_datatype_constructors.clone();
+        type_map.constructor_arg_types =
+            self.prior_constructor_arg_types.clone();
         if let DeclKind::Datatype(datatype_binds) = &decl.kind {
             for db in datatype_binds {
                 let con_names: Vec<String> =
@@ -920,6 +930,20 @@ impl TypeResolver {
                 type_map
                     .datatype_constructors
                     .insert(db.name.clone(), con_names);
+                // Store constructor argument types for the pretty
+                // printer (e.g. record arguments).
+                for con in &db.constructors {
+                    if let Some(ast_type) = &con.type_ {
+                        if let Some(arg_type) = ast_type_to_core_type_with_vars(
+                            ast_type,
+                            &db.type_vars,
+                        ) {
+                            type_map
+                                .constructor_arg_types
+                                .insert(con.name.clone(), arg_type);
+                        }
+                    }
+                }
             }
         }
 
@@ -1106,15 +1130,24 @@ impl TypeResolver {
         term_map: &mut Vec<(String, Term)>,
     ) -> Result<Decl, Error> {
         match &decl.kind {
-            DeclKind::Val(rec, inst, val_binds) => {
-                let x = &self.deduce_val_decl_type(
-                    env, *rec, *inst, val_binds, term_map,
-                )?;
-                Ok(self.reg_decl(&x, &decl.span, decl.id))
+            // lint: sort until '#}' where '##DeclKind::'
+            DeclKind::Datatype(datatype_binds) => {
+                self.deduce_datatype_decl_type(env, datatype_binds, term_map)?;
+                Ok(decl.clone())
             }
             DeclKind::Fun(fun_binds) => {
                 let val_decl = self.convert_fun_to_val(env, fun_binds);
                 self.deduce_decl_type(env, &val_decl, term_map)
+            }
+            DeclKind::Over(name) => {
+                // Register the name as an overloaded operator.
+                // At this point we don't know the type; instances
+                // will be added by subsequent `val inst` decls.
+                // We bind to a fresh variable so the name is in
+                // scope for later decls.
+                let v = self.variable();
+                term_map.push((name.clone(), Term::Variable(v)));
+                Ok(decl.clone())
             }
             DeclKind::Signature(_) => {
                 // Signatures don't have types themselves in the type system.
@@ -1137,19 +1170,11 @@ impl TypeResolver {
                 }
                 Ok(decl.clone())
             }
-            DeclKind::Datatype(datatype_binds) => {
-                self.deduce_datatype_decl_type(env, datatype_binds, term_map)?;
-                Ok(decl.clone())
-            }
-            DeclKind::Over(name) => {
-                // Register the name as an overloaded operator.
-                // At this point we don't know the type; instances
-                // will be added by subsequent `val inst` decls.
-                // We bind to a fresh variable so the name is in
-                // scope for later decls.
-                let v = self.variable();
-                term_map.push((name.clone(), Term::Variable(v)));
-                Ok(decl.clone())
+            DeclKind::Val(rec, inst, val_binds) => {
+                let x = &self.deduce_val_decl_type(
+                    env, *rec, *inst, val_binds, term_map,
+                )?;
+                Ok(self.reg_decl(&x, &decl.span, decl.id))
             }
         }
     }
@@ -3638,8 +3663,6 @@ impl TypeResolver {
             .push((*c, Rc::new(MayBeBagOrListAction { v, list_op, bag_op })));
     }
 
-    /// Checks whether a variable's term (in self.terms) is a list.
-    /// Returns false if it's a bag or unknown.
     /// Inspects the aggregate function's declared type to determine
     /// its collection kind. Per morel#271 (d751e565):
     /// - Identifier with list param → List
@@ -4707,11 +4730,15 @@ pub(crate) fn ast_type_to_core_type_with_vars(
             Some(Type::Fn(Box::new(c1), Box::new(c2)))
         }
         TypeKind::App(args, t) => {
+            // Flatten Composite args (e.g. `('a, 'b) tree` is parsed
+            // as `App([Composite(['a, 'b])], Id("tree"))` — flatten
+            // to `['a, 'b]`).
+            let flat_args = AstType::flatten(args);
             if let TypeKind::Id(name) = &t.kind
-                && args.len() == 1
+                && flat_args.len() == 1
             {
                 let arg_core =
-                    ast_type_to_core_type_with_vars(&args[0], type_vars)?;
+                    ast_type_to_core_type_with_vars(&flat_args[0], type_vars)?;
                 return Some(match name.as_str() {
                     "list" => Type::List(Box::new(arg_core)),
                     "bag" => Type::Bag(Box::new(arg_core)),
@@ -4719,13 +4746,13 @@ pub(crate) fn ast_type_to_core_type_with_vars(
                 });
             }
             if let TypeKind::Id(name) = &t.kind {
-                let arg_cores: Vec<Type> = args
+                let arg_cores: Vec<Type> = flat_args
                     .iter()
                     .filter_map(|a| {
                         ast_type_to_core_type_with_vars(a, type_vars)
                     })
                     .collect();
-                if arg_cores.len() == args.len() {
+                if arg_cores.len() == flat_args.len() {
                     return Some(Type::Data(name.clone(), arg_cores));
                 }
             }

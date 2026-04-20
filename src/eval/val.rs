@@ -30,6 +30,11 @@ use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+/// Sentinel ordinal for the built-in `DESC` constructor of the
+/// `descending` datatype. Distinct from any user-defined constructor
+/// ordinal (which are 0-based).
+pub const DESC_ORDINAL: usize = usize::MAX;
+
 /// Runtime value.
 ///
 /// The [Val::Typed], [Val::Named], [Val::Labeled], and [Val::Type] variants are
@@ -62,13 +67,14 @@ pub enum Val {
     /// `Inr(v)` represents the `Either` value `INR v`.
     Inr(Box<Val>),
 
-    /// `Constructor(name, v)` represents a user-defined datatype
-    /// constructor application. Nullary constructors carry
-    /// `Val::Unit`. For example, `Y 0` of `datatype foo = ... |
-    /// Y of int` becomes `Constructor("Y", Box::new(Int(0)))`.
-    /// The name is `Arc<str>` so that cloning a constructor
-    /// value does not copy the string.
-    Constructor(Arc<str>, Box<Val>),
+    /// `Constructor(ordinal, v)` represents a user-defined datatype
+    /// constructor application. `ordinal` is the 0-based position of the
+    /// constructor in the datatype declaration (used for comparison
+    /// ordering). Nullary constructors carry `Val::Unit`. For example,
+    /// `Y 0` of `datatype foo = X | Y of int` becomes
+    /// `Constructor(1, Box::new(Int(0)))`. The built-in `DESC`
+    /// constructor uses [`DESC_ORDINAL`] as its ordinal.
+    Constructor(usize, Box<Val>),
 
     /// Wrapper that indicates that a value should be printed with its name
     /// and type.
@@ -287,11 +293,11 @@ impl Display for Val {
             Val::Char(c) => {
                 write!(f, "#\"{}\"", parser::string_to_string(&c.to_string()))
             }
-            Val::Constructor(name, v) => {
+            Val::Constructor(ordinal, v) => {
                 if **v == Val::Unit {
-                    write!(f, "{}", name)
+                    write!(f, "#{}", ordinal)
                 } else {
-                    write!(f, "{} {}", name, v)
+                    write!(f, "#{} {}", ordinal, v)
                 }
             }
             Val::Fn(func) => write!(f, "{:?}", func),
@@ -386,9 +392,9 @@ impl Hash for Val {
                 12.hash(state);
                 v.hash(state);
             }
-            Val::Constructor(name, v) => {
+            Val::Constructor(ordinal, v) => {
                 20.hash(state);
-                name.hash(state);
+                ordinal.hash(state);
                 v.hash(state);
             }
             Val::Typed(boxed) => {

@@ -23,6 +23,7 @@ use crate::compile::type_parser;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::bool::Bool;
 use crate::eval::char::Char;
+use crate::eval::comparator::Comparator;
 use crate::eval::either::Either;
 use crate::eval::frame::FrameDef;
 use crate::eval::int::Int;
@@ -36,7 +37,7 @@ use crate::eval::relational::Relational;
 use crate::eval::row_sink::RowSinkFactory;
 use crate::eval::session::Session;
 use crate::eval::string::Str;
-use crate::eval::val::Val;
+use crate::eval::val::{self, Val};
 use crate::eval::vector::Vector;
 use crate::shell::main::{MorelError, Shell};
 use crate::shell::prop::{Configurable, Prop};
@@ -95,6 +96,28 @@ pub enum Effect {
     UseFile(String, bool),
 }
 
+/// Wrapper around `Arc<dyn Comparator>` that implements `Clone`,
+/// `PartialEq`, and `Debug` so it can be stored in `Code` variants.
+pub struct CmpRef(pub Arc<dyn Comparator>);
+
+impl Clone for CmpRef {
+    fn clone(&self) -> Self {
+        CmpRef(Arc::clone(&self.0))
+    }
+}
+
+impl PartialEq for CmpRef {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for CmpRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Comparator(...)")
+    }
+}
+
 /// Generated code that can be evaluated.
 #[derive(Clone, PartialEq, Debug)]
 pub enum Code {
@@ -122,11 +145,11 @@ pub enum Code {
     /// type-constructor called `name` and its argument matches `pat`.
     /// (Zero argument constructors become [Code::BindLiteral].)
     BindConstructor(String, Box<Code>),
-    /// `BindConstructor2(name, pat_code)` matches a user-defined
+    /// `BindConstructor2(ordinal, pat_code)` matches a user-defined
     /// constructor value. It succeeds if `a0` is
-    /// `Val::Constructor(name, inner)` and the inner value matches
+    /// `Val::Constructor(ordinal, inner)` and the inner value matches
     /// `pat_code`.
-    BindConstructor2(Arc<str>, Option<Box<Code>>),
+    BindConstructor2(usize, Option<Box<Code>>),
     /// `BindList(patterns)` succeeds if the argument is a list the same length
     /// as `patterns` and each element successfully binds.
     BindList(Vec<Code>),
@@ -149,17 +172,21 @@ pub enum Code {
     /// the case expression's source location).
     Case(Vec<Code>, Option<MorelError>),
 
+    /// `Compare(comparator, a, b)` evaluates `a` and `b`, compares
+    /// them using the type-directed comparator, and returns
+    /// `Val::Order`.
+    Compare(CmpRef, Box<Code>, Box<Code>),
+
     /// `Constant(type, val)` returns the value `val`. The type lets us display
     /// the value more intelligently.
     Constant(Box<Type>, Val),
 
-    /// `ConstructorWrap(name)` is a function that, when applied
+    /// `ConstructorWrap(ordinal)` is a function that, when applied
     /// to a value via `eval_f1`, wraps it in
-    /// `Val::Constructor(name, Box::new(arg))`. Used as the
+    /// `Val::Constructor(ordinal, Box::new(arg))`. Used as the
     /// runtime representation of value-carrying user-defined
-    /// datatype constructors. The name is `Arc<str>` so that
-    /// cloning the code and resulting values is cheap.
-    ConstructorWrap(Arc<str>),
+    /// datatype constructors.
+    ConstructorWrap(usize),
 
     /// `CreateClosure(frame, matches, binds, no_match)` creates a
     /// [Val::Closure] value that is similar to a function, but has a
@@ -208,6 +235,12 @@ pub enum Code {
     /// collects the results. The `scan_slots` specify which frame
     /// slots receive the element values.
     MapElements(Box<Code>, Box<Code>, Vec<usize>),
+    /// `Max(comparator, list_code)` evaluates the list and returns
+    /// its maximum element using the type-directed comparator.
+    Max(CmpRef, Box<Code>),
+    /// `Min(comparator, list_code)` evaluates the list and returns
+    /// its minimum element using the type-directed comparator.
+    Min(CmpRef, Box<Code>),
     Native0(Eager0),
     Native1(Eager1, Box<Code>),
     /// `Native2(eager, code0, code1, gather)`: if `gather` is true,
@@ -277,6 +310,7 @@ impl Code {
     pub(crate) fn new_bind_constructor(
         type_: &Type,
         name: &str,
+        ordinal: Option<usize>,
         t: &Option<Code>,
     ) -> Code {
         // Determine whether this is a built-in constructor (SOME,
@@ -291,7 +325,7 @@ impl Code {
         if !is_builtin {
             // User-defined constructor: use BindConstructor2.
             return Code::BindConstructor2(
-                Arc::from(name),
+                ordinal.expect("user-defined constructor must have ordinal"),
                 t.clone().map(Box::new),
             );
         }
@@ -538,6 +572,7 @@ impl Code {
             Code::Case(_, _) => {
                 *mode == EvalMode::EagerV1 || *mode == EvalMode::EagerF0
             }
+            Code::Compare(_, _, _) => *mode == EvalMode::EagerF0,
             Code::Constant(_, _) => {
                 *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
             }
@@ -554,6 +589,8 @@ impl Code {
             Code::Let(_, _) => *mode == EvalMode::Eager0,
             Code::Link(_, _) => todo!("{:?}", self),
             Code::MapElements(_, _, _) => *mode == EvalMode::EagerF0,
+            Code::Max(_, _) => *mode == EvalMode::EagerF0,
+            Code::Min(_, _) => *mode == EvalMode::EagerF0,
             Code::Native0(_) => *mode == EvalMode::Eager0,
             Code::Native1(_, _) => {
                 *mode == EvalMode::Eager1 || *mode == EvalMode::EagerF0
@@ -630,6 +667,11 @@ impl Code {
                 Err(no_match.clone().unwrap_or_else(|| {
                     MorelError::Runtime(BuiltInExn::Match, Span::new("stdIn"))
                 }))
+            }
+            Code::Compare(cmp, a_code, b_code) => {
+                let a = a_code.eval_f0(r, f)?;
+                let b = b_code.eval_f0(r, f)?;
+                Ok(Val::Order(Order(cmp.0.compare(&a, &b))))
             }
             Code::Constant(_, c) => Ok(c.clone()),
             Code::ConstructorWrap(_) => Ok(Val::Code(Arc::new(self.clone()))),
@@ -728,6 +770,36 @@ impl Code {
                     f.vals[s] = saved[i].clone();
                 }
                 Ok(Val::List(mapped))
+            }
+            Code::Max(cmp, list_code) => {
+                let list = list_code.eval_f0(r, f)?;
+                let items = list.expect_list();
+                if items.is_empty() {
+                    return Err(MorelError::Runtime(
+                        BuiltInExn::Empty,
+                        Span::new("Relational.max"),
+                    ));
+                }
+                Ok(items
+                    .iter()
+                    .max_by(|a, b| cmp.0.compare(a, b))
+                    .unwrap()
+                    .clone())
+            }
+            Code::Min(cmp, list_code) => {
+                let list = list_code.eval_f0(r, f)?;
+                let items = list.expect_list();
+                if items.is_empty() {
+                    return Err(MorelError::Runtime(
+                        BuiltInExn::Empty,
+                        Span::new("Relational.min"),
+                    ));
+                }
+                Ok(items
+                    .iter()
+                    .min_by(|a, b| cmp.0.compare(a, b))
+                    .unwrap()
+                    .clone())
             }
             Code::Native0(eager) => Ok(eager.apply()),
             Code::Native1(eager, code0) => {
@@ -874,10 +946,12 @@ impl Code {
                     _ => Ok(Val::Bool(false)),
                 }
             }
-            Code::BindConstructor2(name, pat_code) => {
+            Code::BindConstructor2(ordinal, pat_code) => {
                 // User-defined constructor pattern.
                 match a0 {
-                    Val::Constructor(con_name, inner) if con_name == name => {
+                    Val::Constructor(con_ordinal, inner)
+                        if con_ordinal == ordinal =>
+                    {
                         if let Some(pat) = pat_code {
                             pat.eval_f1(r, f, inner)
                         } else {
@@ -926,8 +1000,8 @@ impl Code {
                 }))
             }
             Code::Constant(_, v) => Ok(v.clone()),
-            Code::ConstructorWrap(name) => {
-                Ok(Val::Constructor(name.clone(), Box::new(a0.clone())))
+            Code::ConstructorWrap(ordinal) => {
+                Ok(Val::Constructor(*ordinal, Box::new(a0.clone())))
             }
             Code::CreateClosure(frame_def, matches, bind_codes, no_match) => {
                 // Build the closure's bound values from the current
@@ -1198,8 +1272,8 @@ impl Display for Code {
             Self::BindAnd(codes) => {
                 Self::write_codes(f, "bindAnd(", codes, ")")
             }
-            Self::BindConstructor2(name, _) => {
-                write!(f, "bindCon2({})", name)
+            Self::BindConstructor2(ordinal, _) => {
+                write!(f, "bindCon2(#{})", ordinal)
             }
             Self::BindLiteral(v) => write!(f, "{}", v),
             Self::BindSlot(_, slot) => write!(f, "bind({})", slot),
@@ -1208,6 +1282,7 @@ impl Display for Code {
             }
             Self::BindWildcard => write!(f, "_"),
             Self::Case(codes, _) => Self::write_codes(f, "case(", codes, ")"),
+            Self::Compare(_, a, b) => write!(f, "compare({}, {})", a, b),
             Self::Constant(_, v) => match v {
                 Val::Char(c) => write!(f, "constant({})", c),
                 Val::Fn(fun) => write!(f, "constant({})", fun.full_name()),
@@ -1216,8 +1291,8 @@ impl Display for Code {
                 Val::Unit => write!(f, "constant([NONE])"),
                 _ => write!(f, "constant({})", v),
             },
-            Self::ConstructorWrap(name) => {
-                write!(f, "conWrap({})", name)
+            Self::ConstructorWrap(ordinal) => {
+                write!(f, "conWrap(#{})", ordinal)
             }
             Self::CreateClosure(_, matches, bind_codes, _) => {
                 write!(f, "createClosure(captures(")?;
@@ -1993,7 +2068,7 @@ impl Eager1 {
             CharToLower => Val::Char(Char::to_lower(a0.expect_char())),
             CharToString => Val::String(Char::to_string(a0.expect_char())),
             CharToUpper => Val::Char(Char::to_upper(a0.expect_char())),
-            DescendingDesc => Val::Constructor(Arc::from("DESC"), Box::new(a0)),
+            DescendingDesc => Val::Constructor(val::DESC_ORDINAL, Box::new(a0)),
             EitherAsLeft => Either::as_left(&a0),
             EitherAsRight => Either::as_right(&a0),
             EitherInl => Val::Inl(Box::new(a0)),

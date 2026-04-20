@@ -58,6 +58,9 @@ pub struct Session {
     /// coverage checker knows the constructor set of previously
     /// declared datatypes.
     pub datatype_constructors: HashMap<String, Vec<String>>,
+    /// Constructor argument types accumulated across statements.
+    /// Used by the pretty printer to format record arguments.
+    pub constructor_arg_types: HashMap<String, Type>,
     /// Accumulated overload instance types. Maps overloaded name
     /// to a list of instance types (one per `val inst` declaration).
     pub overloads: HashMap<String, Vec<Type>>,
@@ -90,6 +93,7 @@ impl Session {
             type_bindings: HashMap::new(),
             type_aliases: HashMap::new(),
             datatype_constructors: HashMap::new(),
+            constructor_arg_types: HashMap::new(),
             overloads: HashMap::new(),
             // debug_id: id,
         }
@@ -159,6 +163,8 @@ impl Session {
         type_resolver.type_aliases = self.type_aliases.clone();
         type_resolver.prior_datatype_constructors =
             self.datatype_constructors.clone();
+        type_resolver.prior_constructor_arg_types =
+            self.constructor_arg_types.clone();
         type_resolver.seed_overloads = self.overloads.clone();
 
         // Use the accumulated type environment from previous statements
@@ -191,6 +197,9 @@ impl Session {
         for (name, cons) in &resolved.type_map.datatype_constructors {
             self.datatype_constructors
                 .insert(name.clone(), cons.clone());
+        }
+        for (name, t) in &resolved.type_map.constructor_arg_types {
+            self.constructor_arg_types.insert(name.clone(), t.clone());
         }
 
         Ok(resolved)
