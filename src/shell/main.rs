@@ -491,12 +491,13 @@ impl Shell {
 
                 // Remove the semicolon, then parse/execute the statement
                 statement_buffer.pop();
-                let raw = self
-                    .process_statement(
-                        &statement_buffer,
-                        Some(&expected_output_buffer),
-                    )
-                    .unwrap();
+                let raw = match self.process_statement(
+                    &statement_buffer,
+                    Some(&expected_output_buffer),
+                ) {
+                    Ok(s) => s,
+                    Err(e) => format!("{}\n", e),
+                };
                 let formatted = if idempotent {
                     prefix_lines(">", &raw)
                 } else {
@@ -550,12 +551,11 @@ impl Shell {
         // Try to parse the statement
         let statement = match parser::parse_statement(&actual_code) {
             Err(e) => {
-                let string = e.to_string();
-                println!("Failed to parse: {}, err {}", &actual_code, string);
-                return Err(Error::Parse(format!(
-                    "Failed to parse: {}, err {}",
-                    &actual_code, string,
-                )));
+                let span = Span::from_line_col(&e.line_col);
+                return Ok(format!(
+                    "{} Error: syntax error\n  raised at: {}\n",
+                    span, span
+                ));
             }
             Ok(statement) => statement,
         };
