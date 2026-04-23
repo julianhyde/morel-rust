@@ -35,6 +35,20 @@ use std::sync::Arc;
 /// ordinal (which are 0-based).
 pub const DESC_ORDINAL: usize = usize::MAX;
 
+/// Sentinel ordinals for the 10 built-in constructors of the `range`
+/// datatype. Distinct from any user-defined constructor ordinal (which
+/// are 0-based) and from [`DESC_ORDINAL`].
+pub const RANGE_ALL_ORDINAL: usize = usize::MAX - 10;
+pub const RANGE_AT_LEAST_ORDINAL: usize = usize::MAX - 11;
+pub const RANGE_AT_MOST_ORDINAL: usize = usize::MAX - 12;
+pub const RANGE_CLOSED_ORDINAL: usize = usize::MAX - 13;
+pub const RANGE_CLOSED_OPEN_ORDINAL: usize = usize::MAX - 14;
+pub const RANGE_GREATER_THAN_ORDINAL: usize = usize::MAX - 15;
+pub const RANGE_LESS_THAN_ORDINAL: usize = usize::MAX - 16;
+pub const RANGE_OPEN_ORDINAL: usize = usize::MAX - 17;
+pub const RANGE_OPEN_CLOSED_ORDINAL: usize = usize::MAX - 18;
+pub const RANGE_POINT_ORDINAL: usize = usize::MAX - 19;
+
 /// Runtime value.
 ///
 /// The [Val::Typed], [Val::Named], [Val::Labeled], and [Val::Type] variants are

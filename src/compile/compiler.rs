@@ -1122,6 +1122,10 @@ impl<'a> Compiler<'a> {
                     Val::Fn(BuiltInFunction::OrderGreater) => {
                         Val::Order(Order(Ordering::Greater))
                     }
+                    Val::Fn(BuiltInFunction::RangeAll) => Val::Constructor(
+                        crate::eval::val::RANGE_ALL_ORDINAL,
+                        Box::new(Val::Unit),
+                    ),
                     _ => val.clone(),
                 };
                 Code::new_constant(type_, val2.clone())

@@ -1569,6 +1569,7 @@ pub enum Eager0 {
     OrderEqual,
     OrderGreater,
     OrderLess,
+    RangeAll,
     RealMaxFinite,
     RealMinNormalPos,
     RealMinPos,
@@ -1602,6 +1603,9 @@ impl Eager0 {
             OrderEqual => Val::Order(Order(Ordering::Equal)),
             OrderGreater => Val::Order(Order(Ordering::Greater)),
             OrderLess => Val::Order(Order(Ordering::Less)),
+            RangeAll => {
+                Val::Constructor(val::RANGE_ALL_ORDINAL, Box::new(Val::Unit))
+            }
             RealMaxFinite => Val::Real(f32::MAX),
             RealMinNormalPos => Val::Real(f32::MIN_POSITIVE),
             // Smallest denormalized positive (2^-149)
@@ -1970,6 +1974,15 @@ pub enum Eager1 {
     OptionIsSome,
     OptionJoin,
     OptionSome,
+    RangeAtLeast,
+    RangeAtMost,
+    RangeClosed,
+    RangeClosedOpen,
+    RangeGreaterThan,
+    RangeLessThan,
+    RangeOpen,
+    RangeOpenClosed,
+    RangePoint,
     RealAbs,
     RealFromInt,
     RealFromString,
@@ -2091,6 +2104,33 @@ impl Eager1 {
             OptionIsSome => Val::Bool(Opt::is_some(&a0)),
             OptionJoin => Opt::join(&a0),
             OptionSome => Val::Some(Box::new(a0)),
+            RangeAtLeast => {
+                Val::Constructor(val::RANGE_AT_LEAST_ORDINAL, Box::new(a0))
+            }
+            RangeAtMost => {
+                Val::Constructor(val::RANGE_AT_MOST_ORDINAL, Box::new(a0))
+            }
+            RangeClosed => {
+                Val::Constructor(val::RANGE_CLOSED_ORDINAL, Box::new(a0))
+            }
+            RangeClosedOpen => {
+                Val::Constructor(val::RANGE_CLOSED_OPEN_ORDINAL, Box::new(a0))
+            }
+            RangeGreaterThan => {
+                Val::Constructor(val::RANGE_GREATER_THAN_ORDINAL, Box::new(a0))
+            }
+            RangeLessThan => {
+                Val::Constructor(val::RANGE_LESS_THAN_ORDINAL, Box::new(a0))
+            }
+            RangeOpen => {
+                Val::Constructor(val::RANGE_OPEN_ORDINAL, Box::new(a0))
+            }
+            RangeOpenClosed => {
+                Val::Constructor(val::RANGE_OPEN_CLOSED_ORDINAL, Box::new(a0))
+            }
+            RangePoint => {
+                Val::Constructor(val::RANGE_POINT_ORDINAL, Box::new(a0))
+            }
             RealAbs => Val::Real(Real::abs(a0.expect_real())),
             RealFromInt => Val::Real(Real::from_int(a0.expect_int())),
             RealFromString => Real::from_string(&a0.expect_string()),
@@ -3386,6 +3426,16 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager0::OrderEqual.implements(&mut b, OrderEqual);
     Eager0::OrderGreater.implements(&mut b, OrderGreater);
     Eager0::OrderLess.implements(&mut b, OrderLess);
+    Eager0::RangeAll.implements(&mut b, RangeAll);
+    Eager1::RangeAtLeast.implements(&mut b, RangeAtLeast);
+    Eager1::RangeAtMost.implements(&mut b, RangeAtMost);
+    Eager1::RangeClosed.implements(&mut b, RangeClosed);
+    Eager1::RangeClosedOpen.implements(&mut b, RangeClosedOpen);
+    Eager1::RangeGreaterThan.implements(&mut b, RangeGreaterThan);
+    Eager1::RangeLessThan.implements(&mut b, RangeLessThan);
+    Eager1::RangeOpen.implements(&mut b, RangeOpen);
+    Eager1::RangeOpenClosed.implements(&mut b, RangeOpenClosed);
+    Eager1::RangePoint.implements(&mut b, RangePoint);
     Eager1::RealFromInt.implements(&mut b, Real);
     Eager1::RealAbs.implements(&mut b, RealAbs);
     EagerF1::RealCeil.implements(&mut b, RealCeil);

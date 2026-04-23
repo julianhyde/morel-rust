@@ -725,6 +725,36 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Order", name = "LESS", global = true))]
     #[strum(props(type = "`order`", constructor = true))]
     OrderLess,
+    #[strum(props(p = "Range", name = "ALL", global = true))]
+    #[strum(props(type = "forall 1 'a range", constructor = true))]
+    RangeAll,
+    #[strum(props(p = "Range", name = "AT_LEAST", global = true))]
+    #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
+    RangeAtLeast,
+    #[strum(props(p = "Range", name = "AT_MOST", global = true))]
+    #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
+    RangeAtMost,
+    #[strum(props(p = "Range", name = "CLOSED", global = true))]
+    #[strum(props(type = "forall 1 'a * 'a -> 'a range", constructor = true))]
+    RangeClosed,
+    #[strum(props(p = "Range", name = "CLOSED_OPEN", global = true))]
+    #[strum(props(type = "forall 1 'a * 'a -> 'a range", constructor = true))]
+    RangeClosedOpen,
+    #[strum(props(p = "Range", name = "GREATER_THAN", global = true))]
+    #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
+    RangeGreaterThan,
+    #[strum(props(p = "Range", name = "LESS_THAN", global = true))]
+    #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
+    RangeLessThan,
+    #[strum(props(p = "Range", name = "OPEN", global = true))]
+    #[strum(props(type = "forall 1 'a * 'a -> 'a range", constructor = true))]
+    RangeOpen,
+    #[strum(props(p = "Range", name = "OPEN_CLOSED", global = true))]
+    #[strum(props(type = "forall 1 'a * 'a -> 'a range", constructor = true))]
+    RangeOpenClosed,
+    #[strum(props(p = "Range", name = "POINT", global = true))]
+    #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
+    RangePoint,
     /// `real` is a synonym for `Real.fromInt`
     #[strum(props(name = "real", type = "int -> real", global = true))]
     Real,
@@ -1110,6 +1140,8 @@ pub enum BuiltInRecord {
     Math,
     #[strum(props(name = "Option"))]
     Option,
+    #[strum(props(name = "Range"))]
+    Range,
     #[strum(props(name = "Real"))]
     Real,
     #[strum(props(name = "Relational"))]
