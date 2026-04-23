@@ -275,6 +275,12 @@ pub enum Code {
     /// `Range.contains` handles element types whose order differs from
     /// the natural ordering (e.g. `descending`).
     RangeContains(CmpRef, Box<Code>, Box<Code>),
+    /// `RangeContinuousSetOf(cmp, ranges_code)` evaluates the input
+    /// list of ranges and returns a normalized `continuous_set` — a
+    /// `Val::Constructor(CONTINUOUS_SET_ORDINAL, ...)` wrapping the
+    /// merged range list. The pre-built type-directed comparator
+    /// handles element types with non-natural ordering.
+    RangeContinuousSetOf(CmpRef, Box<Code>),
     Tuple(Vec<Code>),
 }
 
@@ -623,6 +629,7 @@ impl Code {
                 *mode == EvalMode::Eager1 || *mode == EvalMode::EagerF0
             }
             Code::RangeContains(_, _, _) => *mode == EvalMode::EagerF0,
+            Code::RangeContinuousSetOf(_, _) => *mode == EvalMode::EagerF0,
             Code::Tuple(_) => *mode == EvalMode::EagerF0,
         }
     }
@@ -877,6 +884,17 @@ impl Code {
                 let range = range_code.eval_f0(r, f)?;
                 let value = value_code.eval_f0(r, f)?;
                 Ok(Val::Bool(range_contains(&*cmp.0, &range, &value)))
+            }
+            Code::RangeContinuousSetOf(cmp, ranges_code) => {
+                let ranges = ranges_code.eval_f0(r, f)?;
+                let merged = crate::eval::bound::from_ranges(
+                    ranges.expect_list(),
+                    &*cmp.0,
+                );
+                Ok(Val::Constructor(
+                    val::CONTINUOUS_SET_ORDINAL,
+                    Box::new(Val::List(merged)),
+                ))
             }
             Code::Tuple(codes) => {
                 let mut values = Vec::with_capacity(codes.capacity());
@@ -2175,10 +2193,19 @@ impl Eager1 {
                 Val::Constructor(val::RANGE_CLOSED_OPEN_ORDINAL, Box::new(a0))
             }
             RangeContinuousSetOf => {
-                // TODO: normalize (merge overlapping/touching ranges).
-                // Until Bound-based merging lands, wrap the input list
-                // as-is.
-                Val::Constructor(val::CONTINUOUS_SET_ORDINAL, Box::new(a0))
+                // Fallback when the compiler did not intercept the
+                // call (e.g. partial application). Uses
+                // `NaturalComparator`, which is correct for primitive
+                // element types but wrong for `descending` and other
+                // non-natural orderings.
+                let merged = crate::eval::bound::from_ranges(
+                    a0.expect_list(),
+                    &crate::eval::comparator::NaturalComparator,
+                );
+                Val::Constructor(
+                    val::CONTINUOUS_SET_ORDINAL,
+                    Box::new(Val::List(merged)),
+                )
             }
             RangeDiscreteSetOf => {
                 // TODO: normalize and validate the element type is

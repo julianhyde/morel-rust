@@ -654,6 +654,33 @@ impl<'a> Compiler<'a> {
                                 Code::Min(cmp, Box::new(arg))
                             };
                         }
+                        // Intercept Range.continuousSetOf to build a
+                        // type-directed comparator from the element
+                        // type inside `'a range list`.
+                        if *f == BuiltInFunction::RangeContinuousSetOf {
+                            let elem_type = match a.type_().as_ref() {
+                                Type::List(r) => match r.as_ref() {
+                                    Type::Data(name, args)
+                                        if name == "range"
+                                            && !args.is_empty() =>
+                                    {
+                                        args[0].clone()
+                                    }
+                                    _ => *a.type_(),
+                                },
+                                _ => *a.type_(),
+                            };
+                            let cmp = CmpRef(comparator::comparator_for_with(
+                                &elem_type,
+                                &self.type_map.datatype_constructors,
+                                &self.type_map.constructor_arg_types,
+                            ));
+                            let arg = self.compile_arg(cx, a);
+                            return Code::RangeContinuousSetOf(
+                                cmp,
+                                Box::new(arg),
+                            );
+                        }
                         let arg = self.compile_arg(cx, a);
                         let codes: Vec<Box<Code>> = vec![Box::new(arg)];
                         return Code::new_native(impl_, &codes, span);
