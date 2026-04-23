@@ -3612,6 +3612,16 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     b.build()
 });
 
+/// Returns true for functions that are ML-style datatype constructors
+/// (e.g. `DESC`, `POINT`, `NONE`, `SOME`) and should be omitted from the
+/// parent structure's record value. Excludes the conventional
+/// lowercase-named values `nil` and similar, which morel-java includes
+/// in `List;` / `Bag;` as empty-collection values.
+fn is_datatype_constructor(f: BuiltInFunction, name: &str) -> bool {
+    f.is_constructor()
+        && name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+}
+
 impl LibBuilder {
     fn build(&mut self) -> Lib {
         // Populate a table of functions and structures that are in the global
@@ -3645,7 +3655,16 @@ impl LibBuilder {
 
             if let Some((parent, name)) = BuiltIn::Fn(f).heritage()
                 && let Ok(r) = BuiltInRecord::from_str(parent)
+                && !is_datatype_constructor(f, name)
             {
+                // ML-style datatype constructors (e.g. DESC, POINT,
+                // CLOSED, NONE, SOME) have a parent structure for
+                // namespacing and are accessible as globals, but they
+                // are not members of the structure's record value.
+                // Morel-java's `Relational;`, `Range;`, `Option;` show
+                // only functions, not constructors. But `List.nil` /
+                // `Bag.nil` are conventional values (empty list/bag)
+                // and DO appear in their parent structure.
                 structure_names_fns
                     .entry(r)
                     .or_default()
