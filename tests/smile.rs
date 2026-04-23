@@ -118,6 +118,12 @@ fn regex_example() {
 }
 
 #[test]
+#[ignore = "Range structure not yet implemented (hydromatic/morel#338)"]
+fn range() {
+    run_script("tests/script/range.smli");
+}
+
+#[test]
 fn relational() {
     run_script("tests/script/relational.smli");
 }
