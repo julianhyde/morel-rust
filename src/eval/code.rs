@@ -1802,6 +1802,7 @@ pub enum EagerF1 {
     CharChr,
     CharPred,
     CharSucc,
+    IntAbs,
     InteractUse,
     InteractUseSilently,
     ListHd,
@@ -1844,7 +1845,7 @@ impl EagerF1 {
         #[expect(clippy::enum_glob_use)]
         use EagerF1::*;
         match self {
-            BagHd | BagTl | CharChr | CharPred | CharSucc | ListHd
+            BagHd | BagTl | CharChr | CharPred | CharSucc | IntAbs | ListHd
             | ListLast | ListTl | OptionValOf | RealCeil | RealCheckFloat
             | RealFloor | RealRound | RealSign | RealTrunc | RelationalMax
             | RelationalMin | RelationalOnly => true,
@@ -1871,6 +1872,17 @@ impl EagerF1 {
             CharChr => Char::chr(a0.expect_int(), span.unwrap()),
             CharPred => Char::pred(a0.expect_char(), span.unwrap()),
             CharSucc => Char::succ(a0.expect_char(), span.unwrap()),
+            IntAbs => {
+                let i = a0.expect_int();
+                if i == i32::MIN {
+                    Err(MorelError::Runtime(
+                        BuiltInExn::Overflow,
+                        span.unwrap().clone(),
+                    ))
+                } else {
+                    Ok(Val::Int(i.abs()))
+                }
+            }
             InteractUse => {
                 let path = a0.expect_string();
                 r.emit_effect(Effect::EmitLine(format!("[opening {}]", path)));
@@ -1973,7 +1985,6 @@ pub enum Eager1 {
     EitherProj,
     FnId,
     GeneralIgnore,
-    IntAbs,
     IntFromInt,
     IntFromLarge,
     IntFromString,
@@ -2092,7 +2103,6 @@ impl Eager1 {
             EitherProj => Either::proj(&a0),
             FnId => a0,
             GeneralIgnore => Val::Unit,
-            IntAbs => Val::Int(a0.expect_int().abs()),
             IntFromInt => a0,
             IntFromLarge => a0,
             IntFromString => match Int::from_string(&a0.expect_string()) {
@@ -3054,6 +3064,7 @@ impl Eager3 {
 pub enum Custom {
     // lint: sort until '#}'
     BoolIf,
+    GAbs,
     GEq,
     GGe,
     GGt,
@@ -3084,6 +3095,11 @@ impl Custom {
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
             BoolIf => panic!("Not implemented"),
+            GAbs => match a0 {
+                Val::Int(x) => Val::Int(x.abs()),
+                Val::Real(x) => Val::Real(x.abs()),
+                _ => panic!("Type error in abs"),
+            },
             GEq => Val::Bool(norm(a0) == norm(a1)),
             GGe => match (a0, a1) {
                 (Val::Int(x), Val::Int(y)) => Val::Bool(x >= y),
@@ -3293,6 +3309,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     EagerF2::FnO.implements(&mut b, FnO);
     EagerF3::FnRepeat.implements(&mut b, FnRepeat);
     EagerF2::FnUncurry.implements(&mut b, FnUncurry);
+    Custom::GAbs.implements(&mut b, GAbs);
     Custom::GEq.implements(&mut b, GEq);
     Custom::GGe.implements(&mut b, GGe);
     Custom::GGt.implements(&mut b, GGt);
@@ -3305,7 +3322,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Custom::GTimes.implements(&mut b, GTimes);
     Eager1::GeneralIgnore.implements(&mut b, GeneralIgnore);
     EagerF2::FnO.implements(&mut b, GeneralO);
-    Eager1::IntAbs.implements(&mut b, IntAbs);
+    EagerF1::IntAbs.implements(&mut b, IntAbs);
     Eager2::IntCompare.implements(&mut b, IntCompare);
     Eager2::IntDiv.implements(&mut b, IntDiv);
     Eager2::IntEq.implements(&mut b, IntEq);

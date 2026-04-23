@@ -303,9 +303,13 @@ set("mode", "evaluate");
 (*) TODO !;
 (* "val := : 'a ref * 'a -> unit" maps to "General.:=" *)
 (*) TODO :=;
-(* "val ~ : int -> int" maps to "Int.~" *)
+(* "val ~ : int -> int" maps to "Int.~"; overloaded for real *)
 op ~;
 > val it = fn : int -> int
+~ 5;
+> val it = ~5 : int
+~ 3.5;
+> val it = ~3.5 : real
 (* "val + : int * int -> int" maps to "Int.+" *)
 op +;
 > val it = fn : int * int -> int
@@ -321,6 +325,16 @@ op @;
 (* "val ^ : string * string -> string" maps to "String.^" *)
 op ^;
 > val it = fn : string * string -> string
+(* "val abs : int -> int" maps to "Int.abs"; overloaded for real *)
+abs;
+> val it = fn : 'a -> 'a
+abs ~3;
+> val it = 3 : int
+abs (valOf Int.minInt);
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.1-1.23
+abs ~3.5;
+> val it = 3.5 : real
 (* "val app : ('a -> unit) -> 'a list -> unit" maps to "List.app" *)
 app;
 > val it = fn : ('a -> unit) -> 'a list -> unit
@@ -3029,6 +3043,9 @@ Int.abs 5;
 > val it = 5 : int
 Int.abs ~3;
 > val it = 3 : int
+Int.abs (valOf Int.minInt);
+> uncaught exception Overflow [overflow]
+>   raised at: stdIn:1.1-1.27
 Int.compare;
 > val it = fn : int * int -> order
 Int.compare (4, 3);
