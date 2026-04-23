@@ -131,7 +131,7 @@ pub fn code_equal(type_: &Type, code0: &str, code1: &str) -> bool {
 }
 
 /// Parsed value tree: an atomic string, or a list of sub-values.
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 enum Parsed {
     Atom(String),
     Seq(Vec<Parsed>),
@@ -772,8 +772,10 @@ mod tests {
         fields.insert(Label::from("name"), string());
         fields.insert(Label::from("values"), int_bag());
         let rec = Type::Record(false, fields);
-        let a = "val r = {name=\"test\",values=[30,10,20]} : {name:string, values:int bag}";
-        let b = "val r = {name=\"test\",values=[10,20,30]} : {name:string, values:int bag}";
+        let a = "val r = {name=\"test\",values=[30,10,20]} \
+                 : {name:string, values:int bag}";
+        let b = "val r = {name=\"test\",values=[10,20,30]} \
+                 : {name:string, values:int bag}";
         assert!(equivalent_with_type(&rec, a, b));
     }
 
