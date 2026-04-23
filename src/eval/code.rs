@@ -18,6 +18,7 @@
 use crate::compile::library::{
     BuiltIn, BuiltInExn, BuiltInFunction, BuiltInRecord,
 };
+use crate::compile::span::Span;
 use crate::compile::type_env::Binding;
 use crate::compile::type_parser;
 use crate::compile::types::{Label, PrimitiveType, Type};
@@ -1419,10 +1420,6 @@ impl Display for Code {
         }
     }
 }
-
-// Span is defined in compile::span and re-exported here for
-// backward compatibility.
-pub use crate::compile::span::Span;
 
 /// Stack frame for evaluating [Code].
 pub struct Frame<'a> {

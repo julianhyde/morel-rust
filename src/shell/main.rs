@@ -24,11 +24,12 @@
 use crate::compile::inliner::Env;
 use crate::compile::library::BuiltInExn;
 use crate::compile::resolver;
+use crate::compile::span::Span;
 use crate::compile::type_env::{Binding, EmptyTypeEnv, FunTypeEnv, TypeEnv};
 use crate::compile::type_resolver::Resolved;
 use crate::compile::types::{PrimitiveType, Type};
 use crate::compile::{compiler, inliner, library};
-use crate::eval::code::{Effect, Span};
+use crate::eval::code::Effect;
 use crate::eval::link_table::LinkTable;
 use crate::eval::session::Config as SessionConfig;
 use crate::eval::session::Session;
