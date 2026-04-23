@@ -30,7 +30,8 @@
 //! deduce it) are fine; false positives are not.
 
 use crate::compile::type_parser;
-use crate::compile::types::Type;
+use crate::compile::types::{Label, Type};
+use std::collections::{BTreeMap, HashMap};
 
 /// Compares two output strings modulo whitespace and bag reordering.
 ///
@@ -360,11 +361,10 @@ fn parse_tuple_elements(
 /// into the field-name order of the given type.
 fn parse_record_to_tuple(
     sc: &mut Scanner,
-    fields: &std::collections::BTreeMap<crate::compile::types::Label, Type>,
+    fields: &BTreeMap<Label, Type>,
 ) -> Option<Parsed> {
     sc.consume_str("{")?;
-    let mut field_map: std::collections::HashMap<String, Parsed> =
-        std::collections::HashMap::new();
+    let mut field_map: HashMap<String, Parsed> = HashMap::new();
     if sc.peek() != Some('}') {
         loop {
             let name = sc.consume_word()?;
@@ -693,8 +693,7 @@ impl<'a> Scanner<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compile::types::{Label, PrimitiveType};
-    use std::collections::BTreeMap;
+    use crate::compile::types::PrimitiveType;
 
     fn int() -> Type {
         Type::Primitive(PrimitiveType::Int)
