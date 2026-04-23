@@ -2034,6 +2034,8 @@ pub enum Eager1 {
     RangeAtMost,
     RangeClosed,
     RangeClosedOpen,
+    RangeContinuousSetOf,
+    RangeDiscreteSetOf,
     RangeGreaterThan,
     RangeLessThan,
     RangeOpen,
@@ -2171,6 +2173,17 @@ impl Eager1 {
             }
             RangeClosedOpen => {
                 Val::Constructor(val::RANGE_CLOSED_OPEN_ORDINAL, Box::new(a0))
+            }
+            RangeContinuousSetOf => {
+                // TODO: normalize (merge overlapping/touching ranges).
+                // Until Bound-based merging lands, wrap the input list
+                // as-is.
+                Val::Constructor(val::CONTINUOUS_SET_ORDINAL, Box::new(a0))
+            }
+            RangeDiscreteSetOf => {
+                // TODO: normalize and validate the element type is
+                // discrete. Until then, wrap the input list as-is.
+                Val::Constructor(val::DISCRETE_SET_ORDINAL, Box::new(a0))
             }
             RangeGreaterThan => {
                 Val::Constructor(val::RANGE_GREATER_THAN_ORDINAL, Box::new(a0))
@@ -3494,6 +3507,8 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::RangeClosed.implements(&mut b, RangeClosed);
     Eager1::RangeClosedOpen.implements(&mut b, RangeClosedOpen);
     Eager2::RangeContains.implements(&mut b, RangeContains);
+    Eager1::RangeContinuousSetOf.implements(&mut b, RangeContinuousSetOf);
+    Eager1::RangeDiscreteSetOf.implements(&mut b, RangeDiscreteSetOf);
     Eager1::RangeGreaterThan.implements(&mut b, RangeGreaterThan);
     Eager1::RangeLessThan.implements(&mut b, RangeLessThan);
     Eager1::RangeOpen.implements(&mut b, RangeOpen);

@@ -743,6 +743,12 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Range", name = "contains"))]
     #[strum(props(type = "forall 1 'a range -> 'a -> bool"))]
     RangeContains,
+    #[strum(props(p = "Range", name = "continuousSetOf"))]
+    #[strum(props(type = "forall 1 'a range list -> 'a continuous_set"))]
+    RangeContinuousSetOf,
+    #[strum(props(p = "Range", name = "discreteSetOf"))]
+    #[strum(props(type = "forall 1 'a range list -> 'a discrete_set"))]
+    RangeDiscreteSetOf,
     #[strum(props(p = "Range", name = "GREATER_THAN", global = true))]
     #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
     RangeGreaterThan,

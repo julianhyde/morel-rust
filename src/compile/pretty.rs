@@ -711,6 +711,24 @@ impl Pretty {
                 );
             }
         }
+        if (name == "continuous_set" || name == "discrete_set")
+            && let Val::Constructor(ordinal, inner) = value
+            && (*ordinal == val::CONTINUOUS_SET_ORDINAL
+                || *ordinal == val::DISCRETE_SET_ORDINAL)
+        {
+            let label = if name == "continuous_set" {
+                "CONTINUOUS_SET "
+            } else {
+                "DISCRETE_SET "
+            };
+            self.pretty_raw(buf, indent, line_end, depth, label)?;
+            let range_type =
+                Type::Data("range".to_string(), vec![args[0].clone()]);
+            let list_type = Type::List(Box::new(range_type));
+            return self.pretty1(
+                buf, indent, line_end, depth, &list_type, inner, 0, 0,
+            );
+        }
         if name == "range"
             && let Val::Constructor(ordinal, inner) = value
         {

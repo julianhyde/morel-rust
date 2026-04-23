@@ -49,6 +49,11 @@ pub const RANGE_OPEN_ORDINAL: usize = usize::MAX - 17;
 pub const RANGE_OPEN_CLOSED_ORDINAL: usize = usize::MAX - 18;
 pub const RANGE_POINT_ORDINAL: usize = usize::MAX - 19;
 
+/// Sentinel ordinals for the `continuous_set` and `discrete_set`
+/// wrapper types. A value wraps a `Val::List` of `range` constructors.
+pub const CONTINUOUS_SET_ORDINAL: usize = usize::MAX - 20;
+pub const DISCRETE_SET_ORDINAL: usize = usize::MAX - 21;
+
 /// Runtime value.
 ///
 /// The [Val::Typed], [Val::Named], [Val::Labeled], and [Val::Type] variants are
