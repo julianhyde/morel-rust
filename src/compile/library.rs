@@ -740,6 +740,9 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Range", name = "CLOSED_OPEN", global = true))]
     #[strum(props(type = "forall 1 'a * 'a -> 'a range", constructor = true))]
     RangeClosedOpen,
+    #[strum(props(p = "Range", name = "contains"))]
+    #[strum(props(type = "forall 1 'a range -> 'a -> bool"))]
+    RangeContains,
     #[strum(props(p = "Range", name = "GREATER_THAN", global = true))]
     #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
     RangeGreaterThan,

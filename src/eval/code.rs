@@ -269,6 +269,12 @@ pub enum Code {
     /// `Nth(Type, slot)` returns the `slot`th element of a record.
     /// The type must be a record type.
     Nth(Box<Type>, usize),
+    /// `RangeContains(cmp, range_code, value_code)` evaluates the range
+    /// and the candidate value, then tests membership in the range using
+    /// the pre-built, type-directed comparator. This exists so that
+    /// `Range.contains` handles element types whose order differs from
+    /// the natural ordering (e.g. `descending`).
+    RangeContains(CmpRef, Box<Code>, Box<Code>),
     Tuple(Vec<Code>),
 }
 
@@ -616,6 +622,7 @@ impl Code {
             Code::Nth(_, _) => {
                 *mode == EvalMode::Eager1 || *mode == EvalMode::EagerF0
             }
+            Code::RangeContains(_, _, _) => *mode == EvalMode::EagerF0,
             Code::Tuple(_) => *mode == EvalMode::EagerF0,
         }
     }
@@ -865,6 +872,11 @@ impl Code {
                 let v2 = code2.eval_f0(r, f)?;
                 let v3 = code3.eval_f0(r, f)?;
                 eager.apply(r, f, v0, v1, v2, v3, span.as_ref())
+            }
+            Code::RangeContains(cmp, range_code, value_code) => {
+                let range = range_code.eval_f0(r, f)?;
+                let value = value_code.eval_f0(r, f)?;
+                Ok(Val::Bool(range_contains(&*cmp.0, &range, &value)))
             }
             Code::Tuple(codes) => {
                 let mut values = Vec::with_capacity(codes.capacity());
@@ -1247,6 +1259,50 @@ fn capture_bound_vals(
 /// a cheap `Val::Unit` placeholder and set `gather = true` so that
 /// `Code::Native2`'s evaluator unpacks `v0`'s tuple elements into
 /// `a0, a1`.
+/// Implements `Range.contains r x` for the given range value `r` and
+/// element `x`, using `cmp` to compare `x` against the range's bounds.
+pub(crate) fn range_contains(
+    cmp: &dyn Comparator,
+    range: &Val,
+    value: &Val,
+) -> bool {
+    let (ord, inner) = match range {
+        Val::Constructor(ord, inner) => (*ord, inner.as_ref()),
+        _ => panic!("Range.contains: not a range value: {:?}", range),
+    };
+    match ord {
+        val::RANGE_ALL_ORDINAL => true,
+        val::RANGE_POINT_ORDINAL => cmp.compare(value, inner).is_eq(),
+        val::RANGE_AT_LEAST_ORDINAL => cmp.compare(value, inner).is_ge(),
+        val::RANGE_GREATER_THAN_ORDINAL => cmp.compare(value, inner).is_gt(),
+        val::RANGE_AT_MOST_ORDINAL => cmp.compare(value, inner).is_le(),
+        val::RANGE_LESS_THAN_ORDINAL => cmp.compare(value, inner).is_lt(),
+        val::RANGE_CLOSED_ORDINAL => {
+            let pair = inner.expect_list();
+            cmp.compare(value, &pair[0]).is_ge()
+                && cmp.compare(value, &pair[1]).is_le()
+        }
+        val::RANGE_OPEN_ORDINAL => {
+            let pair = inner.expect_list();
+            cmp.compare(value, &pair[0]).is_gt()
+                && cmp.compare(value, &pair[1]).is_lt()
+        }
+        val::RANGE_CLOSED_OPEN_ORDINAL => {
+            let pair = inner.expect_list();
+            cmp.compare(value, &pair[0]).is_ge()
+                && cmp.compare(value, &pair[1]).is_lt()
+        }
+        val::RANGE_OPEN_CLOSED_ORDINAL => {
+            let pair = inner.expect_list();
+            cmp.compare(value, &pair[0]).is_gt()
+                && cmp.compare(value, &pair[1]).is_le()
+        }
+        _ => {
+            panic!("Range.contains: unknown range constructor ordinal {}", ord)
+        }
+    }
+}
+
 fn code_or_gather(codes: &[Box<Code>], n: usize) -> (Box<Code>, bool) {
     if codes.len() == n + 1 {
         (codes[n].clone(), false)
@@ -2239,6 +2295,7 @@ pub enum Eager2 {
     MathAtan2,
     MathPow,
     OptionGetOpt,
+    RangeContains,
     RealCopySign,
     RealDivide,
     RealEq,
@@ -2368,6 +2425,11 @@ impl Eager2 {
                 Val::Real(Math::pow(x, y))
             }
             OptionGetOpt => Opt::get_opt(&a0, &a1),
+            RangeContains => Val::Bool(range_contains(
+                &crate::eval::comparator::NaturalComparator,
+                &a0,
+                &a1,
+            )),
             RealCopySign => {
                 Val::Real(Real::copy_sign(a0.expect_real(), a1.expect_real()))
             }
@@ -3431,6 +3493,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::RangeAtMost.implements(&mut b, RangeAtMost);
     Eager1::RangeClosed.implements(&mut b, RangeClosed);
     Eager1::RangeClosedOpen.implements(&mut b, RangeClosedOpen);
+    Eager2::RangeContains.implements(&mut b, RangeContains);
     Eager1::RangeGreaterThan.implements(&mut b, RangeGreaterThan);
     Eager1::RangeLessThan.implements(&mut b, RangeLessThan);
     Eager1::RangeOpen.implements(&mut b, RangeOpen);

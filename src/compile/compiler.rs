@@ -870,6 +870,28 @@ impl<'a> Compiler<'a> {
                         );
                     }
 
+                    // Intercept `Range.contains r x` to build a
+                    // type-directed comparator from the element type.
+                    if let Expr::Literal(
+                        _,
+                        Val::Fn(BuiltInFunction::RangeContains),
+                    ) = middle_f.as_ref()
+                    {
+                        let elem_type = *a.type_();
+                        let cmp = CmpRef(comparator::comparator_for_with(
+                            &elem_type,
+                            &self.type_map.datatype_constructors,
+                            &self.type_map.constructor_arg_types,
+                        ));
+                        let range_code = self.compile_arg(cx, second_arg);
+                        let value_code = self.compile_arg(cx, a);
+                        return Code::RangeContains(
+                            cmp,
+                            Box::new(range_code),
+                            Box::new(value_code),
+                        );
+                    }
+
                     // Handle curried application of EV2 and E2 functions like
                     // String.map and String.isPrefix. Pattern:
                     //   (String.map f) s => String.map (f, s)
