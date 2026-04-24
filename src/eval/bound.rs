@@ -243,6 +243,71 @@ impl Bound {
     }
 }
 
+/// Returns the complement of a normalized list of ranges: the set of
+/// values *not* covered by any range. For continuous sets (`discrete =
+/// None`), bounds are flipped (inclusive ↔ exclusive). For discrete
+/// sets (`Some(d)`), adjacent discrete values are used so the result
+/// contains only `CLOSED` and unbounded constructors.
+pub fn complement(ranges: &[Val], discrete: Option<&dyn Discrete>) -> Vec<Val> {
+    let mut result: Vec<Val> = Vec::new();
+    let mut lo = Bound::UNBOUNDED;
+    for r in ranges {
+        let range_lo = Bound::lower(r);
+        let range_hi = Bound::upper(r);
+        if range_lo.value.is_some()
+            && let Some(hi) = complement_hi(&range_lo, discrete)
+        {
+            result.push(Bound::to_range(&lo, &hi));
+        }
+        if range_hi.value.is_none() {
+            // Range extends to +∞; no complement after this.
+            return result;
+        }
+        match complement_lo(&range_hi, discrete) {
+            Some(next_lo) => lo = next_lo,
+            None => return result,
+        }
+    }
+    result.push(Bound::to_range(&lo, &Bound::UNBOUNDED));
+    result
+}
+
+/// Upper bound of the complement range that ends just before `lo`.
+/// Returns `None` if that complement is empty (only possible when
+/// `discrete` is supplied and `lo` is at the discrete minimum).
+fn complement_hi(lo: &Bound, discrete: Option<&dyn Discrete>) -> Option<Bound> {
+    let lo_value = lo.value.as_ref()?;
+    if let Some(d) = discrete {
+        if lo.inclusive {
+            d.prev(lo_value).map(Bound::inclusive)
+        } else {
+            Some(Bound::inclusive(lo_value.clone()))
+        }
+    } else if lo.inclusive {
+        Some(Bound::exclusive(lo_value.clone()))
+    } else {
+        Some(Bound::inclusive(lo_value.clone()))
+    }
+}
+
+/// Lower bound of the complement range that starts just after `hi`.
+/// Returns `None` if no value remains past `hi` in the discrete
+/// domain.
+fn complement_lo(hi: &Bound, discrete: Option<&dyn Discrete>) -> Option<Bound> {
+    let hi_value = hi.value.as_ref()?;
+    if let Some(d) = discrete {
+        if hi.inclusive {
+            d.next(hi_value).map(Bound::inclusive)
+        } else {
+            Some(Bound::inclusive(hi_value.clone()))
+        }
+    } else if hi.inclusive {
+        Some(Bound::exclusive(hi_value.clone()))
+    } else {
+        Some(Bound::inclusive(hi_value.clone()))
+    }
+}
+
 /// Appends all discrete values in the range `[lo..hi]` to `out`, using
 /// `discrete` for stepping and `cmp` for the upper-bound check. Panics
 /// on an unbounded upper side or an empty exclusive lower bound at the

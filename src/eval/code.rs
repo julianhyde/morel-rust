@@ -2117,6 +2117,7 @@ pub enum Eager1 {
     RangeAtMost,
     RangeClosed,
     RangeClosedOpen,
+    RangeComplement,
     RangeContinuousSetOf,
     RangeDiscreteSetOf,
     RangeGreaterThan,
@@ -2259,6 +2260,24 @@ impl Eager1 {
             }
             RangeClosedOpen => {
                 Val::Constructor(val::RANGE_CLOSED_OPEN_ORDINAL, Box::new(a0))
+            }
+            RangeComplement => {
+                // Continuous complement: no Discrete needed, so the
+                // Eager1 fallback handles every call directly.
+                let inner = match a0 {
+                    Val::Constructor(val::CONTINUOUS_SET_ORDINAL, inner) => {
+                        inner.expect_list().to_vec()
+                    }
+                    other => panic!(
+                        "Range.complement: expected continuous_set, got {:?}",
+                        other
+                    ),
+                };
+                let complemented = crate::eval::bound::complement(&inner, None);
+                Val::Constructor(
+                    val::CONTINUOUS_SET_ORDINAL,
+                    Box::new(Val::List(complemented)),
+                )
             }
             RangeContinuousSetOf => {
                 // Fallback when the compiler did not intercept the
@@ -3628,6 +3647,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::RangeAtMost.implements(&mut b, RangeAtMost);
     Eager1::RangeClosed.implements(&mut b, RangeClosed);
     Eager1::RangeClosedOpen.implements(&mut b, RangeClosedOpen);
+    Eager1::RangeComplement.implements(&mut b, RangeComplement);
     Eager2::RangeContains.implements(&mut b, RangeContains);
     Eager1::RangeContinuousSetOf.implements(&mut b, RangeContinuousSetOf);
     Eager1::RangeDiscreteSetOf.implements(&mut b, RangeDiscreteSetOf);

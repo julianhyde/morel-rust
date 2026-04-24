@@ -740,6 +740,9 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Range", name = "CLOSED_OPEN", global = true))]
     #[strum(props(type = "forall 1 'a * 'a -> 'a range", constructor = true))]
     RangeClosedOpen,
+    #[strum(props(p = "Range", name = "complement"))]
+    #[strum(props(type = "forall 1 'a continuous_set -> 'a continuous_set"))]
+    RangeComplement,
     #[strum(props(p = "Range", name = "contains"))]
     #[strum(props(type = "forall 1 'a range -> 'a -> bool"))]
     RangeContains,
