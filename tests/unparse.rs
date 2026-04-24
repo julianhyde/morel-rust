@@ -20,7 +20,7 @@
 //! that the unparser uses parentheses iff they are required by the
 //! precedence of surrounding operators.
 
-use morel::syntax::ast::{Expr, ExprKind, StatementKind};
+use morel::syntax::ast::{Expr, StatementKind};
 use morel::syntax::parser::parse_unadorned_statement;
 
 /// Parses `input` as a single expression statement and returns the
@@ -208,93 +208,23 @@ fn test_subquery_wrapped() {
     check_same("from e in (from x in xs yield x)");
 }
 
+use morel::syntax::ast::ExprKindTag;
 use std::collections::HashSet;
+use strum::IntoEnumIterator;
 
-/// Declares every `ExprKind` variant. Each line names the variant,
-/// optionally with `(..)` for variants that have payload.
-///
-/// The macro expands to two items:
-///  - `fn variant_name(&ExprKind<Expr>) -> &'static str` — an exhaustive
-///    match that returns the variant's string name.
-///  - `const VARIANT_NAMES: &[&str]` — every variant's name, used to
-///    seed the coverage set in [`test_each_expr_kind`].
-///
-/// Compile-time safety: adding a new `ExprKind` variant breaks the
-/// `variant_name` match (non-exhaustive). Removing a line here does the
-/// same — the variant is no longer covered. Either way the build fails.
-macro_rules! every_variant {
-    ( $( $variant:ident $( ( $($args:tt)* ) )? ),+ $(,)? ) => {
-        fn variant_name(k: &ExprKind<Expr>) -> &'static str {
-            match k {
-                $(
-                    ExprKind::$variant $( ( $($args)* ) )?
-                        => stringify!($variant),
-                )+
-            }
-        }
-        const VARIANT_NAMES: &[&str] =
-            &[ $( stringify!($variant) ),+ ];
-    };
-}
-
-every_variant! {
-    // lint: sort until '#}' where '^\s*[A-Z]'
-    Aggregate(..),
-    AndAlso(..),
-    Annotated(..),
-    Append(..),
-    Apply(..),
-    Caret(..),
-    Case(..),
-    Compose(..),
-    Cons(..),
-    Current,
-    Div(..),
-    Divide(..),
-    Elem(..),
-    Elements,
-    Equal(..),
-    Exists(..),
-    Fn(..),
-    Forall(..),
-    From(..),
-    GreaterThan(..),
-    GreaterThanOrEqual(..),
-    Identifier(..),
-    If(..),
-    Implies(..),
-    LessThan(..),
-    LessThanOrEqual(..),
-    Let(..),
-    List(..),
-    Literal(..),
-    Minus(..),
-    Mod(..),
-    Negate(..),
-    NotElem(..),
-    NotEqual(..),
-    OpSection(..),
-    OrElse(..),
-    Ordinal,
-    Plus(..),
-    Record(..),
-    RecordSelector(..),
-    Times(..),
-    Tuple(..),
-}
-
-/// Coverage tracker for `ExprKind` variants. Seeded with every declared
-/// variant name; [`Self::check_kind`] removes the parsed variant's name
-/// as each canonical input is exercised, and [`Self::assert_complete`]
-/// fails the test if anything remains.
+/// Coverage tracker for `ExprKind` variants. Seeded with every variant
+/// via `ExprKindTag::iter()` (generated from `ExprKind` by
+/// `strum::EnumDiscriminants`). [`Self::check_kind`] removes the parsed
+/// variant's tag as each canonical input is exercised;
+/// [`Self::assert_complete`] fails the test if anything remains.
 struct KindCoverage {
-    remaining: HashSet<&'static str>,
+    remaining: HashSet<ExprKindTag>,
 }
 
 impl KindCoverage {
     fn new() -> Self {
         Self {
-            remaining: VARIANT_NAMES.iter().copied().collect(),
+            remaining: ExprKindTag::iter().collect(),
         }
     }
 
@@ -304,7 +234,7 @@ impl KindCoverage {
     fn check_kind(&mut self, input: &str) {
         check_same(input);
         let expr = parse_expr(input);
-        self.remaining.remove(variant_name(&expr.kind));
+        self.remaining.remove(&ExprKindTag::from(&expr.kind));
     }
 
     /// Fails the test if any declared variant is still uncovered.
@@ -312,8 +242,7 @@ impl KindCoverage {
     fn assert_complete(&self) {
         assert!(
             self.remaining.is_empty(),
-            "variants declared in every_variant! but not exercised by any \
-             check_kind call: {:?}",
+            "ExprKind variants not exercised by any check_kind call: {:?}",
             self.remaining
         );
     }
@@ -321,12 +250,11 @@ impl KindCoverage {
 
 /// One round-trip per `ExprKind` variant.
 ///
-/// Compile-time: adding a new `ExprKind` variant, or removing a line
-/// from the `every_variant!` invocation above, breaks the build because
-/// the generated `variant_name` match is no longer exhaustive.
-///
-/// Runtime: [`KindCoverage`] tracks which variants have been exercised;
-/// [`KindCoverage::assert_complete`] names any that weren't.
+/// `ExprKindTag` (auto-derived by `strum::EnumDiscriminants` from
+/// `ExprKind`) tracks coverage. Adding a new variant to `ExprKind`
+/// automatically adds it to `ExprKindTag::iter()`, so a canonical input
+/// for it is required for this test to pass; the failure message names
+/// any variant that was never exercised.
 #[test]
 fn test_each_expr_kind() {
     let mut k = KindCoverage::new();

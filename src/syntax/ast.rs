@@ -219,7 +219,11 @@ impl Display for Expr {
 }
 
 /// Kind of expression.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, strum_macros::EnumDiscriminants)]
+#[strum_discriminants(
+    name(ExprKindTag),
+    derive(Hash, strum_macros::Display, strum_macros::EnumIter)
+)]
 pub enum ExprKind<SubExpr> {
     Literal(Literal),
     Identifier(String),
