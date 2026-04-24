@@ -22,7 +22,7 @@ use crate::compile::library::BuiltInFunction;
 use crate::compile::types::{PrimitiveType, Type};
 
 /// Calling convention for a postfix method-call dispatch.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum PostfixKind {
     /// `recv.m ()` — method takes only the receiver; argument (if
     /// any) is a unit placeholder that gets discarded.
