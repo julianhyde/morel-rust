@@ -22,14 +22,16 @@
 //! b4a0c4b1.
 //!
 //! Covers `int`, `char`, `bool`, `unit`; tuples/records of discretes;
-//! `'a descending` where `'a` is discrete; and the built-in sum types
+//! `'a descending` where `'a` is discrete; the built-in sum types
 //! `order`, `'a option`, and `('a, 'b) either` (each using their
-//! dedicated `Val` variant rather than `Val::Constructor`).
-//! User-defined enum datatypes are not yet supported.
+//! dedicated `Val` variant rather than `Val::Constructor`); and
+//! user-defined sum types whose constructors are each either nullary
+//! or wrap a discrete arg type.
 
-use crate::compile::types::{PrimitiveType, Type};
+use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::char::Char;
 use crate::eval::val::{self, Val};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Represents a discrete ordered type: each value (except the max) has
@@ -357,10 +359,144 @@ impl Discrete for EitherDiscrete {
     }
 }
 
+/// Discrete for a user-defined sum-type datatype. Constructors are
+/// stored at runtime as `Val::Constructor(ordinal, inner)`, where
+/// `inner` is `Val::Unit` for nullary constructors or the actual arg
+/// value otherwise.
+pub struct DataDiscrete {
+    constructors: Vec<Option<Arc<dyn Discrete>>>,
+}
+
+impl DataDiscrete {
+    fn first_of(&self, ord: usize) -> Option<Val> {
+        if ord >= self.constructors.len() {
+            return None;
+        }
+        match &self.constructors[ord] {
+            None => Some(Val::Constructor(ord, Box::new(Val::Unit))),
+            Some(d) => match d.min_value() {
+                Some(v) => Some(Val::Constructor(ord, Box::new(v))),
+                None => self.first_of(ord + 1),
+            },
+        }
+    }
+
+    fn last_of(&self, ord: usize) -> Option<Val> {
+        match &self.constructors[ord] {
+            None => Some(Val::Constructor(ord, Box::new(Val::Unit))),
+            Some(d) => match d.max_value() {
+                Some(v) => Some(Val::Constructor(ord, Box::new(v))),
+                None => {
+                    if ord == 0 {
+                        None
+                    } else {
+                        self.last_of(ord - 1)
+                    }
+                }
+            },
+        }
+    }
+}
+
+impl Discrete for DataDiscrete {
+    fn next(&self, v: &Val) -> Option<Val> {
+        let (ord, inner) = match v {
+            Val::Constructor(ord, inner) => (*ord, inner.as_ref()),
+            _ => panic!(
+                "DataDiscrete::next: expected Val::Constructor, got {:?}",
+                v
+            ),
+        };
+        if let Some(Some(d)) = self.constructors.get(ord)
+            && let Some(next) = d.next(inner)
+        {
+            return Some(Val::Constructor(ord, Box::new(next)));
+        }
+        self.first_of(ord + 1)
+    }
+    fn prev(&self, v: &Val) -> Option<Val> {
+        let (ord, inner) = match v {
+            Val::Constructor(ord, inner) => (*ord, inner.as_ref()),
+            _ => panic!(
+                "DataDiscrete::prev: expected Val::Constructor, got {:?}",
+                v
+            ),
+        };
+        if let Some(Some(d)) = self.constructors.get(ord)
+            && let Some(prev) = d.prev(inner)
+        {
+            return Some(Val::Constructor(ord, Box::new(prev)));
+        }
+        if ord == 0 {
+            return None;
+        }
+        self.last_of(ord - 1)
+    }
+    fn min_value(&self) -> Option<Val> {
+        self.first_of(0)
+    }
+    fn max_value(&self) -> Option<Val> {
+        if self.constructors.is_empty() {
+            None
+        } else {
+            self.last_of(self.constructors.len() - 1)
+        }
+    }
+}
+
+/// Substitutes type variables in `type_` using `args` (where
+/// `Type::Variable(i)` is replaced with `args[i]`). Mirrors
+/// `comparator::instantiate`.
+fn instantiate(type_: &Type, args: &[Type]) -> Type {
+    match type_ {
+        Type::Bag(t) => Type::Bag(Box::new(instantiate(t, args))),
+        Type::Data(name, ts) => Type::Data(
+            name.clone(),
+            ts.iter().map(|t| instantiate(t, args)).collect(),
+        ),
+        Type::Fn(a, b) => Type::Fn(
+            Box::new(instantiate(a, args)),
+            Box::new(instantiate(b, args)),
+        ),
+        Type::List(t) => Type::List(Box::new(instantiate(t, args))),
+        Type::Record(p, fields) => Type::Record(
+            *p,
+            fields
+                .iter()
+                .map(|(k, v): (&Label, &Type)| {
+                    (k.clone(), instantiate(v, args))
+                })
+                .collect(),
+        ),
+        Type::Tuple(ts) => {
+            Type::Tuple(ts.iter().map(|t| instantiate(t, args)).collect())
+        }
+        Type::Variable(tv) if tv.id < args.len() => args[tv.id].clone(),
+        _ => type_.clone(),
+    }
+}
+
 /// Returns a `Discrete` for the given type, or an error describing why
-/// the type is not discrete. The error message starts with `"not a
-/// discrete type: "` followed by the offending type.
+/// the type is not discrete. Convenience wrapper around
+/// [`discrete_for_with`] for callers without datatype context (only
+/// built-in types will resolve).
 pub fn discrete_for(type_: &Type) -> Result<Arc<dyn Discrete>, String> {
+    let empty = HashMap::new();
+    let empty2 = HashMap::new();
+    discrete_for_with(type_, &empty, &empty2)
+}
+
+/// Like [`discrete_for`] but with access to the type system's user-
+/// defined datatype constructor tables, so user-defined sum types
+/// resolve as well.
+pub fn discrete_for_with(
+    type_: &Type,
+    datatype_constructors: &HashMap<String, Vec<String>>,
+    constructor_arg_types: &HashMap<String, Type>,
+) -> Result<Arc<dyn Discrete>, String> {
+    let recurse = |t: &Type| {
+        discrete_for_with(t, datatype_constructors, constructor_arg_types)
+    };
     match type_ {
         Type::Primitive(p) => match p {
             PrimitiveType::Int => Ok(Arc::new(IntDiscrete)),
@@ -371,14 +507,14 @@ pub fn discrete_for(type_: &Type) -> Result<Arc<dyn Discrete>, String> {
         },
         Type::Tuple(ts) => {
             let components: Result<Vec<_>, _> =
-                ts.iter().map(discrete_for).collect();
+                ts.iter().map(recurse).collect();
             Ok(Arc::new(TupleDiscrete {
                 components: components?,
             }))
         }
         Type::Record(_, fields) => {
             let components: Result<Vec<_>, _> =
-                fields.values().map(discrete_for).collect();
+                fields.values().map(recurse).collect();
             Ok(Arc::new(TupleDiscrete {
                 components: components?,
             }))
@@ -386,22 +522,50 @@ pub fn discrete_for(type_: &Type) -> Result<Arc<dyn Discrete>, String> {
         Type::Named(args, name) | Type::Data(name, args) => match name.as_str()
         {
             "descending" if !args.is_empty() => {
-                let inner = discrete_for(&args[0])?;
+                let inner = recurse(&args[0])?;
                 Ok(Arc::new(DescendingDiscrete { inner }))
             }
             "order" => Ok(Arc::new(OrderDiscrete)),
             "option" if !args.is_empty() => {
-                let inner = discrete_for(&args[0])?;
+                let inner = recurse(&args[0])?;
                 Ok(Arc::new(OptionDiscrete { inner }))
             }
             "either" if args.len() >= 2 => {
-                let left = discrete_for(&args[0])?;
-                let right = discrete_for(&args[1])?;
+                let left = recurse(&args[0])?;
+                let right = recurse(&args[1])?;
                 Ok(Arc::new(EitherDiscrete { left, right }))
             }
             _ => {
-                // User-defined enum datatypes are not yet supported.
-                Err(format!("not a discrete type: {}", type_))
+                // User-defined sum-type datatype: each constructor is
+                // either nullary (no entry in `constructor_arg_types`)
+                // or wraps a discrete arg type. Type variables in the
+                // arg types are instantiated via the dataType's
+                // `args`.
+                let cons = datatype_constructors
+                    .get(name)
+                    .ok_or_else(|| format!("not a discrete type: {}", type_))?;
+                let mut constructors: Vec<Option<Arc<dyn Discrete>>> =
+                    Vec::with_capacity(cons.len());
+                for con_name in cons {
+                    match constructor_arg_types.get(con_name) {
+                        None => constructors.push(None),
+                        Some(t) => {
+                            let inst = instantiate(t, args);
+                            // morel-java collapses inner errors into
+                            // "not a discrete type: <whole type>".
+                            let d = discrete_for_with(
+                                &inst,
+                                datatype_constructors,
+                                constructor_arg_types,
+                            )
+                            .map_err(|_| {
+                                format!("not a discrete type: {}", type_)
+                            })?;
+                            constructors.push(Some(d));
+                        }
+                    }
+                }
+                Ok(Arc::new(DataDiscrete { constructors }))
             }
         },
         _ => Err(format!("not a discrete type: {}", type_)),

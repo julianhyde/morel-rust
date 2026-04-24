@@ -406,4 +406,18 @@ fun f (INL LESS) = 1 | f (INR true) = 1 | f _ = 0;
 List.map f (Range.toList eitherSet);
 > val it = [1,0,0,0,1] : int list
 
+(*) toList on a user-defined parametric datatype: `('a, 'b) myEither`
+(*) instantiated with `(bool, order)` has 2 + 3 = 5 values. (Constructor
+(*) names LFT/RGT used to avoid clashing with the built-in either's INL/INR.)
+datatype ('a, 'b) myEither = LFT of 'a | RGT of 'b;
+> datatype ('a,'b) myEither = LFT of 'a | RGT of 'b
+
+val ms = Range.discreteSetOf [CLOSED (LFT false, RGT GREATER)];
+> val ms = DISCRETE_SET [CLOSED (LFT false,RGT GREATER)]
+>   : (bool,order) myEither discrete_set
+
+Range.toList ms;
+> val it = [LFT false,LFT true,RGT LESS,RGT EQUAL,RGT GREATER]
+>   : (bool,order) myEither list
+
 (*) End range.smli

@@ -675,7 +675,11 @@ impl<'a> Compiler<'a> {
                                 &self.type_map.constructor_arg_types,
                             ));
                             if let Ok(discrete) =
-                                crate::eval::discrete::discrete_for(&elem_type)
+                                crate::eval::discrete::discrete_for_with(
+                                    &elem_type,
+                                    &self.type_map.datatype_constructors,
+                                    &self.type_map.constructor_arg_types,
+                                )
                             {
                                 let arg = self.compile_arg(cx, a);
                                 return Code::RangeEnumerate(
@@ -702,7 +706,11 @@ impl<'a> Compiler<'a> {
                         {
                             let elem_type = args[0].clone();
                             if let Ok(discrete) =
-                                crate::eval::discrete::discrete_for(&elem_type)
+                                crate::eval::discrete::discrete_for_with(
+                                    &elem_type,
+                                    &self.type_map.datatype_constructors,
+                                    &self.type_map.constructor_arg_types,
+                                )
                             {
                                 let arg = self.compile_arg(cx, a);
                                 return Code::RangeDiscreteSetComplement(
@@ -746,8 +754,10 @@ impl<'a> Compiler<'a> {
                             // If the element type is not discrete,
                             // bake a runtime `IllegalArgument` error
                             // carrying the message morel-java raises.
-                            match crate::eval::discrete::discrete_for(
+                            match crate::eval::discrete::discrete_for_with(
                                 &elem_type,
+                                &self.type_map.datatype_constructors,
+                                &self.type_map.constructor_arg_types,
                             ) {
                                 Ok(discrete) => {
                                     return Code::RangeDiscreteSetOf(
