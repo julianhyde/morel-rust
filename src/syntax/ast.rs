@@ -347,7 +347,7 @@ impl ExprKind<Expr> {
             ExprKind::Append(..) => Op::APPEND,
             ExprKind::Apply(..) => Op::APPLY,
             ExprKind::Caret(..) => Op::CARET,
-            ExprKind::Case(..) => Op::ATOM,
+            ExprKind::Case(..) => Op::LOW_EXPR,
             ExprKind::Compose(..) => Op::COMPOSE,
             ExprKind::Cons(..) => Op::CONS,
             ExprKind::Current => Op::ATOM,
@@ -356,18 +356,18 @@ impl ExprKind<Expr> {
             ExprKind::Elem(..) => Op::ELEM_OP,
             ExprKind::Elements => Op::ATOM,
             ExprKind::Equal(..) => Op::EQ_OP,
-            ExprKind::Exists(..) => Op::ATOM,
-            ExprKind::Fn(..) => Op::ATOM,
-            ExprKind::Forall(..) => Op::ATOM,
-            ExprKind::From(..) => Op::ATOM,
+            ExprKind::Exists(..) => Op::LOW_EXPR,
+            ExprKind::Fn(..) => Op::LOW_EXPR,
+            ExprKind::Forall(..) => Op::LOW_EXPR,
+            ExprKind::From(..) => Op::LOW_EXPR,
             ExprKind::GreaterThan(..) => Op::GT_OP,
             ExprKind::GreaterThanOrEqual(..) => Op::GE_OP,
             ExprKind::Identifier(..) => Op::ATOM,
-            ExprKind::If(..) => Op::ATOM,
+            ExprKind::If(..) => Op::LOW_EXPR,
             ExprKind::Implies(..) => Op::IMPLIES,
             ExprKind::LessThan(..) => Op::LT_OP,
             ExprKind::LessThanOrEqual(..) => Op::LE_OP,
-            ExprKind::Let(..) => Op::ATOM,
+            ExprKind::Let(..) => Op::LOW_EXPR,
             ExprKind::List(..) => Op::ATOM,
             ExprKind::Literal(..) => Op::ATOM,
             ExprKind::Minus(..) => Op::MINUS,
@@ -439,7 +439,7 @@ impl ExprKind<Expr> {
             }
             ExprKind::Elements => f.write_str("elements"),
             ExprKind::Equal(a0, a1) => infix(f, a0, Op::EQ_OP, a1, left, right),
-            ExprKind::Exists(steps) => write!(f, "exists {:?}", steps),
+            ExprKind::Exists(steps) => write_query(f, "exists", steps),
             ExprKind::Fn(arms) => {
                 write!(f, "fn ")?;
                 for (i, match_) in arms.iter().enumerate() {
@@ -450,8 +450,8 @@ impl ExprKind<Expr> {
                 }
                 Ok(())
             }
-            ExprKind::Forall(steps) => write!(f, "forall {:?}", steps),
-            ExprKind::From(steps) => write!(f, "from {:?}", steps),
+            ExprKind::Forall(steps) => write_query(f, "forall", steps),
+            ExprKind::From(steps) => write_query(f, "from", steps),
             ExprKind::GreaterThan(a0, a1) => {
                 infix(f, a0, Op::GT_OP, a1, left, right)
             }
@@ -476,7 +476,7 @@ impl ExprKind<Expr> {
                 for decl in decls {
                     write!(f, "{}; ", decl)?;
                 }
-                write!(f, "in {}", body)
+                write!(f, "in {} end", body)
             }
             ExprKind::List(elems) => {
                 f.write_str("[")?;
@@ -758,6 +758,118 @@ impl StepKind {
             span: span.clone(),
         }
     }
+
+    /// Returns whether this is a scan-like step (first-class source in a
+    /// query): a `from p in e`, `join p in e on cond`, `join p = e`, or
+    /// `join p` step.
+    pub fn is_scan(&self) -> bool {
+        matches!(
+            self,
+            StepKind::Scan(..)
+                | StepKind::ScanEq(..)
+                | StepKind::ScanExtent(..)
+        )
+    }
+}
+
+impl Display for Step {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        std::fmt::Display::fmt(&self.kind, f)
+    }
+}
+
+impl Display for StepKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            // lint: sort until '#}' where '##StepKind::'
+            StepKind::Compute(e) => write!(f, "compute {}", e),
+            StepKind::Distinct => f.write_str("distinct"),
+            StepKind::Except(distinct, args) => {
+                write_set_step(f, "except", *distinct, args)
+            }
+            StepKind::Group(key, None) => write!(f, "group {}", key),
+            StepKind::Group(key, Some(agg)) => {
+                write!(f, "group {} compute {}", key, agg)
+            }
+            StepKind::Intersect(distinct, args) => {
+                write_set_step(f, "intersect", *distinct, args)
+            }
+            StepKind::Into(e) => write!(f, "into {}", e),
+            StepKind::Order(e) => write!(f, "order {}", e),
+            StepKind::Require(e) => write!(f, "require {}", e),
+            StepKind::Scan(pat, exp, None) => {
+                write!(f, "{} in ", pat)?;
+                write_sub(f, exp, Op::EQ_OP.right, 0)
+            }
+            StepKind::Scan(pat, exp, Some(cond)) => {
+                write!(f, "{} in ", pat)?;
+                write_sub(f, exp, Op::EQ_OP.right, 0)?;
+                write!(f, " on {}", cond)
+            }
+            StepKind::ScanEq(pat, exp) => {
+                write!(f, "{} = ", pat)?;
+                write_sub(f, exp, Op::EQ_OP.right, 0)
+            }
+            StepKind::ScanExtent(pat) => write!(f, "{}", pat),
+            StepKind::Skip(e) => write!(f, "skip {}", e),
+            StepKind::Take(e) => write!(f, "take {}", e),
+            StepKind::Through(pat, exp) => {
+                write!(f, "through {} in {}", pat, exp)
+            }
+            StepKind::Union(distinct, args) => {
+                write_set_step(f, "union", *distinct, args)
+            }
+            StepKind::Unorder => f.write_str("unorder"),
+            StepKind::Where(e) => write!(f, "where {}", e),
+            StepKind::Yield(e) => write!(f, "yield {}", e),
+        }
+    }
+}
+
+/// Writes a set-operation step (`union`, `intersect`, `except`).
+fn write_set_step(
+    f: &mut Formatter<'_>,
+    keyword: &str,
+    distinct: bool,
+    args: &[Expr],
+) -> FmtResult {
+    f.write_str(keyword)?;
+    for (i, arg) in args.iter().enumerate() {
+        f.write_str(if i == 0 { " " } else { ", " })?;
+        if distinct {
+            f.write_str("distinct ")?;
+        }
+        write!(f, "{}", arg)?;
+    }
+    Ok(())
+}
+
+/// Writes the steps of a query (`from`, `exists`, `forall`), inserting the
+/// appropriate separator between consecutive steps: `,` between consecutive
+/// scans, `join` before a scan that follows a non-scan step, otherwise a
+/// single space.
+fn write_query(
+    f: &mut Formatter<'_>,
+    keyword: &str,
+    steps: &[Step],
+) -> FmtResult {
+    f.write_str(keyword)?;
+    let mut prev_scan = false;
+    for (i, step) in steps.iter().enumerate() {
+        let this_scan = step.kind.is_scan();
+        if i == 0 {
+            f.write_str(" ")?;
+        } else if this_scan && prev_scan {
+            f.write_str(", ")?;
+        } else if this_scan {
+            f.write_str(" join ")?;
+        } else {
+            f.write_str(" ")?;
+        }
+        write!(f, "{}", step)?;
+        prev_scan = this_scan;
+    }
+    Ok(())
 }
 
 /// Abstract syntax tree (AST) of a pattern.
@@ -880,36 +992,60 @@ impl Display for PatKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match &self {
             // lint: sort until '#}' where '##PatKind::'
-            PatKind::Annotated(pat, typ) => write!(f, "{}: {}", pat, typ),
-            PatKind::Identifier(name) => write!(f, "{}", name),
-            PatKind::Literal(lit) => write!(f, "{:?}", lit),
-            PatKind::Record(fields, ellipsis) => {
-                let fields_str = fields
-                    .iter()
-                    .map(|field| match field {
-                        PatField::Labeled(_, name, pat) => {
-                            format!("{} = {}", name, pat)
-                        }
-                        PatField::Anonymous(_, pat) => format!("{}", pat),
-                        PatField::Ellipsis(_) => "...".to_string(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                if *ellipsis {
-                    write!(f, "{{{}, ...}}", fields_str)
-                } else {
-                    write!(f, "{{{}}}", fields_str)
+            PatKind::Annotated(pat, typ) => write!(f, "{} : {}", pat, typ),
+            PatKind::As(name, pat) => write!(f, "{} as {}", name, pat),
+            PatKind::Cons(head, tail) => write!(f, "{} :: {}", head, tail),
+            PatKind::Constructor(name, None) => f.write_str(name),
+            PatKind::Constructor(name, Some(pat)) => {
+                write!(f, "{} {}", name, pat)
+            }
+            PatKind::Identifier(name) => f.write_str(name),
+            PatKind::List(pats) => {
+                f.write_str("[")?;
+                for (i, p) in pats.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}", p)?;
                 }
+                f.write_str("]")
+            }
+            PatKind::Literal(lit) => write!(f, "{}", lit),
+            PatKind::Record(fields, ellipsis) => {
+                f.write_str("{")?;
+                let mut first = true;
+                for field in fields {
+                    if !first {
+                        f.write_str(", ")?;
+                    }
+                    first = false;
+                    match field {
+                        PatField::Labeled(_, name, pat) => {
+                            write!(f, "{} = {}", name, pat)?
+                        }
+                        PatField::Anonymous(_, pat) => write!(f, "{}", pat)?,
+                        PatField::Ellipsis(_) => f.write_str("...")?,
+                    }
+                }
+                if *ellipsis {
+                    if !first {
+                        f.write_str(", ")?;
+                    }
+                    f.write_str("...")?;
+                }
+                f.write_str("}")
             }
             PatKind::Tuple(pats) => {
-                let pats_str = pats
-                    .iter()
-                    .map(|p| format!("{}", p))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "({})", pats_str)
+                f.write_str("(")?;
+                for (i, p) in pats.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}", p)?;
+                }
+                f.write_str(")")
             }
-            _ => write!(f, "<unknown pat>"),
+            PatKind::Wildcard => f.write_str("_"),
         }
     }
 }

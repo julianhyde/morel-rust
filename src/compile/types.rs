@@ -477,6 +477,13 @@ impl Op {
     /// Atomic nodes: literals, identifiers, tuples, records, lists.
     pub const ATOM: Op = Op::new(198, 199, "", "", "", true);
 
+    /// Low-precedence expression wrapper for constructs that span arbitrary
+    /// sub-expressions and whose boundaries are unambiguous only because they
+    /// include syntactic sentinels (`let ... end`, `case ... of`, `if ... else
+    /// ...`, `fn`, `from`/`exists`/`forall`). At precedence (0, 0) they wrap
+    /// when used as a tighter operator's operand.
+    pub const LOW_EXPR: Op = Op::new(0, 0, "", "", "", false);
+
     /// Type-annotated expression `e : t`. Precedence 0, left-associative.
     pub const ANNOTATED_EXP: Op = Op::new(0, 1, "", " : ", "", false);
 

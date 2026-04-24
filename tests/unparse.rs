@@ -110,3 +110,129 @@ fn test_andalso_orelse() {
         "(true orelse false) andalso true",
     );
 }
+
+#[test]
+fn test_if_then_else() {
+    check("if x then 1 else 2", "if x then 1 else 2");
+    check(
+        "if x > 0 then y + 1 else y - 1",
+        "if x > 0 then y + 1 else y - 1",
+    );
+}
+
+#[test]
+fn test_fn() {
+    check("fn x => x + 1", "fn x => x + 1");
+    check("fn x => fn y => x + y", "fn x => fn y => x + y");
+}
+
+#[test]
+fn test_case() {
+    check(
+        "case x of 1 => \"a\" | _ => \"b\"",
+        "case x of 1 => \"a\" | _ => \"b\"",
+    );
+}
+
+#[test]
+fn test_let() {
+    check("let val x = 1 in x + 2 end", "let val x = 1; in x + 2 end");
+}
+
+#[test]
+fn test_record_with() {
+    check("{r with a = 1}", "{r with a = 1}");
+}
+
+#[test]
+fn test_from_basic() {
+    check("from e in emps", "from e in emps");
+    check(
+        "from i in [1, 2, 3] where i > 1",
+        "from i in [1, 2, 3] where i > 1",
+    );
+    check(
+        "from i in [1, 2, 3] where i > 1 yield i",
+        "from i in [1, 2, 3] where i > 1 yield i",
+    );
+}
+
+#[test]
+fn test_from_multi_scan() {
+    // Consecutive scans are separated by comma (canonical).
+    check("from x in xs, y in ys", "from x in xs, y in ys");
+    // An explicit `join` between adjacent scans is canonicalized to comma.
+    check(
+        "from x in xs join y in ys on x = y",
+        "from x in xs, y in ys on x = y",
+    );
+    // After a non-scan step, a subsequent scan must use `join`.
+    check(
+        "from x in xs where x > 0 join y in ys on x = y",
+        "from x in xs where x > 0 join y in ys on x = y",
+    );
+}
+
+#[test]
+fn test_from_order_group_compute() {
+    check("from i in [3, 1, 2] order i", "from i in [3, 1, 2] order i");
+    check(
+        "from e in emps group e.deptno compute count",
+        "from e in emps group #deptno e compute count",
+    );
+}
+
+#[test]
+fn test_from_distinct_skip_take() {
+    check(
+        "from i in [1, 2, 3] distinct",
+        "from i in [1, 2, 3] distinct",
+    );
+    check(
+        "from i in [1, 2, 3, 4, 5] skip 1 take 3",
+        "from i in [1, 2, 3, 4, 5] skip 1 take 3",
+    );
+}
+
+#[test]
+fn test_from_set_operations() {
+    check(
+        "from i in [1, 2, 3] union [4, 5]",
+        "from i in [1, 2, 3] union [4, 5]",
+    );
+    check(
+        "from i in [1, 2, 3] union distinct [4, 5]",
+        "from i in [1, 2, 3] union distinct [4, 5]",
+    );
+    check(
+        "from i in [1, 2, 3] intersect [2, 3]",
+        "from i in [1, 2, 3] intersect [2, 3]",
+    );
+    check(
+        "from i in [1, 2, 3] except [2]",
+        "from i in [1, 2, 3] except [2]",
+    );
+}
+
+#[test]
+fn test_exists_forall() {
+    check(
+        "exists e in emps where e.name = \"X\"",
+        "exists e in emps where #name e = \"X\"",
+    );
+    check(
+        "forall e in emps require e.age > 0",
+        "forall e in emps require #age e > 0",
+    );
+}
+
+#[test]
+fn test_subquery_wrapped() {
+    // A `from` appearing as the source of another `from` must be
+    // parenthesized; otherwise the inner query's steps would be attributed
+    // to the outer query.
+    check(
+        "from e in (from x in xs yield x)",
+        "from e in (from x in xs yield x)",
+    );
+}
