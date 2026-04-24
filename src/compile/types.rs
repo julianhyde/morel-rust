@@ -417,6 +417,7 @@ impl Display for Label {
 
 /// Operator definition. Includes left and right precedence, and the opening,
 /// closing, and separator strings to use when printing a list.
+#[derive(Copy, Clone)]
 pub struct Op {
     pub left: u8,
     pub right: u8,
@@ -466,6 +467,71 @@ impl Op {
     /// val it = [SOME 0] : int option list
     /// ```
     pub const APPLY: Op = Op::new(16, 17, "", " ", "", false);
+
+    // --- AST expression operators ---
+    //
+    // Precedences follow the scheme `left = prec*2, right = prec*2+1` for
+    // left-associative operators, and swapped for right-associative. Atoms
+    // use very high left/right so they never require wrapping.
+
+    /// Atomic nodes: literals, identifiers, tuples, records, lists.
+    pub const ATOM: Op = Op::new(198, 199, "", "", "", true);
+
+    /// Type-annotated expression `e : t`. Precedence 0, left-associative.
+    pub const ANNOTATED_EXP: Op = Op::new(0, 1, "", " : ", "", false);
+
+    /// `implies`. Precedence 0, left-associative.
+    pub const IMPLIES: Op = Op::new(0, 1, "", " implies ", "", false);
+
+    /// `orelse`. Precedence 1, left-associative.
+    pub const ORELSE: Op = Op::new(2, 3, "", " orelse ", "", false);
+
+    /// `andalso`. Precedence 2, left-associative.
+    pub const ANDALSO: Op = Op::new(4, 5, "", " andalso ", "", false);
+
+    /// Function composition `o`. Precedence 3, left-associative.
+    pub const COMPOSE: Op = Op::new(6, 7, "", " o ", "", false);
+
+    /// Comparison `=`. Precedence 4, left-associative.
+    pub const EQ_OP: Op = Op::new(8, 9, "", " = ", "", false);
+    /// `<>`. Precedence 4.
+    pub const NE_OP: Op = Op::new(8, 9, "", " <> ", "", false);
+    /// `<`. Precedence 4.
+    pub const LT_OP: Op = Op::new(8, 9, "", " < ", "", false);
+    /// `<=`. Precedence 4.
+    pub const LE_OP: Op = Op::new(8, 9, "", " <= ", "", false);
+    /// `>`. Precedence 4.
+    pub const GT_OP: Op = Op::new(8, 9, "", " > ", "", false);
+    /// `>=`. Precedence 4.
+    pub const GE_OP: Op = Op::new(8, 9, "", " >= ", "", false);
+    /// `elem`. Precedence 4.
+    pub const ELEM_OP: Op = Op::new(8, 9, "", " elem ", "", false);
+    /// `notelem`. Precedence 4.
+    pub const NOT_ELEM_OP: Op = Op::new(8, 9, "", " notelem ", "", false);
+
+    /// List cons `::`. Precedence 5, right-associative.
+    pub const CONS: Op = Op::new(11, 10, "", " :: ", "", false);
+    /// List append `@`. Precedence 5, right-associative.
+    pub const APPEND: Op = Op::new(11, 10, "", " @ ", "", false);
+
+    /// Addition `+`. Precedence 6, left-associative.
+    pub const PLUS: Op = Op::new(12, 13, "", " + ", "", false);
+    /// Subtraction `-`. Precedence 6.
+    pub const MINUS: Op = Op::new(12, 13, "", " - ", "", false);
+    /// String concat `^`. Precedence 6.
+    pub const CARET: Op = Op::new(12, 13, "", " ^ ", "", false);
+
+    /// Multiplication `*`. Precedence 7, left-associative.
+    pub const TIMES_OP: Op = Op::new(14, 15, "", " * ", "", false);
+    /// Division `/`. Precedence 7.
+    pub const DIVIDE: Op = Op::new(14, 15, "", " / ", "", false);
+    /// Integer division `div`. Precedence 7.
+    pub const DIV_OP: Op = Op::new(14, 15, "", " div ", "", false);
+    /// Modulo `mod`. Precedence 7.
+    pub const MOD_OP: Op = Op::new(14, 15, "", " mod ", "", false);
+
+    /// `over` (aggregate). Uses APPLY precedence to bind tightly.
+    pub const OVER_OP: Op = Op::new(16, 17, "", " over ", "", false);
 }
 
 #[cfg(test)]

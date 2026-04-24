@@ -16,6 +16,7 @@
 // License.
 
 use crate::compile::library::BuiltInFunction;
+use crate::compile::types::Op;
 use crate::eval::val::Val;
 use crate::syntax::ast;
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
@@ -332,22 +333,88 @@ impl ExprKind<Expr> {
         }
         self.spanned(&span)
     }
-}
 
-impl Display for ExprKind<Expr> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        match &self {
+    /// Returns the precedence operator for this expression kind, used when
+    /// unparsing to decide whether the node needs surrounding parentheses.
+    /// Atomic nodes (literals, identifiers, tuples, records, lists, and
+    /// bracketed control structures) return [`Op::ATOM`].
+    pub fn prec_op(&self) -> Op {
+        match self {
+            // lint: sort until '#}' where '##ExprKind::'
+            ExprKind::Aggregate(..) => Op::OVER_OP,
+            ExprKind::AndAlso(..) => Op::ANDALSO,
+            ExprKind::Annotated(..) => Op::ANNOTATED_EXP,
+            ExprKind::Append(..) => Op::APPEND,
+            ExprKind::Apply(..) => Op::APPLY,
+            ExprKind::Caret(..) => Op::CARET,
+            ExprKind::Case(..) => Op::ATOM,
+            ExprKind::Compose(..) => Op::COMPOSE,
+            ExprKind::Cons(..) => Op::CONS,
+            ExprKind::Current => Op::ATOM,
+            ExprKind::Div(..) => Op::DIV_OP,
+            ExprKind::Divide(..) => Op::DIVIDE,
+            ExprKind::Elem(..) => Op::ELEM_OP,
+            ExprKind::Elements => Op::ATOM,
+            ExprKind::Equal(..) => Op::EQ_OP,
+            ExprKind::Exists(..) => Op::ATOM,
+            ExprKind::Fn(..) => Op::ATOM,
+            ExprKind::Forall(..) => Op::ATOM,
+            ExprKind::From(..) => Op::ATOM,
+            ExprKind::GreaterThan(..) => Op::GT_OP,
+            ExprKind::GreaterThanOrEqual(..) => Op::GE_OP,
+            ExprKind::Identifier(..) => Op::ATOM,
+            ExprKind::If(..) => Op::ATOM,
+            ExprKind::Implies(..) => Op::IMPLIES,
+            ExprKind::LessThan(..) => Op::LT_OP,
+            ExprKind::LessThanOrEqual(..) => Op::LE_OP,
+            ExprKind::Let(..) => Op::ATOM,
+            ExprKind::List(..) => Op::ATOM,
+            ExprKind::Literal(..) => Op::ATOM,
+            ExprKind::Minus(..) => Op::MINUS,
+            ExprKind::Mod(..) => Op::MOD_OP,
+            ExprKind::Negate(..) => Op::ATOM,
+            ExprKind::NotElem(..) => Op::NOT_ELEM_OP,
+            ExprKind::NotEqual(..) => Op::NE_OP,
+            ExprKind::OpSection(..) => Op::ATOM,
+            ExprKind::OrElse(..) => Op::ORELSE,
+            ExprKind::Ordinal => Op::ATOM,
+            ExprKind::Plus(..) => Op::PLUS,
+            ExprKind::Record(..) => Op::ATOM,
+            ExprKind::RecordSelector(..) => Op::ATOM,
+            ExprKind::Times(..) => Op::TIMES_OP,
+            ExprKind::Tuple(..) => Op::ATOM,
+        }
+    }
+
+    /// Unparses this expression to `f`, wrapping sub-expressions in parens
+    /// only where required by the surrounding precedence `left` / `right`.
+    pub fn unparse(
+        &self,
+        f: &mut Formatter<'_>,
+        left: u8,
+        right: u8,
+    ) -> FmtResult {
+        match self {
             // lint: sort until '#}' where '##ExprKind::'
             ExprKind::Aggregate(a0, a1) => {
-                write!(f, "({} over {})", a0, a1)
+                infix(f, a0, Op::OVER_OP, a1, left, right)
             }
             ExprKind::AndAlso(a0, a1) => {
-                write!(f, "({} andalso {})", a0, a1)
+                infix(f, a0, Op::ANDALSO, a1, left, right)
             }
-            ExprKind::Annotated(e, typ) => write!(f, "{}: {}", e, typ),
-            ExprKind::Append(a0, a1) => write!(f, "({} @ {})", a0, a1),
-            ExprKind::Apply(fx, arg) => write!(f, "{} {}", fx, arg),
-            ExprKind::Caret(a0, a1) => write!(f, "({} ^ {})", a0, a1),
+            ExprKind::Annotated(e, typ) => {
+                let op = Op::ANNOTATED_EXP;
+                write_sub(f, e, left, op.left)?;
+                f.write_str(op.sep)?;
+                write!(f, "{}", typ)
+            }
+            ExprKind::Append(a0, a1) => {
+                infix(f, a0, Op::APPEND, a1, left, right)
+            }
+            ExprKind::Apply(fx, arg) => {
+                infix(f, fx, Op::APPLY, arg, left, right)
+            }
+            ExprKind::Caret(a0, a1) => infix(f, a0, Op::CARET, a1, left, right),
             ExprKind::Case(e, arms) => {
                 write!(f, "case {} of ", e)?;
                 for (i, match_) in arms.iter().enumerate() {
@@ -358,14 +425,20 @@ impl Display for ExprKind<Expr> {
                 }
                 Ok(())
             }
-            ExprKind::Compose(a0, a1) => write!(f, "({} o {})", a0, a1),
-            ExprKind::Cons(a0, a1) => write!(f, "({} :: {})", a0, a1),
-            ExprKind::Current => write!(f, "current"),
-            ExprKind::Div(a0, a1) => write!(f, "({} div {})", a0, a1),
-            ExprKind::Divide(a0, a1) => write!(f, "({} / {})", a0, a1),
-            ExprKind::Elem(a0, a1) => write!(f, "({} elem {})", a0, a1),
-            ExprKind::Elements => write!(f, "elements"),
-            ExprKind::Equal(a0, a1) => write!(f, "({} = {})", a0, a1),
+            ExprKind::Compose(a0, a1) => {
+                infix(f, a0, Op::COMPOSE, a1, left, right)
+            }
+            ExprKind::Cons(a0, a1) => infix(f, a0, Op::CONS, a1, left, right),
+            ExprKind::Current => f.write_str("current"),
+            ExprKind::Div(a0, a1) => infix(f, a0, Op::DIV_OP, a1, left, right),
+            ExprKind::Divide(a0, a1) => {
+                infix(f, a0, Op::DIVIDE, a1, left, right)
+            }
+            ExprKind::Elem(a0, a1) => {
+                infix(f, a0, Op::ELEM_OP, a1, left, right)
+            }
+            ExprKind::Elements => f.write_str("elements"),
+            ExprKind::Equal(a0, a1) => infix(f, a0, Op::EQ_OP, a1, left, right),
             ExprKind::Exists(steps) => write!(f, "exists {:?}", steps),
             ExprKind::Fn(arms) => {
                 write!(f, "fn ")?;
@@ -379,20 +452,24 @@ impl Display for ExprKind<Expr> {
             }
             ExprKind::Forall(steps) => write!(f, "forall {:?}", steps),
             ExprKind::From(steps) => write!(f, "from {:?}", steps),
-            ExprKind::GreaterThan(a0, a1) => write!(f, "({} > {})", a0, a1),
-            ExprKind::GreaterThanOrEqual(a0, a1) => {
-                write!(f, "({} >= {})", a0, a1)
+            ExprKind::GreaterThan(a0, a1) => {
+                infix(f, a0, Op::GT_OP, a1, left, right)
             }
-            ExprKind::Identifier(name) => write!(f, "{}", name),
+            ExprKind::GreaterThanOrEqual(a0, a1) => {
+                infix(f, a0, Op::GE_OP, a1, left, right)
+            }
+            ExprKind::Identifier(name) => f.write_str(name),
             ExprKind::If(cond, then_, else_) => {
                 write!(f, "if {} then {} else {}", cond, then_, else_)
             }
             ExprKind::Implies(a0, a1) => {
-                write!(f, "({} implies {})", a0, a1)
+                infix(f, a0, Op::IMPLIES, a1, left, right)
             }
-            ExprKind::LessThan(a0, a1) => write!(f, "({} < {})", a0, a1),
+            ExprKind::LessThan(a0, a1) => {
+                infix(f, a0, Op::LT_OP, a1, left, right)
+            }
             ExprKind::LessThanOrEqual(a0, a1) => {
-                write!(f, "({} <= {})", a0, a1)
+                infix(f, a0, Op::LE_OP, a1, left, right)
             }
             ExprKind::Let(decls, body) => {
                 write!(f, "let ")?;
@@ -402,48 +479,110 @@ impl Display for ExprKind<Expr> {
                 write!(f, "in {}", body)
             }
             ExprKind::List(elems) => {
-                let elems_str = elems
-                    .iter()
-                    .map(|e| format!("{}", e))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "[{}]", elems_str)
+                f.write_str("[")?;
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write_sub(f, e, 0, 0)?;
+                }
+                f.write_str("]")
             }
             ExprKind::Literal(lit) => write!(f, "{}", lit),
-            ExprKind::Minus(a0, a1) => write!(f, "({} - {})", a0, a1),
-            ExprKind::Mod(a0, a1) => write!(f, "({} mod {})", a0, a1),
-            ExprKind::Negate(e) => write!(f, "-{}", e),
+            ExprKind::Minus(a0, a1) => infix(f, a0, Op::MINUS, a1, left, right),
+            ExprKind::Mod(a0, a1) => infix(f, a0, Op::MOD_OP, a1, left, right),
+            ExprKind::Negate(e) => write!(f, "~{}", e),
             ExprKind::NotElem(a0, a1) => {
-                write!(f, "({} notelem {})", a0, a1)
+                infix(f, a0, Op::NOT_ELEM_OP, a1, left, right)
             }
-            ExprKind::NotEqual(a0, a1) => write!(f, "({} <> {})", a0, a1),
+            ExprKind::NotEqual(a0, a1) => {
+                infix(f, a0, Op::NE_OP, a1, left, right)
+            }
             ExprKind::OpSection(name) => write!(f, "op {}", name),
-            ExprKind::OrElse(a0, a1) => write!(f, "({} orelse {})", a0, a1),
-            ExprKind::Ordinal => write!(f, "ordinal"),
-            ExprKind::Plus(a0, a1) => write!(f, "({} + {})", a0, a1),
+            ExprKind::OrElse(a0, a1) => {
+                infix(f, a0, Op::ORELSE, a1, left, right)
+            }
+            ExprKind::Ordinal => f.write_str("ordinal"),
+            ExprKind::Plus(a0, a1) => infix(f, a0, Op::PLUS, a1, left, right),
             ExprKind::Record(base, fields) => {
-                let mut s = String::new();
+                f.write_str("{")?;
                 if let Some(b) = base {
-                    s.push_str(&format!("{} with ", b));
+                    write!(f, "{} with ", b)?;
                 }
-                let fields_str = fields
-                    .iter()
-                    .map(|f| format!("{}", f.expr))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "{{{}}}", s + &fields_str)
+                for (i, lf) in fields.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    match &lf.label {
+                        Some(lbl) => write!(f, "{} = {}", lbl.name, lf.expr)?,
+                        None => write!(f, "{}", lf.expr)?,
+                    }
+                }
+                f.write_str("}")
             }
             ExprKind::RecordSelector(name) => write!(f, "#{}", name),
-            ExprKind::Times(a0, a1) => write!(f, "({} * {})", a0, a1),
+            ExprKind::Times(a0, a1) => {
+                infix(f, a0, Op::TIMES_OP, a1, left, right)
+            }
             ExprKind::Tuple(elems) => {
-                let elems_str = elems
-                    .iter()
-                    .map(|e| format!("{}", e))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "({})", elems_str)
+                f.write_str("(")?;
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write_sub(f, e, 0, 0)?;
+                }
+                f.write_str(")")
             }
         }
+    }
+}
+
+/// Writes a sub-expression `e` to `f`, wrapping in parens iff the surrounding
+/// precedence `left` / `right` exceeds the expression's own precedence.
+fn write_sub(
+    f: &mut Formatter<'_>,
+    e: &Expr,
+    left: u8,
+    right: u8,
+) -> FmtResult {
+    let op = e.kind.prec_op();
+    if left > op.left || op.right < right {
+        f.write_str("(")?;
+        e.kind.unparse(f, 0, 0)?;
+        f.write_str(")")
+    } else {
+        e.kind.unparse(f, left, right)
+    }
+}
+
+/// Writes an infix binary expression `a0 op a1`, wrapping sub-expressions
+/// as required by `op`'s precedence.
+fn infix(
+    f: &mut Formatter<'_>,
+    a0: &Expr,
+    op: Op,
+    a1: &Expr,
+    left: u8,
+    right: u8,
+) -> FmtResult {
+    let paren = left > op.left || op.right < right;
+    if paren {
+        f.write_str("(")?;
+    }
+    let (outer_left, outer_right) = if paren { (0, 0) } else { (left, right) };
+    write_sub(f, a0, outer_left, op.left)?;
+    f.write_str(op.sep)?;
+    write_sub(f, a1, op.right, outer_right)?;
+    if paren {
+        f.write_str(")")?;
+    }
+    Ok(())
+}
+
+impl Display for ExprKind<Expr> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        self.unparse(f, 0, 0)
     }
 }
 
