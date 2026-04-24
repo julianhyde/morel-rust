@@ -723,19 +723,25 @@ impl<'a> Compiler<'a> {
                                 );
                             }
                             // discreteSetOf: also build a Discrete.
-                            // If the element type is not discrete, fall
-                            // through to the Eager1 fallback (which
-                            // wraps without merging). A proper runtime
-                            // error lands when the error plumbing is
-                            // extended to carry custom messages.
-                            if let Ok(discrete) =
-                                crate::eval::discrete::discrete_for(&elem_type)
-                            {
-                                return Code::RangeDiscreteSetOf(
-                                    cmp,
-                                    code::DiscreteRef(discrete),
-                                    Box::new(arg),
-                                );
+                            // If the element type is not discrete,
+                            // bake a runtime `IllegalArgument` error
+                            // carrying the message morel-java raises.
+                            match crate::eval::discrete::discrete_for(
+                                &elem_type,
+                            ) {
+                                Ok(discrete) => {
+                                    return Code::RangeDiscreteSetOf(
+                                        cmp,
+                                        code::DiscreteRef(discrete),
+                                        Box::new(arg),
+                                    );
+                                }
+                                Err(msg) => {
+                                    return Code::RaiseIllegalArgument(
+                                        msg,
+                                        span.clone(),
+                                    );
+                                }
                             }
                         }
                         let arg = self.compile_arg(cx, a);

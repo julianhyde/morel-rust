@@ -290,6 +290,13 @@ pub enum Code {
     /// `Nth(Type, slot)` returns the `slot`th element of a record.
     /// The type must be a record type.
     Nth(Box<Type>, usize),
+    /// `RaiseIllegalArgument(msg, span)` raises
+    /// `MorelError::IllegalArgument` when evaluated. Baked into the
+    /// `Code` tree by compile-time interceptors that detect invalid
+    /// arguments whose error would otherwise need a separate runtime
+    /// type check (e.g. `Range.discreteSetOf` on a non-discrete
+    /// element type).
+    RaiseIllegalArgument(String, Span),
     /// `RangeContains(cmp, range_code, value_code)` evaluates the range
     /// and the candidate value, then tests membership in the range using
     /// the pre-built, type-directed comparator. This exists so that
@@ -660,6 +667,7 @@ impl Code {
             Code::Nth(_, _) => {
                 *mode == EvalMode::Eager1 || *mode == EvalMode::EagerF0
             }
+            Code::RaiseIllegalArgument(_, _) => *mode == EvalMode::EagerF0,
             Code::RangeContains(_, _, _) => *mode == EvalMode::EagerF0,
             Code::RangeContinuousSetOf(_, _) => *mode == EvalMode::EagerF0,
             Code::RangeDiscreteSetOf(_, _, _) => *mode == EvalMode::EagerF0,
@@ -913,6 +921,9 @@ impl Code {
                 let v2 = code2.eval_f0(r, f)?;
                 let v3 = code3.eval_f0(r, f)?;
                 eager.apply(r, f, v0, v1, v2, v3, span.as_ref())
+            }
+            Code::RaiseIllegalArgument(msg, span) => {
+                Err(MorelError::IllegalArgument(msg.clone(), span.clone()))
             }
             Code::RangeContains(cmp, range_code, value_code) => {
                 let range = range_code.eval_f0(r, f)?;
