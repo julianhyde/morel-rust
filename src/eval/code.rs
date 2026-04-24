@@ -119,6 +119,27 @@ impl std::fmt::Debug for CmpRef {
     }
 }
 
+/// Wrapper around `Arc<dyn Discrete>` mirroring [`CmpRef`].
+pub struct DiscreteRef(pub Arc<dyn crate::eval::discrete::Discrete>);
+
+impl Clone for DiscreteRef {
+    fn clone(&self) -> Self {
+        DiscreteRef(Arc::clone(&self.0))
+    }
+}
+
+impl PartialEq for DiscreteRef {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for DiscreteRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Discrete(...)")
+    }
+}
+
 /// Generated code that can be evaluated.
 #[derive(Clone, PartialEq, Debug)]
 pub enum Code {
@@ -281,6 +302,11 @@ pub enum Code {
     /// merged range list. The pre-built type-directed comparator
     /// handles element types with non-natural ordering.
     RangeContinuousSetOf(CmpRef, Box<Code>),
+    /// `RangeDiscreteSetOf(cmp, discrete, ranges_code)` mirrors
+    /// `RangeContinuousSetOf` but additionally uses a pre-built
+    /// `Discrete` stepper to merge ranges that are adjacent in the
+    /// discrete domain (e.g. `[1,3] ∪ [4,7] → [1,7]` for `int`).
+    RangeDiscreteSetOf(CmpRef, DiscreteRef, Box<Code>),
     Tuple(Vec<Code>),
 }
 
@@ -630,6 +656,7 @@ impl Code {
             }
             Code::RangeContains(_, _, _) => *mode == EvalMode::EagerF0,
             Code::RangeContinuousSetOf(_, _) => *mode == EvalMode::EagerF0,
+            Code::RangeDiscreteSetOf(_, _, _) => *mode == EvalMode::EagerF0,
             Code::Tuple(_) => *mode == EvalMode::EagerF0,
         }
     }
@@ -890,9 +917,22 @@ impl Code {
                 let merged = crate::eval::bound::from_ranges(
                     ranges.expect_list(),
                     &*cmp.0,
+                    None,
                 );
                 Ok(Val::Constructor(
                     val::CONTINUOUS_SET_ORDINAL,
+                    Box::new(Val::List(merged)),
+                ))
+            }
+            Code::RangeDiscreteSetOf(cmp, discrete, ranges_code) => {
+                let ranges = ranges_code.eval_f0(r, f)?;
+                let merged = crate::eval::bound::from_ranges(
+                    ranges.expect_list(),
+                    &*cmp.0,
+                    Some(&*discrete.0),
+                );
+                Ok(Val::Constructor(
+                    val::DISCRETE_SET_ORDINAL,
                     Box::new(Val::List(merged)),
                 ))
             }
@@ -2201,6 +2241,7 @@ impl Eager1 {
                 let merged = crate::eval::bound::from_ranges(
                     a0.expect_list(),
                     &crate::eval::comparator::NaturalComparator,
+                    None,
                 );
                 Val::Constructor(
                     val::CONTINUOUS_SET_ORDINAL,
@@ -2208,8 +2249,11 @@ impl Eager1 {
                 )
             }
             RangeDiscreteSetOf => {
-                // TODO: normalize and validate the element type is
-                // discrete. Until then, wrap the input list as-is.
+                // Fallback when the compiler did not intercept the
+                // call. Without type information we cannot validate
+                // discreteness or merge step-adjacent ranges; wrap the
+                // input as-is. The compile intercept is the correct
+                // path for all direct calls.
                 Val::Constructor(val::DISCRETE_SET_ORDINAL, Box::new(a0))
             }
             RangeGreaterThan => {

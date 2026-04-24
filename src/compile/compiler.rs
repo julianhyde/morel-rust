@@ -654,10 +654,13 @@ impl<'a> Compiler<'a> {
                                 Code::Min(cmp, Box::new(arg))
                             };
                         }
-                        // Intercept Range.continuousSetOf to build a
-                        // type-directed comparator from the element
-                        // type inside `'a range list`.
-                        if *f == BuiltInFunction::RangeContinuousSetOf {
+                        // Intercept Range.continuousSetOf /
+                        // Range.discreteSetOf to build type-directed
+                        // helpers from the element type inside `'a
+                        // range list`.
+                        if *f == BuiltInFunction::RangeContinuousSetOf
+                            || *f == BuiltInFunction::RangeDiscreteSetOf
+                        {
                             let elem_type = match a.type_().as_ref() {
                                 Type::List(r) => match r.as_ref() {
                                     Type::Data(name, args)
@@ -676,10 +679,27 @@ impl<'a> Compiler<'a> {
                                 &self.type_map.constructor_arg_types,
                             ));
                             let arg = self.compile_arg(cx, a);
-                            return Code::RangeContinuousSetOf(
-                                cmp,
-                                Box::new(arg),
-                            );
+                            if *f == BuiltInFunction::RangeContinuousSetOf {
+                                return Code::RangeContinuousSetOf(
+                                    cmp,
+                                    Box::new(arg),
+                                );
+                            }
+                            // discreteSetOf: also build a Discrete.
+                            // If the element type is not discrete, fall
+                            // through to the Eager1 fallback (which
+                            // wraps without merging). A proper runtime
+                            // error lands when the error plumbing is
+                            // extended to carry custom messages.
+                            if let Ok(discrete) =
+                                crate::eval::discrete::discrete_for(&elem_type)
+                            {
+                                return Code::RangeDiscreteSetOf(
+                                    cmp,
+                                    code::DiscreteRef(discrete),
+                                    Box::new(arg),
+                                );
+                            }
                         }
                         let arg = self.compile_arg(cx, a);
                         let codes: Vec<Box<Code>> = vec![Box::new(arg)];

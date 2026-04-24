@@ -23,6 +23,7 @@
 //! a later commit with `Range.discreteSetOf`.
 
 use crate::eval::comparator::Comparator;
+use crate::eval::discrete::Discrete;
 use crate::eval::val::{self, Val};
 use std::cmp::Ordering;
 
@@ -188,6 +189,41 @@ impl Bound {
         }
     }
 
+    /// Returns whether this upper bound and `next` are adjacent in
+    /// discrete order (e.g. `CLOSED(1,3)` and `CLOSED(4,6)` for `int`).
+    pub fn can_merge_discrete(
+        &self,
+        next: &Self,
+        discrete: &dyn Discrete,
+        cmp: &dyn Comparator,
+    ) -> bool {
+        let (a, b) = match (&self.value, &next.value) {
+            (Some(a), Some(b)) => (a, b),
+            _ => return true, // one side is unbounded
+        };
+        // Effective last-included value of this upper bound.
+        let hi_eff = if self.inclusive {
+            Some(a.clone())
+        } else {
+            discrete.prev(a)
+        };
+        // Effective first-included value of the next lower bound.
+        let lo_eff = if next.inclusive {
+            Some(b.clone())
+        } else {
+            discrete.next(b)
+        };
+        let (hi_eff, lo_eff) = match (hi_eff, lo_eff) {
+            (Some(h), Some(l)) => (h, l),
+            _ => return false,
+        };
+        let Some(next_after_hi) = discrete.next(&hi_eff) else {
+            return false;
+        };
+        // Ranges touch iff step-past-hi reaches or exceeds lo.
+        cmp.compare(&next_after_hi, &lo_eff).is_ge()
+    }
+
     /// Returns the greater of this upper bound and `other`.
     pub fn max(&self, other: &Self, cmp: &dyn Comparator) -> Self {
         match (&self.value, &other.value) {
@@ -211,9 +247,13 @@ impl Bound {
 /// sorts by lower bound, then merges overlapping or touching ranges.
 /// Returns the merged ranges as `Val::List` of range constructors.
 ///
-/// Discrete-step merging (for `discreteSetOf`) is not yet implemented;
-/// this function covers only the continuous case.
-pub fn from_ranges(ranges: &[Val], cmp: &dyn Comparator) -> Vec<Val> {
+/// If `discrete` is provided, also merges ranges that are adjacent in
+/// the discrete domain (e.g. `[1,3] ∪ [4,7] → [1,7]` for `int`).
+pub fn from_ranges(
+    ranges: &[Val],
+    cmp: &dyn Comparator,
+    discrete: Option<&dyn Discrete>,
+) -> Vec<Val> {
     let mut pairs: Vec<(Bound, Bound)> = ranges
         .iter()
         .map(|r| (Bound::lower(r), Bound::upper(r)))
@@ -229,7 +269,11 @@ pub fn from_ranges(ranges: &[Val], cmp: &dyn Comparator) -> Vec<Val> {
     let mut result: Vec<(Bound, Bound)> = Vec::new();
     let (mut lo, mut hi) = pairs[0].clone();
     for (next_lo, next_hi) in pairs.into_iter().skip(1) {
-        if hi.can_merge(&next_lo, cmp) {
+        let merge = match discrete {
+            Some(d) => hi.can_merge_discrete(&next_lo, d, cmp),
+            None => hi.can_merge(&next_lo, cmp),
+        };
+        if merge {
             hi = hi.max(&next_hi, cmp);
         } else {
             result.push((lo, hi));
