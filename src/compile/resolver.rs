@@ -880,8 +880,17 @@ impl<'a> Resolver<'a> {
         // Compute the return type from the built-in's signature —
         // type inference left the outer Apply's slot as an
         // unresolved variable because it couldn't unify the receiver
-        // against a record.
-        let return_t = postfix_return_type(builtin, kind, recv_type.as_ref());
+        // against a record. For methods whose parameter list shares a
+        // type variable with the element type of the receiver (notably
+        // Option.getOpt), use the argument's concrete type as a
+        // fallback when the receiver is still polymorphic.
+        let arg_type = self.effective_type(arg);
+        let return_t = postfix_return_type(
+            builtin,
+            kind,
+            recv_type.as_ref(),
+            arg_type.as_deref(),
+        );
         Some(self.build_postfix_call(return_t, builtin, kind, recv, arg, span))
     }
 
@@ -897,7 +906,7 @@ impl<'a> Resolver<'a> {
         {
             return Some(t);
         }
-        if let ExprKind::Apply(f, _a) = &expr.kind
+        if let ExprKind::Apply(f, a) = &expr.kind
             && let ExprKind::Apply(inner_fn, inner_arg) = &f.kind
             && let ExprKind::RecordSelector(name) = &inner_fn.kind
         {
@@ -905,10 +914,12 @@ impl<'a> Resolver<'a> {
             if let Some((builtin, kind)) =
                 postfix_dispatch(name, recv_type.as_ref())
             {
+                let arg_type = self.effective_type(a);
                 return Some(postfix_return_type(
                     builtin,
                     kind,
                     recv_type.as_ref(),
+                    arg_type.as_deref(),
                 ));
             }
         }
@@ -1972,6 +1983,7 @@ fn postfix_return_type(
     builtin: BuiltInFunction,
     _kind: PostfixKind,
     recv_type: &Type,
+    arg_type: Option<&Type>,
 ) -> Box<Type> {
     use BuiltInFunction::{
         BagDrop, BagHd, BagLength, BagNull, BagTake, BagTl, BoolNot,
@@ -2030,10 +2042,11 @@ fn postfix_return_type(
         // Int/Real compare return order
         IntCompare | RealCompare | CharCompare => order_ty(),
         // Real ops returning real
-        RealAbs | RealMax | RealMin | RealRem | RealSign | RealTrunc => {
+        RealAbs | RealMax | RealMin | RealRem | RealTrunc => {
             prim(PrimitiveType::Real)
         }
-        RealCeil | RealFloor => prim(PrimitiveType::Int),
+        // Real ops returning int
+        RealCeil | RealFloor | RealSign => prim(PrimitiveType::Int),
         // Char transforms
         CharPred | CharSucc | CharToLower | CharToUpper => {
             prim(PrimitiveType::Char)
@@ -2050,7 +2063,25 @@ fn postfix_return_type(
             }
         }
         OptionGetOpt => {
-            // option T → T
+            // option T * T → T. If the receiver is still polymorphic
+            // (e.g. `NONE.getOpt(0)`), fall back to the argument's
+            // concrete type — the second argument and the result share
+            // the element type variable.
+            match peel_type(recv_type) {
+                Type::Data(_, args)
+                    if args.len() == 1 && !is_unresolved_type(&args[0]) =>
+                {
+                    return Box::new(args[0].clone());
+                }
+                _ => {}
+            }
+            if let Some(t) = arg_type
+                && !is_unresolved_type(t)
+            {
+                return Box::new(t.clone());
+            }
+            // Fallback: peel whatever we have, even if it's a
+            // variable.
             match peel_type(recv_type) {
                 Type::Data(_, args) if args.len() == 1 => {
                     Box::new(args[0].clone())
