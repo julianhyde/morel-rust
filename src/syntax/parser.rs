@@ -398,16 +398,69 @@ impl MorelParser {
 
     fn expr_postfix(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [atom(e), label(l)..] => {
-                l.collect::<Vec<_>>().iter().fold(e.clone(), |acc, label| {
+            [atom(e), postfix_tail(t)..] => {
+                let tails: Vec<_> = t.collect();
+                tails.into_iter().fold(e, |acc, (label, args_opt)| {
                     let selector =
                         ExprKind::RecordSelector(label.name.to_string())
                             .spanned(&label.span);
-                    let span = acc.span.union(&label.span);
-                    ExprKind::Apply(Box::new(selector), Box::new(acc))
-                        .spanned(&span)
+                    let sel_span = acc.span.union(&label.span);
+                    let sel_apply =
+                        ExprKind::Apply(Box::new(selector), Box::new(acc))
+                            .spanned(&sel_span);
+                    match args_opt {
+                        None => sel_apply,
+                        Some((args, args_span)) => {
+                            // `.method(args)` form: apply the
+                            // record-selector result to the arg list.
+                            // At type-resolution time, this tree is
+                            // disambiguated: if the receiver's type
+                            // has a field named `label`, it's an
+                            // ordinary field projection; otherwise it
+                            // becomes a postfix method call.
+                            let arg_expr = match args.len() {
+                                0 => {
+                                    let unit =
+                                        LiteralKind::Unit.spanned(&args_span);
+                                    ExprKind::Literal(unit).spanned(&args_span)
+                                }
+                                1 => args.into_iter().next().unwrap(),
+                                _ => ExprKind::Tuple(args).spanned(&args_span),
+                            };
+                            let full_span = sel_span.union(&args_span);
+                            ExprKind::Apply(
+                                Box::new(sel_apply),
+                                Box::new(arg_expr),
+                            )
+                            .spanned(&full_span)
+                        }
+                    }
                 })
             },
+        ))
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn postfix_tail(
+        input: ParseInput,
+    ) -> ParseResult<(Label, Option<(Vec<Expr>, Span)>)> {
+        Ok(match_nodes!(input.children();
+            [label(l)] => (l, None),
+            [label(l), postfix_args(args)] => (l, Some(args)),
+        ))
+    }
+
+    fn postfix_args(input: ParseInput) -> ParseResult<(Vec<Expr>, Span)> {
+        let span = input_to_span(&input);
+        Ok(match_nodes!(input.children();
+            [] => (Vec::<Expr>::new(), span.clone()),
+            [postfix_arg_list(args)] => (args, span.clone()),
+        ))
+    }
+
+    fn postfix_arg_list(input: ParseInput) -> ParseResult<Vec<Expr>> {
+        Ok(match_nodes!(input.children();
+            [expr(es)..] => es.collect(),
         ))
     }
 

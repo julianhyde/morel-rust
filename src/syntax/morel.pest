@@ -220,8 +220,21 @@ expr_application = { expr_unary+ }
 expr_unary = { expr_unary_op* ~ expr_postfix }
 expr_unary_op = { !literal ~ "~" }
 
-// Precedence 9: postfix .field
-expr_postfix = { atom ~ ("." ~ label)* }
+// Precedence 9: postfix '.field' (record projection) and '.method(args)'
+// (postfix method call, hydromatic/morel#346). `.method` without a
+// parenthesized argument list stays a plain '.field' dereference,
+// which may combine with function application in the enclosing rule.
+// The '(args)' form must be adjacent to the label (no whitespace
+// between 'method' and '('), so expressions like 'f g (x, y)' — two
+// consecutive arguments to 'f' — are not mis-parsed as a postfix
+// call on 'g'. Using '${...}' (compound atomic) suppresses implicit
+// whitespace at the boundaries of the postfix_tail's own tokens, but
+// sub-rules such as 'postfix_args' remain non-atomic internally so
+// whitespace inside the argument list is still allowed.
+expr_postfix = { atom ~ postfix_tail* }
+postfix_tail = ${ "." ~ WHITESPACE* ~ label ~ postfix_args? }
+postfix_args = !{ "(" ~ postfix_arg_list? ~ ")" }
+postfix_arg_list = !{ expr ~ ("," ~ expr)* }
 
 atom = {
     literal
