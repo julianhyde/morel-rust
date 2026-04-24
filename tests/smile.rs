@@ -101,6 +101,16 @@ fn overload() {
     run_script("tests/script/overload.smli");
 }
 
+/// Postfix method-call syntax (hydromatic/morel#346).
+/// Ported test file is in place but the feature is not yet
+/// implemented; ignored until the parser, type resolver, and
+/// built-in postfix tables land.
+#[test]
+#[ignore]
+fn postfix() {
+    run_script("tests/script/postfix.smli");
+}
+
 #[test]
 fn pretty() {
     run_script("tests/script/pretty.smli");
