@@ -906,6 +906,8 @@ impl<'a> Resolver<'a> {
         {
             return Some(t);
         }
+        // Apply: is this a postfix method call? If so compute the
+        // result type from the built-in signature and receiver.
         if let ExprKind::Apply(f, a) = &expr.kind
             && let ExprKind::Apply(inner_fn, inner_arg) = &f.kind
             && let ExprKind::RecordSelector(name) = &inner_fn.kind
@@ -922,6 +924,20 @@ impl<'a> Resolver<'a> {
                     arg_type.as_deref(),
                 ));
             }
+        }
+        // Let: the let's effective type is the body's effective type.
+        if let ExprKind::Let(_, body) = &expr.kind {
+            return self.effective_type(body);
+        }
+        // Case: take the first branch's right-hand side type.
+        if let ExprKind::Case(_, matches) = &expr.kind
+            && let Some(m) = matches.first()
+        {
+            return self.effective_type(&m.expr);
+        }
+        // If: take the then-branch's type.
+        if let ExprKind::If(_, then_expr, _) = &expr.kind {
+            return self.effective_type(then_expr);
         }
         expr.get_type(self.type_map)
     }
