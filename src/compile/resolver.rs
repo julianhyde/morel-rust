@@ -272,6 +272,12 @@ impl<'a> Resolver<'a> {
                     // `intBag`).
                     let expr_type = pe.expr.type_();
                     let pat_type = pe.pat.type_();
+                    // If type inference left the pattern type as an
+                    // unresolved variable (e.g., the bound expression
+                    // is a postfix method call that the inference pass
+                    // couldn't recognize) but the resolved expression
+                    // has a concrete type, prefer the expression type.
+                    // See hydromatic/morel#346.
                     let t = match (expr_type.as_ref(), pat_type.as_ref()) {
                         (Type::Bag(_), Type::List(_)) => {
                             expr_type.as_ref().clone()
@@ -290,6 +296,7 @@ impl<'a> Resolver<'a> {
                         {
                             expr_type.as_ref().clone()
                         }
+                        (_, Type::Variable(_)) => expr_type.as_ref().clone(),
                         _ => *pat_type,
                     };
                     CoreValBind {
@@ -327,7 +334,10 @@ impl<'a> Resolver<'a> {
 
     /// Resolves an AST expression to a core expression.
     pub fn resolve_expr(&self, expr: &Expr) -> CoreExpr {
-        let t = expr.get_type(self.type_map).unwrap();
+        let t = self
+            .effective_type(expr)
+            .or_else(|| expr.get_type(self.type_map))
+            .unwrap();
         let span =
             Span::from_pest_span(&expr.span.to_pest_span(), self.base_line);
         match &expr.kind {
@@ -373,6 +383,14 @@ impl<'a> Resolver<'a> {
                             _ => {}
                         }
                     }
+                }
+                // Try postfix method-call rewriting
+                // (hydromatic/morel#346). Pattern: outer Apply wraps an
+                // inner `Apply(RecordSelector(name), recv)` that
+                // couldn't be a field projection on `recv`.
+                if let Some(core) = self.try_postfix_call(&t, func, arg, &span)
+                {
+                    return core;
                 }
                 CoreExpr::Apply(
                     t,
@@ -827,6 +845,131 @@ impl<'a> Resolver<'a> {
         let c1 = self.resolve_expr(a1);
         let arg = CoreExpr::new_tuple(&[c0, c1]);
         CoreExpr::Apply(t, Box::new(fn_literal), Box::new(arg), span.clone())
+    }
+
+    /// Detects the postfix method-call pattern
+    /// `Apply(Apply(RecordSelector(name), recv), arg)` and, if the
+    /// receiver isn't a record with that field, rewrites it to a call
+    /// to the appropriate built-in. See hydromatic/morel#346.
+    fn try_postfix_call(
+        &self,
+        _t: &Type,
+        func: &Expr,
+        arg: &Expr,
+        span: &Span,
+    ) -> Option<CoreExpr> {
+        let (method_name, recv) = match &func.kind {
+            ExprKind::Apply(inner_fn, inner_arg) => match &inner_fn.kind {
+                ExprKind::RecordSelector(name) => {
+                    (name.clone(), inner_arg.as_ref())
+                }
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let recv_type = self.effective_type(recv)?;
+        // If the receiver is a record with this field, leave the tree
+        // alone — that's an ordinary field projection applied to `arg`.
+        if let Type::Record(_, fields) = recv_type.as_ref()
+            && fields.keys().any(|k| k.to_string() == method_name)
+        {
+            return None;
+        }
+        let (builtin, kind) =
+            postfix_dispatch(&method_name, recv_type.as_ref())?;
+        // Compute the return type from the built-in's signature —
+        // type inference left the outer Apply's slot as an
+        // unresolved variable because it couldn't unify the receiver
+        // against a record.
+        let return_t = postfix_return_type(builtin, kind, recv_type.as_ref());
+        Some(self.build_postfix_call(return_t, builtin, kind, recv, arg, span))
+    }
+
+    /// Recursively computes the "effective" type of an expression.
+    /// Uses the type_map entry when resolved, but falls back to
+    /// re-deriving the type through the postfix dispatcher for
+    /// expressions whose type inference was left unresolved because
+    /// the expression is itself a postfix call that the type
+    /// resolver couldn't recognize as such.
+    fn effective_type(&self, expr: &Expr) -> Option<Box<Type>> {
+        if let Some(t) = expr.get_type(self.type_map)
+            && !is_unresolved_type(&t)
+        {
+            return Some(t);
+        }
+        if let ExprKind::Apply(f, _a) = &expr.kind
+            && let ExprKind::Apply(inner_fn, inner_arg) = &f.kind
+            && let ExprKind::RecordSelector(name) = &inner_fn.kind
+        {
+            let recv_type = self.effective_type(inner_arg)?;
+            if let Some((builtin, kind)) =
+                postfix_dispatch(name, recv_type.as_ref())
+            {
+                return Some(postfix_return_type(
+                    builtin,
+                    kind,
+                    recv_type.as_ref(),
+                ));
+            }
+        }
+        expr.get_type(self.type_map)
+    }
+
+    /// Builds the Core tree for a postfix call, given the dispatched
+    /// built-in and its calling convention.
+    fn build_postfix_call(
+        &self,
+        t: Box<Type>,
+        f: BuiltInFunction,
+        kind: PostfixKind,
+        recv: &Expr,
+        arg: &Expr,
+        span: &Span,
+    ) -> CoreExpr {
+        let fn_type = f.get_type();
+        let fn_literal = CoreExpr::Literal(fn_type.clone(), Val::Fn(f));
+        let c_recv = self.resolve_expr(recv);
+        match kind {
+            PostfixKind::Unary => {
+                // `recv.m ()` — ignore the unit arg and apply the
+                // method to the receiver.
+                CoreExpr::Apply(
+                    t,
+                    Box::new(fn_literal),
+                    Box::new(c_recv),
+                    span.clone(),
+                )
+            }
+            PostfixKind::Tupled2 => {
+                // `recv.m a` — build the tuple (recv, a) and apply.
+                let c_arg = self.resolve_expr(arg);
+                let tuple = CoreExpr::new_tuple(&[c_recv, c_arg]);
+                CoreExpr::Apply(
+                    t,
+                    Box::new(fn_literal),
+                    Box::new(tuple),
+                    span.clone(),
+                )
+            }
+            PostfixKind::Tupled3 => {
+                // `recv.m (a, b)` — splice recv in as first tuple
+                // element, producing (recv, a, b).
+                let c_arg = self.resolve_expr(arg);
+                let mut parts = vec![c_recv];
+                if let CoreExpr::Tuple(_, elems) = c_arg {
+                    parts.extend(elems);
+                } else {
+                    parts.push(c_arg);
+                }
+                let tuple = CoreExpr::new_tuple(&parts);
+                CoreExpr::Apply(
+                    t,
+                    Box::new(fn_literal),
+                    Box::new(tuple),
+                    span.clone(),
+                )
+            }
+        }
     }
 
     /// Resolves an AST literal to a core value.
@@ -1651,4 +1794,277 @@ impl ReferenceFinder {
             ref_set: HashSet::new(),
         }
     }
+}
+
+/// Calling convention for a postfix method-call dispatch.
+#[derive(Copy, Clone, Debug)]
+enum PostfixKind {
+    /// `recv.m ()` — method takes only the receiver; argument (if any)
+    /// is a unit placeholder that gets discarded.
+    Unary,
+    /// `recv.m a` — method takes a 2-tuple (recv, a).
+    Tupled2,
+    /// `recv.m (a, b)` — method takes a 3-tuple (recv, a, b). The
+    /// user-supplied argument is itself a tuple `(a, b)` that gets
+    /// spliced after recv.
+    #[allow(dead_code)]
+    Tupled3,
+}
+
+/// Maps a postfix method name + receiver type to the corresponding
+/// built-in function. Returns `None` if no postfix method is defined
+/// for this receiver type / method-name combination.
+///
+/// This is the morel-rust counterpart to the per-structure "postfix"
+/// registration in morel-java's `BuiltIn` class.
+fn postfix_dispatch(
+    method: &str,
+    recv_type: &Type,
+) -> Option<(BuiltInFunction, PostfixKind)> {
+    use BuiltInFunction::{
+        BagDrop, BagHd, BagLength, BagNull, BagTake, BagTl, BoolNot,
+        BoolToString, CharCompare, CharIsAlpha, CharIsDigit, CharOrd, CharPred,
+        CharSucc, CharToLower, CharToString, CharToUpper, IntAbs, IntCompare,
+        IntMax, IntMin, IntRem, IntSameSign, IntSign, IntToString, ListDrop,
+        ListHd, ListLength, ListNth, ListNull, ListTake, ListTl, OptionGetOpt,
+        OptionIsSome, OptionValOf, RealAbs, RealCeil, RealCompare, RealFloor,
+        RealMax, RealMin, RealRem, RealSign, RealToString, RealTrunc,
+        StringExplode, StringSize, StringSub, StringSubstring,
+    };
+    use PostfixKind::{Tupled2, Tupled3, Unary};
+    // Strip type aliases; Forall wraps a type scheme we want to look
+    // through.
+    let ty = peel_type(recv_type);
+    match (method, ty) {
+        // String
+        ("size", Type::Primitive(PrimitiveType::String)) => {
+            Some((StringSize, Unary))
+        }
+        ("sub", Type::Primitive(PrimitiveType::String)) => {
+            Some((StringSub, Tupled2))
+        }
+        ("substring", Type::Primitive(PrimitiveType::String)) => {
+            Some((StringSubstring, Tupled3))
+        }
+        ("explode", Type::Primitive(PrimitiveType::String)) => {
+            Some((StringExplode, Unary))
+        }
+        // List
+        ("length", Type::List(_)) => Some((ListLength, Unary)),
+        ("hd", Type::List(_)) => Some((ListHd, Unary)),
+        ("tl", Type::List(_)) => Some((ListTl, Unary)),
+        ("null", Type::List(_)) => Some((ListNull, Unary)),
+        ("drop", Type::List(_)) => Some((ListDrop, Tupled2)),
+        ("take", Type::List(_)) => Some((ListTake, Tupled2)),
+        ("nth", Type::List(_)) => Some((ListNth, Tupled2)),
+        // Bag
+        ("length", Type::Bag(_)) => Some((BagLength, Unary)),
+        ("hd", Type::Bag(_)) => Some((BagHd, Unary)),
+        ("tl", Type::Bag(_)) => Some((BagTl, Unary)),
+        ("null", Type::Bag(_)) => Some((BagNull, Unary)),
+        ("drop", Type::Bag(_)) => Some((BagDrop, Tupled2)),
+        ("take", Type::Bag(_)) => Some((BagTake, Tupled2)),
+        // Int (overloaded)
+        ("abs", Type::Primitive(PrimitiveType::Int)) => Some((IntAbs, Unary)),
+        ("compare", Type::Primitive(PrimitiveType::Int)) => {
+            Some((IntCompare, Tupled2))
+        }
+        ("max", Type::Primitive(PrimitiveType::Int)) => Some((IntMax, Tupled2)),
+        ("min", Type::Primitive(PrimitiveType::Int)) => Some((IntMin, Tupled2)),
+        ("rem", Type::Primitive(PrimitiveType::Int)) => Some((IntRem, Tupled2)),
+        ("sameSign", Type::Primitive(PrimitiveType::Int)) => {
+            Some((IntSameSign, Tupled2))
+        }
+        ("sign", Type::Primitive(PrimitiveType::Int)) => Some((IntSign, Unary)),
+        ("toString", Type::Primitive(PrimitiveType::Int)) => {
+            Some((IntToString, Unary))
+        }
+        // Real (overloaded)
+        ("abs", Type::Primitive(PrimitiveType::Real)) => Some((RealAbs, Unary)),
+        ("ceil", Type::Primitive(PrimitiveType::Real)) => {
+            Some((RealCeil, Unary))
+        }
+        ("compare", Type::Primitive(PrimitiveType::Real)) => {
+            Some((RealCompare, Tupled2))
+        }
+        ("floor", Type::Primitive(PrimitiveType::Real)) => {
+            Some((RealFloor, Unary))
+        }
+        ("max", Type::Primitive(PrimitiveType::Real)) => {
+            Some((RealMax, Tupled2))
+        }
+        ("min", Type::Primitive(PrimitiveType::Real)) => {
+            Some((RealMin, Tupled2))
+        }
+        ("rem", Type::Primitive(PrimitiveType::Real)) => {
+            Some((RealRem, Tupled2))
+        }
+        ("sign", Type::Primitive(PrimitiveType::Real)) => {
+            Some((RealSign, Unary))
+        }
+        ("toString", Type::Primitive(PrimitiveType::Real)) => {
+            Some((RealToString, Unary))
+        }
+        ("trunc", Type::Primitive(PrimitiveType::Real)) => {
+            Some((RealTrunc, Unary))
+        }
+        // Char (overloaded)
+        ("compare", Type::Primitive(PrimitiveType::Char)) => {
+            Some((CharCompare, Tupled2))
+        }
+        ("isAlpha", Type::Primitive(PrimitiveType::Char)) => {
+            Some((CharIsAlpha, Unary))
+        }
+        ("isDigit", Type::Primitive(PrimitiveType::Char)) => {
+            Some((CharIsDigit, Unary))
+        }
+        ("ord", Type::Primitive(PrimitiveType::Char)) => Some((CharOrd, Unary)),
+        ("pred", Type::Primitive(PrimitiveType::Char)) => {
+            Some((CharPred, Unary))
+        }
+        ("succ", Type::Primitive(PrimitiveType::Char)) => {
+            Some((CharSucc, Unary))
+        }
+        ("toLower", Type::Primitive(PrimitiveType::Char)) => {
+            Some((CharToLower, Unary))
+        }
+        ("toString", Type::Primitive(PrimitiveType::Char)) => {
+            Some((CharToString, Unary))
+        }
+        ("toUpper", Type::Primitive(PrimitiveType::Char)) => {
+            Some((CharToUpper, Unary))
+        }
+        // Bool (overloaded)
+        ("not", Type::Primitive(PrimitiveType::Bool)) => Some((BoolNot, Unary)),
+        ("toString", Type::Primitive(PrimitiveType::Bool)) => {
+            Some((BoolToString, Unary))
+        }
+        // Option
+        ("getOpt", Type::Data(n, _)) if n == "option" => {
+            Some((OptionGetOpt, Tupled2))
+        }
+        ("isSome", Type::Data(n, _)) if n == "option" => {
+            Some((OptionIsSome, Unary))
+        }
+        ("valOf", Type::Data(n, _)) if n == "option" => {
+            Some((OptionValOf, Unary))
+        }
+        _ => None,
+    }
+}
+
+/// Peels type aliases and Forall wrappers for the purpose of
+/// postfix-method dispatch.
+fn peel_type(t: &Type) -> &Type {
+    match t {
+        Type::Alias(_, inner, _) => peel_type(inner),
+        Type::Forall(inner, _) => peel_type(inner),
+        _ => t,
+    }
+}
+
+/// Returns the result type of a postfix call, given the dispatched
+/// built-in and the *concrete* receiver type. We need this because
+/// type inference leaves the outer Apply's type variable unresolved
+/// (the record-selector action only fires when the receiver is a
+/// true record, not a built-in type).
+fn postfix_return_type(
+    builtin: BuiltInFunction,
+    _kind: PostfixKind,
+    recv_type: &Type,
+) -> Box<Type> {
+    use BuiltInFunction::{
+        BagDrop, BagHd, BagLength, BagNull, BagTake, BagTl, BoolNot,
+        BoolToString, CharCompare, CharIsAlpha, CharIsDigit, CharOrd, CharPred,
+        CharSucc, CharToLower, CharToString, CharToUpper, IntAbs, IntCompare,
+        IntMax, IntMin, IntRem, IntSameSign, IntSign, IntToString, ListDrop,
+        ListHd, ListLength, ListNth, ListNull, ListTake, ListTl, OptionGetOpt,
+        OptionIsSome, OptionValOf, RealAbs, RealCeil, RealCompare, RealFloor,
+        RealMax, RealMin, RealRem, RealSign, RealToString, RealTrunc,
+        StringExplode, StringSize, StringSub, StringSubstring,
+    };
+    fn prim(p: PrimitiveType) -> Box<Type> {
+        Box::new(Type::Primitive(p))
+    }
+    fn clone_box(t: &Type) -> Box<Type> {
+        Box::new(t.clone())
+    }
+    /// Extracts the element type from a `T list` or `T bag`.
+    fn elem_of(t: &Type) -> Box<Type> {
+        match peel_type(t) {
+            Type::List(e) | Type::Bag(e) => e.clone(),
+            _ => Box::new(t.clone()),
+        }
+    }
+    /// Builds an `order` type (the `order` datatype).
+    fn order_ty() -> Box<Type> {
+        Box::new(Type::Data("order".to_string(), vec![]))
+    }
+    match builtin {
+        // Length-like: always int
+        ListLength | BagLength | StringSize | CharOrd => {
+            prim(PrimitiveType::Int)
+        }
+        // bool results
+        ListNull | BagNull | BoolNot | CharIsAlpha | CharIsDigit => {
+            prim(PrimitiveType::Bool)
+        }
+        // hd returns element type
+        ListHd | BagHd => elem_of(recv_type),
+        // tl / drop / take return collection type
+        ListTl | BagTl | ListDrop | ListTake | BagDrop | BagTake => {
+            clone_box(recv_type)
+        }
+        // nth: (T list * int) -> T
+        ListNth => elem_of(recv_type),
+        // String
+        StringSub => prim(PrimitiveType::Char),
+        StringSubstring => prim(PrimitiveType::String),
+        StringExplode => Box::new(Type::List(prim(PrimitiveType::Char))),
+        // Int ops returning int
+        IntAbs | IntMax | IntMin | IntRem | IntSign => prim(PrimitiveType::Int),
+        IntSameSign => prim(PrimitiveType::Bool),
+        IntToString | BoolToString | CharToString | RealToString => {
+            prim(PrimitiveType::String)
+        }
+        // Int/Real compare return order
+        IntCompare | RealCompare | CharCompare => order_ty(),
+        // Real ops returning real
+        RealAbs | RealMax | RealMin | RealRem | RealSign | RealTrunc => {
+            prim(PrimitiveType::Real)
+        }
+        RealCeil | RealFloor => prim(PrimitiveType::Int),
+        // Char transforms
+        CharPred | CharSucc | CharToLower | CharToUpper => {
+            prim(PrimitiveType::Char)
+        }
+        // Option methods
+        OptionIsSome => prim(PrimitiveType::Bool),
+        OptionValOf => {
+            // option T → T
+            match peel_type(recv_type) {
+                Type::Data(_, args) if args.len() == 1 => {
+                    Box::new(args[0].clone())
+                }
+                _ => clone_box(recv_type),
+            }
+        }
+        OptionGetOpt => {
+            // option T → T
+            match peel_type(recv_type) {
+                Type::Data(_, args) if args.len() == 1 => {
+                    Box::new(args[0].clone())
+                }
+                _ => clone_box(recv_type),
+            }
+        }
+        // Fallback: use the receiver's type (conservative).
+        _ => clone_box(recv_type),
+    }
+}
+
+/// Returns true if a type is still an unresolved unification variable
+/// (i.e., type inference left it unconstrained).
+fn is_unresolved_type(t: &Type) -> bool {
+    matches!(t, Type::Variable(_))
 }
