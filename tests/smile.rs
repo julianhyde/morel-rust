@@ -102,11 +102,7 @@ fn overload() {
 }
 
 /// Postfix method-call syntax (hydromatic/morel#346).
-/// Ported test file is in place but the feature is not yet
-/// implemented; ignored until the parser, type resolver, and
-/// built-in postfix tables land.
 #[test]
-#[ignore]
 fn postfix() {
     run_script("tests/script/postfix.smli");
 }
