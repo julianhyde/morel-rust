@@ -473,10 +473,13 @@ impl ExprKind<Expr> {
             }
             ExprKind::Let(decls, body) => {
                 write!(f, "let ")?;
-                for decl in decls {
-                    write!(f, "{}; ", decl)?;
+                for (i, decl) in decls.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, "; ")?;
+                    }
+                    write!(f, "{}", decl)?;
                 }
-                write!(f, "in {} end", body)
+                write!(f, " in {} end", body)
             }
             ExprKind::List(elems) => {
                 f.write_str("[")?;

@@ -137,7 +137,7 @@ fn test_case() {
 
 #[test]
 fn test_let() {
-    check("let val x = 1 in x + 2 end", "let val x = 1; in x + 2 end");
+    check_same("let val x = 1 in x + 2 end");
 }
 
 #[test]
@@ -283,14 +283,40 @@ every_variant! {
     Tuple(..),
 }
 
-/// Runs a round-trip check and marks the parsed variant as covered by
-/// removing its name from `remaining`. The test fails at the end if any
-/// declared variant was never removed.
-#[track_caller]
-fn check_kind(remaining: &mut HashSet<&str>, input: &str, expected: &str) {
-    check(input, expected);
-    let expr = parse_expr(input);
-    remaining.remove(variant_name(&expr.kind));
+/// Coverage tracker for `ExprKind` variants. Seeded with every declared
+/// variant name; [`Self::check_kind`] removes the parsed variant's name
+/// as each canonical input is exercised, and [`Self::assert_complete`]
+/// fails the test if anything remains.
+struct KindCoverage {
+    remaining: HashSet<&'static str>,
+}
+
+impl KindCoverage {
+    fn new() -> Self {
+        Self {
+            remaining: VARIANT_NAMES.iter().copied().collect(),
+        }
+    }
+
+    /// Round-trips `input` (must be canonical) and marks the parsed
+    /// variant as covered.
+    #[track_caller]
+    fn check_kind(&mut self, input: &str) {
+        check_same(input);
+        let expr = parse_expr(input);
+        self.remaining.remove(variant_name(&expr.kind));
+    }
+
+    /// Fails the test if any declared variant is still uncovered.
+    #[track_caller]
+    fn assert_complete(&self) {
+        assert!(
+            self.remaining.is_empty(),
+            "variants declared in every_variant! but not exercised by any \
+             check_kind call: {:?}",
+            self.remaining
+        );
+    }
 }
 
 /// One round-trip per `ExprKind` variant.
@@ -299,75 +325,76 @@ fn check_kind(remaining: &mut HashSet<&str>, input: &str, expected: &str) {
 /// from the `every_variant!` invocation above, breaks the build because
 /// the generated `variant_name` match is no longer exhaustive.
 ///
-/// Runtime: `remaining` is seeded from `VARIANT_NAMES` and each
-/// `check_kind` call removes the parsed variant's name. Any variant
-/// left at the end is reported by name.
+/// Runtime: [`KindCoverage`] tracks which variants have been exercised;
+/// [`KindCoverage::assert_complete`] names any that weren't.
 #[test]
 fn test_each_expr_kind() {
-    let mut set: HashSet<&str> = VARIANT_NAMES.iter().copied().collect();
-    check_kind(&mut set, "count over xs", "count over xs");
-    check_kind(&mut set, "true andalso false", "true andalso false");
-    check_kind(&mut set, "1 : int", "1 : int");
-    check_kind(&mut set, "[1] @ [2]", "[1] @ [2]");
-    check_kind(&mut set, "f x", "f x");
-    check_kind(&mut set, "\"a\" ^ \"b\"", "\"a\" ^ \"b\"");
-    check_kind(
-        &mut set,
-        "case x of 1 => \"a\" | _ => \"b\"",
-        "case x of 1 => \"a\" | _ => \"b\"",
-    );
-    check_kind(&mut set, "f o g", "f o g");
-    check_kind(&mut set, "1 :: [2]", "1 :: [2]");
-    check_kind(&mut set, "current", "current");
-    check_kind(&mut set, "1 div 2", "1 div 2");
-    check_kind(&mut set, "1 / 2.0", "1 / 2.0");
-    check_kind(&mut set, "1 elem [1, 2]", "1 elem [1, 2]");
-    check_kind(&mut set, "elements", "elements");
-    check_kind(&mut set, "1 = 2", "1 = 2");
-    check_kind(
-        &mut set,
-        "exists x in xs where true",
-        "exists x in xs where true",
-    );
-    check_kind(&mut set, "fn x => x", "fn x => x");
-    check_kind(
-        &mut set,
-        "forall x in xs require true",
-        "forall x in xs require true",
-    );
-    check_kind(&mut set, "from x in xs", "from x in xs");
-    check_kind(&mut set, "1 > 2", "1 > 2");
-    check_kind(&mut set, "1 >= 2", "1 >= 2");
-    check_kind(&mut set, "x", "x");
-    check_kind(&mut set, "if x then 1 else 2", "if x then 1 else 2");
-    check_kind(&mut set, "true implies false", "true implies false");
-    check_kind(&mut set, "1 < 2", "1 < 2");
-    check_kind(&mut set, "1 <= 2", "1 <= 2");
-    // `let` currently emits an extra `;` after each decl.
-    check_kind(
-        &mut set,
-        "let val x = 1 in x end",
-        "let val x = 1; in x end",
-    );
-    check_kind(&mut set, "[1, 2]", "[1, 2]");
-    check_kind(&mut set, "1", "1");
-    check_kind(&mut set, "1 - 2", "1 - 2");
-    check_kind(&mut set, "1 mod 2", "1 mod 2");
-    check_kind(&mut set, "~x", "~x");
-    check_kind(&mut set, "1 notelem [1, 2]", "1 notelem [1, 2]");
-    check_kind(&mut set, "1 <> 2", "1 <> 2");
-    check_kind(&mut set, "op +", "op +");
-    check_kind(&mut set, "true orelse false", "true orelse false");
-    check_kind(&mut set, "ordinal", "ordinal");
-    check_kind(&mut set, "1 + 2", "1 + 2");
-    check_kind(&mut set, "{a = 1}", "{a = 1}");
-    check_kind(&mut set, "#name", "#name");
-    check_kind(&mut set, "1 * 2", "1 * 2");
-    check_kind(&mut set, "(1, 2)", "(1, 2)");
-    assert!(
-        set.is_empty(),
-        "variants declared in every_variant! but not exercised by any \
-         check_kind call: {:?}",
-        set
-    );
+    let mut k = KindCoverage::new();
+
+    // Atoms: literal, identifier, op section, record selector, current,
+    // ordinal, elements
+    k.check_kind("1");
+    k.check_kind("x");
+    k.check_kind("op +");
+    k.check_kind("#name");
+    k.check_kind("current");
+    k.check_kind("ordinal");
+    k.check_kind("elements");
+
+    // Arithmetic ops: +, -, *, /, div, mod, ~
+    k.check_kind("1 + 2");
+    k.check_kind("1 - 2");
+    k.check_kind("1 * 2");
+    k.check_kind("1 / 2.0");
+    k.check_kind("1 div 2");
+    k.check_kind("1 mod 2");
+    k.check_kind("~x");
+
+    // String concat: ^
+    k.check_kind("\"a\" ^ \"b\"");
+
+    // Comparison ops: =, <>, <, <=, >, >=, elem, notelem
+    k.check_kind("1 = 2");
+    k.check_kind("1 <> 2");
+    k.check_kind("1 < 2");
+    k.check_kind("1 <= 2");
+    k.check_kind("1 > 2");
+    k.check_kind("1 >= 2");
+    k.check_kind("1 elem [1, 2]");
+    k.check_kind("1 notelem [1, 2]");
+
+    // Boolean ops: andalso, orelse, implies
+    k.check_kind("true andalso false");
+    k.check_kind("true orelse false");
+    k.check_kind("true implies false");
+
+    // Function: apply, compose
+    k.check_kind("f x");
+    k.check_kind("f o g");
+
+    // List ops: ::, @
+    k.check_kind("1 :: [2]");
+    k.check_kind("[1] @ [2]");
+
+    // Data constructors: [...], (...), {...}
+    k.check_kind("[1, 2]");
+    k.check_kind("(1, 2)");
+    k.check_kind("{a = 1}");
+
+    // Type annotation: :
+    k.check_kind("1 : int");
+
+    // Control flow: if, case, let, fn
+    k.check_kind("if x then 1 else 2");
+    k.check_kind("case x of 1 => \"a\" | _ => \"b\"");
+    k.check_kind("let val x = 1 in x end");
+    k.check_kind("fn x => x");
+
+    // Queries: from, exists, forall, over (aggregate)
+    k.check_kind("from x in xs");
+    k.check_kind("exists x in xs where true");
+    k.check_kind("forall x in xs require true");
+    k.check_kind("count over xs");
+
+    k.assert_complete();
 }
