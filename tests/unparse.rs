@@ -210,30 +210,20 @@ fn test_subquery_wrapped() {
 
 use std::collections::HashSet;
 
-/// Declares one round-trip case per `ExprKind` variant. Each line names
-/// the variant, optionally with `(..)` for variants with payload, and
-/// gives its canonical `(input, expected)` pair.
+/// Declares every `ExprKind` variant. Each line names the variant,
+/// optionally with `(..)` for variants that have payload.
 ///
-/// The macro expands to three items:
+/// The macro expands to two items:
 ///  - `fn variant_name(&ExprKind<Expr>) -> &'static str` — an exhaustive
 ///    match that returns the variant's string name.
-///  - `const VARIANT_CASES: &[(&str, &str)]` — the `(input, expected)`
-///    pairs in declaration order.
-///  - `const VARIANT_NAMES: &[&str]` — the variant names in declaration
-///    order.
+///  - `const VARIANT_NAMES: &[&str]` — every variant's name, used to
+///    seed the coverage set in [`test_each_expr_kind`].
 ///
 /// Compile-time safety: adding a new `ExprKind` variant breaks the
 /// `variant_name` match (non-exhaustive). Removing a line here does the
-/// same — the variant is no longer covered. Either way, the build fails.
-///
-/// Runtime safety: the test seeds a `HashSet` from `VARIANT_NAMES` and
-/// removes each variant as its case runs; if the set is non-empty at
-/// the end, some variant was declared but not actually exercised.
+/// same — the variant is no longer covered. Either way the build fails.
 macro_rules! every_variant {
-    ( $(
-        $variant:ident $( ( $($args:tt)* ) )?
-            => ( $input:expr, $expected:expr )
-    ),+ $(,)? ) => {
+    ( $( $variant:ident $( ( $($args:tt)* ) )? ),+ $(,)? ) => {
         fn variant_name(k: &ExprKind<Expr>) -> &'static str {
             match k {
                 $(
@@ -242,8 +232,6 @@ macro_rules! every_variant {
                 )+
             }
         }
-        const VARIANT_CASES: &[(&str, &str)] =
-            &[ $( ($input, $expected) ),+ ];
         const VARIANT_NAMES: &[&str] =
             &[ $( stringify!($variant) ),+ ];
     };
@@ -251,81 +239,135 @@ macro_rules! every_variant {
 
 every_variant! {
     // lint: sort until '#}' where '^\s*[A-Z]'
-    Aggregate(..)          => ("count over xs", "count over xs"),
-    AndAlso(..)            => ("true andalso false",
-                               "true andalso false"),
-    Annotated(..)          => ("1 : int", "1 : int"),
-    Append(..)             => ("[1] @ [2]", "[1] @ [2]"),
-    Apply(..)              => ("f x", "f x"),
-    Caret(..)              => ("\"a\" ^ \"b\"", "\"a\" ^ \"b\""),
-    Case(..)               => ("case x of 1 => \"a\" | _ => \"b\"",
-                               "case x of 1 => \"a\" | _ => \"b\""),
-    Compose(..)            => ("f o g", "f o g"),
-    Cons(..)               => ("1 :: [2]", "1 :: [2]"),
-    Current                => ("current", "current"),
-    Div(..)                => ("1 div 2", "1 div 2"),
-    Divide(..)             => ("1 / 2.0", "1 / 2.0"),
-    Elem(..)               => ("1 elem [1, 2]", "1 elem [1, 2]"),
-    Elements               => ("elements", "elements"),
-    Equal(..)              => ("1 = 2", "1 = 2"),
-    Exists(..)             => ("exists x in xs where true",
-                               "exists x in xs where true"),
-    Fn(..)                 => ("fn x => x", "fn x => x"),
-    Forall(..)             => ("forall x in xs require true",
-                               "forall x in xs require true"),
-    From(..)               => ("from x in xs", "from x in xs"),
-    GreaterThan(..)        => ("1 > 2", "1 > 2"),
-    GreaterThanOrEqual(..) => ("1 >= 2", "1 >= 2"),
-    Identifier(..)         => ("x", "x"),
-    If(..)                 => ("if x then 1 else 2",
-                               "if x then 1 else 2"),
-    Implies(..)            => ("true implies false",
-                               "true implies false"),
-    LessThan(..)           => ("1 < 2", "1 < 2"),
-    LessThanOrEqual(..)    => ("1 <= 2", "1 <= 2"),
-    // `let` currently emits an extra `;` after each decl.
-    Let(..)                => ("let val x = 1 in x end",
-                               "let val x = 1; in x end"),
-    List(..)               => ("[1, 2]", "[1, 2]"),
-    Literal(..)            => ("1", "1"),
-    Minus(..)              => ("1 - 2", "1 - 2"),
-    Mod(..)                => ("1 mod 2", "1 mod 2"),
-    Negate(..)             => ("~x", "~x"),
-    NotElem(..)            => ("1 notelem [1, 2]",
-                               "1 notelem [1, 2]"),
-    NotEqual(..)           => ("1 <> 2", "1 <> 2"),
-    OpSection(..)          => ("op +", "op +"),
-    OrElse(..)             => ("true orelse false",
-                               "true orelse false"),
-    Ordinal                => ("ordinal", "ordinal"),
-    Plus(..)               => ("1 + 2", "1 + 2"),
-    Record(..)             => ("{a = 1}", "{a = 1}"),
-    RecordSelector(..)     => ("#name", "#name"),
-    Times(..)              => ("1 * 2", "1 * 2"),
-    Tuple(..)              => ("(1, 2)", "(1, 2)"),
+    Aggregate(..),
+    AndAlso(..),
+    Annotated(..),
+    Append(..),
+    Apply(..),
+    Caret(..),
+    Case(..),
+    Compose(..),
+    Cons(..),
+    Current,
+    Div(..),
+    Divide(..),
+    Elem(..),
+    Elements,
+    Equal(..),
+    Exists(..),
+    Fn(..),
+    Forall(..),
+    From(..),
+    GreaterThan(..),
+    GreaterThanOrEqual(..),
+    Identifier(..),
+    If(..),
+    Implies(..),
+    LessThan(..),
+    LessThanOrEqual(..),
+    Let(..),
+    List(..),
+    Literal(..),
+    Minus(..),
+    Mod(..),
+    Negate(..),
+    NotElem(..),
+    NotEqual(..),
+    OpSection(..),
+    OrElse(..),
+    Ordinal,
+    Plus(..),
+    Record(..),
+    RecordSelector(..),
+    Times(..),
+    Tuple(..),
+}
+
+/// Runs a round-trip check and marks the parsed variant as covered by
+/// removing its name from `remaining`. The test fails at the end if any
+/// declared variant was never removed.
+#[track_caller]
+fn check_kind(remaining: &mut HashSet<&str>, input: &str, expected: &str) {
+    check(input, expected);
+    let expr = parse_expr(input);
+    remaining.remove(variant_name(&expr.kind));
 }
 
 /// One round-trip per `ExprKind` variant.
 ///
-/// Compile-time: adding a new `ExprKind` variant or removing a line from
-/// the `every_variant!` invocation above breaks the build, because the
-/// generated `variant_name` match is no longer exhaustive.
+/// Compile-time: adding a new `ExprKind` variant, or removing a line
+/// from the `every_variant!` invocation above, breaks the build because
+/// the generated `variant_name` match is no longer exhaustive.
 ///
-/// Runtime: if the generated `VARIANT_NAMES` list contains a variant for
-/// which no case's input actually produces that variant, the test panics
-/// with the list of variants left in the set.
+/// Runtime: `remaining` is seeded from `VARIANT_NAMES` and each
+/// `check_kind` call removes the parsed variant's name. Any variant
+/// left at the end is reported by name.
 #[test]
-fn test_every_variant() {
-    let mut remaining: HashSet<&str> = VARIANT_NAMES.iter().copied().collect();
-    for (input, expected) in VARIANT_CASES {
-        check(input, expected);
-        let expr = parse_expr(input);
-        remaining.remove(variant_name(&expr.kind));
-    }
+fn test_each_expr_kind() {
+    let mut set: HashSet<&str> = VARIANT_NAMES.iter().copied().collect();
+    check_kind(&mut set, "count over xs", "count over xs");
+    check_kind(&mut set, "true andalso false", "true andalso false");
+    check_kind(&mut set, "1 : int", "1 : int");
+    check_kind(&mut set, "[1] @ [2]", "[1] @ [2]");
+    check_kind(&mut set, "f x", "f x");
+    check_kind(&mut set, "\"a\" ^ \"b\"", "\"a\" ^ \"b\"");
+    check_kind(
+        &mut set,
+        "case x of 1 => \"a\" | _ => \"b\"",
+        "case x of 1 => \"a\" | _ => \"b\"",
+    );
+    check_kind(&mut set, "f o g", "f o g");
+    check_kind(&mut set, "1 :: [2]", "1 :: [2]");
+    check_kind(&mut set, "current", "current");
+    check_kind(&mut set, "1 div 2", "1 div 2");
+    check_kind(&mut set, "1 / 2.0", "1 / 2.0");
+    check_kind(&mut set, "1 elem [1, 2]", "1 elem [1, 2]");
+    check_kind(&mut set, "elements", "elements");
+    check_kind(&mut set, "1 = 2", "1 = 2");
+    check_kind(
+        &mut set,
+        "exists x in xs where true",
+        "exists x in xs where true",
+    );
+    check_kind(&mut set, "fn x => x", "fn x => x");
+    check_kind(
+        &mut set,
+        "forall x in xs require true",
+        "forall x in xs require true",
+    );
+    check_kind(&mut set, "from x in xs", "from x in xs");
+    check_kind(&mut set, "1 > 2", "1 > 2");
+    check_kind(&mut set, "1 >= 2", "1 >= 2");
+    check_kind(&mut set, "x", "x");
+    check_kind(&mut set, "if x then 1 else 2", "if x then 1 else 2");
+    check_kind(&mut set, "true implies false", "true implies false");
+    check_kind(&mut set, "1 < 2", "1 < 2");
+    check_kind(&mut set, "1 <= 2", "1 <= 2");
+    // `let` currently emits an extra `;` after each decl.
+    check_kind(
+        &mut set,
+        "let val x = 1 in x end",
+        "let val x = 1; in x end",
+    );
+    check_kind(&mut set, "[1, 2]", "[1, 2]");
+    check_kind(&mut set, "1", "1");
+    check_kind(&mut set, "1 - 2", "1 - 2");
+    check_kind(&mut set, "1 mod 2", "1 mod 2");
+    check_kind(&mut set, "~x", "~x");
+    check_kind(&mut set, "1 notelem [1, 2]", "1 notelem [1, 2]");
+    check_kind(&mut set, "1 <> 2", "1 <> 2");
+    check_kind(&mut set, "op +", "op +");
+    check_kind(&mut set, "true orelse false", "true orelse false");
+    check_kind(&mut set, "ordinal", "ordinal");
+    check_kind(&mut set, "1 + 2", "1 + 2");
+    check_kind(&mut set, "{a = 1}", "{a = 1}");
+    check_kind(&mut set, "#name", "#name");
+    check_kind(&mut set, "1 * 2", "1 * 2");
+    check_kind(&mut set, "(1, 2)", "(1, 2)");
     assert!(
-        remaining.is_empty(),
+        set.is_empty(),
         "variants declared in every_variant! but not exercised by any \
-         canonical input: {:?}",
-        remaining
+         check_kind call: {:?}",
+        set
     );
 }
