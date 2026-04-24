@@ -691,6 +691,26 @@ impl<'a> Compiler<'a> {
                             // which itself would have rejected a
                             // non-discrete type.
                         }
+                        // Intercept Range.complement: if the argument
+                        // is a discrete_set, use the Discrete-aware
+                        // complement; otherwise fall through to the
+                        // continuous-set Eager1 fallback.
+                        if *f == BuiltInFunction::RangeComplement
+                            && let Type::Data(name, args) = a.type_().as_ref()
+                            && name == "discrete_set"
+                            && !args.is_empty()
+                        {
+                            let elem_type = args[0].clone();
+                            if let Ok(discrete) =
+                                crate::eval::discrete::discrete_for(&elem_type)
+                            {
+                                let arg = self.compile_arg(cx, a);
+                                return Code::RangeDiscreteSetComplement(
+                                    code::DiscreteRef(discrete),
+                                    Box::new(arg),
+                                );
+                            }
+                        }
                         // Intercept Range.continuousSetOf /
                         // Range.discreteSetOf to build type-directed
                         // helpers from the element type inside `'a

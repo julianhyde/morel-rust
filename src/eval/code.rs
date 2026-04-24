@@ -309,6 +309,11 @@ pub enum Code {
     /// merged range list. The pre-built type-directed comparator
     /// handles element types with non-natural ordering.
     RangeContinuousSetOf(CmpRef, Box<Code>),
+    /// `RangeDiscreteSetComplement(discrete, set_code)` evaluates a
+    /// `discrete_set` and returns its complement as a `discrete_set`,
+    /// using the pre-built `Discrete` stepper to step across discrete
+    /// boundaries.
+    RangeDiscreteSetComplement(DiscreteRef, Box<Code>),
     /// `RangeDiscreteSetOf(cmp, discrete, ranges_code)` mirrors
     /// `RangeContinuousSetOf` but additionally uses a pre-built
     /// `Discrete` stepper to merge ranges that are adjacent in the
@@ -670,6 +675,9 @@ impl Code {
             Code::RaiseIllegalArgument(_, _) => *mode == EvalMode::EagerF0,
             Code::RangeContains(_, _, _) => *mode == EvalMode::EagerF0,
             Code::RangeContinuousSetOf(_, _) => *mode == EvalMode::EagerF0,
+            Code::RangeDiscreteSetComplement(_, _) => {
+                *mode == EvalMode::EagerF0
+            }
             Code::RangeDiscreteSetOf(_, _, _) => *mode == EvalMode::EagerF0,
             Code::RangeEnumerate(_, _, _) => *mode == EvalMode::EagerF0,
             Code::Tuple(_) => *mode == EvalMode::EagerF0,
@@ -940,6 +948,24 @@ impl Code {
                 Ok(Val::Constructor(
                     val::CONTINUOUS_SET_ORDINAL,
                     Box::new(Val::List(merged)),
+                ))
+            }
+            Code::RangeDiscreteSetComplement(discrete, set_code) => {
+                let set = set_code.eval_f0(r, f)?;
+                let ranges = match &set {
+                    Val::Constructor(val::DISCRETE_SET_ORDINAL, inner) => {
+                        inner.expect_list()
+                    }
+                    other => panic!(
+                        "Range.complement: expected discrete_set, got {:?}",
+                        other
+                    ),
+                };
+                let complemented =
+                    crate::eval::bound::complement(ranges, Some(&*discrete.0));
+                Ok(Val::Constructor(
+                    val::DISCRETE_SET_ORDINAL,
+                    Box::new(Val::List(complemented)),
                 ))
             }
             Code::RangeDiscreteSetOf(cmp, discrete, ranges_code) => {
@@ -1390,6 +1416,11 @@ pub(crate) fn range_contains(
             let pair = inner.expect_list();
             cmp.compare(value, &pair[0]).is_gt()
                 && cmp.compare(value, &pair[1]).is_le()
+        }
+        val::CONTINUOUS_SET_ORDINAL | val::DISCRETE_SET_ORDINAL => {
+            // The wrapper carries a normalized `Val::List` of ranges;
+            // binary-search it.
+            crate::eval::bound::set_contains(inner.expect_list(), value, cmp)
         }
         _ => {
             panic!("Range.contains: unknown range constructor ordinal {}", ord)
@@ -2330,15 +2361,17 @@ impl Eager1 {
                 Val::Constructor(val::RANGE_POINT_ORDINAL, Box::new(a0))
             }
             RangeRanges => {
-                // `ranges : 'a continuous_set -> 'a range list`.
-                // The continuous_set wraps a Val::List of ranges; just
-                // unwrap it.
+                // `ranges : 'a continuous_set | 'a discrete_set -> 'a
+                // range list`. Both wrappers store a Val::List of
+                // ranges; just unwrap it.
                 match a0 {
-                    Val::Constructor(val::CONTINUOUS_SET_ORDINAL, inner) => {
+                    Val::Constructor(val::CONTINUOUS_SET_ORDINAL, inner)
+                    | Val::Constructor(val::DISCRETE_SET_ORDINAL, inner) => {
                         *inner
                     }
                     other => panic!(
-                        "Range.ranges: expected continuous_set, got {:?}",
+                        "Range.ranges: expected continuous_set or \
+                         discrete_set, got {:?}",
                         other
                     ),
                 }

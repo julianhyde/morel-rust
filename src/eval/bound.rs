@@ -224,6 +224,21 @@ impl Bound {
         cmp.compare(&next_after_hi, &lo_eff).is_ge()
     }
 
+    /// Compares `x` against this lower bound. Positive if `x`
+    /// satisfies the bound (is at or past the lower endpoint), zero
+    /// if `x` exactly equals an inclusive bound, -1 if `x` equals an
+    /// exclusive lower bound (not satisfied). Unbounded always
+    /// returns positive.
+    pub fn compare_value(&self, x: &Val, cmp: &dyn Comparator) -> Ordering {
+        let Some(v) = &self.value else {
+            return Ordering::Greater;
+        };
+        match cmp.compare(x, v) {
+            Ordering::Equal if !self.inclusive => Ordering::Less,
+            other => other,
+        }
+    }
+
     /// Returns the greater of this upper bound and `other`.
     pub fn max(&self, other: &Self, cmp: &dyn Comparator) -> Self {
         match (&self.value, &other.value) {
@@ -241,6 +256,43 @@ impl Bound {
             },
         }
     }
+}
+
+/// Tests whether `x` is contained in any of the (normalized) ranges.
+/// Binary-searches for the range whose lower bound is satisfied, then
+/// checks the upper bound.
+pub fn set_contains(ranges: &[Val], x: &Val, cmp: &dyn Comparator) -> bool {
+    if ranges.is_empty() {
+        return false;
+    }
+    let bounds: Vec<(Bound, Bound)> = ranges
+        .iter()
+        .map(|r| (Bound::lower(r), Bound::upper(r)))
+        .collect();
+    let mut lo: i32 = 0;
+    let mut hi: i32 = bounds.len() as i32 - 1;
+    let mut candidate: i32 = -1;
+    while lo <= hi {
+        let mid = (lo + hi) / 2;
+        if bounds[mid as usize].0.compare_value(x, cmp).is_ge() {
+            candidate = mid;
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    if candidate >= 0 {
+        let hi_b = &bounds[candidate as usize].1;
+        let Some(hi_val) = &hi_b.value else {
+            return true; // unbounded above
+        };
+        match cmp.compare(x, hi_val) {
+            Ordering::Less => return true,
+            Ordering::Equal if hi_b.inclusive => return true,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// Returns the complement of a normalized list of ranges: the set of

@@ -741,10 +741,10 @@ pub enum BuiltInFunction {
     #[strum(props(type = "forall 1 'a * 'a -> 'a range", constructor = true))]
     RangeClosedOpen,
     #[strum(props(p = "Range", name = "complement"))]
-    #[strum(props(type = "forall 1 'a continuous_set -> 'a continuous_set"))]
+    #[strum(props(type = "forall 1 'a -> 'a"))]
     RangeComplement,
     #[strum(props(p = "Range", name = "contains"))]
-    #[strum(props(type = "forall 1 'a range -> 'a -> bool"))]
+    #[strum(props(type = "forall 2 'a -> 'b -> bool"))]
     RangeContains,
     #[strum(props(p = "Range", name = "continuousSetOf"))]
     #[strum(props(type = "forall 1 'a range list -> 'a continuous_set"))]
@@ -768,7 +768,7 @@ pub enum BuiltInFunction {
     #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
     RangePoint,
     #[strum(props(p = "Range", name = "ranges"))]
-    #[strum(props(type = "forall 1 'a continuous_set -> 'a range list"))]
+    #[strum(props(type = "forall 2 'a -> 'b range list"))]
     RangeRanges,
     #[strum(props(p = "Range", name = "toBag"))]
     #[strum(props(type = "forall 1 'a discrete_set -> 'a bag"))]
