@@ -60,154 +60,6 @@ fn check_same(input: &str) {
     check(input, input);
 }
 
-#[test]
-fn test_redundant_outer_parens_stripped() {
-    check("((1 + 2)) * 3", "(1 + 2) * 3");
-    check("((1 * 2)) + 3", "1 * 2 + 3");
-}
-
-#[test]
-fn test_precedence_parens_preserved() {
-    check_same("(1 + 2) * 3");
-    check_same("1 + 2 * 3");
-    check_same("1 * 2 + 3");
-    check_same("(1 + 2) * (3 + 4)");
-}
-
-#[test]
-fn test_left_associative_no_extra_parens() {
-    check_same("1 + 2 + 3");
-    check_same("1 - 2 - 3");
-    check_same("1 * 2 * 3");
-}
-
-#[test]
-fn test_right_associative_cons() {
-    check_same("1 :: 2 :: [3]");
-    check_same("(1 :: [2]) :: [[3]]");
-}
-
-#[test]
-fn test_list_is_atomic() {
-    check_same("hd [1, 2, 3]");
-    check("hd ([1, 2, 3])", "hd [1, 2, 3]");
-    check_same("length [1, 2, 3]");
-}
-
-#[test]
-fn test_tuple_is_atomic() {
-    check_same("f (1, 2)");
-}
-
-#[test]
-fn test_record_is_atomic() {
-    check_same("f {a = 1, b = 2}");
-}
-
-#[test]
-fn test_comparison_vs_arithmetic() {
-    check_same("1 + 2 = 3");
-    check("(1 + 2) = 3", "1 + 2 = 3");
-    check_same("1 = 2 + 3");
-}
-
-#[test]
-fn test_andalso_orelse() {
-    check_same("true andalso false orelse true");
-    check_same("true orelse false andalso true");
-    check_same("(true orelse false) andalso true");
-}
-
-#[test]
-fn test_if_then_else() {
-    check_same("if x then 1 else 2");
-    check_same("if x > 0 then y + 1 else y - 1");
-}
-
-#[test]
-fn test_fn() {
-    check_same("fn x => x + 1");
-    check_same("fn x => fn y => x + y");
-}
-
-#[test]
-fn test_case() {
-    check_same("case x of 1 => \"a\" | _ => \"b\"");
-}
-
-#[test]
-fn test_let() {
-    check_same("let val x = 1 in x + 2 end");
-}
-
-#[test]
-fn test_record_with() {
-    check_same("{r with a = 1}");
-}
-
-#[test]
-fn test_from_basic() {
-    check_same("from e in emps");
-    check_same("from i in [1, 2, 3] where i > 1");
-    check_same("from i in [1, 2, 3] where i > 1 yield i");
-}
-
-#[test]
-fn test_from_multi_scan() {
-    // Consecutive scans are separated by comma (canonical).
-    check_same("from x in xs, y in ys");
-    // An explicit `join` between adjacent scans is canonicalized to comma.
-    check(
-        "from x in xs join y in ys on x = y",
-        "from x in xs, y in ys on x = y",
-    );
-    // After a non-scan step, a subsequent scan must use `join`.
-    check_same("from x in xs where x > 0 join y in ys on x = y");
-}
-
-#[test]
-fn test_from_order_group_compute() {
-    check_same("from i in [3, 1, 2] order i");
-    check(
-        "from e in emps group e.deptno compute count",
-        "from e in emps group #deptno e compute count",
-    );
-}
-
-#[test]
-fn test_from_distinct_skip_take() {
-    check_same("from i in [1, 2, 3] distinct");
-    check_same("from i in [1, 2, 3, 4, 5] skip 1 take 3");
-}
-
-#[test]
-fn test_from_set_operations() {
-    check_same("from i in [1, 2, 3] union [4, 5]");
-    check_same("from i in [1, 2, 3] union distinct [4, 5]");
-    check_same("from i in [1, 2, 3] intersect [2, 3]");
-    check_same("from i in [1, 2, 3] except [2]");
-}
-
-#[test]
-fn test_exists_forall() {
-    check(
-        "exists e in emps where e.name = \"X\"",
-        "exists e in emps where #name e = \"X\"",
-    );
-    check(
-        "forall e in emps require e.age > 0",
-        "forall e in emps require #age e > 0",
-    );
-}
-
-#[test]
-fn test_subquery_wrapped() {
-    // A `from` appearing as the source of another `from` must be
-    // parenthesized; otherwise the inner query's steps would be attributed
-    // to the outer query.
-    check_same("from e in (from x in xs yield x)");
-}
-
 use morel::syntax::ast::ExprKindTag;
 use std::collections::HashSet;
 use strum::IntoEnumIterator;
@@ -248,7 +100,9 @@ impl KindCoverage {
     }
 }
 
-/// One round-trip per `ExprKind` variant.
+/// Round-trip tests, grouped by operator family. Exercises every
+/// `ExprKind` variant at least once, plus a handful of ad-hoc
+/// precedence / associativity / normalization checks per group.
 ///
 /// `ExprKindTag` (auto-derived by `strum::EnumDiscriminants` from
 /// `ExprKind`) tracks coverage. Adding a new variant to `ExprKind`
@@ -260,7 +114,7 @@ fn test_each_expr_kind() {
     let mut k = KindCoverage::new();
 
     // Atoms: literal, identifier, op section, record selector, current,
-    // ordinal, elements
+    // ordinal, elements.
     k.check_kind("1");
     k.check_kind("x");
     k.check_kind("op +");
@@ -269,7 +123,7 @@ fn test_each_expr_kind() {
     k.check_kind("ordinal");
     k.check_kind("elements");
 
-    // Arithmetic ops: +, -, *, /, div, mod, ~
+    // Arithmetic ops: +, -, *, /, div, mod, ~.
     k.check_kind("1 + 2");
     k.check_kind("1 - 2");
     k.check_kind("1 * 2");
@@ -277,11 +131,22 @@ fn test_each_expr_kind() {
     k.check_kind("1 div 2");
     k.check_kind("1 mod 2");
     k.check_kind("~x");
+    // `*` binds tighter than `+`; left-associative chains stay flat.
+    check_same("1 + 2 * 3");
+    check_same("1 * 2 + 3");
+    check_same("(1 + 2) * 3");
+    check_same("(1 + 2) * (3 + 4)");
+    check_same("1 + 2 + 3");
+    check_same("1 - 2 - 3");
+    check_same("1 * 2 * 3");
+    // Redundant outer parens are stripped.
+    check("((1 + 2)) * 3", "(1 + 2) * 3");
+    check("((1 * 2)) + 3", "1 * 2 + 3");
 
-    // String concat: ^
+    // String concat: ^.
     k.check_kind("\"a\" ^ \"b\"");
 
-    // Comparison ops: =, <>, <, <=, >, >=, elem, notelem
+    // Comparison ops: =, <>, <, <=, >, >=, elem, notelem.
     k.check_kind("1 = 2");
     k.check_kind("1 <> 2");
     k.check_kind("1 < 2");
@@ -290,39 +155,95 @@ fn test_each_expr_kind() {
     k.check_kind("1 >= 2");
     k.check_kind("1 elem [1, 2]");
     k.check_kind("1 notelem [1, 2]");
+    // `+` binds tighter than `=`.
+    check_same("1 + 2 = 3");
+    check_same("1 = 2 + 3");
+    check("(1 + 2) = 3", "1 + 2 = 3");
 
-    // Boolean ops: andalso, orelse, implies
+    // Boolean ops: andalso, orelse, implies.
     k.check_kind("true andalso false");
     k.check_kind("true orelse false");
     k.check_kind("true implies false");
+    // `andalso` binds tighter than `orelse`.
+    check_same("true andalso false orelse true");
+    check_same("true orelse false andalso true");
+    check_same("(true orelse false) andalso true");
 
-    // Function: apply, compose
+    // Function: apply, compose.
     k.check_kind("f x");
     k.check_kind("f o g");
 
-    // List ops: ::, @
+    // List ops: ::, @. `::` is right-associative.
     k.check_kind("1 :: [2]");
     k.check_kind("[1] @ [2]");
+    check_same("1 :: 2 :: [3]");
+    check_same("(1 :: [2]) :: [[3]]");
 
-    // Data constructors: [...], (...), {...}
+    // Data constructors: [...], (...), {...}. All three are atomic when
+    // used as a function argument.
     k.check_kind("[1, 2]");
     k.check_kind("(1, 2)");
     k.check_kind("{a = 1}");
+    check_same("hd [1, 2, 3]");
+    check("hd ([1, 2, 3])", "hd [1, 2, 3]");
+    check_same("length [1, 2, 3]");
+    check_same("f (1, 2)");
+    check_same("f {a = 1, b = 2}");
+    check_same("{r with a = 1}");
 
-    // Type annotation: :
+    // Type annotation: `:`.
     k.check_kind("1 : int");
 
-    // Control flow: if, case, let, fn
+    // Control flow: if, case, let, fn.
     k.check_kind("if x then 1 else 2");
     k.check_kind("case x of 1 => \"a\" | _ => \"b\"");
     k.check_kind("let val x = 1 in x end");
     k.check_kind("fn x => x");
+    check_same("if x > 0 then y + 1 else y - 1");
+    check_same("let val x = 1 in x + 2 end");
+    check_same("fn x => x + 1");
+    check_same("fn x => fn y => x + y");
 
-    // Queries: from, exists, forall, over (aggregate)
+    // Queries: from, exists, forall, over (aggregate).
     k.check_kind("from x in xs");
     k.check_kind("exists x in xs where true");
     k.check_kind("forall x in xs require true");
     k.check_kind("count over xs");
+    check_same("from e in emps");
+    check_same("from i in [1, 2, 3] where i > 1");
+    check_same("from i in [1, 2, 3] where i > 1 yield i");
+    // Consecutive scans are separated by comma (canonical); an explicit
+    // `join` between adjacent scans is canonicalized to comma.
+    check_same("from x in xs, y in ys");
+    check(
+        "from x in xs join y in ys on x = y",
+        "from x in xs, y in ys on x = y",
+    );
+    // After a non-scan step, a subsequent scan must use `join`.
+    check_same("from x in xs where x > 0 join y in ys on x = y");
+    check_same("from i in [3, 1, 2] order i");
+    check(
+        "from e in emps group e.deptno compute count",
+        "from e in emps group #deptno e compute count",
+    );
+    check_same("from i in [1, 2, 3] distinct");
+    check_same("from i in [1, 2, 3, 4, 5] skip 1 take 3");
+    check_same("from i in [1, 2, 3] union [4, 5]");
+    check_same("from i in [1, 2, 3] union distinct [4, 5]");
+    check_same("from i in [1, 2, 3] intersect [2, 3]");
+    check_same("from i in [1, 2, 3] except [2]");
+    check(
+        "exists e in emps where e.name = \"X\"",
+        "exists e in emps where #name e = \"X\"",
+    );
+    check(
+        "forall e in emps require e.age > 0",
+        "forall e in emps require #age e > 0",
+    );
+    // A `from` appearing as the source of another `from` must be
+    // parenthesized; otherwise the inner query's steps would be
+    // attributed to the outer query.
+    check_same("from e in (from x in xs yield x)");
 
     k.assert_complete();
 }
