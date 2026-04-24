@@ -20,17 +20,27 @@
 //! that the unparser uses parentheses iff they are required by the
 //! precedence of surrounding operators.
 
-use morel::syntax::ast::StatementKind;
+use morel::syntax::ast::{Expr, ExprKind, StatementKind};
 use morel::syntax::parser::parse_unadorned_statement;
+
+/// Parses `input` as a single expression statement and returns the
+/// expression.
+fn parse_expr(input: &str) -> Expr {
+    let stmt = parse_unadorned_statement(input).expect("parse should succeed");
+    match stmt.kind {
+        StatementKind::Expr(kind) => Expr {
+            kind,
+            span: stmt.span,
+            id: stmt.id,
+        },
+        other => panic!("expected an expression, got {:?}", other),
+    }
+}
 
 /// Parses `input` as a single expression statement and returns its unparsed
 /// form.
 fn unparse(input: &str) -> String {
-    let stmt = parse_unadorned_statement(input).expect("parse should succeed");
-    match stmt.kind {
-        StatementKind::Expr(e) => format!("{}", e),
-        other => panic!("expected an expression, got {:?}", other),
-    }
+    format!("{}", parse_expr(input).kind)
 }
 
 /// Asserts that `input` parses and unparses to `expected`.
@@ -196,4 +206,126 @@ fn test_subquery_wrapped() {
     // parenthesized; otherwise the inner query's steps would be attributed
     // to the outer query.
     check_same("from e in (from x in xs yield x)");
+}
+
+use std::collections::HashSet;
+
+/// Declares one round-trip case per `ExprKind` variant. Each line names
+/// the variant, optionally with `(..)` for variants with payload, and
+/// gives its canonical `(input, expected)` pair.
+///
+/// The macro expands to three items:
+///  - `fn variant_name(&ExprKind<Expr>) -> &'static str` — an exhaustive
+///    match that returns the variant's string name.
+///  - `const VARIANT_CASES: &[(&str, &str)]` — the `(input, expected)`
+///    pairs in declaration order.
+///  - `const VARIANT_NAMES: &[&str]` — the variant names in declaration
+///    order.
+///
+/// Compile-time safety: adding a new `ExprKind` variant breaks the
+/// `variant_name` match (non-exhaustive). Removing a line here does the
+/// same — the variant is no longer covered. Either way, the build fails.
+///
+/// Runtime safety: the test seeds a `HashSet` from `VARIANT_NAMES` and
+/// removes each variant as its case runs; if the set is non-empty at
+/// the end, some variant was declared but not actually exercised.
+macro_rules! every_variant {
+    ( $(
+        $variant:ident $( ( $($args:tt)* ) )?
+            => ( $input:expr, $expected:expr )
+    ),+ $(,)? ) => {
+        fn variant_name(k: &ExprKind<Expr>) -> &'static str {
+            match k {
+                $(
+                    ExprKind::$variant $( ( $($args)* ) )?
+                        => stringify!($variant),
+                )+
+            }
+        }
+        const VARIANT_CASES: &[(&str, &str)] =
+            &[ $( ($input, $expected) ),+ ];
+        const VARIANT_NAMES: &[&str] =
+            &[ $( stringify!($variant) ),+ ];
+    };
+}
+
+every_variant! {
+    // lint: sort until '#}' where '^\s*[A-Z]'
+    Aggregate(..)          => ("count over xs", "count over xs"),
+    AndAlso(..)            => ("true andalso false",
+                               "true andalso false"),
+    Annotated(..)          => ("1 : int", "1 : int"),
+    Append(..)             => ("[1] @ [2]", "[1] @ [2]"),
+    Apply(..)              => ("f x", "f x"),
+    Caret(..)              => ("\"a\" ^ \"b\"", "\"a\" ^ \"b\""),
+    Case(..)               => ("case x of 1 => \"a\" | _ => \"b\"",
+                               "case x of 1 => \"a\" | _ => \"b\""),
+    Compose(..)            => ("f o g", "f o g"),
+    Cons(..)               => ("1 :: [2]", "1 :: [2]"),
+    Current                => ("current", "current"),
+    Div(..)                => ("1 div 2", "1 div 2"),
+    Divide(..)             => ("1 / 2.0", "1 / 2.0"),
+    Elem(..)               => ("1 elem [1, 2]", "1 elem [1, 2]"),
+    Elements               => ("elements", "elements"),
+    Equal(..)              => ("1 = 2", "1 = 2"),
+    Exists(..)             => ("exists x in xs where true",
+                               "exists x in xs where true"),
+    Fn(..)                 => ("fn x => x", "fn x => x"),
+    Forall(..)             => ("forall x in xs require true",
+                               "forall x in xs require true"),
+    From(..)               => ("from x in xs", "from x in xs"),
+    GreaterThan(..)        => ("1 > 2", "1 > 2"),
+    GreaterThanOrEqual(..) => ("1 >= 2", "1 >= 2"),
+    Identifier(..)         => ("x", "x"),
+    If(..)                 => ("if x then 1 else 2",
+                               "if x then 1 else 2"),
+    Implies(..)            => ("true implies false",
+                               "true implies false"),
+    LessThan(..)           => ("1 < 2", "1 < 2"),
+    LessThanOrEqual(..)    => ("1 <= 2", "1 <= 2"),
+    // `let` currently emits an extra `;` after each decl.
+    Let(..)                => ("let val x = 1 in x end",
+                               "let val x = 1; in x end"),
+    List(..)               => ("[1, 2]", "[1, 2]"),
+    Literal(..)            => ("1", "1"),
+    Minus(..)              => ("1 - 2", "1 - 2"),
+    Mod(..)                => ("1 mod 2", "1 mod 2"),
+    Negate(..)             => ("~x", "~x"),
+    NotElem(..)            => ("1 notelem [1, 2]",
+                               "1 notelem [1, 2]"),
+    NotEqual(..)           => ("1 <> 2", "1 <> 2"),
+    OpSection(..)          => ("op +", "op +"),
+    OrElse(..)             => ("true orelse false",
+                               "true orelse false"),
+    Ordinal                => ("ordinal", "ordinal"),
+    Plus(..)               => ("1 + 2", "1 + 2"),
+    Record(..)             => ("{a = 1}", "{a = 1}"),
+    RecordSelector(..)     => ("#name", "#name"),
+    Times(..)              => ("1 * 2", "1 * 2"),
+    Tuple(..)              => ("(1, 2)", "(1, 2)"),
+}
+
+/// One round-trip per `ExprKind` variant.
+///
+/// Compile-time: adding a new `ExprKind` variant or removing a line from
+/// the `every_variant!` invocation above breaks the build, because the
+/// generated `variant_name` match is no longer exhaustive.
+///
+/// Runtime: if the generated `VARIANT_NAMES` list contains a variant for
+/// which no case's input actually produces that variant, the test panics
+/// with the list of variants left in the set.
+#[test]
+fn test_every_variant() {
+    let mut remaining: HashSet<&str> = VARIANT_NAMES.iter().copied().collect();
+    for (input, expected) in VARIANT_CASES {
+        check(input, expected);
+        let expr = parse_expr(input);
+        remaining.remove(variant_name(&expr.kind));
+    }
+    assert!(
+        remaining.is_empty(),
+        "variants declared in every_variant! but not exercised by any \
+         canonical input: {:?}",
+        remaining
+    );
 }
