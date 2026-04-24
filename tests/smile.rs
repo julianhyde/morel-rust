@@ -112,8 +112,15 @@ fn pretty() {
     run_script("tests/script/pretty.smli");
 }
 
+// Range functionality itself passes via REPL checks; see #338
+// commits. The .smli still diverges from morel-java output on
+// pre-existing formatting details: reals print `1` not `1.0`,
+// nullary constructors print `INL LESS` not `INL (LESS)`, runtime
+// errors get a trailing `raised at:` line, and the overload-type
+// changes show `'a -> 'b` rather than the specific set/element
+// signatures.
 #[test]
-#[ignore = "Range structure not yet implemented (hydromatic/morel#338)"]
+#[ignore = "range.smli formatting divergences (hydromatic/morel#338)"]
 fn range() {
     run_script("tests/script/range.smli");
 }
