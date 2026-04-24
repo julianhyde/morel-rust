@@ -22,10 +22,10 @@
 //! b4a0c4b1.
 //!
 //! Covers `int`, `char`, `bool`, `unit`; tuples/records of discretes;
-//! and `'a descending` where `'a` is discrete. Sum types (`order`,
-//! `either`, `option`, user-defined enums) land in a follow-up commit
-//! because morel-rust represents each as a distinct `Val` variant, not
-//! the uniform `Val::Constructor` used for user datatypes.
+//! `'a descending` where `'a` is discrete; and the built-in sum types
+//! `order`, `'a option`, and `('a, 'b) either` (each using their
+//! dedicated `Val` variant rather than `Val::Constructor`).
+//! User-defined enum datatypes are not yet supported.
 
 use crate::compile::types::{PrimitiveType, Type};
 use crate::eval::char::Char;
@@ -242,6 +242,121 @@ impl Discrete for DescendingDiscrete {
     }
 }
 
+/// Discrete for the built-in `order` enum: LESS < EQUAL < GREATER.
+pub struct OrderDiscrete;
+
+impl Discrete for OrderDiscrete {
+    fn next(&self, v: &Val) -> Option<Val> {
+        use crate::eval::order::Order;
+        match v {
+            Val::Order(o) => match o.0 {
+                std::cmp::Ordering::Less => {
+                    Some(Val::Order(Order(std::cmp::Ordering::Equal)))
+                }
+                std::cmp::Ordering::Equal => {
+                    Some(Val::Order(Order(std::cmp::Ordering::Greater)))
+                }
+                std::cmp::Ordering::Greater => None,
+            },
+            _ => panic!("OrderDiscrete::next: expected Val::Order"),
+        }
+    }
+    fn prev(&self, v: &Val) -> Option<Val> {
+        use crate::eval::order::Order;
+        match v {
+            Val::Order(o) => match o.0 {
+                std::cmp::Ordering::Greater => {
+                    Some(Val::Order(Order(std::cmp::Ordering::Equal)))
+                }
+                std::cmp::Ordering::Equal => {
+                    Some(Val::Order(Order(std::cmp::Ordering::Less)))
+                }
+                std::cmp::Ordering::Less => None,
+            },
+            _ => panic!("OrderDiscrete::prev: expected Val::Order"),
+        }
+    }
+    fn min_value(&self) -> Option<Val> {
+        use crate::eval::order::Order;
+        Some(Val::Order(Order(std::cmp::Ordering::Less)))
+    }
+    fn max_value(&self) -> Option<Val> {
+        use crate::eval::order::Order;
+        Some(Val::Order(Order(std::cmp::Ordering::Greater)))
+    }
+}
+
+/// Discrete for `'a option`: NONE (represented as `Val::Unit`) precedes
+/// every `SOME v`.
+pub struct OptionDiscrete {
+    inner: Arc<dyn Discrete>,
+}
+
+impl Discrete for OptionDiscrete {
+    fn next(&self, v: &Val) -> Option<Val> {
+        match v {
+            Val::Unit => self.inner.min_value().map(|x| Val::Some(Box::new(x))),
+            Val::Some(s) => self.inner.next(s).map(|x| Val::Some(Box::new(x))),
+            _ => {
+                panic!("OptionDiscrete::next: expected Val::Unit or Val::Some")
+            }
+        }
+    }
+    fn prev(&self, v: &Val) -> Option<Val> {
+        match v {
+            Val::Unit => None,
+            Val::Some(s) => match self.inner.prev(s) {
+                Some(x) => Some(Val::Some(Box::new(x))),
+                None => Some(Val::Unit),
+            },
+            _ => {
+                panic!("OptionDiscrete::prev: expected Val::Unit or Val::Some")
+            }
+        }
+    }
+    fn min_value(&self) -> Option<Val> {
+        Some(Val::Unit)
+    }
+    fn max_value(&self) -> Option<Val> {
+        self.inner.max_value().map(|x| Val::Some(Box::new(x)))
+    }
+}
+
+/// Discrete for `('a, 'b) either`: every `INL a` precedes every `INR b`.
+pub struct EitherDiscrete {
+    left: Arc<dyn Discrete>,
+    right: Arc<dyn Discrete>,
+}
+
+impl Discrete for EitherDiscrete {
+    fn next(&self, v: &Val) -> Option<Val> {
+        match v {
+            Val::Inl(l) => match self.left.next(l) {
+                Some(x) => Some(Val::Inl(Box::new(x))),
+                None => self.right.min_value().map(|x| Val::Inr(Box::new(x))),
+            },
+            Val::Inr(r) => self.right.next(r).map(|x| Val::Inr(Box::new(x))),
+            _ => panic!("EitherDiscrete::next: expected Val::Inl or Val::Inr"),
+        }
+    }
+    fn prev(&self, v: &Val) -> Option<Val> {
+        match v {
+            Val::Inl(l) => self.left.prev(l).map(|x| Val::Inl(Box::new(x))),
+            Val::Inr(r) => match self.right.prev(r) {
+                Some(x) => Some(Val::Inr(Box::new(x))),
+                None => self.left.max_value().map(|x| Val::Inl(Box::new(x))),
+            },
+            _ => panic!("EitherDiscrete::prev: expected Val::Inl or Val::Inr"),
+        }
+    }
+    fn min_value(&self) -> Option<Val> {
+        self.left.min_value().map(|x| Val::Inl(Box::new(x)))
+    }
+    fn max_value(&self) -> Option<Val> {
+        self.right.max_value().map(|x| Val::Inr(Box::new(x)))
+    }
+}
+
 /// Returns a `Discrete` for the given type, or an error describing why
 /// the type is not discrete. The error message starts with `"not a
 /// discrete type: "` followed by the offending type.
@@ -268,18 +383,27 @@ pub fn discrete_for(type_: &Type) -> Result<Arc<dyn Discrete>, String> {
                 components: components?,
             }))
         }
-        Type::Named(args, name) | Type::Data(name, args) => {
-            if name == "descending" && !args.is_empty() {
+        Type::Named(args, name) | Type::Data(name, args) => match name.as_str()
+        {
+            "descending" if !args.is_empty() => {
                 let inner = discrete_for(&args[0])?;
                 Ok(Arc::new(DescendingDiscrete { inner }))
-            } else {
-                // Sum types (order, either, option, user-defined
-                // enums) are not yet supported. Their morel-rust `Val`
-                // representations are special and will land in a
-                // follow-up commit.
+            }
+            "order" => Ok(Arc::new(OrderDiscrete)),
+            "option" if !args.is_empty() => {
+                let inner = discrete_for(&args[0])?;
+                Ok(Arc::new(OptionDiscrete { inner }))
+            }
+            "either" if args.len() >= 2 => {
+                let left = discrete_for(&args[0])?;
+                let right = discrete_for(&args[1])?;
+                Ok(Arc::new(EitherDiscrete { left, right }))
+            }
+            _ => {
+                // User-defined enum datatypes are not yet supported.
                 Err(format!("not a discrete type: {}", type_))
             }
-        }
+        },
         _ => Err(format!("not a discrete type: {}", type_)),
     }
 }
