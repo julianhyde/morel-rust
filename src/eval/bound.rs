@@ -243,6 +243,70 @@ impl Bound {
     }
 }
 
+/// Appends all discrete values in the range `[lo..hi]` to `out`, using
+/// `discrete` for stepping and `cmp` for the upper-bound check. Panics
+/// on an unbounded upper side or an empty exclusive lower bound at the
+/// discrete maximum — morel-java raises `Size` in those cases, but the
+/// runtime-error plumbing for `discrete_set` isn't wired yet.
+pub fn enumerate(
+    lo: &Bound,
+    hi: &Bound,
+    discrete: &dyn Discrete,
+    cmp: &dyn Comparator,
+    out: &mut Vec<Val>,
+) {
+    let hi_val = match &hi.value {
+        Some(v) => v,
+        None => panic!("Range.toList/toBag: range is unbounded above"),
+    };
+    let start = match &lo.value {
+        None => match discrete.min_value() {
+            Some(v) => v,
+            None => panic!("Range.toList/toBag: element type has no minimum"),
+        },
+        Some(v) => {
+            if lo.inclusive {
+                v.clone()
+            } else {
+                match discrete.next(v) {
+                    Some(n) => n,
+                    None => {
+                        panic!("Range.toList/toBag: empty open range at max")
+                    }
+                }
+            }
+        }
+    };
+    let mut v = start;
+    loop {
+        let c = cmp.compare(&v, hi_val);
+        if c == Ordering::Greater || (c == Ordering::Equal && !hi.inclusive) {
+            break;
+        }
+        out.push(v.clone());
+        match discrete.next(&v) {
+            Some(n) => v = n,
+            None => break,
+        }
+    }
+}
+
+/// Enumerates every value covered by the given (normalized) list of
+/// ranges, in ascending order.
+pub fn enumerate_ranges(
+    ranges: &[Val],
+    discrete: &dyn Discrete,
+    cmp: &dyn Comparator,
+) -> Vec<Val> {
+    let mut out = Vec::new();
+    for r in ranges {
+        let lo = Bound::lower(r);
+        let hi = Bound::upper(r);
+        enumerate(&lo, &hi, discrete, cmp, &mut out);
+    }
+    out
+}
+
 /// Converts a list of runtime range values into a normalized list:
 /// sorts by lower bound, then merges overlapping or touching ranges.
 /// Returns the merged ranges as `Val::List` of range constructors.

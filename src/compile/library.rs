@@ -764,6 +764,15 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Range", name = "POINT", global = true))]
     #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
     RangePoint,
+    #[strum(props(p = "Range", name = "ranges"))]
+    #[strum(props(type = "forall 1 'a continuous_set -> 'a range list"))]
+    RangeRanges,
+    #[strum(props(p = "Range", name = "toBag"))]
+    #[strum(props(type = "forall 1 'a discrete_set -> 'a bag"))]
+    RangeToBag,
+    #[strum(props(p = "Range", name = "toList"))]
+    #[strum(props(type = "forall 1 'a discrete_set -> 'a list"))]
+    RangeToList,
     /// `real` is a synonym for `Real.fromInt`
     #[strum(props(name = "real", type = "int -> real", global = true))]
     Real,

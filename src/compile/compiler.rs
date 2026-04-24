@@ -654,6 +654,43 @@ impl<'a> Compiler<'a> {
                                 Code::Min(cmp, Box::new(arg))
                             };
                         }
+                        // Intercept Range.toList / Range.toBag to build
+                        // type-directed helpers from the element type
+                        // inside `'a discrete_set`.
+                        if *f == BuiltInFunction::RangeToList
+                            || *f == BuiltInFunction::RangeToBag
+                        {
+                            let elem_type = match a.type_().as_ref() {
+                                Type::Data(name, args)
+                                    if name == "discrete_set"
+                                        && !args.is_empty() =>
+                                {
+                                    args[0].clone()
+                                }
+                                _ => *a.type_(),
+                            };
+                            let cmp = CmpRef(comparator::comparator_for_with(
+                                &elem_type,
+                                &self.type_map.datatype_constructors,
+                                &self.type_map.constructor_arg_types,
+                            ));
+                            if let Ok(discrete) =
+                                crate::eval::discrete::discrete_for(&elem_type)
+                            {
+                                let arg = self.compile_arg(cx, a);
+                                return Code::RangeEnumerate(
+                                    cmp,
+                                    code::DiscreteRef(discrete),
+                                    Box::new(arg),
+                                );
+                            }
+                            // Element type is not discrete: fall
+                            // through. The Eager1 fallback will panic
+                            // — this path is unreachable when the
+                            // input came from `Range.discreteSetOf`,
+                            // which itself would have rejected a
+                            // non-discrete type.
+                        }
                         // Intercept Range.continuousSetOf /
                         // Range.discreteSetOf to build type-directed
                         // helpers from the element type inside `'a

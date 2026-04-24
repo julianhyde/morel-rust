@@ -307,6 +307,12 @@ pub enum Code {
     /// `Discrete` stepper to merge ranges that are adjacent in the
     /// discrete domain (e.g. `[1,3] ∪ [4,7] → [1,7]` for `int`).
     RangeDiscreteSetOf(CmpRef, DiscreteRef, Box<Code>),
+    /// `RangeEnumerate(cmp, discrete, set_code)` evaluates a
+    /// `discrete_set` and returns the `Val::List` of values it
+    /// covers, in ascending order. Used to implement both
+    /// `Range.toList` and `Range.toBag` (bags share the `Val::List`
+    /// representation).
+    RangeEnumerate(CmpRef, DiscreteRef, Box<Code>),
     Tuple(Vec<Code>),
 }
 
@@ -657,6 +663,7 @@ impl Code {
             Code::RangeContains(_, _, _) => *mode == EvalMode::EagerF0,
             Code::RangeContinuousSetOf(_, _) => *mode == EvalMode::EagerF0,
             Code::RangeDiscreteSetOf(_, _, _) => *mode == EvalMode::EagerF0,
+            Code::RangeEnumerate(_, _, _) => *mode == EvalMode::EagerF0,
             Code::Tuple(_) => *mode == EvalMode::EagerF0,
         }
     }
@@ -935,6 +942,24 @@ impl Code {
                     val::DISCRETE_SET_ORDINAL,
                     Box::new(Val::List(merged)),
                 ))
+            }
+            Code::RangeEnumerate(cmp, discrete, set_code) => {
+                let set = set_code.eval_f0(r, f)?;
+                let ranges = match &set {
+                    Val::Constructor(val::DISCRETE_SET_ORDINAL, inner) => {
+                        inner.expect_list()
+                    }
+                    other => panic!(
+                        "Range.toList/toBag: expected discrete_set, got {:?}",
+                        other
+                    ),
+                };
+                let out = crate::eval::bound::enumerate_ranges(
+                    ranges,
+                    &*discrete.0,
+                    &*cmp.0,
+                );
+                Ok(Val::List(out))
             }
             Code::Tuple(codes) => {
                 let mut values = Vec::with_capacity(codes.capacity());
@@ -2099,6 +2124,9 @@ pub enum Eager1 {
     RangeOpen,
     RangeOpenClosed,
     RangePoint,
+    RangeRanges,
+    RangeToBag,
+    RangeToList,
     RealAbs,
     RealFromInt,
     RealFromString,
@@ -2270,6 +2298,29 @@ impl Eager1 {
             }
             RangePoint => {
                 Val::Constructor(val::RANGE_POINT_ORDINAL, Box::new(a0))
+            }
+            RangeRanges => {
+                // `ranges : 'a continuous_set -> 'a range list`.
+                // The continuous_set wraps a Val::List of ranges; just
+                // unwrap it.
+                match a0 {
+                    Val::Constructor(val::CONTINUOUS_SET_ORDINAL, inner) => {
+                        *inner
+                    }
+                    other => panic!(
+                        "Range.ranges: expected continuous_set, got {:?}",
+                        other
+                    ),
+                }
+            }
+            RangeToBag | RangeToList => {
+                // Fallback for partial application. Without type info
+                // we cannot build a `Discrete`; panic clearly. The
+                // compile intercept covers every direct call.
+                panic!(
+                    "Range.toList/toBag: partial application is not supported; \
+                     invoke with a concrete discrete_set argument"
+                )
             }
             RealAbs => Val::Real(Real::abs(a0.expect_real())),
             RealFromInt => Val::Real(Real::from_int(a0.expect_int())),
@@ -3585,6 +3636,9 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::RangeOpen.implements(&mut b, RangeOpen);
     Eager1::RangeOpenClosed.implements(&mut b, RangeOpenClosed);
     Eager1::RangePoint.implements(&mut b, RangePoint);
+    Eager1::RangeRanges.implements(&mut b, RangeRanges);
+    Eager1::RangeToBag.implements(&mut b, RangeToBag);
+    Eager1::RangeToList.implements(&mut b, RangeToList);
     Eager1::RealFromInt.implements(&mut b, Real);
     Eager1::RealAbs.implements(&mut b, RealAbs);
     EagerF1::RealCeil.implements(&mut b, RealCeil);
