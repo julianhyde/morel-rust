@@ -54,12 +54,6 @@ fn check(input: &str, expected: &str) {
     );
 }
 
-/// Asserts that `input` parses and unparses back to itself unchanged.
-#[track_caller]
-fn check_same(input: &str) {
-    check(input, input);
-}
-
 use morel::syntax::ast::ExprKindTag;
 use std::collections::HashSet;
 use strum::IntoEnumIterator;
@@ -84,7 +78,14 @@ impl KindCoverage {
     /// variant as covered.
     #[track_caller]
     fn check_kind(&mut self, input: &str) {
-        check_same(input);
+        self.check_kind_as(input, input);
+    }
+
+    /// Round-trips a possibly non-canonical `input` to the canonical
+    /// `expected` form, and marks the parsed variant as covered.
+    #[track_caller]
+    fn check_kind_as(&mut self, input: &str, expected: &str) {
+        check(input, expected);
         let expr = parse_expr(input);
         self.remaining.remove(&ExprKindTag::from(&expr.kind));
     }
@@ -132,16 +133,16 @@ fn test_each_expr_kind() {
     k.check_kind("1 mod 2");
     k.check_kind("~x");
     // `*` binds tighter than `+`; left-associative chains stay flat.
-    check_same("1 + 2 * 3");
-    check_same("1 * 2 + 3");
-    check_same("(1 + 2) * 3");
-    check_same("(1 + 2) * (3 + 4)");
-    check_same("1 + 2 + 3");
-    check_same("1 - 2 - 3");
-    check_same("1 * 2 * 3");
+    k.check_kind("1 + 2 * 3");
+    k.check_kind("1 * 2 + 3");
+    k.check_kind("(1 + 2) * 3");
+    k.check_kind("(1 + 2) * (3 + 4)");
+    k.check_kind("1 + 2 + 3");
+    k.check_kind("1 - 2 - 3");
+    k.check_kind("1 * 2 * 3");
     // Redundant outer parens are stripped.
-    check("((1 + 2)) * 3", "(1 + 2) * 3");
-    check("((1 * 2)) + 3", "1 * 2 + 3");
+    k.check_kind_as("((1 + 2)) * 3", "(1 + 2) * 3");
+    k.check_kind_as("((1 * 2)) + 3", "1 * 2 + 3");
 
     // String concat: ^.
     k.check_kind("\"a\" ^ \"b\"");
@@ -156,18 +157,18 @@ fn test_each_expr_kind() {
     k.check_kind("1 elem [1, 2]");
     k.check_kind("1 notelem [1, 2]");
     // `+` binds tighter than `=`.
-    check_same("1 + 2 = 3");
-    check_same("1 = 2 + 3");
-    check("(1 + 2) = 3", "1 + 2 = 3");
+    k.check_kind("1 + 2 = 3");
+    k.check_kind("1 = 2 + 3");
+    k.check_kind_as("(1 + 2) = 3", "1 + 2 = 3");
 
     // Boolean ops: andalso, orelse, implies.
     k.check_kind("true andalso false");
     k.check_kind("true orelse false");
     k.check_kind("true implies false");
     // `andalso` binds tighter than `orelse`.
-    check_same("true andalso false orelse true");
-    check_same("true orelse false andalso true");
-    check_same("(true orelse false) andalso true");
+    k.check_kind("true andalso false orelse true");
+    k.check_kind("true orelse false andalso true");
+    k.check_kind("(true orelse false) andalso true");
 
     // Function: apply, compose.
     k.check_kind("f x");
@@ -176,20 +177,20 @@ fn test_each_expr_kind() {
     // List ops: ::, @. `::` is right-associative.
     k.check_kind("1 :: [2]");
     k.check_kind("[1] @ [2]");
-    check_same("1 :: 2 :: [3]");
-    check_same("(1 :: [2]) :: [[3]]");
+    k.check_kind("1 :: 2 :: [3]");
+    k.check_kind("(1 :: [2]) :: [[3]]");
 
     // Data constructors: [...], (...), {...}. All three are atomic when
     // used as a function argument.
     k.check_kind("[1, 2]");
     k.check_kind("(1, 2)");
     k.check_kind("{a = 1}");
-    check_same("hd [1, 2, 3]");
-    check("hd ([1, 2, 3])", "hd [1, 2, 3]");
-    check_same("length [1, 2, 3]");
-    check_same("f (1, 2)");
-    check_same("f {a = 1, b = 2}");
-    check_same("{r with a = 1}");
+    k.check_kind("hd [1, 2, 3]");
+    k.check_kind_as("hd ([1, 2, 3])", "hd [1, 2, 3]");
+    k.check_kind("length [1, 2, 3]");
+    k.check_kind("f (1, 2)");
+    k.check_kind("f {a = 1, b = 2}");
+    k.check_kind("{r with a = 1}");
 
     // Type annotation: `:`.
     k.check_kind("1 : int");
@@ -199,51 +200,51 @@ fn test_each_expr_kind() {
     k.check_kind("case x of 1 => \"a\" | _ => \"b\"");
     k.check_kind("let val x = 1 in x end");
     k.check_kind("fn x => x");
-    check_same("if x > 0 then y + 1 else y - 1");
-    check_same("let val x = 1 in x + 2 end");
-    check_same("fn x => x + 1");
-    check_same("fn x => fn y => x + y");
+    k.check_kind("if x > 0 then y + 1 else y - 1");
+    k.check_kind("let val x = 1 in x + 2 end");
+    k.check_kind("fn x => x + 1");
+    k.check_kind("fn x => fn y => x + y");
 
     // Queries: from, exists, forall, over (aggregate).
     k.check_kind("from x in xs");
     k.check_kind("exists x in xs where true");
     k.check_kind("forall x in xs require true");
     k.check_kind("count over xs");
-    check_same("from e in emps");
-    check_same("from i in [1, 2, 3] where i > 1");
-    check_same("from i in [1, 2, 3] where i > 1 yield i");
+    k.check_kind("from e in emps");
+    k.check_kind("from i in [1, 2, 3] where i > 1");
+    k.check_kind("from i in [1, 2, 3] where i > 1 yield i");
     // Consecutive scans are separated by comma (canonical); an explicit
     // `join` between adjacent scans is canonicalized to comma.
-    check_same("from x in xs, y in ys");
-    check(
+    k.check_kind("from x in xs, y in ys");
+    k.check_kind_as(
         "from x in xs join y in ys on x = y",
         "from x in xs, y in ys on x = y",
     );
     // After a non-scan step, a subsequent scan must use `join`.
-    check_same("from x in xs where x > 0 join y in ys on x = y");
-    check_same("from i in [3, 1, 2] order i");
-    check(
+    k.check_kind("from x in xs where x > 0 join y in ys on x = y");
+    k.check_kind("from i in [3, 1, 2] order i");
+    k.check_kind_as(
         "from e in emps group e.deptno compute count",
         "from e in emps group #deptno e compute count",
     );
-    check_same("from i in [1, 2, 3] distinct");
-    check_same("from i in [1, 2, 3, 4, 5] skip 1 take 3");
-    check_same("from i in [1, 2, 3] union [4, 5]");
-    check_same("from i in [1, 2, 3] union distinct [4, 5]");
-    check_same("from i in [1, 2, 3] intersect [2, 3]");
-    check_same("from i in [1, 2, 3] except [2]");
-    check(
+    k.check_kind("from i in [1, 2, 3] distinct");
+    k.check_kind("from i in [1, 2, 3, 4, 5] skip 1 take 3");
+    k.check_kind("from i in [1, 2, 3] union [4, 5]");
+    k.check_kind("from i in [1, 2, 3] union distinct [4, 5]");
+    k.check_kind("from i in [1, 2, 3] intersect [2, 3]");
+    k.check_kind("from i in [1, 2, 3] except [2]");
+    k.check_kind_as(
         "exists e in emps where e.name = \"X\"",
         "exists e in emps where #name e = \"X\"",
     );
-    check(
+    k.check_kind_as(
         "forall e in emps require e.age > 0",
         "forall e in emps require #age e > 0",
     );
     // A `from` appearing as the source of another `from` must be
     // parenthesized; otherwise the inner query's steps would be
     // attributed to the outer query.
-    check_same("from e in (from x in xs yield x)");
+    k.check_kind("from e in (from x in xs yield x)");
 
     k.assert_complete();
 }
