@@ -193,12 +193,6 @@ getInt (INT 42);
 getInt (STRING "hello");
 > val it = NONE : int option
 
-(*) TODO: when a homogeneous LIST/BAG/VECTOR/RECORD is decomposed by a
-(*) constructor pattern, the inner-list elements come out raw (e.g. an
-(*) `int`) rather than wrapped variants, so a recursive function that
-(*) expects variants from the elements fails. Keep variantDepth disabled
-(*) until elements are re-wrapped on pattern match.
-(*
 (*) Recursive function on variant
 fun variantDepth v =
   case v of
@@ -232,7 +226,6 @@ variantDepth (LIST [LIST [INT 1]]);
 > val it = 2 : int
 variantDepth (RECORD [("x", LIST [INT 1, INT 2])]);
 > val it = 2 : int
-*)
 
 (*) Round-trip tests: parse (print v) = v
 fun testRoundTrip v =

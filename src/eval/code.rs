@@ -979,23 +979,36 @@ impl Code {
                     {
                         pat_code.eval_f1(r, f, &boxed.1)
                     }
-                    ("LIST", Val::Variant(boxed))
-                        if matches!(&boxed.0, Type::List(_)) =>
-                    {
-                        pat_code.eval_f1(r, f, &boxed.1)
+                    ("LIST", Val::Variant(boxed)) => {
+                        let elem_type = match &boxed.0 {
+                            Type::List(t) => t.as_ref(),
+                            _ => return Ok(Val::Bool(false)),
+                        };
+                        let rewrapped =
+                            wrap_collection_elements(elem_type, &boxed.1);
+                        pat_code.eval_f1(r, f, &rewrapped)
                     }
-                    ("BAG", Val::Variant(boxed))
-                        if matches!(&boxed.0, Type::Bag(_)) =>
-                    {
-                        pat_code.eval_f1(r, f, &boxed.1)
+                    ("BAG", Val::Variant(boxed)) => {
+                        let elem_type = match &boxed.0 {
+                            Type::Bag(t) => t.as_ref(),
+                            _ => return Ok(Val::Bool(false)),
+                        };
+                        let rewrapped =
+                            wrap_collection_elements(elem_type, &boxed.1);
+                        pat_code.eval_f1(r, f, &rewrapped)
                     }
-                    ("VECTOR", Val::Variant(boxed))
-                        if matches!(
-                            &boxed.0,
-                            Type::Data(n, _) if n == "vector"
-                        ) =>
-                    {
-                        pat_code.eval_f1(r, f, &boxed.1)
+                    ("VECTOR", Val::Variant(boxed)) => {
+                        let elem_type = match &boxed.0 {
+                            Type::Data(n, args)
+                                if n == "vector" && !args.is_empty() =>
+                            {
+                                &args[0]
+                            }
+                            _ => return Ok(Val::Bool(false)),
+                        };
+                        let rewrapped =
+                            wrap_collection_elements(elem_type, &boxed.1);
+                        pat_code.eval_f1(r, f, &rewrapped)
                     }
                     ("VARIANT_SOME", Val::Variant(boxed))
                         if matches!(
@@ -1009,13 +1022,13 @@ impl Code {
                             unreachable!()
                         }
                     }
-                    ("RECORD", Val::Variant(boxed))
-                        if matches!(
-                            &boxed.0,
-                            Type::Record(_, _) | Type::Tuple(_)
-                        ) =>
-                    {
-                        pat_code.eval_f1(r, f, &boxed.1)
+                    ("RECORD", Val::Variant(boxed)) => {
+                        let rewrapped =
+                            match wrap_record_pairs(&boxed.0, &boxed.1) {
+                                Some(v) => v,
+                                None => return Ok(Val::Bool(false)),
+                            };
+                        pat_code.eval_f1(r, f, &rewrapped)
                     }
                     _ => Ok(Val::Bool(false)),
                 }
@@ -1292,6 +1305,78 @@ impl Code {
 /// recursive let-bound closures (like the `fact4` helper inside
 /// `baz4` in `closure.smli`) work without rebuilding their
 /// captured environment from a now-vanished outer frame.
+/// Re-wraps the elements of a homogeneous LIST/BAG/VECTOR variant value
+/// as `Val::Variant((elem_type, elem))` so that a constructor pattern
+/// (e.g. `LIST (v::vs)`) hands the inner pattern a list of variants
+/// rather than raw element values. If the elements are already variants
+/// (the heterogeneous case where `elem_type` is `variant`), they are
+/// passed through unchanged. Returns the rewritten `Val::List`.
+fn wrap_collection_elements(elem_type: &Type, value: &Val) -> Val {
+    let items = match value {
+        Val::List(items) => items,
+        _ => return value.clone(),
+    };
+    let already_variant = matches!(
+        elem_type,
+        Type::Data(name, _) if name == "variant"
+    );
+    if already_variant {
+        return value.clone();
+    }
+    let wrapped: Vec<Val> = items
+        .iter()
+        .map(|v| match v {
+            Val::Variant(_) => v.clone(),
+            _ => Val::Variant(Box::new((elem_type.clone(), v.clone()))),
+        })
+        .collect();
+    Val::List(wrapped)
+}
+
+/// Re-wraps the fields of a RECORD variant value as the list of
+/// `(label, variant)` pairs that the constructor takes. Returns
+/// `None` if the variant's inner type isn't a record/tuple, signalling
+/// the pattern doesn't match.
+fn wrap_record_pairs(inner_type: &Type, value: &Val) -> Option<Val> {
+    let values = match value {
+        Val::List(items) => items,
+        Val::Unit => &Vec::new(),
+        _ => return None,
+    };
+    let pairs: Vec<Val> = match inner_type {
+        Type::Record(_, fields) => fields
+            .iter()
+            .zip(values.iter())
+            .map(|((label, field_type), v)| {
+                let inner = match v {
+                    Val::Variant(_) => v.clone(),
+                    _ => {
+                        Val::Variant(Box::new((field_type.clone(), v.clone())))
+                    }
+                };
+                Val::List(vec![Val::String(label.to_string()), inner])
+            })
+            .collect(),
+        Type::Tuple(types) => types
+            .iter()
+            .zip(values.iter())
+            .enumerate()
+            .map(|(i, (field_type, v))| {
+                let inner = match v {
+                    Val::Variant(_) => v.clone(),
+                    _ => {
+                        Val::Variant(Box::new((field_type.clone(), v.clone())))
+                    }
+                };
+                Val::List(vec![Val::String((i + 1).to_string()), inner])
+            })
+            .collect(),
+        Type::Primitive(PrimitiveType::Unit) => Vec::new(),
+        _ => return None,
+    };
+    Some(Val::List(pairs))
+}
+
 fn capture_bound_vals(
     frame_def: &Arc<FrameDef>,
     bind_codes: &[Code],
