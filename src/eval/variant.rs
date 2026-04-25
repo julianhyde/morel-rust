@@ -91,27 +91,38 @@ fn collection(arg: Val, wrap_type: impl FnOnce(Type) -> Type) -> Val {
         _ => panic!("Expected list of variants, got {:?}", arg),
     };
     let element_type = common_element_type(&items);
-    let unwrapped: Vec<Val> = items
-        .into_iter()
-        .map(|v| match v {
-            Val::Variant(boxed) => boxed.1,
-            _ => panic!("Expected variant element, got {:?}", v),
-        })
-        .collect();
-    variant_of(wrap_type(element_type), Val::List(unwrapped))
+    // When the element type is a real type (not the fallback `variant`),
+    // unwrap each element. When the elements are heterogeneous and we
+    // fell back to `variant`, keep them wrapped — the displayer needs
+    // the inner-type tag on each element.
+    let is_fallback = matches!(
+        &element_type,
+        Type::Data(name, _) if name == "variant"
+    );
+    let elements: Vec<Val> = if is_fallback {
+        items
+    } else {
+        items
+            .into_iter()
+            .map(|v| match v {
+                Val::Variant(boxed) => boxed.1,
+                _ => panic!("Expected variant element, got {:?}", v),
+            })
+            .collect()
+    };
+    variant_of(wrap_type(element_type), Val::List(elements))
 }
 
 /// Returns the common inner type of a list of variants. If they all
-/// agree, returns that type; otherwise returns `variant`.
+/// agree, returns that type; otherwise (or if the list is empty)
+/// returns `variant` — matching morel-java's behavior.
 fn common_element_type(items: &[Val]) -> Type {
     let mut iter = items.iter().filter_map(|v| match v {
         Val::Variant(boxed) => Some(&boxed.0),
         _ => None,
     });
     let Some(first) = iter.next() else {
-        // Empty list — fall back to a fresh type variable so the
-        // displayed type is, e.g., `'a list variant`.
-        return fresh_var();
+        return Type::Data("variant".to_string(), vec![]);
     };
     let first = first.clone();
     if iter.all(|t| t == &first) {
@@ -130,6 +141,10 @@ pub(crate) fn record(arg: Val) -> Val {
         Val::List(items) => items,
         _ => panic!("Expected list of (label, variant) pairs, got {:?}", arg),
     };
+    if pairs.is_empty() {
+        // An empty record is `unit` — matching morel-java.
+        return unit();
+    }
     let mut fields: BTreeMap<Label, Type> = BTreeMap::new();
     let mut values: Vec<(Label, Val)> = Vec::with_capacity(pairs.len());
     for pair in pairs {
@@ -556,6 +571,37 @@ impl<'a> Parser<'a> {
     /// Parses one variant value.
     fn parse_variant(&mut self) -> Val {
         self.skip_ws();
+        // Bare literals — Variant.parse "~5" and friends are valid input.
+        match self.peek() {
+            Some(b'~') | Some(b'0'..=b'9') => {
+                let n = self.parse_number();
+                return match n {
+                    Val::Int(_) => {
+                        variant_of(Type::Primitive(PrimitiveType::Int), n)
+                    }
+                    Val::Real(_) => {
+                        variant_of(Type::Primitive(PrimitiveType::Real), n)
+                    }
+                    _ => unreachable!(),
+                };
+            }
+            Some(b'"') => {
+                let s = self.parse_string_literal();
+                return variant_of(
+                    Type::Primitive(PrimitiveType::String),
+                    Val::String(s),
+                );
+            }
+            Some(b'#') => {
+                // CHAR literal #"c"
+                let c = self.parse_char_literal();
+                return variant_of(
+                    Type::Primitive(PrimitiveType::Char),
+                    Val::Char(c),
+                );
+            }
+            _ => {}
+        }
         let ident = self.parse_ident();
         match ident {
             "UNIT" => unit(),

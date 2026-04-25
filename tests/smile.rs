@@ -157,6 +157,11 @@ fn use_() {
 }
 
 #[test]
+fn variant() {
+    run_script("tests/script/variant.smli");
+}
+
+#[test]
 fn wordle() {
     run_script("tests/script/wordle.smli");
 }
