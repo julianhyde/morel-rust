@@ -1311,6 +1311,27 @@ pub(crate) fn populate_env(map: &mut BTreeMap<&str, (Type, Option<Val>)>) {
     }
 }
 
+/// Pair of a built-in datatype name and its constructor names, in
+/// declaration order.
+pub type DatatypeConstructors = (&'static str, Vec<&'static str>);
+
+/// Returns the constructor names of each built-in datatype, in
+/// declaration order. This is the seed for the per-session
+/// `datatype_constructors` map; user-declared datatypes are added on top.
+///
+/// Encoded as a `Vec<(name, Vec<constructor, ...>)>` rather than derived
+/// from `BuiltInFunction` metadata because not every constructor is
+/// flagged with `constructor = true` (e.g. `false`, `::`).
+pub fn built_in_datatype_constructors() -> Vec<DatatypeConstructors> {
+    vec![
+        ("bool", vec!["true", "false"]),
+        ("either", vec!["INL", "INR"]),
+        ("list", vec!["nil", "cons"]),
+        ("option", vec!["NONE", "SOME"]),
+        ("order", vec!["LESS", "EQUAL", "GREATER"]),
+    ]
+}
+
 /// Looks up a built-in (function or structure) by name.
 pub fn lookup(name: &str) -> Option<BuiltIn> {
     LIBRARY.name_to_built_in.get(name).cloned()

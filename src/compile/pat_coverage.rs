@@ -447,33 +447,21 @@ impl<'a> CoverageChecker<'a> {
 // ---------------------------------------------------------------------------
 
 /// Returns the constructor names for a closed (finite) type, or `None` for
-/// open (infinite) types like `int` and `string`.
+/// open (infinite) types like `int` and `string`. `datatypes` is the
+/// per-session `datatype_constructors` table, pre-seeded with the
+/// built-in datatypes (`bool`, `either`, `list`, `option`, `order`) and
+/// extended with each user-declared datatype as it is resolved.
 fn closed_constructors(
     type_: &Type,
-    user_datatypes: &HashMap<String, Vec<String>>,
+    datatypes: &HashMap<String, Vec<String>>,
 ) -> Option<Vec<String>> {
-    match type_ {
-        Type::Primitive(PrimitiveType::Bool) => {
-            Some(vec!["true".to_string(), "false".to_string()])
-        }
-        Type::Data(name, _) if name == "order" => Some(vec![
-            "LESS".to_string(),
-            "EQUAL".to_string(),
-            "GREATER".to_string(),
-        ]),
-        Type::Data(name, _) if name == "option" => {
-            Some(vec!["NONE".to_string(), "SOME".to_string()])
-        }
-        Type::Data(name, _) if name == "either" => {
-            Some(vec!["INL".to_string(), "INR".to_string()])
-        }
-        Type::Data(name, _) => {
-            // Look up user-defined datatype constructors.
-            user_datatypes.get(name).cloned()
-        }
-        Type::List(_) => Some(vec!["nil".to_string(), "cons".to_string()]),
-        _ => None,
-    }
+    let name = match type_ {
+        Type::Primitive(PrimitiveType::Bool) => "bool",
+        Type::Data(name, _) => name.as_str(),
+        Type::List(_) => "list",
+        _ => return None,
+    };
+    datatypes.get(name).cloned()
 }
 
 /// Builds a unique string key for a literal value.

@@ -101,6 +101,20 @@ impl Session {
                 .or_default()
                 .push(*f.get_type());
         }
+        // Seed the datatype constructor map with the built-in datatypes
+        // (`bool`, `either`, `list`, `option`, `order`); user-declared
+        // datatypes are added incrementally as their declarations are
+        // resolved.
+        let datatype_constructors: HashMap<String, Vec<String>> =
+            crate::compile::library::built_in_datatype_constructors()
+                .into_iter()
+                .map(|(name, cons)| {
+                    (
+                        name.to_string(),
+                        cons.into_iter().map(String::from).collect(),
+                    )
+                })
+                .collect();
         Session {
             config: Config::default(),
             code: None,
@@ -110,7 +124,7 @@ impl Session {
             type_env: Rc::new(type_env) as Rc<dyn TypeEnv>,
             type_bindings: HashMap::new(),
             type_aliases: HashMap::new(),
-            datatype_constructors: HashMap::new(),
+            datatype_constructors,
             constructor_arg_types: HashMap::new(),
             overloads,
         }
