@@ -102,10 +102,11 @@ VECTOR [STRING "a", STRING "b", STRING "c"];
 VECTOR [LIST [STRING "a"], LIST [STRING "b", STRING "c"]];
 > val it = #[["a"],["b","c"]] : string list vector variant
 
-(*) VECTOR constructor - vector of string lists, one of them empty
-(*) TODO: Type should be 'string list vector', notwithstanding the empty list
+(*) VECTOR constructor - vector of string lists, one of them empty.
+(*) The empty `LIST []` has element type `variant`; common-type
+(*) unification reconciles it with the others' `string list`.
 VECTOR [LIST [STRING "a"], LIST [], LIST [STRING "b", STRING "c"]];
-> val it = #[["a"],[],["b","c"]] : variant vector variant
+> val it = #[["a"],[],["b","c"]] : string list vector variant
 
 (*) VARIANT_NONE constructor
 VARIANT_NONE;

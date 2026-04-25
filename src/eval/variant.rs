@@ -118,9 +118,10 @@ fn collection(arg: Val, wrap_type: impl FnOnce(Type) -> Type) -> Val {
     variant_of(wrap_type(element_type), Val::List(elements))
 }
 
-/// Returns the common inner type of a list of variants. If they all
-/// agree, returns that type; otherwise (or if the list is empty)
-/// returns `variant` — matching morel-java's behavior.
+/// Returns the common inner type of a list of variants. Folds the
+/// element types through [`unify_types`]; if unification fails at any
+/// point the result is `variant`. An empty list also yields `variant`,
+/// matching morel-java.
 fn common_element_type(items: &[Val]) -> Type {
     let mut iter = items.iter().filter_map(|v| match v {
         Val::Variant(boxed) => Some(&boxed.0),
@@ -129,11 +130,49 @@ fn common_element_type(items: &[Val]) -> Type {
     let Some(first) = iter.next() else {
         return Type::Data("variant".to_string(), vec![]);
     };
-    let first = first.clone();
-    if iter.all(|t| t == &first) {
-        first
-    } else {
-        Type::Data("variant".to_string(), vec![])
+    let mut current = first.clone();
+    for next in iter {
+        match unify_types(&current, next) {
+            Some(t) => current = t,
+            None => return Type::Data("variant".to_string(), vec![]),
+        }
+    }
+    current
+}
+
+/// Returns the most specific type compatible with both `t1` and `t2`,
+/// or `None` if they are incompatible. Used by [`common_element_type`]
+/// so that, e.g., `string list` and `variant list` (the type of an
+/// empty list element) reconcile to `string list`.
+fn unify_types(t1: &Type, t2: &Type) -> Option<Type> {
+    if t1 == t2 {
+        return Some(t1.clone());
+    }
+    let is_variant = |t: &Type| matches!(t, Type::Data(n, _) if n == "variant");
+    if is_variant(t1) {
+        return Some(t2.clone());
+    }
+    if is_variant(t2) {
+        return Some(t1.clone());
+    }
+    match (t1, t2) {
+        (Type::List(a), Type::List(b)) => {
+            unify_types(a, b).map(|t| Type::List(Box::new(t)))
+        }
+        (Type::Bag(a), Type::Bag(b)) => {
+            unify_types(a, b).map(|t| Type::Bag(Box::new(t)))
+        }
+        (Type::Data(n1, a1), Type::Data(n2, a2))
+            if n1 == n2 && a1.len() == a2.len() =>
+        {
+            let unified: Option<Vec<Type>> = a1
+                .iter()
+                .zip(a2.iter())
+                .map(|(x, y)| unify_types(x, y))
+                .collect();
+            unified.map(|args| Type::Data(n1.clone(), args))
+        }
+        _ => None,
     }
 }
 
