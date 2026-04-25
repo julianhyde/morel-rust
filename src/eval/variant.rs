@@ -43,10 +43,15 @@ fn fresh_var() -> Type {
 }
 
 /// `Variant.VARIANT_NONE`: returns a variant whose inner type is
-/// `'a option` and whose value is `Val::Unit` (the runtime form of `NONE`).
+/// `variant option` and whose value is `Val::Unit` (the runtime form
+/// of `NONE`). The inner element type is `variant` rather than a fresh
+/// `'a` to mirror morel-java.
 pub(crate) fn none() -> Val {
     variant_of(
-        Type::Data("option".to_string(), vec![fresh_var()]),
+        Type::Data(
+            "option".to_string(),
+            vec![Type::Data("variant".to_string(), vec![])],
+        ),
         Val::Unit,
     )
 }
@@ -188,10 +193,7 @@ pub(crate) fn constant(arg: Val) -> Val {
         _ => panic!("Expected string, got {:?}", arg),
     };
     match name.as_str() {
-        "NONE" => variant_of(
-            Type::Data("option".to_string(), vec![fresh_var()]),
-            Val::Unit,
-        ),
+        "NONE" => none(),
         "LESS" => variant_of(
             Type::Data("order".to_string(), vec![]),
             Val::Order(Order(Ordering::Less)),

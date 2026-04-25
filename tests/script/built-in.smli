@@ -5085,4 +5085,36 @@ Sys.plan ();
 >   "apply2(fnValue Vector.collate, fn(bindTuple(bind(0), bind(1)) => case(apply2(fnValue Int.lt, get(0), get(1)), true, constant(LESS), _, case(apply2(fnValue Int.eq, get(0), get(1)), true, constant(EQUAL), _, constant(GREATER)))), tuple(apply(fnValue Vector.fromList, argCode tuple(constant(1), constant(3), constant(5))), apply(fnValue Vector.fromList, argCode tuple(constant(1), constant(3), constant(6)))))"
 >   : string
 
+(*) Variant structure tests
+
+(*) variant datatype constructors exist
+UNIT;
+> val it = () : unit variant
+BOOL true;
+> val it = true : bool variant
+INT 42;
+> val it = 42 : int variant
+REAL 3.14;
+> val it = 3.14 : real variant
+CHAR #"x";
+> val it = #"x" : char variant
+STRING "hello";
+> val it = "hello" : string variant
+LIST [INT 1, INT 2];
+> val it = [1,2] : int list variant
+BAG [INT 3];
+> val it = [3] : int bag variant
+VECTOR [STRING "a"];
+> val it = #["a"] : string vector variant
+VARIANT_NONE;
+> val it = NONE : variant option variant
+VARIANT_SOME (INT 5);
+> val it = SOME 5 : int option variant
+RECORD [("x", INT 1)];
+> val it = {x=1} : {x:int} variant
+CONSTANT "LESS";
+> val it = LESS : order variant
+CONSTRUCT ("INL", INT 1);
+> val it = INL 1 : (int,'a) either variant
+
 (*) End builtIn.smli
