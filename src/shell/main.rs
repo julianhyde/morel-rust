@@ -683,11 +683,53 @@ impl Shell {
             ));
         }
 
+        // Resolution succeeded but pattern coverage detected errors
+        // (e.g. "match redundant"). Record the declaration for
+        // `Sys.planEx` and return the error message; do not run the
+        // case at runtime.
+        if let Some((message, span)) = resolved.errors.first() {
+            self.record_decls_for_planex(&resolved);
+            let pest_span = span.to_pest_span();
+            let span2 = Span::from_pest_span(&pest_span, resolved.base_line);
+            let s = format!(
+                "{} Error: {}\n  raised at: {}\n",
+                span2, message, span2
+            );
+            return Ok(format!("{}{}", warning_prefix, s));
+        }
+
         // Successfully parsed, now evaluate
         let output = self.evaluate_node(&resolved);
         match &output {
             Ok(s) => Ok(format!("{}{}", warning_prefix, s)),
             Err(_) => output,
+        }
+    }
+
+    /// Stores the current command's pre- and post-inlining declarations
+    /// in the session so that `Sys.planEx` can re-print them. Mirrors
+    /// the storage logic in `evaluate_node`, but is a separate entry
+    /// point used when evaluation is skipped due to a compile error.
+    fn record_decls_for_planex(&mut self, resolved: &Resolved) {
+        let (decl, resolve_errors) = resolver::resolve(resolved);
+        if !resolve_errors.is_empty() {
+            return;
+        }
+        let env = Env::empty();
+        let mut map: BTreeMap<&str, (Type, Option<Val>)> = BTreeMap::new();
+        self.environment.bindings.iter().for_each(|(k, v)| {
+            map.insert(
+                k,
+                (Type::Primitive(PrimitiveType::Unit), Some(v.clone())),
+            );
+        });
+        library::populate_env(&mut map);
+        let env2 = env.multi(&map);
+        let decl2 = inliner::inline_decl(&env2, &decl);
+        if !is_plan_or_plan_ex_call(&decl2) {
+            let mut session = self.session.borrow_mut();
+            session.pre_inline_decl = Some(decl);
+            session.post_inline_decl = Some(decl2);
         }
     }
 

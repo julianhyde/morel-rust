@@ -293,6 +293,7 @@ impl Display for Val {
             Val::Char(c) => {
                 write!(f, "#\"{}\"", parser::string_to_string(&c.to_string()))
             }
+            Val::Closure(..) | Val::Code(_) => write!(f, "fn"),
             Val::Constructor(ordinal, v) => {
                 if **v == Val::Unit {
                     write!(f, "#{}", ordinal)
@@ -346,7 +347,7 @@ impl Display for Val {
             Val::Some(v) => write!(f, "SOME {}", v),
             Val::String(s) => write!(f, "\"{}\"", parser::string_to_string(s)),
             Val::Unit => write!(f, "()"),
-            _ => todo!("{:?}", self),
+            _ => write!(f, "{:?}", self),
         }
     }
 }

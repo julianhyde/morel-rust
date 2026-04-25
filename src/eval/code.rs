@@ -337,6 +337,24 @@ impl Code {
         {
             // Option value NONE is represented by Unit
             Self::new_bind_literal(&Val::Unit)
+        } else if let Type::Data(type_name, _) = type_
+            && type_name == "order"
+        {
+            // Order constructors `LESS`, `EQUAL`, `GREATER` evaluate to
+            // distinct `Val::Order` values; compare against those rather
+            // than against the constructor's name.
+            use std::cmp::Ordering;
+            let v = match name {
+                "LESS" => Val::Order(crate::eval::order::Order(Ordering::Less)),
+                "EQUAL" => {
+                    Val::Order(crate::eval::order::Order(Ordering::Equal))
+                }
+                "GREATER" => {
+                    Val::Order(crate::eval::order::Order(Ordering::Greater))
+                }
+                _ => Val::String(name.to_string()),
+            };
+            Self::new_bind_literal(&v)
         } else {
             Self::new_bind_literal(&Val::String(name.to_string()))
         }

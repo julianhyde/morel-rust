@@ -37,13 +37,23 @@ trait Transformer {
 fn expr_to_val(expr: &Expr) -> Option<Val> {
     match expr {
         Expr::Literal(_, v) => match v {
-            // The `NONE`, `nil` and similar nullary constants live in the
-            // environment as `Val::Fn(...)` until compilation lowers them
-            // to their runtime forms. Apply the same lowering here so the
-            // case-on-constant logic can match them.
+            // The `NONE`, `nil`, `LESS`/`EQUAL`/`GREATER` and similar
+            // nullary constants live in the environment as `Val::Fn(...)`
+            // until compilation lowers them to their runtime forms. Apply
+            // the same lowering here so the case-on-constant logic can
+            // match them.
             Val::Fn(BuiltInFunction::OptionNone) => Some(Val::Unit),
             Val::Fn(BuiltInFunction::ListNil)
             | Val::Fn(BuiltInFunction::BagNil) => Some(Val::List(Vec::new())),
+            Val::Fn(BuiltInFunction::OrderLess) => Some(Val::Order(
+                crate::eval::order::Order(std::cmp::Ordering::Less),
+            )),
+            Val::Fn(BuiltInFunction::OrderEqual) => Some(Val::Order(
+                crate::eval::order::Order(std::cmp::Ordering::Equal),
+            )),
+            Val::Fn(BuiltInFunction::OrderGreater) => Some(Val::Order(
+                crate::eval::order::Order(std::cmp::Ordering::Greater),
+            )),
             // Other function values, code, and closures cannot be matched
             // against patterns so we conservatively decline.
             Val::Fn(_) | Val::Code(_) | Val::Closure(..) => None,
@@ -261,6 +271,40 @@ impl Transformer for Inliner {
                 expr
             }
             Expr::Case(_t, scrutinee, matches, _span) => {
+                // Single-arm cases like `case x of y => exp` (which the
+                // inliner generates when destructuring patterns) are
+                // rewritten to a let so that further inlining can take
+                // place. This mirrors morel-java's `getSub`.
+                if matches.len() == 1
+                    && let Some(val) = expr_to_val(scrutinee)
+                {
+                    let m = &matches[0];
+                    let mut binds: Vec<(Box<Pat>, Val)> = Vec::new();
+                    let matched = m.pat.bind_recurse(&val, &mut |p, v| {
+                        binds.push((p, v.clone()));
+                    });
+                    if matched {
+                        let mut result = m.expr.clone();
+                        for (pat, v) in binds.into_iter().rev() {
+                            let pat_t = pat.type_();
+                            let lit = Expr::Literal(pat_t.clone(), v.clone());
+                            let val_bind = ValBind {
+                                pat: *pat,
+                                t: *pat_t,
+                                expr: lit,
+                                overload_pat: None,
+                                span: None,
+                            };
+                            let result_t = result.type_();
+                            result = Expr::Let(
+                                result_t,
+                                vec![Decl::NonRecVal(Box::new(val_bind))],
+                                Box::new(result),
+                            );
+                        }
+                        return self.transform_expr(env, &result);
+                    }
+                }
                 // If the scrutinee is a constant expression and there is more
                 // than one match arm, find the first arm whose pattern matches
                 // and substitute the bound variables. This implements
