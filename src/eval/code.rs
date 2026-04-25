@@ -2006,6 +2006,7 @@ pub enum Eager1 {
     VariantConstruct,
     VariantInt,
     VariantList,
+    VariantParse,
     VariantPrint,
     VariantReal,
     VariantRecord,
@@ -2163,6 +2164,7 @@ impl Eager1 {
                 a0,
             ))),
             VariantList => crate::eval::variant::list(a0),
+            VariantParse => crate::eval::variant::parse(a0),
             VariantPrint => crate::eval::variant::print(a0),
             VariantReal => Val::Variant(Box::new((
                 Type::Primitive(PrimitiveType::Real),
@@ -3527,6 +3529,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::VariantInt.implements(&mut b, VariantInt);
     Eager1::VariantList.implements(&mut b, VariantList);
     Eager0::VariantNone.implements(&mut b, VariantNone);
+    Eager1::VariantParse.implements(&mut b, VariantParse);
     Eager1::VariantPrint.implements(&mut b, VariantPrint);
     Eager1::VariantReal.implements(&mut b, VariantReal);
     Eager1::VariantRecord.implements(&mut b, VariantRecord);

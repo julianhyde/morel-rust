@@ -340,3 +340,352 @@ fn append_collection(
     }
     buf.push(']');
 }
+
+/// `Variant.parse s`: the inverse of [`print()`]. Parses a string of
+/// the construction-expression format (e.g. `"LIST [INT 1, INT 2]"`)
+/// and returns the corresponding variant value.
+pub(crate) fn parse(arg: Val) -> Val {
+    let s = match arg {
+        Val::String(s) => s,
+        _ => panic!("Expected string, got {:?}", arg),
+    };
+    let mut p = Parser::new(&s);
+    p.skip_ws();
+    let v = p.parse_variant();
+    p.skip_ws();
+    if !p.at_end() {
+        panic!("Trailing input at position {} of {:?}", p.pos, p.input);
+    }
+    v
+}
+
+/// Recursive-descent parser for the variant construction-expression
+/// format produced by [`print()`].
+struct Parser<'a> {
+    input: &'a str,
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Parser<'a> {
+    fn new(input: &'a str) -> Self {
+        Self {
+            input,
+            bytes: input.as_bytes(),
+            pos: 0,
+        }
+    }
+
+    fn at_end(&self) -> bool {
+        self.pos >= self.bytes.len()
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.pos).copied()
+    }
+
+    fn skip_ws(&mut self) {
+        while let Some(b) = self.peek() {
+            if b.is_ascii_whitespace() {
+                self.pos += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn try_consume(&mut self, lit: &str) -> bool {
+        let bytes = lit.as_bytes();
+        if self.bytes[self.pos..].starts_with(bytes) {
+            self.pos += bytes.len();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect(&mut self, lit: &str) {
+        if !self.try_consume(lit) {
+            panic!(
+                "Expected {:?} at position {} of {:?}",
+                lit, self.pos, self.input
+            );
+        }
+    }
+
+    /// Parses an identifier (a sequence of `_`, letters, or digits) and
+    /// advances past it. Used to read constructor names and field names.
+    fn parse_ident(&mut self) -> &'a str {
+        let start = self.pos;
+        while let Some(b) = self.peek() {
+            if b == b'_' || b.is_ascii_alphanumeric() {
+                self.pos += 1;
+            } else {
+                break;
+            }
+        }
+        &self.input[start..self.pos]
+    }
+
+    /// Parses a `"..."` string literal, returning the unescaped contents.
+    fn parse_string_literal(&mut self) -> String {
+        self.expect("\"");
+        let mut out = String::new();
+        while let Some(b) = self.peek() {
+            match b {
+                b'"' => {
+                    self.pos += 1;
+                    return out;
+                }
+                b'\\' => {
+                    self.pos += 1;
+                    let c = self.peek().unwrap_or_else(|| {
+                        panic!(
+                            "Incomplete escape at position {} of {:?}",
+                            self.pos, self.input
+                        )
+                    });
+                    self.pos += 1;
+                    out.push(match c {
+                        b'n' => '\n',
+                        b't' => '\t',
+                        b'r' => '\r',
+                        b'\\' => '\\',
+                        b'"' => '"',
+                        other => other as char,
+                    });
+                }
+                _ => {
+                    out.push(b as char);
+                    self.pos += 1;
+                }
+            }
+        }
+        panic!(
+            "Unterminated string literal at position {} of {:?}",
+            self.pos, self.input
+        );
+    }
+
+    /// Parses a `#"..."` char literal.
+    fn parse_char_literal(&mut self) -> char {
+        self.expect("#\"");
+        let c = match self.peek() {
+            Some(b'\\') => {
+                self.pos += 1;
+                let escape = self.peek().expect("incomplete escape");
+                self.pos += 1;
+                match escape {
+                    b'n' => '\n',
+                    b't' => '\t',
+                    b'r' => '\r',
+                    b'\\' => '\\',
+                    b'"' => '"',
+                    other => other as char,
+                }
+            }
+            Some(b) => {
+                self.pos += 1;
+                b as char
+            }
+            None => panic!("Incomplete char literal"),
+        };
+        self.expect("\"");
+        c
+    }
+
+    /// Parses an integer or real literal. Recognizes the leading `~`
+    /// for negation and a single `.` for reals.
+    fn parse_number(&mut self) -> Val {
+        let start = self.pos;
+        if self.peek() == Some(b'~') {
+            self.pos += 1;
+        }
+        while let Some(b) = self.peek() {
+            if b.is_ascii_digit() {
+                self.pos += 1;
+            } else {
+                break;
+            }
+        }
+        let mut is_real = false;
+        if self.peek() == Some(b'.') {
+            is_real = true;
+            self.pos += 1;
+            while let Some(b) = self.peek() {
+                if b.is_ascii_digit() {
+                    self.pos += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+        // Optional 'e' exponent.
+        if matches!(self.peek(), Some(b'e' | b'E')) {
+            is_real = true;
+            self.pos += 1;
+            if self.peek() == Some(b'~') {
+                self.pos += 1;
+            }
+            while let Some(b) = self.peek() {
+                if b.is_ascii_digit() {
+                    self.pos += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+        let lit = &self.input[start..self.pos];
+        if is_real {
+            let cleaned = lit.replace('~', "-");
+            Val::Real(
+                cleaned.parse::<f32>().unwrap_or_else(|_| {
+                    panic!("Invalid real literal {:?}", lit)
+                }),
+            )
+        } else {
+            let cleaned = lit.replace('~', "-");
+            Val::Int(
+                cleaned.parse::<i32>().unwrap_or_else(|_| {
+                    panic!("Invalid int literal {:?}", lit)
+                }),
+            )
+        }
+    }
+
+    /// Parses one variant value.
+    fn parse_variant(&mut self) -> Val {
+        self.skip_ws();
+        let ident = self.parse_ident();
+        match ident {
+            "UNIT" => unit(),
+            "BOOL" => {
+                self.skip_ws();
+                let val = if self.try_consume("true") {
+                    Val::Bool(true)
+                } else if self.try_consume("false") {
+                    Val::Bool(false)
+                } else {
+                    panic!(
+                        "Expected 'true' or 'false' at position {}",
+                        self.pos
+                    );
+                };
+                variant_of(Type::Primitive(PrimitiveType::Bool), val)
+            }
+            "INT" => {
+                self.skip_ws();
+                let n = match self.parse_number() {
+                    Val::Int(n) => n,
+                    other => panic!("Expected int, got {:?}", other),
+                };
+                variant_of(Type::Primitive(PrimitiveType::Int), Val::Int(n))
+            }
+            "REAL" => {
+                self.skip_ws();
+                let r = match self.parse_number() {
+                    Val::Real(r) => r,
+                    Val::Int(n) => n as f32,
+                    other => panic!("Expected real, got {:?}", other),
+                };
+                variant_of(Type::Primitive(PrimitiveType::Real), Val::Real(r))
+            }
+            "CHAR" => {
+                self.skip_ws();
+                let c = self.parse_char_literal();
+                variant_of(Type::Primitive(PrimitiveType::Char), Val::Char(c))
+            }
+            "STRING" => {
+                self.skip_ws();
+                let s = self.parse_string_literal();
+                variant_of(
+                    Type::Primitive(PrimitiveType::String),
+                    Val::String(s),
+                )
+            }
+            "LIST" => self.parse_collection(list),
+            "BAG" => self.parse_collection(bag),
+            "VECTOR" => self.parse_collection(vector),
+            "VARIANT_NONE" => none(),
+            "VARIANT_SOME" => {
+                self.skip_ws();
+                let inner = self.parse_variant();
+                some(inner)
+            }
+            "RECORD" => self.parse_record_body(),
+            "CONSTANT" => {
+                self.skip_ws();
+                let name = self.parse_string_literal();
+                constant(Val::String(name))
+            }
+            "CONSTRUCT" => {
+                self.skip_ws();
+                self.expect("(");
+                self.skip_ws();
+                let name = self.parse_string_literal();
+                self.skip_ws();
+                self.expect(",");
+                self.skip_ws();
+                let payload = self.parse_variant();
+                self.skip_ws();
+                self.expect(")");
+                construct(Val::List(vec![Val::String(name), payload]))
+            }
+            other => panic!(
+                "Unknown variant constructor {:?} at position {}",
+                other, self.pos
+            ),
+        }
+    }
+
+    fn parse_collection(&mut self, ctor: fn(Val) -> Val) -> Val {
+        self.skip_ws();
+        self.expect("[");
+        self.skip_ws();
+        let mut elements = Vec::new();
+        if !self.try_consume("]") {
+            loop {
+                elements.push(self.parse_variant());
+                self.skip_ws();
+                if self.try_consume(",") {
+                    self.skip_ws();
+                    continue;
+                }
+                self.expect("]");
+                break;
+            }
+        }
+        ctor(Val::List(elements))
+    }
+
+    /// Parses the body of `RECORD [(label, variant), ...]` after the
+    /// `RECORD` keyword has been consumed.
+    fn parse_record_body(&mut self) -> Val {
+        self.skip_ws();
+        self.expect("[");
+        self.skip_ws();
+        let mut pairs = Vec::new();
+        if !self.try_consume("]") {
+            loop {
+                self.skip_ws();
+                self.expect("(");
+                self.skip_ws();
+                let label = self.parse_string_literal();
+                self.skip_ws();
+                self.expect(",");
+                self.skip_ws();
+                let variant = self.parse_variant();
+                self.skip_ws();
+                self.expect(")");
+                self.skip_ws();
+                pairs.push(Val::List(vec![Val::String(label), variant]));
+                if self.try_consume(",") {
+                    continue;
+                }
+                self.expect("]");
+                break;
+            }
+        }
+        record(Val::List(pairs))
+    }
+}

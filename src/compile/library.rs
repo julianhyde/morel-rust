@@ -995,6 +995,11 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Variant", name = "VARIANT_NONE", global = true))]
     #[strum(props(type = "variant", constructor = true))]
     VariantNone,
+    /// `Variant.parse s`: the inverse of `Variant.print`; parses a
+    /// construction-expression string into the corresponding variant.
+    #[strum(props(p = "Variant", name = "parse"))]
+    #[strum(props(type = "string -> variant"))]
+    VariantParse,
     /// `Variant.print v`: serialises a variant to the construction
     /// expression that would build it.
     #[strum(props(p = "Variant", name = "print"))]
