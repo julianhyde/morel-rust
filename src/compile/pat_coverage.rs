@@ -413,6 +413,22 @@ fn closed_constructors(
         Type::Data(name, _) if name == "option" => {
             Some(vec!["NONE".to_string(), "SOME".to_string()])
         }
+        Type::Data(name, _) if name == "variant" => Some(vec![
+            "UNIT".to_string(),
+            "BOOL".to_string(),
+            "INT".to_string(),
+            "REAL".to_string(),
+            "CHAR".to_string(),
+            "STRING".to_string(),
+            "LIST".to_string(),
+            "BAG".to_string(),
+            "VECTOR".to_string(),
+            "VARIANT_NONE".to_string(),
+            "VARIANT_SOME".to_string(),
+            "RECORD".to_string(),
+            "CONSTANT".to_string(),
+            "CONSTRUCT".to_string(),
+        ]),
         Type::Data(name, _) => {
             // Look up user-defined datatype constructors.
             user_datatypes.get(name).cloned()

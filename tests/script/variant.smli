@@ -176,10 +176,6 @@ LIST [
 ];
 > val it = [{age=30,name="Alice"},"Bob",[1,"Carol"]] : variant list variant
 
-(*) TODO: pattern matching on variant constructors is not yet supported
-(*) in morel-rust because the type system doesn't yet treat `variant` as
-(*) a datatype with the listed constructors. Skipped.
-(*
 (*) Pattern matching on value
 fun isUnit v =
   case v of
@@ -204,6 +200,12 @@ getInt (INT 42);
 getInt (STRING "hello");
 > val it = NONE : int option
 
+(*) TODO: when a homogeneous LIST/BAG/VECTOR/RECORD is decomposed by a
+(*) constructor pattern, the inner-list elements come out raw (e.g. an
+(*) `int`) rather than wrapped variants, so a recursive function that
+(*) expects variants from the elements fails. Keep variantDepth disabled
+(*) until elements are re-wrapped on pattern match.
+(*
 (*) Recursive function on variant
 fun variantDepth v =
   case v of

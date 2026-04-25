@@ -319,7 +319,7 @@ impl Code {
         let is_builtin = match type_ {
             Type::Data(n, _) => matches!(
                 n.as_str(),
-                "option" | "either" | "order" | "descending"
+                "option" | "either" | "order" | "descending" | "variant"
             ),
             _ => true,
         };
@@ -337,6 +337,18 @@ impl Code {
         {
             // Option value NONE is represented by Unit
             Self::new_bind_literal(&Val::Unit)
+        } else if let Type::Data(type_name, _) = type_
+            && type_name == "variant"
+        {
+            // Nullary variant constructors: UNIT and VARIANT_NONE.
+            // Match by their canonical runtime representation.
+            match name {
+                "UNIT" => Self::new_bind_literal(&crate::eval::variant::unit()),
+                "VARIANT_NONE" => {
+                    Self::new_bind_literal(&crate::eval::variant::none())
+                }
+                _ => Self::new_bind_literal(&Val::String(name.to_string())),
+            }
         } else {
             Self::new_bind_literal(&Val::String(name.to_string()))
         }
@@ -940,10 +952,71 @@ impl Code {
                 let tail_result = tail_code.eval_f1(r, f, &tail)?;
                 Ok(tail_result)
             }
-            Code::BindConstructor(_name, pat_code) => {
-                // Constructor call delegation to pattern
-                match a0 {
-                    Val::Some(a) => pat_code.eval_f1(r, f, a),
+            Code::BindConstructor(name, pat_code) => {
+                // Constructor call delegation to pattern. The constructor
+                // is one of the built-in datatypes; the runtime form of
+                // the value tells us which.
+                match (name.as_str(), a0) {
+                    ("SOME", Val::Some(a)) => pat_code.eval_f1(r, f, a),
+                    ("INL", Val::Inl(a)) => pat_code.eval_f1(r, f, a),
+                    ("INR", Val::Inr(a)) => pat_code.eval_f1(r, f, a),
+                    // `variant` constructors: each matches a `Val::Variant`
+                    // whose inner type is consistent with the constructor.
+                    (
+                        "BOOL" | "INT" | "REAL" | "CHAR" | "STRING",
+                        Val::Variant(boxed),
+                    ) if matches!(
+                        (name.as_str(), &boxed.0),
+                        ("BOOL", Type::Primitive(PrimitiveType::Bool))
+                            | ("INT", Type::Primitive(PrimitiveType::Int))
+                            | ("REAL", Type::Primitive(PrimitiveType::Real))
+                            | ("CHAR", Type::Primitive(PrimitiveType::Char))
+                            | (
+                                "STRING",
+                                Type::Primitive(PrimitiveType::String)
+                            )
+                    ) =>
+                    {
+                        pat_code.eval_f1(r, f, &boxed.1)
+                    }
+                    ("LIST", Val::Variant(boxed))
+                        if matches!(&boxed.0, Type::List(_)) =>
+                    {
+                        pat_code.eval_f1(r, f, &boxed.1)
+                    }
+                    ("BAG", Val::Variant(boxed))
+                        if matches!(&boxed.0, Type::Bag(_)) =>
+                    {
+                        pat_code.eval_f1(r, f, &boxed.1)
+                    }
+                    ("VECTOR", Val::Variant(boxed))
+                        if matches!(
+                            &boxed.0,
+                            Type::Data(n, _) if n == "vector"
+                        ) =>
+                    {
+                        pat_code.eval_f1(r, f, &boxed.1)
+                    }
+                    ("VARIANT_SOME", Val::Variant(boxed))
+                        if matches!(
+                            (&boxed.0, &boxed.1),
+                            (Type::Data(n, _), Val::Some(_)) if n == "option"
+                        ) =>
+                    {
+                        if let Val::Some(inner) = &boxed.1 {
+                            pat_code.eval_f1(r, f, inner)
+                        } else {
+                            unreachable!()
+                        }
+                    }
+                    ("RECORD", Val::Variant(boxed))
+                        if matches!(
+                            &boxed.0,
+                            Type::Record(_, _) | Type::Tuple(_)
+                        ) =>
+                    {
+                        pat_code.eval_f1(r, f, &boxed.1)
+                    }
                     _ => Ok(Val::Bool(false)),
                 }
             }
