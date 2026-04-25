@@ -67,6 +67,7 @@ impl TypeBuilder {
                         || name == "either" && args.len() == 2
                         || name == "descending" && args.len() == 1
                         || name == "order" && args.is_empty()
+                        || name == "variant" && args.is_empty()
                     {
                         Type::Data(name.clone(), arg_types)
                     } else {

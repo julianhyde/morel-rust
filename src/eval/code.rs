@@ -1577,6 +1577,7 @@ pub enum Eager0 {
     RealPrecision,
     RealRadix,
     StringMaxSize,
+    VariantUnit,
     VectorMaxLen,
 }
 
@@ -1611,6 +1612,10 @@ impl Eager0 {
             RealPrecision => Val::Int(24), // IEEE 754 single precision
             RealRadix => Val::Int(2),
             StringMaxSize => Val::Int(i32::MAX),
+            VariantUnit => Val::Variant(Box::new((
+                Type::Primitive(PrimitiveType::Unit),
+                Val::Unit,
+            ))),
             VectorMaxLen => Val::Int(Vector::max_len()),
         }
     }
@@ -1995,6 +2000,11 @@ pub enum Eager1 {
     StringImplode,
     StringSize,
     StringStr,
+    VariantBool,
+    VariantChar,
+    VariantInt,
+    VariantReal,
+    VariantString,
     Vector,
     VectorConcat,
     VectorFromList,
@@ -2130,6 +2140,26 @@ impl Eager1 {
                 let c = a0.expect_char();
                 Val::String(c.to_string())
             }
+            VariantBool => Val::Variant(Box::new((
+                Type::Primitive(PrimitiveType::Bool),
+                a0,
+            ))),
+            VariantChar => Val::Variant(Box::new((
+                Type::Primitive(PrimitiveType::Char),
+                a0,
+            ))),
+            VariantInt => Val::Variant(Box::new((
+                Type::Primitive(PrimitiveType::Int),
+                a0,
+            ))),
+            VariantReal => Val::Variant(Box::new((
+                Type::Primitive(PrimitiveType::Real),
+                a0,
+            ))),
+            VariantString => Val::Variant(Box::new((
+                Type::Primitive(PrimitiveType::String),
+                a0,
+            ))),
             Vector => a0, // as VectorFromList
             VectorConcat => {
                 use crate::eval::vector::Vector as VectorOps;
@@ -3474,6 +3504,12 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     EagerF1::SysShow.implements(&mut b, SysShow);
     EagerF0::SysShowAll.implements(&mut b, SysShowAll);
     EagerF1::SysUnset.implements(&mut b, SysUnset);
+    Eager1::VariantBool.implements(&mut b, VariantBool);
+    Eager1::VariantChar.implements(&mut b, VariantChar);
+    Eager1::VariantInt.implements(&mut b, VariantInt);
+    Eager1::VariantReal.implements(&mut b, VariantReal);
+    Eager1::VariantString.implements(&mut b, VariantString);
+    Eager0::VariantUnit.implements(&mut b, VariantUnit);
     Eager1::Vector.implements(&mut b, Vector);
     EagerF2::VectorAll.implements(&mut b, VectorAll);
     EagerF2::VectorApp.implements(&mut b, VectorApp);

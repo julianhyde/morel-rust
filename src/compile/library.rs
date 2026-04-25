@@ -959,6 +959,30 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Sys", name = "unset", global = true))]
     #[strum(props(type = "string -> unit"))]
     SysUnset,
+    /// `Variant.BOOL`: a constructor of the `variant` datatype.
+    #[strum(props(p = "Variant", name = "BOOL", global = true))]
+    #[strum(props(type = "bool -> variant", constructor = true))]
+    VariantBool,
+    /// `Variant.CHAR`: a constructor of the `variant` datatype.
+    #[strum(props(p = "Variant", name = "CHAR", global = true))]
+    #[strum(props(type = "char -> variant", constructor = true))]
+    VariantChar,
+    /// `Variant.INT`: a constructor of the `variant` datatype.
+    #[strum(props(p = "Variant", name = "INT", global = true))]
+    #[strum(props(type = "int -> variant", constructor = true))]
+    VariantInt,
+    /// `Variant.REAL`: a constructor of the `variant` datatype.
+    #[strum(props(p = "Variant", name = "REAL", global = true))]
+    #[strum(props(type = "real -> variant", constructor = true))]
+    VariantReal,
+    /// `Variant.STRING`: a constructor of the `variant` datatype.
+    #[strum(props(p = "Variant", name = "STRING", global = true))]
+    #[strum(props(type = "string -> variant", constructor = true))]
+    VariantString,
+    /// `Variant.UNIT`: a nullary constructor of the `variant` datatype.
+    #[strum(props(p = "Variant", name = "UNIT", global = true))]
+    #[strum(props(type = "variant", constructor = true))]
+    VariantUnit,
     /// `vector` is a synonym for `Vector.fromList`
     #[strum(props(name = "vector", global = true, throws = "Size"))]
     #[strum(props(type = "forall 1 'a list -> 'a vector"))]
@@ -1122,6 +1146,8 @@ pub enum BuiltInRecord {
     String,
     #[strum(props(name = "Sys"))]
     Sys,
+    #[strum(props(name = "Variant"))]
+    Variant,
     #[strum(props(name = "Vector"))]
     Vector,
 }
