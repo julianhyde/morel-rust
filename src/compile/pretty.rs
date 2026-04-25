@@ -444,6 +444,11 @@ impl Pretty {
                     value.expect_list(),
                 )?;
             }
+            Type::Named(_, _) => {
+                // For arbitrary named types we don't have rich display
+                // logic; print the value via its `Display` impl.
+                write!(buf, "{}", value)?;
+            }
             Type::Primitive(prim_type) => {
                 self.pretty_primitive(buf, prim_type, value)?;
             }

@@ -1122,11 +1122,11 @@ impl<'a> Compiler<'a> {
                     Val::Fn(BuiltInFunction::OrderGreater) => {
                         Val::Order(Order(Ordering::Greater))
                     }
+                    Val::Fn(BuiltInFunction::VariantNone) => {
+                        crate::eval::variant::none()
+                    }
                     Val::Fn(BuiltInFunction::VariantUnit) => {
-                        Val::Variant(Box::new((
-                            Type::Primitive(PrimitiveType::Unit),
-                            Val::Unit,
-                        )))
+                        crate::eval::variant::unit()
                     }
                     _ => val.clone(),
                 };

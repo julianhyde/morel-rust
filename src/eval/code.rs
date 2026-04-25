@@ -1577,6 +1577,7 @@ pub enum Eager0 {
     RealPrecision,
     RealRadix,
     StringMaxSize,
+    VariantNone,
     VariantUnit,
     VectorMaxLen,
 }
@@ -1612,10 +1613,8 @@ impl Eager0 {
             RealPrecision => Val::Int(24), // IEEE 754 single precision
             RealRadix => Val::Int(2),
             StringMaxSize => Val::Int(i32::MAX),
-            VariantUnit => Val::Variant(Box::new((
-                Type::Primitive(PrimitiveType::Unit),
-                Val::Unit,
-            ))),
+            VariantNone => crate::eval::variant::none(),
+            VariantUnit => crate::eval::variant::unit(),
             VectorMaxLen => Val::Int(Vector::max_len()),
         }
     }
@@ -2000,11 +1999,18 @@ pub enum Eager1 {
     StringImplode,
     StringSize,
     StringStr,
+    VariantBag,
     VariantBool,
     VariantChar,
+    VariantConstant,
+    VariantConstruct,
     VariantInt,
+    VariantList,
     VariantReal,
+    VariantRecord,
+    VariantSome,
     VariantString,
+    VariantVector,
     Vector,
     VectorConcat,
     VectorFromList,
@@ -2140,6 +2146,7 @@ impl Eager1 {
                 let c = a0.expect_char();
                 Val::String(c.to_string())
             }
+            VariantBag => crate::eval::variant::bag(a0),
             VariantBool => Val::Variant(Box::new((
                 Type::Primitive(PrimitiveType::Bool),
                 a0,
@@ -2148,18 +2155,24 @@ impl Eager1 {
                 Type::Primitive(PrimitiveType::Char),
                 a0,
             ))),
+            VariantConstant => crate::eval::variant::constant(a0),
+            VariantConstruct => crate::eval::variant::construct(a0),
             VariantInt => Val::Variant(Box::new((
                 Type::Primitive(PrimitiveType::Int),
                 a0,
             ))),
+            VariantList => crate::eval::variant::list(a0),
             VariantReal => Val::Variant(Box::new((
                 Type::Primitive(PrimitiveType::Real),
                 a0,
             ))),
+            VariantRecord => crate::eval::variant::record(a0),
+            VariantSome => crate::eval::variant::some(a0),
             VariantString => Val::Variant(Box::new((
                 Type::Primitive(PrimitiveType::String),
                 a0,
             ))),
+            VariantVector => crate::eval::variant::vector(a0),
             Vector => a0, // as VectorFromList
             VectorConcat => {
                 use crate::eval::vector::Vector as VectorOps;
@@ -3504,12 +3517,20 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     EagerF1::SysShow.implements(&mut b, SysShow);
     EagerF0::SysShowAll.implements(&mut b, SysShowAll);
     EagerF1::SysUnset.implements(&mut b, SysUnset);
+    Eager1::VariantBag.implements(&mut b, VariantBag);
     Eager1::VariantBool.implements(&mut b, VariantBool);
     Eager1::VariantChar.implements(&mut b, VariantChar);
+    Eager1::VariantConstant.implements(&mut b, VariantConstant);
+    Eager1::VariantConstruct.implements(&mut b, VariantConstruct);
     Eager1::VariantInt.implements(&mut b, VariantInt);
+    Eager1::VariantList.implements(&mut b, VariantList);
+    Eager0::VariantNone.implements(&mut b, VariantNone);
     Eager1::VariantReal.implements(&mut b, VariantReal);
+    Eager1::VariantRecord.implements(&mut b, VariantRecord);
+    Eager1::VariantSome.implements(&mut b, VariantSome);
     Eager1::VariantString.implements(&mut b, VariantString);
     Eager0::VariantUnit.implements(&mut b, VariantUnit);
+    Eager1::VariantVector.implements(&mut b, VariantVector);
     Eager1::Vector.implements(&mut b, Vector);
     EagerF2::VectorAll.implements(&mut b, VectorAll);
     EagerF2::VectorApp.implements(&mut b, VectorApp);
