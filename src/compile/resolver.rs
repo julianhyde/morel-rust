@@ -1107,6 +1107,27 @@ impl<'a> Resolver<'a> {
                     span.clone(),
                 )
             }
+            PostfixKind::Curried2 => {
+                // `recv.m a` — build the curried call `m recv a`,
+                // i.e. `Apply(Apply(m, recv), a)`. The intermediate
+                // type after the first apply is `arg_t -> result_t`.
+                let c_arg = self.resolve_expr(arg);
+                let arg_t = c_arg.type_();
+                let intermediate_t =
+                    Box::new(Type::Fn(arg_t.clone(), t.clone()));
+                let inner = CoreExpr::Apply(
+                    intermediate_t,
+                    Box::new(fn_literal),
+                    Box::new(c_recv),
+                    span.clone(),
+                );
+                CoreExpr::Apply(
+                    t,
+                    Box::new(inner),
+                    Box::new(c_arg),
+                    span.clone(),
+                )
+            }
         }
     }
 
@@ -1934,161 +1955,17 @@ impl ReferenceFinder {
     }
 }
 
-/// Calling convention for a postfix method-call dispatch.
-#[derive(Copy, Clone, Debug)]
-enum PostfixKind {
-    /// `recv.m ()` — method takes only the receiver; argument (if any)
-    /// is a unit placeholder that gets discarded.
-    Unary,
-    /// `recv.m a` — method takes a 2-tuple (recv, a).
-    Tupled2,
-    /// `recv.m (a, b)` — method takes a 3-tuple (recv, a, b). The
-    /// user-supplied argument is itself a tuple `(a, b)` that gets
-    /// spliced after recv.
-    #[allow(dead_code)]
-    Tupled3,
-}
+/// Local re-export of the shared dispatch enum, so existing
+/// `PostfixKind::Unary` qualifiers in this module still resolve. The
+/// canonical definition lives in `crate::compile::postfix`.
+type PostfixKind = crate::compile::postfix::PostfixKind;
 
-/// Maps a postfix method name + receiver type to the corresponding
-/// built-in function. Returns `None` if no postfix method is defined
-/// for this receiver type / method-name combination.
-///
-/// This is the morel-rust counterpart to the per-structure "postfix"
-/// registration in morel-java's `BuiltIn` class.
+/// Local wrapper around the shared `postfix_dispatch`.
 fn postfix_dispatch(
     method: &str,
     recv_type: &Type,
 ) -> Option<(BuiltInFunction, PostfixKind)> {
-    use BuiltInFunction::{
-        BagDrop, BagHd, BagLength, BagNull, BagTake, BagTl, BoolNot,
-        BoolToString, CharCompare, CharIsAlpha, CharIsDigit, CharOrd, CharPred,
-        CharSucc, CharToLower, CharToString, CharToUpper, IntAbs, IntCompare,
-        IntMax, IntMin, IntRem, IntSameSign, IntSign, IntToString, ListDrop,
-        ListHd, ListLength, ListNth, ListNull, ListTake, ListTl, OptionGetOpt,
-        OptionIsSome, OptionValOf, RealAbs, RealCeil, RealCompare, RealFloor,
-        RealMax, RealMin, RealRem, RealSign, RealToString, RealTrunc,
-        StringExplode, StringSize, StringSub, StringSubstring,
-    };
-    use PostfixKind::{Tupled2, Tupled3, Unary};
-    // Strip type aliases; Forall wraps a type scheme we want to look
-    // through.
-    let ty = peel_type(recv_type);
-    match (method, ty) {
-        // String
-        ("size", Type::Primitive(PrimitiveType::String)) => {
-            Some((StringSize, Unary))
-        }
-        ("sub", Type::Primitive(PrimitiveType::String)) => {
-            Some((StringSub, Tupled2))
-        }
-        ("substring", Type::Primitive(PrimitiveType::String)) => {
-            Some((StringSubstring, Tupled3))
-        }
-        ("explode", Type::Primitive(PrimitiveType::String)) => {
-            Some((StringExplode, Unary))
-        }
-        // List
-        ("length", Type::List(_)) => Some((ListLength, Unary)),
-        ("hd", Type::List(_)) => Some((ListHd, Unary)),
-        ("tl", Type::List(_)) => Some((ListTl, Unary)),
-        ("null", Type::List(_)) => Some((ListNull, Unary)),
-        ("drop", Type::List(_)) => Some((ListDrop, Tupled2)),
-        ("take", Type::List(_)) => Some((ListTake, Tupled2)),
-        ("nth", Type::List(_)) => Some((ListNth, Tupled2)),
-        // Bag
-        ("length", Type::Bag(_)) => Some((BagLength, Unary)),
-        ("hd", Type::Bag(_)) => Some((BagHd, Unary)),
-        ("tl", Type::Bag(_)) => Some((BagTl, Unary)),
-        ("null", Type::Bag(_)) => Some((BagNull, Unary)),
-        ("drop", Type::Bag(_)) => Some((BagDrop, Tupled2)),
-        ("take", Type::Bag(_)) => Some((BagTake, Tupled2)),
-        // Int (overloaded)
-        ("abs", Type::Primitive(PrimitiveType::Int)) => Some((IntAbs, Unary)),
-        ("compare", Type::Primitive(PrimitiveType::Int)) => {
-            Some((IntCompare, Tupled2))
-        }
-        ("max", Type::Primitive(PrimitiveType::Int)) => Some((IntMax, Tupled2)),
-        ("min", Type::Primitive(PrimitiveType::Int)) => Some((IntMin, Tupled2)),
-        ("rem", Type::Primitive(PrimitiveType::Int)) => Some((IntRem, Tupled2)),
-        ("sameSign", Type::Primitive(PrimitiveType::Int)) => {
-            Some((IntSameSign, Tupled2))
-        }
-        ("sign", Type::Primitive(PrimitiveType::Int)) => Some((IntSign, Unary)),
-        ("toString", Type::Primitive(PrimitiveType::Int)) => {
-            Some((IntToString, Unary))
-        }
-        // Real (overloaded)
-        ("abs", Type::Primitive(PrimitiveType::Real)) => Some((RealAbs, Unary)),
-        ("ceil", Type::Primitive(PrimitiveType::Real)) => {
-            Some((RealCeil, Unary))
-        }
-        ("compare", Type::Primitive(PrimitiveType::Real)) => {
-            Some((RealCompare, Tupled2))
-        }
-        ("floor", Type::Primitive(PrimitiveType::Real)) => {
-            Some((RealFloor, Unary))
-        }
-        ("max", Type::Primitive(PrimitiveType::Real)) => {
-            Some((RealMax, Tupled2))
-        }
-        ("min", Type::Primitive(PrimitiveType::Real)) => {
-            Some((RealMin, Tupled2))
-        }
-        ("rem", Type::Primitive(PrimitiveType::Real)) => {
-            Some((RealRem, Tupled2))
-        }
-        ("sign", Type::Primitive(PrimitiveType::Real)) => {
-            Some((RealSign, Unary))
-        }
-        ("toString", Type::Primitive(PrimitiveType::Real)) => {
-            Some((RealToString, Unary))
-        }
-        ("trunc", Type::Primitive(PrimitiveType::Real)) => {
-            Some((RealTrunc, Unary))
-        }
-        // Char (overloaded)
-        ("compare", Type::Primitive(PrimitiveType::Char)) => {
-            Some((CharCompare, Tupled2))
-        }
-        ("isAlpha", Type::Primitive(PrimitiveType::Char)) => {
-            Some((CharIsAlpha, Unary))
-        }
-        ("isDigit", Type::Primitive(PrimitiveType::Char)) => {
-            Some((CharIsDigit, Unary))
-        }
-        ("ord", Type::Primitive(PrimitiveType::Char)) => Some((CharOrd, Unary)),
-        ("pred", Type::Primitive(PrimitiveType::Char)) => {
-            Some((CharPred, Unary))
-        }
-        ("succ", Type::Primitive(PrimitiveType::Char)) => {
-            Some((CharSucc, Unary))
-        }
-        ("toLower", Type::Primitive(PrimitiveType::Char)) => {
-            Some((CharToLower, Unary))
-        }
-        ("toString", Type::Primitive(PrimitiveType::Char)) => {
-            Some((CharToString, Unary))
-        }
-        ("toUpper", Type::Primitive(PrimitiveType::Char)) => {
-            Some((CharToUpper, Unary))
-        }
-        // Bool (overloaded)
-        ("not", Type::Primitive(PrimitiveType::Bool)) => Some((BoolNot, Unary)),
-        ("toString", Type::Primitive(PrimitiveType::Bool)) => {
-            Some((BoolToString, Unary))
-        }
-        // Option
-        ("getOpt", Type::Data(n, _)) if n == "option" => {
-            Some((OptionGetOpt, Tupled2))
-        }
-        ("isSome", Type::Data(n, _)) if n == "option" => {
-            Some((OptionIsSome, Unary))
-        }
-        ("valOf", Type::Data(n, _)) if n == "option" => {
-            Some((OptionValOf, Unary))
-        }
-        _ => None,
-    }
+    crate::compile::postfix::postfix_dispatch(method, recv_type)
 }
 
 /// Peels type aliases and Forall wrappers for the purpose of

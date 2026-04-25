@@ -31,6 +31,12 @@ pub enum PostfixKind {
     Tupled2,
     /// `recv.m (a, b)` — method takes a 3-tuple (recv, a, b).
     Tupled3,
+    /// `recv.m a` — method is curried; rewrites to `m recv a`.
+    /// Used by built-ins whose declared type is curried (e.g.
+    /// `Range.contains : 'a -> 'b -> bool`) so that the existing
+    /// compile-time intercepts (which look at the curried Apply
+    /// shape) fire correctly.
+    Curried2,
 }
 
 /// Maps a postfix method name + receiver type to the corresponding

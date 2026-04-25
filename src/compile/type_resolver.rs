@@ -3332,9 +3332,6 @@ impl TypeResolver {
             return Ok(None);
         };
 
-        // Build the rewritten argument expression.
-        let new_arg = self.build_postfix_arg(kind, &recv2, arg)?;
-
         // Build `Literal(Fn(builtin))` as the new function.
         let span = recv.span.clone();
         let fn_literal = Literal {
@@ -3344,9 +3341,28 @@ impl TypeResolver {
         };
         let new_fun = Expr {
             kind: ExprKind::Literal(fn_literal),
-            span,
+            span: span.clone(),
             id: None,
         };
+
+        // Curried2 nests two Applies: `Apply(Apply(fn, recv), arg)`.
+        // Other kinds collapse to a single Apply with a built argument.
+        if let crate::compile::postfix::PostfixKind::Curried2 = kind {
+            let v_inner = self.variable();
+            let (fun_inner, arg_inner) =
+                self.deduce_apply_type(env, &new_fun, &recv2, &v_inner)?;
+            let inner_apply = Expr {
+                kind: ExprKind::Apply(Box::new(fun_inner), Box::new(arg_inner)),
+                span,
+                id: None,
+            };
+            let (fun2, arg2) =
+                self.deduce_apply_type(env, &inner_apply, arg, v_result)?;
+            return Ok(Some((fun2, arg2)));
+        }
+
+        // Build the rewritten argument expression.
+        let new_arg = self.build_postfix_arg(kind, &recv2, arg)?;
 
         // Recursively deduce the rewritten Apply. The result must
         // share `v_result` with the outer call so the surrounding
@@ -3390,6 +3406,12 @@ impl TypeResolver {
                     span,
                     id: None,
                 }
+            }
+            PostfixKind::Curried2 => {
+                // Curried2 is rewritten as nested Applies in the
+                // caller, not via this helper, so this branch is
+                // unreachable in practice.
+                unreachable!("Curried2 handled before build_postfix_arg")
             }
         })
     }
