@@ -112,14 +112,7 @@ fn pretty() {
     run_script("tests/script/pretty.smli");
 }
 
-// Range functionality itself passes via REPL checks; see #338
-// commits. The .smli still diverges on: nullary constructor
-// printing (`INL LESS` not `INL (LESS)`), trailing `raised at:`
-// on runtime errors, and the permissive-type signatures
-// introduced by overload dispatch (`contains: 'a -> 'b -> bool`
-// rather than morel-java's `'b range -> 'b -> bool`).
 #[test]
-#[ignore = "range.smli formatting divergences (hydromatic/morel#338)"]
 fn range() {
     run_script("tests/script/range.smli");
 }
