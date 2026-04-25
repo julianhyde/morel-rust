@@ -132,26 +132,19 @@ RECORD [("name", STRING "Alice"), ("age", INT 30), ("b", BOOL true), ("i", INT 4
 > val it = {age=30,b=true,i=42,name="Alice",pets=["cat","dog"]}
 >   : {age:int, b:bool, i:int, name:string, pets:string list} variant
 
-(*) TODO: morel-rust has no datatype lookup, so CONSTANT and CONSTRUCT
-(*) cannot resolve a constructor name to its parent datatype. Skipped.
-(*
-(*) CONSTANT constructor - nullary constructor
+(*) CONSTANT constructor - nullary constructor of a built-in datatype.
+(*) morel-rust supports `LESS`/`EQUAL`/`GREATER` (order) and `NONE`
+(*) (option). Other names fall back to a placeholder display.
 CONSTANT "LESS";
 > val it = LESS : order variant
 
-(*) TODO: better error message
-CONSTANT "missing";
-> java.lang.IllegalArgumentException: Unknown constructor: missing
-
-(*) CONSTRUCT constructor - unary constructor
+(*) CONSTRUCT constructor - unary constructor of a built-in datatype.
+(*) morel-rust supports `SOME`, `INL`, `INR`, `DESC`. The morel-java
+(*) `CONS` test (which targets the internal `$list` datatype) and the
+(*) `CONSTANT "missing"` error test require runtime datatype lookup
+(*) and are not yet supported.
 CONSTRUCT ("SOME", INT 42);
 > val it = SOME 42 : int option variant
-
-(*) CONSTRUCT constructor - constructor with tuple
-(* The "$list" isn't pretty. It's because CONS belongs to an internal datatype. *)
-CONSTRUCT ("CONS", RECORD [("1", INT 1), ("2", CONSTANT "NIL")]);
-> val it = CONS (1,NIL) : (int * 'a $list) $list variant
-*)
 
 (*) List of homogeneous records
 LIST [
@@ -307,14 +300,11 @@ testRoundTrip (RECORD [("x", INT 1), ("y", INT 2)]);
 testRoundTrip (RECORD [("name", STRING "Alice"), ("age", INT 30)]);
 > val it = true : bool
 
-(*) TODO: round-trip for CONSTANT/CONSTRUCT depends on datatype lookup.
-(*
 (*) Test CONSTANT and CONSTRUCT round-trip
 testRoundTrip (CONSTANT "LESS");
 > val it = true : bool
 testRoundTrip (CONSTRUCT ("SOME", INT 42));
 > val it = true : bool
-*)
 
 (*) Test complex nested structure round-trip
 testRoundTrip

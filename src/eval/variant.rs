@@ -173,25 +173,52 @@ pub(crate) fn record(arg: Val) -> Val {
 }
 
 /// `Variant.CONSTANT name`: a constructor representing a nullary
-/// constructor of an arbitrary datatype, identified by name.
+/// constructor of a built-in datatype, identified by name. Supports
+/// `NONE` (option), `LESS`/`EQUAL`/`GREATER` (order). Unknown names
+/// fall back to a placeholder `Type::Named` representation that
+/// pretty-prints crudely; full support for arbitrary user-defined
+/// datatypes would require a runtime constructor table.
 pub(crate) fn constant(arg: Val) -> Val {
+    use std::cmp::Ordering;
+
+    use crate::eval::order::Order;
+
     let name = match arg {
         Val::String(s) => s,
         _ => panic!("Expected string, got {:?}", arg),
     };
-    // The inner type is "the named datatype" — but at this layer we
-    // don't know which datatype. Use a placeholder Named type with no
-    // arguments.
-    variant_of(
-        Type::Named(vec![], name.clone()),
-        Val::Constructor(0, Box::new(Val::Unit)),
-    )
+    match name.as_str() {
+        "NONE" => variant_of(
+            Type::Data("option".to_string(), vec![fresh_var()]),
+            Val::Unit,
+        ),
+        "LESS" => variant_of(
+            Type::Data("order".to_string(), vec![]),
+            Val::Order(Order(Ordering::Less)),
+        ),
+        "EQUAL" => variant_of(
+            Type::Data("order".to_string(), vec![]),
+            Val::Order(Order(Ordering::Equal)),
+        ),
+        "GREATER" => variant_of(
+            Type::Data("order".to_string(), vec![]),
+            Val::Order(Order(Ordering::Greater)),
+        ),
+        _ => variant_of(
+            Type::Named(vec![], name.clone()),
+            Val::Constructor(0, Box::new(Val::Unit)),
+        ),
+    }
 }
 
 /// `Variant.CONSTRUCT (name, payload)`: a constructor representing a
-/// unary constructor of an arbitrary datatype, identified by name and
-/// payload variant.
+/// unary constructor of a built-in datatype, identified by name and
+/// payload variant. Supports `SOME` (option), `INL`/`INR` (either),
+/// and `DESC` (descending). Unknown names fall back to a placeholder
+/// representation that pretty-prints crudely.
 pub(crate) fn construct(arg: Val) -> Val {
+    use crate::eval::val::DESC_ORDINAL;
+
     let parts = match arg {
         Val::List(items) if items.len() == 2 => items,
         _ => panic!("Expected (name, variant) pair, got {:?}", arg),
@@ -202,11 +229,32 @@ pub(crate) fn construct(arg: Val) -> Val {
         other => panic!("Expected string name, got {:?}", other),
     };
     let payload = iter.next().unwrap();
-    let (_inner_type, inner_val) = expect_variant(&payload);
-    variant_of(
-        Type::Named(vec![], name.clone()),
-        Val::Constructor(0, Box::new(inner_val.clone())),
-    )
+    let (inner_type, inner_val) = match payload {
+        Val::Variant(boxed) => *boxed,
+        other => panic!("Expected variant payload, got {:?}", other),
+    };
+    match name.as_str() {
+        "SOME" => variant_of(
+            Type::Data("option".to_string(), vec![inner_type]),
+            Val::Some(Box::new(inner_val)),
+        ),
+        "INL" => variant_of(
+            Type::Data("either".to_string(), vec![inner_type, fresh_var()]),
+            Val::Inl(Box::new(inner_val)),
+        ),
+        "INR" => variant_of(
+            Type::Data("either".to_string(), vec![fresh_var(), inner_type]),
+            Val::Inr(Box::new(inner_val)),
+        ),
+        "DESC" => variant_of(
+            Type::Data("descending".to_string(), vec![inner_type]),
+            Val::Constructor(DESC_ORDINAL, Box::new(inner_val)),
+        ),
+        _ => variant_of(
+            Type::Named(vec![], name.clone()),
+            Val::Constructor(0, Box::new(inner_val)),
+        ),
+    }
 }
 
 fn expect_variant(v: &Val) -> (&Type, &Val) {
@@ -252,6 +300,45 @@ fn append(buf: &mut String, inner_type: &Type, inner_val: &Val) {
                 }
                 _ => panic!("Expected option value, got {:?}", inner_val),
             }
+        }
+        Type::Data(name, _) if name == "order" => {
+            use crate::eval::order::Order;
+            let con_name = match inner_val {
+                Val::Order(Order(o)) => match o {
+                    std::cmp::Ordering::Less => "LESS",
+                    std::cmp::Ordering::Equal => "EQUAL",
+                    std::cmp::Ordering::Greater => "GREATER",
+                },
+                _ => panic!("Expected order value, got {:?}", inner_val),
+            };
+            buf.push_str("CONSTANT \"");
+            buf.push_str(con_name);
+            buf.push('"');
+        }
+        Type::Data(name, args) if name == "either" => match inner_val {
+            Val::Inl(v) => {
+                let elem = args.first().expect("either has 2 args");
+                buf.push_str("CONSTRUCT (\"INL\", ");
+                append(buf, elem, v);
+                buf.push(')');
+            }
+            Val::Inr(v) => {
+                let elem = args.get(1).expect("either has 2 args");
+                buf.push_str("CONSTRUCT (\"INR\", ");
+                append(buf, elem, v);
+                buf.push(')');
+            }
+            _ => panic!("Expected either value, got {:?}", inner_val),
+        },
+        Type::Data(name, args) if name == "descending" => {
+            let elem = args.first().expect("descending has 1 arg");
+            let v = match inner_val {
+                Val::Constructor(_, inner) => inner.as_ref(),
+                _ => panic!("Expected descending value, got {:?}", inner_val),
+            };
+            buf.push_str("CONSTRUCT (\"DESC\", ");
+            append(buf, elem, v);
+            buf.push(')');
         }
         Type::Record(_, fields) => {
             let values = match inner_val {
