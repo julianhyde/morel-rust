@@ -3506,6 +3506,14 @@ impl TypeResolver {
                     vec![Type::Primitive(PrimitiveType::Unit)],
                 )))
             }
+            "range" | "continuous_set" | "discrete_set" => {
+                // postfix_dispatch only keys on the data-type name;
+                // the element-type slot is filled with a placeholder.
+                Some(Box::new(Type::Data(
+                    op_name.clone(),
+                    vec![Type::Primitive(PrimitiveType::Unit)],
+                )))
+            }
             _ => None,
         }
     }

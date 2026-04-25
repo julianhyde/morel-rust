@@ -52,11 +52,12 @@ pub fn postfix_dispatch(
         CharSucc, CharToLower, CharToString, CharToUpper, IntAbs, IntCompare,
         IntMax, IntMin, IntRem, IntSameSign, IntSign, IntToString, ListDrop,
         ListHd, ListLength, ListNth, ListNull, ListTake, ListTl, OptionGetOpt,
-        OptionIsSome, OptionValOf, RealAbs, RealCeil, RealCompare, RealFloor,
+        OptionIsSome, OptionValOf, RangeComplement, RangeContains, RangeRanges,
+        RangeToBag, RangeToList, RealAbs, RealCeil, RealCompare, RealFloor,
         RealMax, RealMin, RealRem, RealSign, RealToString, RealTrunc,
         StringExplode, StringSize, StringSub, StringSubstring,
     };
-    use PostfixKind::{Tupled2, Tupled3, Unary};
+    use PostfixKind::{Curried2, Tupled2, Tupled3, Unary};
     let ty = peel_type(recv_type);
     match (method, ty) {
         // String
@@ -172,6 +173,28 @@ pub fn postfix_dispatch(
         ("valOf", Type::Data(n, _)) if n == "option" => {
             Some((OptionValOf, Unary))
         }
+        // Range
+        ("contains", Type::Data(n, _))
+            if n == "range" || n == "continuous_set" || n == "discrete_set" =>
+        {
+            Some((RangeContains, Curried2))
+        }
+        ("ranges", Type::Data(n, _))
+            if n == "continuous_set" || n == "discrete_set" =>
+        {
+            Some((RangeRanges, Unary))
+        }
+        ("complement", Type::Data(n, _))
+            if n == "continuous_set" || n == "discrete_set" =>
+        {
+            Some((RangeComplement, Unary))
+        }
+        ("toList", Type::Data(n, _)) if n == "discrete_set" => {
+            Some((RangeToList, Unary))
+        }
+        ("toBag", Type::Data(n, _)) if n == "discrete_set" => {
+            Some((RangeToBag, Unary))
+        }
         _ => None,
     }
 }
@@ -195,6 +218,8 @@ pub fn is_overloaded_name(method: &str) -> bool {
         method,
         "abs"
             | "compare"
+            | "complement"
+            | "contains"
             | "drop"
             | "getItem"
             | "hd"
@@ -203,6 +228,7 @@ pub fn is_overloaded_name(method: &str) -> bool {
             | "min"
             | "nth"
             | "null"
+            | "ranges"
             | "rem"
             | "sign"
             | "sub"
