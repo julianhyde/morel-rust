@@ -16,6 +16,7 @@
 // License.
 
 use crate::compile::core::{Decl, Expr, Match, Pat, Step, StepKind, ValBind};
+use crate::compile::library::BuiltInFunction;
 use crate::compile::types::Type;
 use crate::eval::val::Val;
 use im::HashMap;
@@ -28,6 +29,204 @@ trait Transformer {
     fn transform_decl(&self, env: &Env, decl: &Decl) -> Decl;
     fn transform_expr(&self, env: &Env, expr: &Expr) -> Expr;
     fn transform_pat(&self, env: &Env, pat: &Pat) -> Pat;
+}
+
+/// Tries to convert a constant expression to a runtime value. Returns `None`
+/// if the expression is not a recognizable constant, or if its value cannot
+/// be matched against patterns (e.g. function values).
+fn expr_to_val(expr: &Expr) -> Option<Val> {
+    match expr {
+        Expr::Literal(_, v) => match v {
+            // The `NONE`, `nil` and similar nullary constants live in the
+            // environment as `Val::Fn(...)` until compilation lowers them
+            // to their runtime forms. Apply the same lowering here so the
+            // case-on-constant logic can match them.
+            Val::Fn(BuiltInFunction::OptionNone) => Some(Val::Unit),
+            Val::Fn(BuiltInFunction::ListNil)
+            | Val::Fn(BuiltInFunction::BagNil) => Some(Val::List(Vec::new())),
+            // Other function values, code, and closures cannot be matched
+            // against patterns so we conservatively decline.
+            Val::Fn(_) | Val::Code(_) | Val::Closure(..) => None,
+            _ => Some(v.clone()),
+        },
+        Expr::Tuple(_, args) => args
+            .iter()
+            .map(expr_to_val)
+            .collect::<Option<Vec<_>>>()
+            .map(Val::List),
+        Expr::Apply(_, fn_expr, arg, _) => {
+            if let Expr::Literal(_, Val::Fn(f)) = fn_expr.as_ref() {
+                let v = expr_to_val(arg)?;
+                match f {
+                    BuiltInFunction::OptionSome => Some(Val::Some(Box::new(v))),
+                    BuiltInFunction::EitherInl => Some(Val::Inl(Box::new(v))),
+                    BuiltInFunction::EitherInr => Some(Val::Inr(Box::new(v))),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Returns true if `expr` has no side effects and can be safely eliminated
+/// when its value is not used. Constant expressions (those for which
+/// [`expr_to_val`] succeeds) are pure; we additionally accept identifiers
+/// and record selectors.
+fn is_pure(expr: &Expr) -> bool {
+    if expr_to_val(expr).is_some() {
+        return true;
+    }
+    match expr {
+        Expr::Identifier(_, _) | Expr::RecordSelector(_, _) => true,
+        Expr::Tuple(_, args) => args.iter().all(is_pure),
+        _ => false,
+    }
+}
+
+fn decl_is_pure(decl: &Decl) -> bool {
+    match decl {
+        Decl::NonRecVal(vb) => is_pure(&vb.expr),
+        Decl::RecVal(_) => false,
+        Decl::Type(_) | Decl::Datatype(_) | Decl::Over(_) => true,
+    }
+}
+
+/// Returns true if the named identifier is referenced anywhere in `expr`.
+/// Used for dead-code elimination of unused let bindings. This walks
+/// through binding constructs (fn, case, let, from-scan) and stops the
+/// search if a sub-binding shadows the name.
+fn references_var(expr: &Expr, name: &str) -> bool {
+    match expr {
+        Expr::Identifier(_, id) => id == name,
+        Expr::Literal(_, _)
+        | Expr::Current(_)
+        | Expr::Ordinal(_)
+        | Expr::RecordSelector(_, _) => false,
+        Expr::Aggregate(_, a, b) => {
+            references_var(a, name) || references_var(b, name)
+        }
+        Expr::Apply(_, f, a, _) => {
+            references_var(f, name) || references_var(a, name)
+        }
+        Expr::Case(_, scrutinee, matches, _) => {
+            if references_var(scrutinee, name) {
+                return true;
+            }
+            matches.iter().any(|m| {
+                !pat_binds(&m.pat, name) && references_var(&m.expr, name)
+            })
+        }
+        Expr::Fn(_, matches, _) => matches
+            .iter()
+            .any(|m| !pat_binds(&m.pat, name) && references_var(&m.expr, name)),
+        Expr::Let(_, decls, body) => {
+            for d in decls {
+                if decl_references_var(d, name) {
+                    return true;
+                }
+                if decl_binds(d, name) {
+                    return false;
+                }
+            }
+            references_var(body, name)
+        }
+        Expr::Tuple(_, args) | Expr::List(_, args) => {
+            args.iter().any(|e| references_var(e, name))
+        }
+        Expr::From(_, steps)
+        | Expr::Exists(_, steps)
+        | Expr::Forall(_, steps) => {
+            for s in steps {
+                let (refs, shadows) = step_refs(&s.kind, name);
+                if refs {
+                    return true;
+                }
+                if shadows {
+                    return false;
+                }
+            }
+            false
+        }
+    }
+}
+
+fn pat_binds(pat: &Pat, name: &str) -> bool {
+    let mut found = false;
+    pat.for_each_id_pat(&mut |(_, n)| {
+        if n == name {
+            found = true;
+        }
+    });
+    found
+}
+
+/// Returns true if no variable bound by `pat` is referenced in `body`.
+fn pat_unused(pat: &Pat, body: &Expr) -> bool {
+    let mut names: Vec<String> = Vec::new();
+    pat.for_each_id_pat(&mut |(_, n)| names.push(n.to_string()));
+    names.iter().all(|n| !references_var(body, n))
+}
+
+fn decl_binds(decl: &Decl, name: &str) -> bool {
+    let mut found = false;
+    decl.for_each_id_pat(|(_, n)| {
+        if n == name {
+            found = true;
+        }
+    });
+    found
+}
+
+fn decl_references_var(decl: &Decl, name: &str) -> bool {
+    match decl {
+        Decl::NonRecVal(vb) => references_var(&vb.expr, name),
+        Decl::RecVal(vbs) => {
+            // Check whether any binding pattern shadows `name`. If so, the
+            // let-rec scope is closed and references inside don't count.
+            let shadows = vbs.iter().any(|vb| pat_binds(&vb.pat, name));
+            if shadows {
+                false
+            } else {
+                vbs.iter().any(|vb| references_var(&vb.expr, name))
+            }
+        }
+        Decl::Over(_) | Decl::Type(_) | Decl::Datatype(_) => false,
+    }
+}
+
+/// Returns `(references, shadows)`: whether `name` is referenced in this
+/// step, and whether the step binds `name` (shadowing later steps).
+fn step_refs(kind: &StepKind, name: &str) -> (bool, bool) {
+    match kind {
+        StepKind::Compute(e)
+        | StepKind::Order(e)
+        | StepKind::Where(e)
+        | StepKind::Yield(e)
+        | StepKind::Require(e)
+        | StepKind::Skip(e)
+        | StepKind::Take(e) => (references_var(e, name), false),
+        StepKind::Group(e, opt) => {
+            let r = references_var(e, name)
+                || opt.as_deref().is_some_and(|o| references_var(o, name));
+            (r, false)
+        }
+        StepKind::Scan(pat, expr, cond) => {
+            let r = references_var(expr, name)
+                || cond.as_deref().is_some_and(|c| references_var(c, name));
+            (r, pat_binds(pat, name))
+        }
+        StepKind::Except(_, exprs)
+        | StepKind::Intersect(_, exprs)
+        | StepKind::Union(_, exprs) => {
+            (exprs.iter().any(|e| references_var(e, name)), false)
+        }
+        StepKind::Distinct | StepKind::Exists | StepKind::Unorder => {
+            (false, false)
+        }
+    }
 }
 
 /// Passes over a tree and inlines constants.
@@ -61,6 +260,45 @@ impl Transformer for Inliner {
                 }
                 expr
             }
+            Expr::Case(_t, scrutinee, matches, _span) => {
+                // If the scrutinee is a constant expression and there is more
+                // than one match arm, find the first arm whose pattern matches
+                // and substitute the bound variables. This implements
+                // "case x of 1 => one | 2 => two" -> "two" when x = 2.
+                if matches.len() > 1
+                    && let Some(val) = expr_to_val(scrutinee)
+                {
+                    for m in matches {
+                        let mut binds: Vec<(Box<Pat>, Val)> = Vec::new();
+                        let matched = m.pat.bind_recurse(&val, &mut |p, v| {
+                            binds.push((p, v.clone()));
+                        });
+                        if matched {
+                            let mut result = m.expr.clone();
+                            for (pat, v) in binds.into_iter().rev() {
+                                let pat_t = pat.type_();
+                                let lit =
+                                    Expr::Literal(pat_t.clone(), v.clone());
+                                let val_bind = ValBind {
+                                    pat: *pat,
+                                    t: *pat_t,
+                                    expr: lit,
+                                    overload_pat: None,
+                                    span: None,
+                                };
+                                let result_t = result.type_();
+                                result = Expr::Let(
+                                    result_t,
+                                    vec![Decl::NonRecVal(Box::new(val_bind))],
+                                    Box::new(result),
+                                );
+                            }
+                            return self.transform_expr(env, &result);
+                        }
+                    }
+                }
+                expr
+            }
             Expr::Identifier(t, id) => {
                 // If the name is a constant in the environment, replace it with
                 // a literal value. We do this for package names: for example,
@@ -72,6 +310,28 @@ impl Transformer for Inliner {
                     return Expr::Literal(t.clone(), v.clone());
                 }
                 expr
+            }
+            Expr::Let(t, decl_list, body) => {
+                // Drop a let whose only declaration is `val pat = e` if no
+                // variable bound by `pat` is referenced in the body, and `e`
+                // has no side effects. This handles atomic let inlining
+                // where the body's references to the bound variable have
+                // already been replaced with the literal.
+                if decl_list.len() == 1
+                    && let Decl::NonRecVal(vb) = &decl_list[0]
+                    && is_pure(&vb.expr)
+                    && pat_unused(&vb.pat, body)
+                {
+                    return (**body).clone();
+                }
+                // If the let body is now a literal and all decls are pure,
+                // drop the let entirely.
+                if matches!(body.as_ref(), Expr::Literal(_, _))
+                    && decl_list.iter().all(decl_is_pure)
+                {
+                    return (**body).clone();
+                }
+                Expr::Let(t.clone(), decl_list.clone(), body.clone())
             }
             _ => expr,
         }
@@ -173,13 +433,39 @@ impl Expr {
                 let mut decl_list2 = Vec::new();
                 // Shadow names defined by the let's declarations so
                 // that the body uses the let-local definitions, not
-                // any outer-scope bindings of the same name.
+                // any outer-scope bindings of the same name. For atomic
+                // (literal) val bindings, we additionally bind the value
+                // in the environment so that references to the variable
+                // in the body are inlined to the literal.
                 let mut body_env = env.clone();
                 for d in decl_list {
                     let d2 = x.transform_decl(env, d);
-                    d.for_each_id_pat(&mut |(t, name): (&Type, &str)| {
-                        body_env = body_env.child_none(name, t);
-                    });
+                    let bound = if let Decl::NonRecVal(vb) = &d2
+                        && let Some(v) = expr_to_val(&vb.expr)
+                    {
+                        let mut binds: Vec<(Box<Pat>, Val)> = Vec::new();
+                        let matched = vb.pat.bind_recurse(&v, &mut |p, vv| {
+                            binds.push((p, vv.clone()));
+                        });
+                        if matched {
+                            for (p, v) in &binds {
+                                if let Some(name) = p.name() {
+                                    let pt = p.type_();
+                                    body_env = body_env.child(&name, &pt, v);
+                                }
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if !bound {
+                        d.for_each_id_pat(&mut |(t, name): (&Type, &str)| {
+                            body_env = body_env.child_none(name, t);
+                        });
+                    }
                     decl_list2.push(d2);
                 }
                 let e2 = Box::new(x.transform_expr(&body_env, e));

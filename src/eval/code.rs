@@ -1273,6 +1273,9 @@ impl Display for Code {
             Self::BindAnd(codes) => {
                 Self::write_codes(f, "bindAnd(", codes, ")")
             }
+            Self::BindConstructor(name, inner) => {
+                write!(f, "bindCon({}, {})", name, inner)
+            }
             Self::BindConstructor2(ordinal, _) => {
                 write!(f, "bindCon2(#{})", ordinal)
             }

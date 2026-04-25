@@ -2509,9 +2509,7 @@ Option.valOf NONE;
 val noneInt = if true then NONE else SOME 0;
 > val noneInt = NONE : int option
 Sys.plan ();
-> val it =
->   "case(constant(true), true, constant([NONE]), _, apply(fnValue Option.some, argCode constant(0)))"
->   : string
+> val it = "constant([NONE])" : string
 Option.valOf noneInt;
 > uncaught exception Option
 >   raised at: stdIn:1.1-1.21
