@@ -300,7 +300,20 @@ impl Display for Val {
                     write!(f, "#{} {}", ordinal, v)
                 }
             }
-            Val::Fn(func) => write!(f, "{:?}", func),
+            Val::Fn(func) => {
+                let name = func.name();
+                // Symbolic operator names (e.g. `^`, `+`, `=`) are shown as
+                // `op name`; alphabetic names use their dotted form (e.g.
+                // `Option.valOf`).
+                if name
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '.' || c == '_')
+                {
+                    write!(f, "{}", func.full_name())
+                } else {
+                    write!(f, "op {}", name)
+                }
+            }
             Val::Inl(v) => write!(f, "INL {}", v),
             Val::Inr(v) => write!(f, "INR {}", v),
             Val::Int(i) => {

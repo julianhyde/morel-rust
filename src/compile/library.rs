@@ -947,6 +947,9 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Sys", name = "plan", global = true))]
     #[strum(props(type = "unit -> string"))]
     SysPlan,
+    #[strum(props(p = "Sys", name = "planEx", global = true))]
+    #[strum(props(type = "string -> string"))]
+    SysPlanEx,
     #[strum(props(p = "Sys", name = "set", global = true))]
     #[strum(props(type = "forall 1 string * 'a -> unit"))]
     SysSet,

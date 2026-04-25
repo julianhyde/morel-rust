@@ -21,8 +21,9 @@
 #![allow(clippy::useless_format)]
 #![allow(clippy::redundant_closure)]
 
+use crate::compile::core::{Decl, Expr};
 use crate::compile::inliner::Env;
-use crate::compile::library::BuiltInExn;
+use crate::compile::library::{BuiltInExn, BuiltInFunction};
 use crate::compile::resolver;
 use crate::compile::span::Span;
 use crate::compile::type_env::{Binding, EmptyTypeEnv, FunTypeEnv, TypeEnv};
@@ -56,6 +57,28 @@ use std::rc::Rc;
 /// the first non-comment token).
 ///
 /// Morel has two comment forms:
+/// Returns true if `decl` is a top-level call to `Sys.plan` or
+/// `Sys.planEx`. Used to skip storing the previous command's plan when
+/// the user is asking about it; otherwise the stored plan would always
+/// just be the most recent `Sys.plan*` call itself.
+fn is_plan_or_plan_ex_call(decl: &Decl) -> bool {
+    let Decl::NonRecVal(vb) = decl else {
+        return false;
+    };
+    fn fn_is_plan(expr: &Expr) -> bool {
+        if let Expr::Literal(_, Val::Fn(f)) = expr {
+            matches!(f, BuiltInFunction::SysPlan | BuiltInFunction::SysPlanEx)
+        } else {
+            false
+        }
+    }
+    if let Expr::Apply(_, fn_expr, _, _) = &vb.expr {
+        fn_is_plan(fn_expr)
+    } else {
+        fn_is_plan(&vb.expr)
+    }
+}
+
 /// * Line comment: `(*) text...` — starts with `(*)`, runs to end of line.
 /// * Block comment: `(* text... *)` — may span lines and nest.
 fn leading_comment_lines(code: &str) -> usize {
@@ -724,6 +747,17 @@ impl Shell {
         library::populate_env(&mut map);
         let env2 = env.multi(&map);
         let decl2 = inliner::inline_decl(&env2, &decl);
+
+        // Save the pre- and post-inlining declarations so that
+        // `Sys.planEx` can re-print the previous command's plan at the
+        // requested optimizer phase. Skip when the current command is
+        // itself a `Sys.plan` or `Sys.planEx` call so it operates on the
+        // user's last real command rather than on itself.
+        if !is_plan_or_plan_ex_call(&decl2) {
+            let mut session = self.session.borrow_mut();
+            session.pre_inline_decl = Some(decl.clone());
+            session.post_inline_decl = Some(decl2.clone());
+        }
 
         let compiled_statement = {
             let mut link_table = self.link_table.borrow_mut();

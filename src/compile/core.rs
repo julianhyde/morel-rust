@@ -169,10 +169,16 @@ impl Display for Expr {
             Expr::Identifier(_, name) => write!(f, "{}", name),
             Expr::Let(_, decls, body) => {
                 write!(f, "let ")?;
+                let mut first = true;
                 for decl in decls {
-                    write!(f, "{}; ", decl)?;
+                    if first {
+                        first = false;
+                    } else {
+                        write!(f, "; ")?;
+                    }
+                    write!(f, "{}", decl)?;
                 }
-                write!(f, "in {}", body)
+                write!(f, " in {} end", body)
             }
             Expr::List(_, elems) => {
                 let elems_str = elems
