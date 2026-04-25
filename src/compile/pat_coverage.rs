@@ -217,11 +217,11 @@ impl<'a> CoverageChecker<'a> {
                     Type::List(t) => *t.clone(),
                     _ => return Formula::True,
                 };
-                let cons_var =
-                    match self.get_constructor_var(path, type_, "cons") {
-                        Some(v) => v,
-                        None => return Formula::True,
-                    };
+                let cons_var = match self.get_constructor_var(path, type_, "::")
+                {
+                    Some(v) => v,
+                    None => return Formula::True,
+                };
                 path.push(0);
                 let head_f = self.pat_formula_typed(head, path, &elem_type);
                 path.pop();
@@ -359,11 +359,11 @@ impl<'a> CoverageChecker<'a> {
                 None => Formula::True,
             }
         } else {
-            let cons_var =
-                match self.get_constructor_var(path, list_type, "cons") {
-                    Some(v) => v,
-                    None => return Formula::True,
-                };
+            let cons_var = match self.get_constructor_var(path, list_type, "::")
+            {
+                Some(v) => v,
+                None => return Formula::True,
+            };
             path.push(0);
             let head_f = self.pat_formula_typed(&pats[start], path, elem_type);
             path.pop();
