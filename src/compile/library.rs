@@ -995,6 +995,11 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Variant", name = "VARIANT_NONE", global = true))]
     #[strum(props(type = "variant", constructor = true))]
     VariantNone,
+    /// `Variant.print v`: serialises a variant to the construction
+    /// expression that would build it.
+    #[strum(props(p = "Variant", name = "print"))]
+    #[strum(props(type = "variant -> string"))]
+    VariantPrint,
     /// `Variant.REAL`: a constructor of the `variant` datatype.
     #[strum(props(p = "Variant", name = "REAL", global = true))]
     #[strum(props(type = "real -> variant", constructor = true))]

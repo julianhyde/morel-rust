@@ -19,7 +19,11 @@
 //! structure.
 
 use crate::compile::types::{Label, PrimitiveType, Type, TypeVariable};
+use crate::eval::char::Char;
+use crate::eval::int::Int;
+use crate::eval::real::Real;
 use crate::eval::val::Val;
+use crate::syntax::parser::string_to_string_append;
 use std::collections::BTreeMap;
 
 /// Wraps a value with its inner type into a `Val::Variant`.
@@ -195,4 +199,144 @@ fn expect_variant(v: &Val) -> (&Type, &Val) {
         Val::Variant(boxed) => (&boxed.0, &boxed.1),
         _ => panic!("Expected variant, got {:?}", v),
     }
+}
+
+/// `Variant.print v`: serializes a variant to a string of the form
+/// `INT 42` / `LIST [STRING "a"]` / etc., such that
+/// `Variant.parse (Variant.print v) = v`.
+pub(crate) fn print(arg: Val) -> Val {
+    let (inner_type, inner_val) = match arg {
+        Val::Variant(boxed) => *boxed,
+        _ => panic!("Expected variant, got {:?}", arg),
+    };
+    let mut buf = String::new();
+    append(&mut buf, &inner_type, &inner_val);
+    Val::String(buf)
+}
+
+/// Recursive helper for [`print()`]. Appends the variant representation
+/// of a value of `inner_type` to `buf`.
+fn append(buf: &mut String, inner_type: &Type, inner_val: &Val) {
+    match inner_type {
+        Type::Primitive(p) => append_primitive(buf, p, inner_val),
+        Type::List(elem) => append_collection(buf, "LIST", elem, inner_val),
+        Type::Bag(elem) => append_collection(buf, "BAG", elem, inner_val),
+        Type::Data(name, args) if name == "vector" => {
+            let elem =
+                args.first().expect("vector type must have element type");
+            append_collection(buf, "VECTOR", elem, inner_val);
+        }
+        Type::Data(name, args) if name == "option" => {
+            let elem =
+                args.first().expect("option type must have element type");
+            match inner_val {
+                Val::Unit => buf.push_str("VARIANT_NONE"),
+                Val::Some(v) => {
+                    buf.push_str("VARIANT_SOME ");
+                    append(buf, elem, v);
+                }
+                _ => panic!("Expected option value, got {:?}", inner_val),
+            }
+        }
+        Type::Record(_, fields) => {
+            let values = match inner_val {
+                Val::List(vs) => vs,
+                _ => panic!("Expected record value, got {:?}", inner_val),
+            };
+            buf.push_str("RECORD [");
+            for (i, ((label, field_type), val)) in
+                fields.iter().zip(values.iter()).enumerate()
+            {
+                if i > 0 {
+                    buf.push_str(", ");
+                }
+                buf.push_str("(\"");
+                string_to_string_append(&label.to_string(), buf);
+                buf.push_str("\", ");
+                append(buf, field_type, val);
+                buf.push(')');
+            }
+            buf.push(']');
+        }
+        Type::Tuple(types) => {
+            // Tuples are printed as records with numeric labels.
+            let values = match inner_val {
+                Val::List(vs) => vs,
+                _ => panic!("Expected tuple value, got {:?}", inner_val),
+            };
+            buf.push_str("RECORD [");
+            for (i, (field_type, val)) in
+                types.iter().zip(values.iter()).enumerate()
+            {
+                if i > 0 {
+                    buf.push_str(", ");
+                }
+                buf.push_str("(\"");
+                buf.push_str(&(i + 1).to_string());
+                buf.push_str("\", ");
+                append(buf, field_type, val);
+                buf.push(')');
+            }
+            buf.push(']');
+        }
+        // CONSTANT / CONSTRUCT for arbitrary named datatypes — for now
+        // these defer to a placeholder; full support requires datatype
+        // lookup in the type system.
+        _ => panic!(
+            "Variant.print: unsupported inner type {:?} for value {:?}",
+            inner_type, inner_val
+        ),
+    }
+}
+
+fn append_primitive(buf: &mut String, p: &PrimitiveType, value: &Val) {
+    match (p, value) {
+        (PrimitiveType::Unit, Val::Unit) => buf.push_str("UNIT"),
+        (PrimitiveType::Bool, Val::Bool(b)) => {
+            buf.push_str("BOOL ");
+            buf.push_str(if *b { "true" } else { "false" });
+        }
+        (PrimitiveType::Int, Val::Int(i)) => {
+            buf.push_str("INT ");
+            buf.push_str(&Int::_to_string(*i));
+        }
+        (PrimitiveType::Real, Val::Real(r)) => {
+            buf.push_str("REAL ");
+            buf.push_str(&Real::to_string(*r));
+        }
+        (PrimitiveType::Char, Val::Char(c)) => {
+            buf.push_str("CHAR #\"");
+            buf.push_str(&Char::to_c_string(*c));
+            buf.push('"');
+        }
+        (PrimitiveType::String, Val::String(s)) => {
+            buf.push_str("STRING \"");
+            string_to_string_append(s, buf);
+            buf.push('"');
+        }
+        _ => panic!("Variant.print: type/value mismatch {:?} / {:?}", p, value),
+    }
+}
+
+fn append_collection(
+    buf: &mut String,
+    keyword: &str,
+    elem_type: &Type,
+    value: &Val,
+) {
+    let items = match value {
+        Val::List(items) => items,
+        _ => panic!("Expected list value, got {:?}", value),
+    };
+    buf.push_str(keyword);
+    buf.push_str(" [");
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            buf.push_str(", ");
+        }
+        // The list elements are stored unwrapped; recurse with the
+        // element type to produce the variant form.
+        append(buf, elem_type, item);
+    }
+    buf.push(']');
 }
