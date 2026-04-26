@@ -142,6 +142,19 @@ forall i
   require i + 100 < 155;
 > val it = true : bool
 
+(* String.isPrefix p s --------------------------------- *)
+from p where String.isPrefix p "abcd";
+> val it = ["","a","ab","abc","abcd"] : string bag
+
+from s in ["abcd", "ant"], p where String.isPrefix p s;
+> val it =
+>   [{p="",s="abcd"},{p="a",s="abcd"},{p="ab",s="abcd"},{p="abc",s="abcd"},
+>    {p="abcd",s="abcd"},{p="",s="ant"},{p="a",s="ant"},{p="an",s="ant"},
+>    {p="ant",s="ant"}] : {p:string, s:string} bag
+
+from s in ["abcd", "ant"], p where String.isPrefix p s yield p distinct;
+> val it = ["","a","ab","abc","abcd","an","ant"] : string bag
+
 (*) 'on' in 'from'
 from i in [1, 2, 3],
   j in [2, 3, 4] on j = i;
