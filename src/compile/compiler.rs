@@ -583,6 +583,49 @@ impl<'a> Compiler<'a> {
         })
     }
 
+    /// Compiles an expression that occurs in tail position. Function
+    /// applications are rewritten into [`Code::TailApply`] so the
+    /// trampoline in [`Val::apply_f1`] can execute tail-recursive
+    /// calls in O(1) Rust stack space. Recurses into [`Expr::Case`]
+    /// arm bodies, since they too are in tail position relative to
+    /// the enclosing expression.
+    pub fn compile_tail_expr(
+        &mut self,
+        cx: &Context,
+        pcx: Option<&Context>,
+        expr: &Expr,
+    ) -> Code {
+        if let Expr::Case(_, scrut, matches, span) = expr {
+            let scrut_code = self.compile_expr(cx, pcx, scrut);
+            let mut codes = vec![scrut_code];
+            for m in matches {
+                let pat_code = self.compile_pat(cx, &m.pat);
+                let body_code = self.compile_tail_expr(cx, pcx, &m.expr);
+                codes.push(pat_code);
+                codes.push(body_code);
+            }
+            Code::new_match(&codes, Some(span.clone()))
+        } else {
+            // Compile normally, then convert any top-level Apply-like
+            // Code variant into TailApply.
+            let code = self.compile_expr(cx, pcx, expr);
+            Self::tailify(code)
+        }
+    }
+
+    /// If `code` is an Apply-like Code variant, returns a [`Code::TailApply`]
+    /// that wraps the same fn/arg pair; otherwise returns `code` unchanged.
+    /// Used by [`Self::compile_tail_expr`] to lift tail-position function
+    /// applications into trampoline-aware sentinels.
+    fn tailify(code: Code) -> Code {
+        match code {
+            Code::Apply(f, a) => Code::TailApply(f, a),
+            Code::ApplyConstant(f, a) => Code::TailApply(f, a),
+            Code::ApplyClosure(f, a, _) => Code::TailApply(f, a),
+            other => other,
+        }
+    }
+
     /// Compiles an expression.
     pub fn compile_expr(
         &mut self,
@@ -1143,7 +1186,12 @@ impl<'a> Compiler<'a> {
                 assert!(!match_list.is_empty(), "match list is empty");
                 for m in match_list {
                     let pat_code = self.compile_pat(&cx1, &m.pat);
-                    let expr_code = self.compile_expr(&cx1, Some(cx), &m.expr);
+                    // Compile the body in tail position so that tail-
+                    // recursive calls become Code::TailApply, allowing
+                    // the trampoline in Val::apply_f1 to execute them
+                    // in O(1) Rust stack space.
+                    let expr_code =
+                        self.compile_tail_expr(&cx1, Some(cx), &m.expr);
                     pat_expr_codes.push((pat_code, expr_code));
                 }
                 if frame_def.bound_vars.is_empty() {

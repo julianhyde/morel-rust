@@ -141,6 +141,13 @@ pub enum Val {
         Vec<Val>,
         Option<MorelError>,
     ),
+
+    /// Sentinel returned by [`Code::TailApply`] from a tail-position
+    /// function call. The trampoline in [`Frame::create_bind_and_eval`]
+    /// (and [`Frame::create_and_eval`]) bounces on this so that
+    /// tail-recursive calls execute in O(1) Rust stack space. Other
+    /// consumers should never observe this variant.
+    TailCall(Box<Val>, Box<Val>),
 }
 
 // REVIEW Should we use `Into` or `From` traits?
@@ -253,6 +260,12 @@ impl Val {
 
     /// Applies this value as a function to a single argument.
     /// Handles Val::Code, Val::Closure, and Val::Fn (built-in functions).
+    ///
+    /// May return a [`Val::TailCall`] sentinel if the called body is in
+    /// tail position. The trampoline in [`Frame::create_and_eval`] /
+    /// [`Frame::create_bind_and_eval`] catches sentinels at the top of
+    /// each closure activation, so that tail-recursive calls execute in
+    /// O(1) Rust stack space.
     pub(crate) fn apply_f1(
         &self,
         r: &mut EvalEnv,
@@ -467,6 +480,11 @@ impl Hash for Val {
                 // Hash match count and vals
                 matchers.len().hash(state);
                 vals.hash(state);
+            }
+            Val::TailCall(fn_, arg) => {
+                20.hash(state);
+                fn_.hash(state);
+                arg.hash(state);
             }
         }
     }

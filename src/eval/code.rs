@@ -331,6 +331,14 @@ pub enum Code {
     /// `Range.toList` and `Range.toBag` (bags share the `Val::List`
     /// representation).
     RangeEnumerate(CmpRef, DiscreteRef, Box<Code>),
+    /// `TailApply(fn_code, arg_code)` is the tail-call variant of
+    /// [`Apply`]. It evaluates `fn_code` and `arg_code` and returns a
+    /// [`Val::TailCall`] sentinel; the trampoline in
+    /// [`Frame::create_bind_and_eval`] bounces on the sentinel,
+    /// executing tail-recursive calls in O(1) Rust stack space. Emitted
+    /// by [`Compiler::compile_tail_expr`] at tail-position function
+    /// applications.
+    TailApply(Box<Code>, Box<Code>),
     Tuple(Vec<Code>),
 }
 
@@ -619,7 +627,9 @@ impl Code {
                 *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
             }
             Code::ApplyClosure(_, _, _) => *mode == EvalMode::Eager0,
-            Code::ApplyConstant(_, _) => *mode == EvalMode::Eager0,
+            Code::ApplyConstant(_, _) => {
+                *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
+            }
             Code::Bind(_) => *mode == EvalMode::Eager0,
             Code::BindAnd(_) => *mode == EvalMode::EagerV1,
             Code::BindCons(_, _) => {
@@ -658,7 +668,7 @@ impl Code {
             Code::FromRowSink(_) => *mode == EvalMode::EagerF0,
             Code::GetLocal(_, _) => *mode == EvalMode::EagerF0,
             Code::Let(_, _) => *mode == EvalMode::Eager0,
-            Code::Link(_, _) => todo!("{:?}", self),
+            Code::Link(_, _) => *mode == EvalMode::EagerF0,
             Code::MapElements(_, _, _) => *mode == EvalMode::EagerF0,
             Code::Max(_, _) => *mode == EvalMode::EagerF0,
             Code::Min(_, _) => *mode == EvalMode::EagerF0,
@@ -692,6 +702,7 @@ impl Code {
             Code::RangeDsComplement(_, _) => *mode == EvalMode::EagerF0,
             Code::RangeDsOf(_, _, _) => *mode == EvalMode::EagerF0,
             Code::RangeEnumerate(_, _, _) => *mode == EvalMode::EagerF0,
+            Code::TailApply(_, _) => *mode == EvalMode::EagerF0,
             Code::Tuple(_) => *mode == EvalMode::EagerF0,
         }
     }
@@ -714,8 +725,12 @@ impl Code {
                 fun.apply_f1(r, f, &arg)
             }
             Code::ApplyConstant(fn_code, arg_code) => {
+                // Route through apply_f1 (rather than fn_code.eval_f1
+                // directly) so the trampoline there can bounce on
+                // tail-call sentinels emitted by the function body.
+                let fn_val = fn_code.eval_f0(r, f)?;
                 let arg = arg_code.eval_f0(r, f)?;
-                fn_code.eval_f1(r, f, &arg)
+                fn_val.apply_f1(r, f, &arg)
             }
             Code::Bind(b) => {
                 let (pat_code, expr_code, span) = &**b;
@@ -817,6 +832,16 @@ impl Code {
                     code.eval_f0(r, f)?;
                 }
                 result_code.eval_f0(r, f)
+            }
+            Code::Link(slot, _name) => {
+                // Resolve via the shell-wide LinkTable and return as a
+                // Val::Code so callers can apply it (used by Code::TailApply).
+                let code = r.shell.link_table.borrow().get(*slot);
+                if let Some(code) = code {
+                    Ok(Val::Code(code))
+                } else {
+                    panic!("Link slot {} not filled", slot)
+                }
             }
             Code::MapElements(elements_code, over_code, scan_slots) => {
                 let elements = elements_code.eval_f0(r, f)?;
@@ -1000,6 +1025,13 @@ impl Code {
                 };
                 let out = enumerate_ranges(ranges, &*discrete.0, &*cmp.0);
                 Ok(Val::List(out))
+            }
+            Code::TailApply(fn_code, arg_code) => {
+                // Tail-call: package fn and arg as a sentinel that the
+                // trampoline in `Frame::create_bind_and_eval` will bounce on.
+                let fn_ = fn_code.eval_f0(r, f)?;
+                let arg = arg_code.eval_f0(r, f)?;
+                Ok(Val::TailCall(Box::new(fn_), Box::new(arg)))
             }
             Code::Tuple(codes) => {
                 let mut values = Vec::with_capacity(codes.capacity());
@@ -1779,7 +1811,8 @@ impl<'a> Frame<'a> {
         assert!(frame_def.bound_vars.is_empty());
         let mut val_vec: Vec<Val> =
             vec![Val::Char('a'); frame_def.local_vars.len()];
-        Self::eval(&mut val_vec, matches, no_match, r, arg)
+        let result = Self::eval(&mut val_vec, matches, no_match, r, arg)?;
+        Self::trampoline(r, result)
     }
 
     pub(crate) fn create_bind_and_eval(
@@ -1795,7 +1828,74 @@ impl<'a> Frame<'a> {
             .cloned()
             .chain(repeat_n(Val::Unit, frame_def.local_vars.len()))
             .collect();
-        Self::eval(&mut val_vec, matches, no_match, r, arg)
+        let result = Self::eval(&mut val_vec, matches, no_match, r, arg)?;
+        Self::trampoline(r, result)
+    }
+
+    /// Bounces on [`Val::TailCall`] sentinels until a real value (or
+    /// error) is produced. Each bounce performs ONE body evaluation
+    /// (without further trampolining), so a chain of tail-recursive
+    /// calls — including mutual recursion — executes in O(1) Rust
+    /// stack space.
+    fn trampoline(
+        r: &mut EvalEnv,
+        mut current: Val,
+    ) -> Result<Val, MorelError> {
+        while let Val::TailCall(fn_box, arg_box) = current {
+            current = Self::dispatch_no_trampoline(r, &fn_box, &arg_box)?;
+        }
+        Ok(current)
+    }
+
+    /// Dispatches a single function application step WITHOUT
+    /// trampolining: returns whatever the body produces, including a
+    /// [`Val::TailCall`] sentinel. Used inside [`Self::trampoline`]
+    /// so that bouncing on tail calls does not introduce additional
+    /// trampoline layers (which would defeat the O(1) stack guarantee).
+    fn dispatch_no_trampoline(
+        r: &mut EvalEnv,
+        fn_val: &Val,
+        arg: &Val,
+    ) -> Result<Val, MorelError> {
+        match fn_val {
+            Val::Closure(frame_def, matches, bound_vals, no_match) => {
+                let mut val_vec: Vec<Val> = bound_vals
+                    .iter()
+                    .cloned()
+                    .chain(repeat_n(Val::Unit, frame_def.local_vars.len()))
+                    .collect();
+                Self::eval(&mut val_vec, matches, no_match.as_ref(), r, arg)
+            }
+            Val::Code(code) => match code.as_ref() {
+                Code::Fn(frame_def, matches, no_match) => {
+                    let mut val_vec: Vec<Val> =
+                        vec![Val::Char('a'); frame_def.local_vars.len()];
+                    Self::eval(&mut val_vec, matches, no_match.as_ref(), r, arg)
+                }
+                Code::Link(slot, _name) => {
+                    let inner = r.shell.link_table.borrow().get(*slot);
+                    if let Some(inner) = inner {
+                        Self::dispatch_no_trampoline(r, &Val::Code(inner), arg)
+                    } else {
+                        panic!("Link slot {} not filled", slot)
+                    }
+                }
+                _ => {
+                    let mut local_vec: Vec<Val> = Vec::new();
+                    let mut frame = Frame {
+                        vals: &mut local_vec,
+                    };
+                    code.eval_f1(r, &mut frame, arg)
+                }
+            },
+            _ => {
+                let mut local_vec: Vec<Val> = Vec::new();
+                let mut frame = Frame {
+                    vals: &mut local_vec,
+                };
+                fn_val.apply_f1(r, &mut frame, arg)
+            }
+        }
     }
 
     fn eval(
