@@ -23,6 +23,12 @@ Sys.set ("printLength", 999);
 Sys.set ("stringDepth", ~1);
 > val it = () : unit
 
+(*) Set properties for deterministic Date/Time tests.
+Sys.set ("timeZone", "UTC");
+> val it = () : unit
+Sys.set ("now", "2024-01-01T00:00:00Z");
+> val it = () : unit
+
 (* Until we have a real "print" function, we use "ignore" to
    suppress the output of expressions. *)
 fun print x = General.ignore x;
@@ -206,6 +212,22 @@ Sys;
 >      plan:unit -> string, set:string * 'a -> unit,
 >      show:string -> string option,
 >      showAll:unit -> (string * string option) list, unset:string -> unit}
+
+Time;
+> val it =
+>   {+=fn,-=fn,<=fn,<==fn,>=fn,>==fn,compare=fn,fmt=fn,fromMicroseconds=fn,
+>    fromMilliseconds=fn,fromNanoseconds=fn,fromReal=fn,fromSeconds=fn,
+>    fromString=fn,now=fn,toMicroseconds=fn,toMilliseconds=fn,toNanoseconds=fn,
+>    toReal=fn,toSeconds=fn,toString=fn,zeroTime=0}
+>   : {+:time * time -> time, -:time * time -> time, <:time * time -> bool,
+>      <=:time * time -> bool, >:time * time -> bool, >=:time * time -> bool,
+>      compare:time * time -> order, fmt:int -> time -> string,
+>      fromMicroseconds:int -> time, fromMilliseconds:int -> time,
+>      fromNanoseconds:int -> time, fromReal:real -> time,
+>      fromSeconds:int -> time, fromString:string -> time option,
+>      now:unit -> time, toMicroseconds:time -> int, toMilliseconds:time -> int,
+>      toNanoseconds:time -> int, toReal:time -> real, toSeconds:time -> int,
+>      toString:time -> string, zeroTime:time}
 
 (* Operators --------------------------------------------------- *)
 set("mode", "evaluate");
@@ -4652,6 +4674,8 @@ Sys.env ();
 >     "{<:string * string -> bool, <=:string * string -> bool, <>:string * string -> bool, =:string * string -> bool, >:string * string -> bool, >=:string * string -> bool, ^:string * string -> string, collate:(char * char -> order) -> string * string -> order, compare:string * string -> order, concat:string list -> string, concatWith:string -> string list -> string, explode:string -> char list, extract:string * int * int option -> string, fields:(char -> bool) -> string -> string list, implode:char list -> string, isPrefix:string -> string -> bool, isSubstring:string -> string -> bool, isSuffix:string -> string -> bool, map:(char -> char) -> string -> string, maxSize:int, size:string -> int, str:char -> string, sub:string * int -> char, substring:string * int * int -> string, tokens:(char -> bool) -> string -> string list, translate:(char -> string) -> string -> string}"),
 >    ("Sys",
 >     "{clearEnv:unit -> unit, env:unit -> (string * string) list, plan:unit -> string, set:forall 'a. string * 'a -> unit, show:string -> string option, showAll:unit -> (string * string option) list, unset:string -> unit}"),
+>    ("Time",
+>     "{+:time * time -> time, -:time * time -> time, <:time * time -> bool, <=:time * time -> bool, >:time * time -> bool, >=:time * time -> bool, compare:time * time -> order, fmt:int -> time -> string, fromMicroseconds:int -> time, fromMilliseconds:int -> time, fromNanoseconds:int -> time, fromReal:real -> time, fromSeconds:int -> time, fromString:string -> time option, now:unit -> time, toMicroseconds:time -> int, toMilliseconds:time -> int, toNanoseconds:time -> int, toReal:time -> real, toSeconds:time -> int, toString:time -> string, zeroTime:time}"),
 >    ("UNIT","variant"),("VARIANT_NONE","variant"),
 >    ("VARIANT_SOME","variant -> variant"),("VECTOR","variant list -> variant"),
 >    ("Variant","{parse:string -> variant, print:variant -> string}"),
@@ -4723,6 +4747,8 @@ env ();
 >     "{<:string * string -> bool, <=:string * string -> bool, <>:string * string -> bool, =:string * string -> bool, >:string * string -> bool, >=:string * string -> bool, ^:string * string -> string, collate:(char * char -> order) -> string * string -> order, compare:string * string -> order, concat:string list -> string, concatWith:string -> string list -> string, explode:string -> char list, extract:string * int * int option -> string, fields:(char -> bool) -> string -> string list, implode:char list -> string, isPrefix:string -> string -> bool, isSubstring:string -> string -> bool, isSuffix:string -> string -> bool, map:(char -> char) -> string -> string, maxSize:int, size:string -> int, str:char -> string, sub:string * int -> char, substring:string * int * int -> string, tokens:(char -> bool) -> string -> string list, translate:(char -> string) -> string -> string}"),
 >    ("Sys",
 >     "{clearEnv:unit -> unit, env:unit -> (string * string) list, plan:unit -> string, set:forall 'a. string * 'a -> unit, show:string -> string option, showAll:unit -> (string * string option) list, unset:string -> unit}"),
+>    ("Time",
+>     "{+:time * time -> time, -:time * time -> time, <:time * time -> bool, <=:time * time -> bool, >:time * time -> bool, >=:time * time -> bool, compare:time * time -> order, fmt:int -> time -> string, fromMicroseconds:int -> time, fromMilliseconds:int -> time, fromNanoseconds:int -> time, fromReal:real -> time, fromSeconds:int -> time, fromString:string -> time option, now:unit -> time, toMicroseconds:time -> int, toMilliseconds:time -> int, toNanoseconds:time -> int, toReal:time -> real, toSeconds:time -> int, toString:time -> string, zeroTime:time}"),
 >    ("UNIT","variant"),("VARIANT_NONE","variant"),
 >    ("VARIANT_SOME","variant -> variant"),("VECTOR","variant list -> variant"),
 >    ("Variant","{parse:string -> variant, print:variant -> string}"),
@@ -4788,13 +4814,13 @@ map
 >   [("banner",SOME "?"),("directory",SOME "?"),("echo",SOME "false"),
 >    ("hybrid",SOME "true"),("idempotent",SOME "false"),
 >    ("inlinePassCount",SOME "5"),("lineWidth",SOME "79"),
->    ("matchCoverageEnabled",SOME "true"),("mode",SOME "EVALUATE"),("now",NONE),
->    ("optionalInt",NONE),("output",SOME "CLASSIC"),("printDepth",SOME "5"),
->    ("printLength",SOME "12"),("productName",SOME "morel-rust"),
->    ("productVersion",SOME "?"),("relationalize",SOME "false"),
->    ("scriptDirectory",SOME "?"),("showBanner",SOME "true"),
->    ("stringDepth",SOME "70"),("timeZone",NONE)]
->   : (string * string option) list
+>    ("matchCoverageEnabled",SOME "true"),("mode",SOME "EVALUATE"),
+>    ("now",SOME "2024-01-01T00:00:00Z"),("optionalInt",NONE),
+>    ("output",SOME "CLASSIC"),("printDepth",SOME "5"),("printLength",SOME "12"),
+>    ("productName",SOME "morel-rust"),("productVersion",SOME "?"),
+>    ("relationalize",SOME "false"),("scriptDirectory",SOME "?"),
+>    ("showBanner",SOME "true"),("stringDepth",SOME "70"),
+>    ("timeZone",SOME "UTC")] : (string * string option) list
 List.length (Sys.showAll ());
 > val it = 21 : int
 List.length (showAll ());
@@ -5104,5 +5130,95 @@ Sys.plan ();
 > val it =
 >   "apply2(fnValue Vector.collate, fn(bindTuple(bind(0), bind(1)) => case(apply2(fnValue Int.lt, get(0), get(1)), true, constant(LESS), _, case(apply2(fnValue Int.eq, get(0), get(1)), true, constant(EQUAL), _, constant(GREATER)))), tuple(apply(fnValue Vector.fromList, argCode tuple(constant(1), constant(3), constant(5))), apply(fnValue Vector.fromList, argCode tuple(constant(1), constant(3), constant(6)))))"
 >   : string
+
+(* Time ----------------------------------------------------------- *)
+Time.zeroTime;
+> val it = 0 : time
+
+Time.fromSeconds 1;
+> val it = 1000000000 : time
+
+Time.toSeconds (Time.fromSeconds 42);
+> val it = 42 : int
+
+Time.fromMilliseconds 1500;
+> val it = 1500000000 : time
+
+Time.toMilliseconds (Time.fromSeconds 2);
+> val it = 2000 : int
+
+Time.fromMicroseconds 1000000;
+> val it = 1000000000 : time
+
+Time.toMicroseconds (Time.fromSeconds 1);
+> val it = 1000000 : int
+
+Time.fromNanoseconds 1000000000;
+> val it = 1000000000 : time
+
+Time.toNanoseconds (Time.fromSeconds 1);
+> val it = 1000000000 : int
+
+Time.fromReal 1.5;
+> val it = 1500000000 : time
+
+Time.toReal (Time.fromReal 2.5);
+> val it = 2.5 : real
+
+Time.toString Time.zeroTime;
+> val it = "0.000" : string
+
+Time.fmt 0 Time.zeroTime;
+> val it = "0" : string
+
+Time.fmt 6 (Time.fromReal 1.5);
+> val it = "1.500000" : string
+
+Time.fromString "1.5";
+> val it = SOME 1500000000 : time option
+
+Time.fromString "bad";
+> val it = NONE : time option
+
+Time.compare (Time.fromSeconds 1, Time.fromSeconds 2);
+> val it = LESS : order
+
+Time.compare (Time.fromSeconds 2, Time.fromSeconds 1);
+> val it = GREATER : order
+
+Time.compare (Time.fromSeconds 1, Time.fromSeconds 1);
+> val it = EQUAL : order
+
+Time.`+` (Time.fromSeconds 1, Time.fromSeconds 2);
+> val it = 3000000000 : time
+
+Time.`-` (Time.fromSeconds 3, Time.fromSeconds 1);
+> val it = 2000000000 : time
+
+Time.`<` (Time.fromSeconds 1, Time.fromSeconds 2);
+> val it = true : bool
+
+Time.`<=` (Time.fromSeconds 1, Time.fromSeconds 1);
+> val it = true : bool
+
+Time.`>` (Time.fromSeconds 2, Time.fromSeconds 1);
+> val it = true : bool
+
+Time.`>=` (Time.fromSeconds 2, Time.fromSeconds 1);
+> val it = true : bool
+
+(*) Negative time (one second before epoch)
+Time.fromSeconds (~1);
+> val it = -1000000000 : time
+
+Time.toSeconds (Time.fromSeconds (~1));
+> val it = ~1 : int
+
+Time.toString (Time.fromSeconds (~1));
+> val it = "~1.000" : string
+
+(*) Time.now uses the 'now' property (set to 2024-01-01T00:00:00Z above)
+Time.now ();
+> val it = 1704067200000000000 : time
 
 (*) End builtIn.smli

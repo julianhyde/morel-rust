@@ -42,6 +42,7 @@ use crate::eval::relational::Relational;
 use crate::eval::row_sink::RowSinkFactory;
 use crate::eval::session::Session;
 use crate::eval::string::Str;
+use crate::eval::time;
 use crate::eval::val::{self, Val};
 use crate::eval::variant;
 use crate::eval::vector::Vector;
@@ -1907,6 +1908,7 @@ pub enum Eager0 {
     RealPrecision,
     RealRadix,
     StringMaxSize,
+    TimeZeroTime,
     VariantNone,
     VariantUnit,
     VectorMaxLen,
@@ -1946,6 +1948,7 @@ impl Eager0 {
             RealPrecision => Val::Int(24), // IEEE 754 single precision
             RealRadix => Val::Int(2),
             StringMaxSize => Val::Int(i32::MAX),
+            TimeZeroTime => time::zero_time(),
             VariantNone => variant::none(),
             VariantUnit => variant::unit(),
             VectorMaxLen => Val::Int(Vector::max_len()),
@@ -1969,6 +1972,7 @@ pub enum EagerF0 {
     SysEnv,
     SysPlan,
     SysShowAll,
+    TimeNow,
 }
 
 impl EagerF0 {
@@ -2064,6 +2068,7 @@ impl EagerF0 {
                     .collect();
                 Val::List(vals)
             }
+            TimeNow => time::now(r.session),
         }
     }
 
@@ -2108,6 +2113,7 @@ pub enum EagerF1 {
     RelationalMin,
     SysShow,
     SysUnset,
+    TimeFromReal,
 }
 
 // 'Interact' sorts after 'Int*' but before 'L*' as a name; here the
@@ -2216,6 +2222,7 @@ impl EagerF1 {
                 r.emit_effect(Effect::UnsetShellProp(prop));
                 Ok(Val::Unit)
             }
+            TimeFromReal => time::from_real(a0.expect_real(), span.unwrap()),
         }
     }
 }
@@ -2341,6 +2348,17 @@ pub enum Eager1 {
     StringImplode,
     StringSize,
     StringStr,
+    TimeFromMicroseconds,
+    TimeFromMilliseconds,
+    TimeFromNanoseconds,
+    TimeFromSeconds,
+    TimeFromString,
+    TimeToMicroseconds,
+    TimeToMilliseconds,
+    TimeToNanoseconds,
+    TimeToReal,
+    TimeToSeconds,
+    TimeToString,
     VariantBag,
     VariantBool,
     VariantChar,
@@ -2602,6 +2620,17 @@ impl Eager1 {
                 let c = a0.expect_char();
                 Val::String(c.to_string())
             }
+            TimeFromMicroseconds => time::from_microseconds(a0.expect_int()),
+            TimeFromMilliseconds => time::from_milliseconds(a0.expect_int()),
+            TimeFromNanoseconds => time::from_nanoseconds(a0.expect_int()),
+            TimeFromSeconds => time::from_seconds(a0.expect_int()),
+            TimeFromString => time::from_string(&a0.expect_string()),
+            TimeToMicroseconds => time::to_microseconds(a0.expect_time()),
+            TimeToMilliseconds => time::to_milliseconds(a0.expect_time()),
+            TimeToNanoseconds => time::to_nanoseconds(a0.expect_time()),
+            TimeToReal => time::to_real(a0.expect_time()),
+            TimeToSeconds => time::to_seconds(a0.expect_time()),
+            TimeToString => time::to_string(a0.expect_time()),
             VariantBag => variant::bag(a0),
             VariantBool => Val::Variant(Box::new((
                 Type::Primitive(PrimitiveType::Bool),
@@ -2730,6 +2759,14 @@ pub enum Eager2 {
     StringLe,
     StringLt,
     StringNe,
+    TimeAdd,
+    TimeCompare,
+    TimeFmt,
+    TimeGe,
+    TimeGt,
+    TimeLe,
+    TimeLt,
+    TimeSub,
 }
 
 impl Eager2 {
@@ -2888,6 +2925,21 @@ impl Eager2 {
             StringLe => Val::Bool(a0.expect_string() <= a1.expect_string()),
             StringLt => Val::Bool(a0.expect_string() < a1.expect_string()),
             StringNe => Val::Bool(a0.expect_string() != a1.expect_string()),
+            TimeAdd => {
+                Val::Time(a0.expect_time().wrapping_add(a1.expect_time()))
+            }
+            TimeCompare => {
+                use crate::eval::order::Order;
+                Val::Order(Order(a0.expect_time().cmp(&a1.expect_time())))
+            }
+            TimeFmt => time::fmt(a0.expect_int(), a1.expect_time()),
+            TimeGe => Val::Bool(a0.expect_time() >= a1.expect_time()),
+            TimeGt => Val::Bool(a0.expect_time() > a1.expect_time()),
+            TimeLe => Val::Bool(a0.expect_time() <= a1.expect_time()),
+            TimeLt => Val::Bool(a0.expect_time() < a1.expect_time()),
+            TimeSub => {
+                Val::Time(a0.expect_time().wrapping_sub(a1.expect_time()))
+            }
         }
     }
 
@@ -3988,6 +4040,28 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     EagerF1::SysShow.implements(&mut b, SysShow);
     EagerF0::SysShowAll.implements(&mut b, SysShowAll);
     EagerF1::SysUnset.implements(&mut b, SysUnset);
+    Eager2::TimeAdd.implements(&mut b, TimeAdd);
+    Eager2::TimeCompare.implements(&mut b, TimeCompare);
+    Eager2::TimeFmt.implements(&mut b, TimeFmt);
+    Eager1::TimeFromMicroseconds.implements(&mut b, TimeFromMicroseconds);
+    Eager1::TimeFromMilliseconds.implements(&mut b, TimeFromMilliseconds);
+    Eager1::TimeFromNanoseconds.implements(&mut b, TimeFromNanoseconds);
+    EagerF1::TimeFromReal.implements(&mut b, TimeFromReal);
+    Eager1::TimeFromSeconds.implements(&mut b, TimeFromSeconds);
+    Eager1::TimeFromString.implements(&mut b, TimeFromString);
+    Eager2::TimeGe.implements(&mut b, TimeGe);
+    Eager2::TimeGt.implements(&mut b, TimeGt);
+    Eager2::TimeLe.implements(&mut b, TimeLe);
+    Eager2::TimeLt.implements(&mut b, TimeLt);
+    EagerF0::TimeNow.implements(&mut b, TimeNow);
+    Eager2::TimeSub.implements(&mut b, TimeSub);
+    Eager1::TimeToMicroseconds.implements(&mut b, TimeToMicroseconds);
+    Eager1::TimeToMilliseconds.implements(&mut b, TimeToMilliseconds);
+    Eager1::TimeToNanoseconds.implements(&mut b, TimeToNanoseconds);
+    Eager1::TimeToReal.implements(&mut b, TimeToReal);
+    Eager1::TimeToSeconds.implements(&mut b, TimeToSeconds);
+    Eager1::TimeToString.implements(&mut b, TimeToString);
+    Eager0::TimeZeroTime.implements(&mut b, TimeZeroTime);
     Eager1::VariantBag.implements(&mut b, VariantBag);
     Eager1::VariantBool.implements(&mut b, VariantBool);
     Eager1::VariantChar.implements(&mut b, VariantChar);
