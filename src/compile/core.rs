@@ -141,7 +141,26 @@ impl Display for Expr {
             Expr::Aggregate(_, a0, a1) => {
                 write!(f, "({} over {})", a0, a1)
             }
-            Expr::Apply(_, fx, arg, _) => write!(f, "{} {}", fx, arg),
+            Expr::Apply(_, fx, arg, _) => {
+                // Render `Apply(Lit(Val::Fn(op)), Tuple([a, b]))` as
+                // `a op b` when `op` has a symbolic name (e.g. `+`,
+                // `^`, `=`). Mirrors morel-java's unparser for
+                // operator applications.
+                if let Expr::Literal(_, Val::Fn(func)) = fx.as_ref()
+                    && let Expr::Tuple(_, args) = arg.as_ref()
+                    && args.len() == 2
+                {
+                    let name = func.name();
+                    if !name.is_empty()
+                        && name
+                            .chars()
+                            .all(|c| !c.is_alphanumeric() && c != '_')
+                    {
+                        return write!(f, "{} {} {}", args[0], name, args[1]);
+                    }
+                }
+                write!(f, "{} {}", fx, arg)
+            }
             Expr::Case(_, e, arms, _) => {
                 write!(f, "case {} of ", e)?;
                 for (i, match_) in arms.iter().enumerate() {
@@ -681,7 +700,12 @@ impl Display for Pat {
             Pat::Cons(_, head, tail) => write!(f, "{} :: {}", head, tail),
             Pat::Constructor(_, name, None) => write!(f, "{}", name),
             Pat::Constructor(_, name, Some(pat)) => {
-                write!(f, "{} {}", name, pat)
+                // Wrap the constructor argument in parens to match
+                // morel-java's unparser (e.g. `SOME(s)`, `INL(x)`).
+                match pat.as_ref() {
+                    Pat::Tuple(_, _) => write!(f, "{} {}", name, pat),
+                    _ => write!(f, "{}({})", name, pat),
+                }
             }
             Pat::Identifier(_, name) => write!(f, "{}", name),
             Pat::List(_, pats) => {
