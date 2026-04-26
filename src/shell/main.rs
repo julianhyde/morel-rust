@@ -143,6 +143,7 @@ fn expr_contains_reference(expr: &Expr, name: &str) -> bool {
         Expr::Literal(_, _)
         | Expr::Current(_)
         | Expr::Ordinal(_)
+        | Expr::Extent(_)
         | Expr::RecordSelector(_, _) => false,
         Expr::Aggregate(_, a, b) => {
             expr_contains_reference(a, name) || expr_contains_reference(b, name)

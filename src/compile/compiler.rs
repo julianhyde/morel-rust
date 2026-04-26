@@ -1305,6 +1305,20 @@ impl<'a> Compiler<'a> {
                     Code::new_get_local(&cx.frame_def, slot)
                 }
             }
+            Expr::Extent(t) => {
+                // Reached only when a `from p` (no `in`) survives all
+                // earlier passes — i.e. predicate inversion failed
+                // to resolve the unbounded variable. Phase 1+ will
+                // replace this with a real generator scan; until
+                // then, panic with a clear message rather than the
+                // anonymous `todo!`.
+                panic!(
+                    "unbounded variable in `from`: cannot enumerate \
+                     all values of type {:?} (predicate inversion \
+                     not yet implemented)",
+                    t
+                );
+            }
             Expr::Fn(_, match_list, fn_span) => {
                 let mut collector = VarCollector::new(&cx.env);
                 for m in match_list {

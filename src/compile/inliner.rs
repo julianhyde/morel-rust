@@ -172,6 +172,7 @@ impl Analyzer {
             Expr::Literal(_, _)
             | Expr::Current(_)
             | Expr::Ordinal(_)
+            | Expr::Extent(_)
             | Expr::RecordSelector(_, _) => {}
             Expr::Aggregate(_, a, b) => {
                 self.visit_expr(a);
@@ -383,6 +384,7 @@ fn references_var(expr: &Expr, name: &str) -> bool {
         Expr::Literal(_, _)
         | Expr::Current(_)
         | Expr::Ordinal(_)
+        | Expr::Extent(_)
         | Expr::RecordSelector(_, _) => false,
         Expr::Aggregate(_, a, b) => {
             references_var(a, name) || references_var(b, name)
@@ -765,6 +767,7 @@ impl Expr {
                 Expr::Case(t.clone(), expr2, matches2, span.clone())
             }
             Expr::Current(_) => self.clone(),
+            Expr::Extent(_) => self.clone(),
             Expr::Fn(t, match_list, span) => {
                 let mut match_list2 = Vec::new();
                 for m in match_list {

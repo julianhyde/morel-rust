@@ -20,9 +20,6 @@
  * (Originally, such queries used a 'suchthat' keyword, but that keyword
  * has since been removed.)
  *)
-set("mode", "validate");
-> val it = () : unit
-
 (*----------------------------------------------------------------- *)
 (* Convert predicates into ranges. *)
 from i where i > 0 andalso i < 10;
@@ -33,10 +30,12 @@ from i where i > 0 andalso i < 4 yield {j = i + 1} order DESC j;
 > val it = [{j=4},{j=3},{j=2}] : {j:int} list
 from i where i > 0 andalso i < 10 andalso i mod 3 = 2;
 > val it = [2,5,8] : int bag
+
 from i where i = 0 orelse i = 12;
 > val it = [0,12] : int bag
 from i where i > 0 andalso i < 10 orelse i > 12 andalso i <= 15;
 > val it = [1,2,3,4,5,6,7,8,9,13,14,15] : int bag
+
 from i
 where i > 0 andalso i < 10
 join b
@@ -104,10 +103,16 @@ from i
   take 5;
 > val it = [20,19,18,17,16] : int list
 
+(* `through` desugaring of an unbounded scan is not yet supported;
+   validate-only. *)
+set("mode", "validate");
+> val it = () : unit
 from i
   where i >= 0 andalso i <= 10
   through j in (fn bag => Bag.`take` (bag, 3));
 > val it = [0,1,2] : int bag
+set("mode", "evaluate");
+> val it = () : unit
 
 exists i
   where i >= 0 andalso i <= 100;
@@ -131,9 +136,73 @@ forall i
   require i + 100 < 155;
 > val it = true : bool
 
+(* String.isPrefix p s -------------------------------------------- *)
+from p where String.isPrefix p "abcd";
+> val it = ["","a","ab","abc","abcd"] : string bag
 
-set("mode", "evaluate");
-> val it = () : unit
+from s in ["abcd", "ant"], p where String.isPrefix p s;
+> val it =
+>   [{p="",s="abcd"},{p="a",s="abcd"},{p="ab",s="abcd"},{p="abc",s="abcd"},
+>    {p="abcd",s="abcd"},{p="",s="ant"},{p="a",s="ant"},{p="an",s="ant"},
+>    {p="ant",s="ant"}] : {p:string, s:string} bag
+
+from s in ["abcd", "ant"], p where String.isPrefix p s yield p distinct;
+> val it = ["","a","ab","abc","abcd","an","ant"] : string bag
+
+(* Exists as a `where` constraint --------------------------------- *)
+from p where (exists s in ["abcd", "ant"] where String.isPrefix p s)
+order p;
+> val it = ["","a","ab","abc","abcd","an","ant"] : string list
+
+(* Function-defined predicates ------------------------------------ *)
+let
+  val nums = [1, 2, 3, 4, 5]
+in
+  from n where n elem nums
+end;
+> val it = [1,2,3,4,5] : int bag
+
+let
+  val nums = [1, 2, 3, 4, 5]
+  fun isNum n = n elem nums
+  fun isEven n = n mod 2 = 0
+in
+  from n where isNum n andalso isEven n
+end;
+> val it = [2,4] : int bag
+
+(* Single-arm case ------------------------------------------------ *)
+from x where case x of y => y elem [1,2];
+> val it = [1,2] : int bag
+
+from x where case x of y => y > 0 andalso y < 5;
+> val it = [1,2,3,4] : int bag
+
+(* Multi-arm case with literal arms ------------------------------- *)
+from x where (case x of 1 => true | 3 => true | _ => false);
+> val it = [1,3] : int bag
+
+from x where (case x of 1 => true | 2 => false | 3 => true | _ => false);
+> val it = [1,3] : int bag
+
+(* Multi-arm case mixing literal and variable arms ---------------- *)
+from x where (case x of 0 => true | n => n >= 5 andalso n <= 8);
+> val it = [0,5,6,7,8] : int bag
+
+(* Boolean inversion ---------------------------------------------- *)
+from b where not b;
+> val it = [false] : bool bag
+
+from b where b;
+> val it = [true] : bool bag
+
+(* Nested `from` with outer-scope reference ----------------------- *)
+from source in [1, 2, 3, 4, 5]
+yield {source, doubled = (from x where x = source * 2)};
+> val it =
+>   [{doubled=[2],source=1},{doubled=[4],source=2},{doubled=[6],source=3},
+>    {doubled=[8],source=4},{doubled=[10],source=5}]
+>   : {doubled:int bag, source:int} list
 
 (*) 'on' in 'from'
 from i in [1, 2, 3],

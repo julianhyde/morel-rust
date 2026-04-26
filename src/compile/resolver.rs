@@ -21,6 +21,7 @@ use crate::compile::core::{
     PatField as CorePatField, StepKind as CoreStepKind,
     TypeBind as CoreTypeBind, ValBind as CoreValBind,
 };
+use crate::compile::expander;
 use crate::compile::from_builder::FromBuilder;
 use crate::compile::inliner::Env;
 use crate::compile::library;
@@ -47,6 +48,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 pub fn resolve(resolved: &Resolved) -> (CoreDecl, Vec<(String, Span)>) {
     let resolver = Resolver::new(&resolved.type_map, resolved.base_line);
     let decl = resolver.resolve_decl(&resolved.decl);
+    // Run the predicate-inversion pass over the whole resolved decl,
+    // accumulating let-bound function definitions as we walk so that
+    // `maybe_function` can inline them.
+    let decl = expander::expand_decl(decl);
     (decl, resolver.errors.into_inner())
 }
 
@@ -505,9 +510,11 @@ impl<'a> Resolver<'a> {
                 // Add an Exists step to signal that we want an ExistsRowSink.
                 builder.exists();
 
-                builder
-                    .build_simplify()
-                    .expect("Failed to build EXISTS expression")
+                expander::expand_from(
+                    builder
+                        .build_simplify()
+                        .expect("Failed to build EXISTS expression"),
+                )
             }
             ExprKind::Fn(matches) => CoreExpr::Fn(
                 t,
@@ -529,9 +536,11 @@ impl<'a> Resolver<'a> {
                 // Add an Exists step to short-circuit on first violation.
                 builder.exists();
 
-                let from_expr = builder
-                    .build_simplify()
-                    .expect("Failed to build FORALL expression");
+                let from_expr = expander::expand_from(
+                    builder
+                        .build_simplify()
+                        .expect("Failed to build FORALL expression"),
+                );
 
                 // Apply "not" to the exists result.
                 let fn_type = BuiltInFunction::BoolNot.get_type();
@@ -1417,9 +1426,11 @@ impl<'a> Resolver<'a> {
             for step in &steps[..steps.len() - 1] {
                 self.resolve_step(&mut builder, step);
             }
-            let from_result = builder
-                .build_simplify()
-                .expect("Failed to build From expression");
+            let from_result = expander::expand_from(
+                builder
+                    .build_simplify()
+                    .expect("Failed to build From expression"),
+            );
 
             // Apply the function to the query result.
             let func = self.resolve_expr(func_expr);
@@ -1450,9 +1461,11 @@ impl<'a> Resolver<'a> {
             self.resolve_step(&mut builder, step);
         }
 
-        builder
-            .build_simplify()
-            .expect("Failed to build From expression")
+        expander::expand_from(
+            builder
+                .build_simplify()
+                .expect("Failed to build From expression"),
+        )
     }
 
     /// Resolves a step in a query, adding it to a [FromBuilder].
@@ -1549,6 +1562,21 @@ impl<'a> Resolver<'a> {
                 let singleton = CoreExpr::List(list_type, vec![resolved_expr]);
                 builder.scan_with_condition(resolved_pat, singleton, None);
             }
+            AstStepKind::ScanExtent(pat) => {
+                // `from p` (or `join p`) with no explicit source: the
+                // variable `p` is unbounded. Lower to a scan over an
+                // `Extent(t)` placeholder; predicate inversion (Phase
+                // 1+) replaces the placeholder with a real generator
+                // derived from surrounding `where` predicates. Until
+                // then, programs that reach code generation containing
+                // an Extent are rejected with a clean error.
+                let resolved_pat = self.resolve_pat(pat);
+                let elem_type = resolved_pat.type_();
+                let extent_type =
+                    Box::new(Type::Bag(Box::new(elem_type.as_ref().clone())));
+                let extent = CoreExpr::Extent(extent_type);
+                builder.scan_with_condition(resolved_pat, extent, None);
+            }
             AstStepKind::Skip(expr) => {
                 let resolved_expr = self.resolve_expr(expr);
                 builder.skip(resolved_expr);
@@ -1600,11 +1628,6 @@ impl<'a> Resolver<'a> {
             AstStepKind::Yield(expr) => {
                 let resolved_expr = self.resolve_expr(expr);
                 builder.yield_(resolved_expr);
-            }
-            _ => {
-                // For now, fall back to the old resolve_step for unsupported
-                // step types.
-                todo!("resolve_from_step: {:?}", step.kind)
             }
         }
     }
