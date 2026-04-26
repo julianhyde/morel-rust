@@ -147,12 +147,13 @@ CONSTANT "LESS";
 CONSTRUCT ("SOME", INT 42);
 > val it = SOME 42 : int option variant
 
-(*) CONSTRUCT constructor - constructor with tuple. Without a runtime
-(*) constructor table morel-rust doesn't know `CONS` belongs to a
-(*) `list`-like datatype, so the displayed type is the constructor
-(*) name and the payload is shown as a record (its constructed form).
+(*) CONSTRUCT ("CONS", (head, tail)) prepends `head` onto the list
+(*) `tail`. CONSTANT "NIL" is the empty list. Together they let you
+(*) build a `T list variant` from cons cells; existing list patterns
+(*) match the result. (morel-java instead constructs a value of an
+(*) internal `$list` datatype.)
 CONSTRUCT ("CONS", RECORD [("1", INT 1), ("2", CONSTANT "NIL")]);
-> val it = CONS ({1=1,2=NIL}) : CONS variant
+> val it = [1] : int list variant
 
 (*) List of homogeneous records
 LIST [

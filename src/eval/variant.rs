@@ -245,6 +245,13 @@ pub(crate) fn constant(arg: Val) -> Val {
             Type::Data("order".to_string(), vec![]),
             Val::Order(Order(Ordering::Greater)),
         ),
+        // `NIL` is the empty list — same as `LIST []`. Use `variant`
+        // as the element type (matching `LIST []`) so a round-trip via
+        // `Variant.print`/`parse` compares equal.
+        "NIL" => variant_of(
+            Type::List(Box::new(Type::Data("variant".to_string(), vec![]))),
+            Val::List(vec![]),
+        ),
         // Unknown constructor: store the name in `Type::Named` and use
         // `Val::Unit` as the value. Pretty-printing of `Type::Named`
         // emits the name. Full support requires a runtime constructor
@@ -304,10 +311,50 @@ pub(crate) fn construct(arg: Val) -> Val {
                 _ => unreachable!(),
             }
         }
+        // `CONS` builds a real list variant — `CONS (head, tail)` is
+        // the same value as `LIST (head :: tail)`. Existing list
+        // patterns then deconstruct it.
+        "CONS" => cons(payload),
         // Unknown constructor: keep the payload wrapped as a variant so
         // its inner type/value print recursively in the fallback display.
         _ => variant_of(Type::Named(vec![], name.clone()), payload),
     }
+}
+
+/// `CONSTRUCT ("CONS", (head, tail))`: prepend `head` onto the list
+/// inside `tail`, producing a real list variant. The payload is a
+/// 2-element record/tuple variant whose second field is itself a list
+/// variant.
+fn cons(payload: Val) -> Val {
+    let (payload_type, payload_val) = match payload {
+        Val::Variant(boxed) => *boxed,
+        other => panic!("CONS payload must be variant, got {:?}", other),
+    };
+    let parts = match payload_val {
+        Val::List(parts) if parts.len() == 2 => parts,
+        other => panic!("CONS payload must be a 2-tuple, got {:?}", other),
+    };
+    let mut iter = parts.into_iter();
+    let head = iter.next().unwrap();
+    let tail = iter.next().unwrap();
+    let head_type = match &payload_type {
+        Type::Tuple(ts) if ts.len() == 2 => ts[0].clone(),
+        Type::Record(_, fields) if fields.len() == 2 => {
+            fields.values().next().unwrap().clone()
+        }
+        _ => panic!(
+            "CONS payload must be a 2-tuple or 2-field record, got {:?}",
+            payload_type
+        ),
+    };
+    let tail_items = match tail {
+        Val::List(items) => items,
+        other => panic!("CONS tail must be a list, got {:?}", other),
+    };
+    let mut new_items = Vec::with_capacity(tail_items.len() + 1);
+    new_items.push(head);
+    new_items.extend(tail_items);
+    variant_of(Type::List(Box::new(head_type)), Val::List(new_items))
 }
 
 fn expect_variant(v: &Val) -> (&Type, &Val) {
