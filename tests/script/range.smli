@@ -396,11 +396,12 @@ eitherSet.toList ();
 > val it = [INL LESS,INL EQUAL,INL GREATER,INR false,INR true]
 >   : (order,bool) either list
 
-(*) NOTE: morel-rust's match coverage analysis currently rejects
-(*) `fun f (INL LESS) = 1 | f (INR true) = 1 | f _ = 0;` as
-(*) "match redundant", so the morel-java test that mapped `f` over
-(*) the enumerated set is omitted here. Functional equivalence is
-(*) demonstrated by the toList result above.
+(*) Apply f to each value in the set.
+fun f (INL LESS) = 1 | f (INR true) = 1 | f _ = 0;
+> val f = fn : (order,bool) either -> int
+
+List.map f (eitherSet.toList ());
+> val it = [1,0,0,0,1] : int list
 
 (*) toList on a user-defined parametric datatype: `('a, 'b) myEither`
 (*) instantiated with `(bool, order)` has 2 + 3 = 5 values. (Constructor

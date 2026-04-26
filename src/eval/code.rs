@@ -388,13 +388,19 @@ impl Code {
         }
         if let Some(t) = t {
             Code::BindConstructor(name.to_string(), Box::new(t.clone()))
-        } else if let Type::Data(type_name, _) = type_
-            && type_name == "option"
-        {
-            // Option value NONE is represented by Unit
-            Self::new_bind_literal(&Val::Unit)
         } else {
-            Self::new_bind_literal(&Val::String(name.to_string()))
+            // Nullary built-in constructor: emit a literal pattern that
+            // tests equality against the constructor's runtime Val.
+            let val = match name {
+                "NONE" => Val::Unit,
+                "LESS" => Val::Order(Order(Ordering::Less)),
+                "EQUAL" => Val::Order(Order(Ordering::Equal)),
+                "GREATER" => Val::Order(Order(Ordering::Greater)),
+                _ => {
+                    panic!("unsupported nullary built-in constructor {}", name)
+                }
+            };
+            Self::new_bind_literal(&val)
         }
     }
 
@@ -1072,10 +1078,13 @@ impl Code {
                 let tail_result = tail_code.eval_f1(r, f, &tail)?;
                 Ok(tail_result)
             }
-            Code::BindConstructor(_name, pat_code) => {
-                // Constructor call delegation to pattern
-                match a0 {
-                    Val::Some(a) => pat_code.eval_f1(r, f, a),
+            Code::BindConstructor(name, pat_code) => {
+                // Built-in value-carrying constructor: dispatch by name to
+                // the matching Val variant.
+                match (name.as_str(), a0) {
+                    ("SOME", Val::Some(a)) => pat_code.eval_f1(r, f, a),
+                    ("INL", Val::Inl(a)) => pat_code.eval_f1(r, f, a),
+                    ("INR", Val::Inr(a)) => pat_code.eval_f1(r, f, a),
                     _ => Ok(Val::Bool(false)),
                 }
             }
