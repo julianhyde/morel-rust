@@ -2426,7 +2426,10 @@ impl CompiledStatement for CompiledStatementImpl {
         // gone — `EvalEnv::new` now needs only the shell.
         let mut eval_env = EvalEnv::new(session, shell, effects);
         let mut vals = vec![];
-        let mut frame = Frame { vals: &mut vals };
+        let mut frame = Frame {
+            vals: &mut vals,
+            frame_def: None,
+        };
         for action in &self.actions {
             action.apply(&mut eval_env, &mut frame);
         }

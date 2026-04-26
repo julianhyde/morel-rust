@@ -78,16 +78,35 @@ coprime (21, 10);
 coprime (1836311903, 1134903170);
 > val it = true : bool
 
+(* Closure-capture regression: an inner fn whose `bound_vars` count +
+ * `local_vars` count happens to equal the enclosing function's frame
+ * size used to take a wrong "recursive re-entry" shortcut in
+ * `capture_bound_vals` (the heuristic compared frame size, not
+ * frame-def identity) and bind captured values to the wrong slot
+ * positions. The body of `inner` here uses `b` first, then `a`, so
+ * inner's `bound_vars` order is `[b, a]` while the outer slot order
+ * is `[a, b, inner]`; the buggy shortcut fed `[a_val, b_val]` into
+ * `[b, a]` and inner returned the wrong branch. Fixed by tracking
+ * frame_def identity in [`Frame`]. *)
+fun outer (a, b) =
+  let
+    fun inner x = if x then b else a
+  in
+    inner true
+  end;
+> val outer = fn : 'a * 'a -> 'a
+
+outer (10, 20);
+> val it = 20 : int
+
 (* The N-queens block from morel-java commit 6bf5306c (#148) is
- * deferred. It exposes a pre-existing closure-capture issue in
- * morel-rust unrelated to TCO: `capture_bound_vals`' frame
- * heuristic (matching by val_vec length) is too lax, so when a
- * let-bound inner fn's `bound_vars + local_vars` count happens to
- * equal the enclosing function's frame size, the "recursive
- * re-entry" branch fires by accident and binds captured values to
- * the wrong bound_vars positions. The bug was latent until #151
- * because `try` was previously called via Apply (which goes through
- * `Val::Closure::apply_f1` and creates the closure in-place) rather
- * than through CreateClosure's heuristic. *)
+ * deferred. After fixing the simpler closure-capture issue above,
+ * the N-queens test still hits a separate problem in `Code::Link`'s
+ * `eval_f0`: a Link to a recursive let-bound `fn` whose linked code
+ * is `Code::CreateClosure` evaluates the CreateClosure in the
+ * caller's frame (try's frame for a tail call to `addQueen`),
+ * whereas the bind_codes reference the let-binder's frame (addQueen).
+ * Resolving that needs the link layer to remember which frame the
+ * CreateClosure should capture from, which is a separate fix. *)
 
 (*) End tail-recursion.smli

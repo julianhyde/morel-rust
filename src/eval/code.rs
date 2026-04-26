@@ -1803,14 +1803,21 @@ impl Display for Code {
 /// Stack frame for evaluating [Code].
 pub struct Frame<'a> {
     pub vals: &'a mut [Val],
+    /// Identity of the [`FrameDef`] this frame was created for, or
+    /// `None` for placeholder frames that are not associated with any
+    /// particular function activation. Compared by [`Arc::ptr_eq`] in
+    /// [`Self::has_def`] so that a length match alone never causes a
+    /// false positive.
+    pub frame_def: Option<Arc<FrameDef>>,
 }
 
 impl<'a> Frame<'a> {
-    /// Returns whether this frame is consistent with the given definition.
-    /// We can't be sure because the definition is not stored in the frame.
+    /// Returns whether this frame was created for the given [`FrameDef`].
     pub(crate) fn has_def(&self, frame_def: &Arc<FrameDef>) -> bool {
-        self.vals.len()
-            == frame_def.local_vars.len() + frame_def.bound_vars.len()
+        match &self.frame_def {
+            Some(fd) => Arc::ptr_eq(fd, frame_def),
+            None => false,
+        }
     }
 }
 
@@ -1820,7 +1827,7 @@ impl<'a> Frame<'a> {
     ///
     /// This is the implementation of a function call.
     fn create_and_eval(
-        frame_def: &FrameDef,
+        frame_def: &Arc<FrameDef>,
         matches: &[(Code, Code)],
         no_match: Option<&MorelError>,
         r: &mut EvalEnv,
@@ -1829,12 +1836,13 @@ impl<'a> Frame<'a> {
         assert!(frame_def.bound_vars.is_empty());
         let mut val_vec: Vec<Val> =
             vec![Val::Char('a'); frame_def.local_vars.len()];
-        let result = Self::eval(&mut val_vec, matches, no_match, r, arg)?;
+        let result =
+            Self::eval(frame_def, &mut val_vec, matches, no_match, r, arg)?;
         Self::trampoline(r, result)
     }
 
     pub(crate) fn create_bind_and_eval(
-        frame_def: &FrameDef,
+        frame_def: &Arc<FrameDef>,
         matches: &[(Code, Code)],
         bound_vals: &[Val],
         no_match: Option<&MorelError>,
@@ -1846,7 +1854,8 @@ impl<'a> Frame<'a> {
             .cloned()
             .chain(repeat_n(Val::Unit, frame_def.local_vars.len()))
             .collect();
-        let result = Self::eval(&mut val_vec, matches, no_match, r, arg)?;
+        let result =
+            Self::eval(frame_def, &mut val_vec, matches, no_match, r, arg)?;
         Self::trampoline(r, result)
     }
 
@@ -1882,13 +1891,27 @@ impl<'a> Frame<'a> {
                     .cloned()
                     .chain(repeat_n(Val::Unit, frame_def.local_vars.len()))
                     .collect();
-                Self::eval(&mut val_vec, matches, no_match.as_ref(), r, arg)
+                Self::eval(
+                    frame_def,
+                    &mut val_vec,
+                    matches,
+                    no_match.as_ref(),
+                    r,
+                    arg,
+                )
             }
             Val::Code(code) => match code.as_ref() {
                 Code::Fn(frame_def, matches, no_match) => {
                     let mut val_vec: Vec<Val> =
                         vec![Val::Char('a'); frame_def.local_vars.len()];
-                    Self::eval(&mut val_vec, matches, no_match.as_ref(), r, arg)
+                    Self::eval(
+                        frame_def,
+                        &mut val_vec,
+                        matches,
+                        no_match.as_ref(),
+                        r,
+                        arg,
+                    )
                 }
                 Code::Link(slot, _name) => {
                     let inner = r.shell.link_table.borrow().get(*slot);
@@ -1902,6 +1925,7 @@ impl<'a> Frame<'a> {
                     let mut local_vec: Vec<Val> = Vec::new();
                     let mut frame = Frame {
                         vals: &mut local_vec,
+                        frame_def: None,
                     };
                     code.eval_f1(r, &mut frame, arg)
                 }
@@ -1910,6 +1934,7 @@ impl<'a> Frame<'a> {
                 let mut local_vec: Vec<Val> = Vec::new();
                 let mut frame = Frame {
                     vals: &mut local_vec,
+                    frame_def: None,
                 };
                 fn_val.apply_f1(r, &mut frame, arg)
             }
@@ -1917,6 +1942,7 @@ impl<'a> Frame<'a> {
     }
 
     fn eval(
+        frame_def: &Arc<FrameDef>,
         val_vec: &mut [Val],
         matches: &[(Code, Code)],
         no_match: Option<&MorelError>,
@@ -1926,6 +1952,7 @@ impl<'a> Frame<'a> {
         for (pat_code, expr_code) in matches {
             let mut frame = Frame {
                 vals: &mut val_vec[..],
+                frame_def: Some(frame_def.clone()),
             };
             match pat_code.eval_f1(r, &mut frame, arg) {
                 Ok(Val::Bool(true)) => {
