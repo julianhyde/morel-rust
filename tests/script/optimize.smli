@@ -262,7 +262,7 @@ end;
 (*) original name (`fn` for the wrapper, `#<ordinal>` for the tag).
 Sys.planEx "1";
 > val it =
->   "val it = let val v = fn (fn (#0, 1, \"a\"), 2, \"b\") in case v of EMPTY => \"empty\" | NODE (t, i, s) => s end"
+>   "val it = case fn (fn (#0, 1, \"a\"), 2, \"b\") of EMPTY => \"empty\" | NODE (t, i, s) => s"
 >   : string
 
 (* --- Cross-compile-unit inlining (issue #223) ------------------- *)

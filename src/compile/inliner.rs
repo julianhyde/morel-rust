@@ -21,6 +21,7 @@ use crate::compile::types::Type;
 use crate::eval::val::Val;
 use im::HashMap;
 use std::collections::BTreeMap;
+use std::collections::HashMap as StdHashMap;
 
 /// Can transform any expression, declaration, or pattern in a tree.
 /// Combined with [Decl::visit], [Expr::visit], and [Pat::visit], this
@@ -29,6 +30,272 @@ trait Transformer {
     fn transform_decl(&self, env: &Env, decl: &Decl) -> Decl;
     fn transform_expr(&self, env: &Env, expr: &Expr) -> Expr;
     fn transform_pat(&self, env: &Env, pat: &Pat) -> Pat;
+    /// How a binding is classified by the analyzer. Defaults to
+    /// `MultiUnsafe` for transformers without an analysis attached.
+    fn binding_use(&self, _name: &str) -> Use {
+        Use::MultiUnsafe
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Analyzer (ported from morel-java's `Analyzer.java`)
+// ---------------------------------------------------------------------------
+
+/// Classification of how a binding is used. Drives the inliner's
+/// dead-code-elimination and substitution decisions.
+///
+/// Note: morel-rust's analyzer is name-based rather than identity-based
+/// like morel-java's. Nested `let`s that re-use a name will conflate
+/// outer and inner bindings; the conservative outcome is `MultiUnsafe`,
+/// which causes the inliner to leave the let in place.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum Use {
+    /// Reserved for recursive-bindings that participate in a cycle.
+    /// Currently morel-rust never produces this.
+    LoopBreaker,
+    /// Binding is not referenced. The let can be discarded.
+    Dead,
+    /// Binding occurs exactly once, not inside a lambda. Inlining is
+    /// unconditionally safe; it duplicates neither code nor work.
+    OnceSafe,
+    /// Binding is bound to an atomic expression (literal or identifier).
+    /// Inlining is unconditionally safe regardless of use count.
+    Atomic,
+    /// Binding occurs at most once in each of several distinct case
+    /// branches. Inlining may duplicate code but not work.
+    MultiSafe,
+    /// Binding occurs exactly once, inside a lambda. Reserved.
+    OnceUnsafe,
+    /// Binding may occur many times, including inside lambdas; do not
+    /// inline.
+    MultiUnsafe,
+}
+
+#[derive(Default)]
+struct MutableUse {
+    top: bool,
+    atomic: bool,
+    parallel: bool,
+    use_count: u32,
+}
+
+impl MutableUse {
+    fn fix(&self) -> Use {
+        if self.top {
+            Use::MultiUnsafe
+        } else if self.use_count == 0 {
+            Use::Dead
+        } else if self.atomic {
+            Use::Atomic
+        } else if self.use_count == 1 {
+            if self.parallel {
+                Use::MultiSafe
+            } else {
+                Use::OnceSafe
+            }
+        } else {
+            Use::MultiUnsafe
+        }
+    }
+}
+
+/// Result of an analysis: the `Use` for each name encountered.
+#[derive(Debug)]
+pub struct Analysis {
+    map: StdHashMap<String, Use>,
+}
+
+impl Analysis {
+    /// Returns the `Use` of `name`. Defaults to `MultiUnsafe` for names
+    /// the analyzer never saw, so the inliner stays conservative.
+    pub fn use_of(&self, name: &str) -> Use {
+        self.map.get(name).copied().unwrap_or(Use::MultiUnsafe)
+    }
+}
+
+struct Analyzer {
+    map: StdHashMap<String, MutableUse>,
+}
+
+impl Analyzer {
+    fn new() -> Self {
+        Self {
+            map: StdHashMap::new(),
+        }
+    }
+
+    fn entry(&mut self, name: &str) -> &mut MutableUse {
+        self.map.entry(name.to_string()).or_default()
+    }
+
+    fn ensure_bindings(&mut self, pat: &Pat) {
+        pat.for_each_id_pat(&mut |(_, name)| {
+            self.entry(name);
+        });
+    }
+
+    fn visit_decl(&mut self, decl: &Decl) {
+        match decl {
+            Decl::NonRecVal(vb) => {
+                self.ensure_bindings(&vb.pat);
+                self.visit_expr(&vb.expr);
+                if is_atom(&vb.expr)
+                    && let Some(name) = vb.pat.name()
+                {
+                    self.entry(&name).atomic = true;
+                }
+            }
+            Decl::RecVal(vbs) => {
+                for vb in vbs {
+                    self.ensure_bindings(&vb.pat);
+                }
+                for vb in vbs {
+                    self.visit_expr(&vb.expr);
+                    if is_atom(&vb.expr)
+                        && let Some(name) = vb.pat.name()
+                    {
+                        self.entry(&name).atomic = true;
+                    }
+                }
+            }
+            Decl::Type(_) | Decl::Datatype(_) | Decl::Over(_) => {}
+        }
+    }
+
+    fn visit_expr(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Identifier(_, name) => {
+                self.entry(name).use_count += 1;
+            }
+            Expr::Literal(_, _)
+            | Expr::Current(_)
+            | Expr::Ordinal(_)
+            | Expr::RecordSelector(_, _) => {}
+            Expr::Aggregate(_, a, b) => {
+                self.visit_expr(a);
+                self.visit_expr(b);
+            }
+            Expr::Apply(_, f, a, _) => {
+                self.visit_expr(f);
+                self.visit_expr(a);
+            }
+            Expr::Tuple(_, args) | Expr::List(_, args) => {
+                for arg in args {
+                    self.visit_expr(arg);
+                }
+            }
+            Expr::Let(_, decls, body) => {
+                for d in decls {
+                    self.visit_decl(d);
+                }
+                self.visit_expr(body);
+            }
+            Expr::Case(_, scrutinee, matches, _) => {
+                self.visit_expr(scrutinee);
+                if matches.len() == 1 {
+                    self.ensure_bindings(&matches[0].pat);
+                    self.visit_expr(&matches[0].expr);
+                } else {
+                    self.visit_parallel(matches);
+                }
+            }
+            Expr::Fn(_, matches, _) => {
+                // Conservatively count uses inside a lambda the same as
+                // outside. morel-java's analyzer also does not treat
+                // lambdas specially when producing `Use`.
+                for m in matches {
+                    self.ensure_bindings(&m.pat);
+                    self.visit_expr(&m.expr);
+                }
+            }
+            Expr::From(_, steps)
+            | Expr::Exists(_, steps)
+            | Expr::Forall(_, steps) => {
+                for step in steps {
+                    self.visit_step(&step.kind);
+                }
+            }
+        }
+    }
+
+    fn visit_parallel(&mut self, matches: &[Match]) {
+        let mut branch_uses: StdHashMap<String, Vec<MutableUse>> =
+            StdHashMap::new();
+        for m in matches {
+            let mut sub = Analyzer::new();
+            sub.ensure_bindings(&m.pat);
+            sub.visit_expr(&m.expr);
+            for (name, mu) in sub.map {
+                branch_uses.entry(name).or_default().push(mu);
+            }
+        }
+        for (name, uses) in branch_uses {
+            let max_count: u32 =
+                uses.iter().map(|u| u.use_count).max().unwrap_or(0);
+            let entry = self.entry(&name);
+            if uses.len() > 1 {
+                entry.parallel = true;
+            }
+            entry.use_count += max_count;
+        }
+    }
+
+    fn visit_step(&mut self, kind: &StepKind) {
+        match kind {
+            StepKind::Compute(e)
+            | StepKind::Order(e)
+            | StepKind::Where(e)
+            | StepKind::Yield(e)
+            | StepKind::Require(e)
+            | StepKind::Skip(e)
+            | StepKind::Take(e) => self.visit_expr(e),
+            StepKind::Group(e, opt) => {
+                self.visit_expr(e);
+                if let Some(o) = opt {
+                    self.visit_expr(o);
+                }
+            }
+            StepKind::Scan(pat, expr, cond) => {
+                self.ensure_bindings(pat);
+                self.visit_expr(expr);
+                if let Some(c) = cond {
+                    self.visit_expr(c);
+                }
+            }
+            StepKind::Except(_, exprs)
+            | StepKind::Intersect(_, exprs)
+            | StepKind::Union(_, exprs) => {
+                for e in exprs {
+                    self.visit_expr(e);
+                }
+            }
+            StepKind::Distinct | StepKind::Exists | StepKind::Unorder => {}
+        }
+    }
+}
+
+fn is_atom(expr: &Expr) -> bool {
+    matches!(expr, Expr::Literal(_, _) | Expr::Identifier(_, _))
+}
+
+/// Counts how many times each binding is used. Mirrors
+/// [`Analyzer::analyze`](https://github.com/hydromatic/morel/blob/main/src/main/java/net/hydromatic/morel/compile/Analyzer.java).
+pub fn analyze(decl: &Decl) -> Analysis {
+    let mut analyzer = Analyzer::new();
+    // Mark top-level bindings so they aren't dropped.
+    if let Decl::NonRecVal(vb) = decl {
+        vb.pat.for_each_id_pat(&mut |(_, name)| {
+            analyzer.entry(name).top = true;
+        });
+    }
+    analyzer.visit_decl(decl);
+    Analysis {
+        map: analyzer
+            .map
+            .into_iter()
+            .map(|(k, v)| (k, v.fix()))
+            .collect(),
+    }
 }
 
 /// Tries to convert a constant expression to a runtime value. Returns `None`
@@ -240,14 +507,40 @@ fn step_refs(kind: &StepKind, name: &str) -> (bool, bool) {
 }
 
 /// Passes over a tree and inlines constants.
+/// Maximum number of analysis-and-inline passes; mirrors morel-java's
+/// `inlinePassCount` default.
+const INLINE_PASS_COUNT: usize = 5;
+
+/// Runs the analyzer and inliner together, iterating up to
+/// [`INLINE_PASS_COUNT`] times until the declaration's `Display` is
+/// stable. Mirrors the loop in morel-java's `Compiles.java`.
 pub fn inline_decl(env: &Env, decl: &Decl) -> Decl {
-    let inliner = Inliner {};
-    inliner.transform_decl(env, decl)
+    let mut current = decl.clone();
+    for _ in 0..INLINE_PASS_COUNT {
+        let analysis = analyze(&current);
+        let inliner = Inliner {
+            analysis: Some(analysis),
+        };
+        let next = inliner.transform_decl(env, &current);
+        if format!("{}", next) == format!("{}", current) {
+            return next;
+        }
+        current = next;
+    }
+    current
 }
 
-struct Inliner {}
+struct Inliner {
+    analysis: Option<Analysis>,
+}
 
 impl Transformer for Inliner {
+    fn binding_use(&self, name: &str) -> Use {
+        self.analysis
+            .as_ref()
+            .map_or(Use::MultiUnsafe, |a| a.use_of(name))
+    }
+
     fn transform_decl(&self, env: &Env, decl: &Decl) -> Decl {
         decl.visit(env, self)
     }
@@ -256,7 +549,7 @@ impl Transformer for Inliner {
         let expr = expr.visit(env, self);
         match &expr {
             // lint: sort until '#}' where '##Expr::'
-            Expr::Apply(_result_type, f, a, _) => {
+            Expr::Apply(result_type, f, a, span) => {
                 if let Expr::RecordSelector(_fn_type, slot) = f.as_ref()
                     && let Expr::Literal(record_type, v) = a.as_ref()
                     && let Some(field_type) =
@@ -267,6 +560,30 @@ impl Transformer for Inliner {
                         Box::new(field_type.clone()),
                         v2.clone(),
                     );
+                }
+                // Beta-reduction: `(fn pat => body) arg` becomes
+                // `let val pat = arg in body end`. Mirrors morel-java's
+                // visit(Core.Apply). Only applies when the lambda has a
+                // single match arm.
+                if let Expr::Fn(_fn_t, matches, _) = f.as_ref()
+                    && matches.len() == 1
+                {
+                    let m = &matches[0];
+                    let pat_t = m.pat.type_();
+                    let val_bind = ValBind {
+                        pat: m.pat.clone(),
+                        t: *pat_t,
+                        expr: (**a).clone(),
+                        overload_pat: None,
+                        span: Some(span.clone()),
+                    };
+                    let body = m.expr.clone();
+                    let let_expr = Expr::Let(
+                        result_type.clone(),
+                        vec![Decl::NonRecVal(Box::new(val_bind))],
+                        Box::new(body),
+                    );
+                    return self.transform_expr(env, &let_expr);
                 }
                 expr
             }
@@ -344,35 +661,40 @@ impl Transformer for Inliner {
                 expr
             }
             Expr::Identifier(t, id) => {
-                // If the name is a constant in the environment, replace it with
-                // a literal value. We do this for package names: for example,
-                // "Sys.set" becomes the record (list) value "Sys"; next, the
-                // transformation on "Apply" of the 9th field (because "set" is
-                // the 9th field of "Sys" record type) converts that the field
-                // into a function literal.
+                // `elements` is a pseudo-variable whose meaning is
+                // `from`-step-specific (it refers to the elements of
+                // the current group). The compiler binds it as a frame
+                // slot, so it must not be substituted by the inliner
+                // even if a user has shadowed the name in an outer
+                // scope.
+                if id == "elements" {
+                    return expr;
+                }
+                // If the name is bound to an expression in the env (a
+                // let-bound `ATOMIC` or `ONCE_SAFE` binding), substitute
+                // by re-visiting the expression so further inlining can
+                // take place.
+                if let Some(e) = env.lookup_expr(id) {
+                    return self.transform_expr(env, &e);
+                }
+                // Otherwise, if the name is a constant in the environment
+                // (a built-in or atomic literal), replace it with a
+                // literal value. We do this for package names: for
+                // example, "Sys.set" becomes the record (list) value
+                // "Sys"; next, the transformation on "Apply" of the 9th
+                // field (because "set" is the 9th field of "Sys" record
+                // type) converts that the field into a function literal.
                 if let Some(v) = env.lookup_constant(id) {
                     return Expr::Literal(t.clone(), v.clone());
                 }
                 expr
             }
             Expr::Let(t, decl_list, body) => {
-                // Drop a let whose only declaration is `val pat = e` if no
-                // variable bound by `pat` is referenced in the body, and `e`
-                // has no side effects. This handles atomic let inlining
-                // where the body's references to the bound variable have
-                // already been replaced with the literal.
-                if decl_list.len() == 1
-                    && let Decl::NonRecVal(vb) = &decl_list[0]
-                    && is_pure(&vb.expr)
-                    && pat_unused(&vb.pat, body)
-                {
-                    return (**body).clone();
-                }
-                // If the let body is now a literal and all decls are pure,
-                // drop the let entirely.
-                if matches!(body.as_ref(), Expr::Literal(_, _))
-                    && decl_list.iter().all(decl_is_pure)
-                {
+                // The visit() of Expr::Let has already eliminated any
+                // declarations whose `Use` is `Dead`, `Atomic`, or
+                // `OnceSafe` and rewritten body references. If no decls
+                // remain, return the body directly.
+                if decl_list.is_empty() {
                     return (**body).clone();
                 }
                 Expr::Let(t.clone(), decl_list.clone(), body.clone())
@@ -467,6 +789,15 @@ impl Expr {
                 Expr::From(t.clone(), steps2)
             }
             Expr::Identifier(t, id) => {
+                // `elements` is a `from`-step pseudo-variable; the
+                // compiler resolves it via a frame slot, so the inliner
+                // must leave it as an identifier.
+                if id == "elements" {
+                    return self.clone();
+                }
+                if let Some(e) = env.lookup_expr(id) {
+                    return x.transform_expr(env, &e);
+                }
                 if let Some(v) = env.lookup_constant(id) {
                     Expr::Literal(t.clone(), v.clone())
                 } else {
@@ -474,46 +805,52 @@ impl Expr {
                 }
             }
             Expr::Let(t, decl_list, e) => {
-                let mut decl_list2 = Vec::new();
-                // Shadow names defined by the let's declarations so
-                // that the body uses the let-local definitions, not
-                // any outer-scope bindings of the same name. For atomic
-                // (literal) val bindings, we additionally bind the value
-                // in the environment so that references to the variable
-                // in the body are inlined to the literal.
+                // Each declaration is classified by the analyzer:
+                //
+                // * Dead: drop entirely.
+                // * Atomic / OnceSafe: drop the let, but bind the
+                //   expression in the body env so that references in
+                //   the body are substituted (and re-visited).
+                // * Otherwise: keep the decl, shadow the name in the
+                //   body env so outer-scope substitutions don't leak in.
+                //
+                // Mirrors morel-java's Inliner.visit(Core.Let).
+                let mut decl_list2: Vec<Decl> = Vec::new();
                 let mut body_env = env.clone();
                 for d in decl_list {
                     let d2 = x.transform_decl(env, d);
-                    let bound = if let Decl::NonRecVal(vb) = &d2
-                        && let Some(v) = expr_to_val(&vb.expr)
+                    let mut handled = false;
+                    if let Decl::NonRecVal(vb) = &d2
+                        && let Some(name) = vb.pat.name()
                     {
-                        let mut binds: Vec<(Box<Pat>, Val)> = Vec::new();
-                        let matched = vb.pat.bind_recurse(&v, &mut |p, vv| {
-                            binds.push((p, vv.clone()));
-                        });
-                        if matched {
-                            for (p, v) in &binds {
-                                if let Some(name) = p.name() {
-                                    let pt = p.type_();
-                                    body_env = body_env.child(&name, &pt, v);
-                                }
+                        match x.binding_use(&name) {
+                            Use::Dead => {
+                                handled = true;
                             }
-                            true
-                        } else {
-                            false
+                            Use::Atomic | Use::OnceSafe => {
+                                body_env = body_env.child_expr(
+                                    name.as_str(),
+                                    &vb.t,
+                                    &vb.expr,
+                                );
+                                handled = true;
+                            }
+                            _ => {}
                         }
-                    } else {
-                        false
-                    };
-                    if !bound {
+                    }
+                    if !handled {
                         d.for_each_id_pat(&mut |(t, name): (&Type, &str)| {
                             body_env = body_env.child_none(name, t);
                         });
+                        decl_list2.push(d2);
                     }
-                    decl_list2.push(d2);
                 }
                 let e2 = Box::new(x.transform_expr(&body_env, e));
-                Expr::Let(t.clone(), decl_list2, e2)
+                if decl_list2.is_empty() {
+                    *e2
+                } else {
+                    Expr::Let(t.clone(), decl_list2, e2)
+                }
             }
             Expr::List(t, expr_list) => Expr::List(
                 t.clone(),
@@ -541,11 +878,23 @@ impl Expr {
     fn visit_step(env: &Env, x: &dyn Transformer, step: &Step) -> (Step, Env) {
         let (kind, env2) = match &step.kind {
             // lint: sort until '#}' where '##StepKind::'
+            StepKind::Compute(expr) => {
+                let expr2 = x.transform_expr(env, expr);
+                (StepKind::Compute(Box::new(expr2)), env.clone())
+            }
+            StepKind::Distinct | StepKind::Exists | StepKind::Unorder => {
+                (step.kind.clone(), env.clone())
+            }
             StepKind::Except(distinct, exprs) => {
                 let exprs2 = Self::visit_list(env, x, exprs);
                 (StepKind::Except(*distinct, exprs2), env.clone())
             }
-            StepKind::Group(_, _) => (step.kind.clone(), env.clone()),
+            StepKind::Group(expr, opt) => {
+                let expr2 = x.transform_expr(env, expr);
+                let opt2 =
+                    opt.as_ref().map(|o| Box::new(x.transform_expr(env, o)));
+                (StepKind::Group(Box::new(expr2), opt2), env.clone())
+            }
             StepKind::Intersect(distinct, exprs) => {
                 let exprs2 = Self::visit_list(env, x, exprs);
                 (StepKind::Intersect(*distinct, exprs2), env.clone())
@@ -553,6 +902,10 @@ impl Expr {
             StepKind::Order(expr) => {
                 let expr2 = x.transform_expr(env, expr);
                 (StepKind::Order(Box::new(expr2)), env.clone())
+            }
+            StepKind::Require(expr) => {
+                let expr2 = x.transform_expr(env, expr);
+                (StepKind::Require(Box::new(expr2)), env.clone())
             }
             StepKind::Scan(pat, expr, condition) => {
                 let pat2 = x.transform_pat(env, pat);
@@ -572,6 +925,14 @@ impl Expr {
                     scan_env,
                 )
             }
+            StepKind::Skip(expr) => {
+                let expr2 = x.transform_expr(env, expr);
+                (StepKind::Skip(Box::new(expr2)), env.clone())
+            }
+            StepKind::Take(expr) => {
+                let expr2 = x.transform_expr(env, expr);
+                (StepKind::Take(Box::new(expr2)), env.clone())
+            }
             StepKind::Union(distinct, exprs) => {
                 let exprs2 = Self::visit_list(env, x, exprs);
                 (StepKind::Union(*distinct, exprs2), env.clone())
@@ -584,7 +945,6 @@ impl Expr {
                 let expr2 = x.transform_expr(env, expr);
                 (StepKind::Yield(Box::new(expr2)), env.clone())
             }
-            _ => (step.kind.clone(), env.clone()),
         };
         (
             Step {
@@ -638,10 +998,16 @@ impl ValBind {
         }
     }
 }
-/// Environment for inlining.
+/// Environment for inlining. Tracks two parallel maps:
+///
+/// * `map`: scoped `(type, optional value)` for built-in constants and
+///   atomic literals (used by `lookup_constant`).
+/// * `exprs`: scoped expressions to substitute for `ATOMIC` and
+///   `ONCE_SAFE` let-bound variables (used by `lookup_expr`).
 #[derive(Clone, Debug)]
 pub struct Env {
     map: im::HashMap<String, (Type, Option<Val>)>,
+    exprs: im::HashMap<String, Expr>,
 }
 
 impl Env {
@@ -649,24 +1015,52 @@ impl Env {
     pub(crate) fn empty() -> Self {
         Env {
             map: HashMap::new(),
+            exprs: HashMap::new(),
         }
     }
 
     /// Returns an environment with a given backing map.
     pub fn with(map: HashMap<String, (Type, Option<Val>)>) -> Env {
-        Env { map }
+        Env {
+            map,
+            exprs: HashMap::new(),
+        }
     }
 
     pub(crate) fn child(&self, name: &str, t: &Type, v: &Val) -> Env {
         let map2 = self
             .map
             .update(name.to_string(), (t.clone(), Some(v.clone())));
-        Self::with(map2)
+        let exprs2 = self.exprs.without(name);
+        Env {
+            map: map2,
+            exprs: exprs2,
+        }
     }
 
     pub(crate) fn child_none(&self, name: &str, t: &Type) -> Env {
         let map2 = self.map.update(name.to_string(), (t.clone(), None));
-        Self::with(map2)
+        let exprs2 = self.exprs.without(name);
+        Env {
+            map: map2,
+            exprs: exprs2,
+        }
+    }
+
+    /// Binds `name` to a let-bound expression that the inliner should
+    /// substitute on every reference. Use this for `ATOMIC` and
+    /// `ONCE_SAFE` bindings.
+    pub(crate) fn child_expr(&self, name: &str, t: &Type, expr: &Expr) -> Env {
+        let map2 = self.map.update(name.to_string(), (t.clone(), None));
+        let exprs2 = self.exprs.update(name.to_string(), expr.clone());
+        Env {
+            map: map2,
+            exprs: exprs2,
+        }
+    }
+
+    pub(crate) fn lookup_expr(&self, s: &str) -> Option<Expr> {
+        self.exprs.get(s).cloned()
     }
 
     pub(crate) fn multi(
@@ -681,7 +1075,14 @@ impl Env {
         // This is more efficient than chaining updates.
         let new_entries = map.iter().map(|(k, v)| (k.to_string(), v.clone()));
         let map2 = self.map.clone().union(HashMap::from_iter(new_entries));
-        Self::with(map2)
+        let mut exprs2 = self.exprs.clone();
+        for k in map.keys() {
+            exprs2 = exprs2.without(*k);
+        }
+        Env {
+            map: map2,
+            exprs: exprs2,
+        }
     }
 
     pub(crate) fn lookup_constant(&self, s: &str) -> Option<Val> {

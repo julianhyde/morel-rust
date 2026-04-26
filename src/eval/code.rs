@@ -567,7 +567,9 @@ impl Code {
                 *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
             }
             Code::ApplyClosure(_, _, _) => *mode == EvalMode::Eager0,
-            Code::ApplyConstant(_, _) => *mode == EvalMode::Eager0,
+            Code::ApplyConstant(_, _) => {
+                *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
+            }
             Code::Bind(_) => *mode == EvalMode::Eager0,
             Code::BindAnd(_) => *mode == EvalMode::EagerV1,
             Code::BindCons(_, _) => {
