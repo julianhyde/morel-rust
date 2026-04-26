@@ -23,10 +23,10 @@
 //! add string-prefix, function inlining, exists, case, and
 //! constructor patterns.
 
-use crate::compile::core::{Expr, Pat};
+use crate::compile::core::{Expr, Match, Pat};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::generator::{Cache, Cardinality, Generator};
-use crate::compile::library::BuiltInFunction;
+use crate::compile::library::{BuiltInFunction, lookup_struct_field};
 use crate::compile::span::Span;
 use crate::compile::types::{PrimitiveType, Type};
 use crate::eval::val::Val;
@@ -55,6 +55,9 @@ pub fn maybe_generator(
     let mut point_value: Option<&Expr> = None;
 
     let mut has_bounds = false;
+
+    let mut prefix_match: Option<&Expr> = None;
+    let mut prefix_string: Option<&Expr> = None;
 
     for c in constraints {
         if elem_match.is_none()
@@ -89,6 +92,13 @@ pub fn maybe_generator(
         if !has_bounds && is_bound_constraint(c, pat_name) {
             has_bounds = true;
         }
+        if prefix_match.is_none()
+            && matches!(pat_type, Type::Primitive(PrimitiveType::String))
+            && let Some(s) = is_string_prefix_call(c, pat_name)
+        {
+            prefix_match = Some(c);
+            prefix_string = Some(s);
+        }
     }
 
     // Phase B: synthesise leaf generators in priority order.
@@ -105,6 +115,11 @@ pub fn maybe_generator(
             pat_name,
             ordered,
             constraints,
+        );
+    }
+    if let (Some(c), Some(s)) = (prefix_match, prefix_string) {
+        return create_string_prefix_generator(
+            cache, pat, pat_name, ordered, s, c,
         );
     }
     false
@@ -221,7 +236,7 @@ fn create_range_generator(
     let fn_t = Box::new(Type::Fn(int_t.clone(), int_t.clone()));
     let fn_expr = Expr::Fn(
         fn_t.clone(),
-        vec![crate::compile::core::Match {
+        vec![Match {
             pat: k_pat,
             expr: body,
         }],
@@ -252,6 +267,83 @@ fn create_range_generator(
         true,
         true,
         provenance,
+    );
+    cache.add(pat_name.to_string(), generator);
+    true
+}
+
+/// Inverts `String.isPrefix p s` (where `p` is the pattern, `s` is
+/// any string expression) into
+///   `Bag.tabulate(String.size s + 1, fn i => String.substring(s, 0, i))`
+/// (or `List.tabulate` when the surrounding `from` is ordered).
+fn create_string_prefix_generator(
+    cache: &mut Cache,
+    pat: &Pat,
+    pat_name: &str,
+    ordered: bool,
+    s: &Expr,
+    source_constraint: &Expr,
+) -> bool {
+    let int_t = Box::new(Type::Primitive(PrimitiveType::Int));
+    let str_t = Box::new(Type::Primitive(PrimitiveType::String));
+
+    // String.size s
+    let size_s = call1(BuiltInFunction::StringSize, s.clone(), int_t.clone());
+    // String.size s + 1
+    let count = binop_int(BuiltInFunction::IntPlus, size_s, int_lit(1));
+
+    // fn i => String.substring (s, 0, i)
+    let i_pat = Pat::Identifier(int_t.clone(), "i".to_string());
+    let i_id = Expr::Identifier(int_t.clone(), "i".to_string());
+    let triple_t = Box::new(Type::Tuple(vec![
+        (*str_t).clone(),
+        (*int_t).clone(),
+        (*int_t).clone(),
+    ]));
+    let triple =
+        Expr::Tuple(triple_t.clone(), vec![s.clone(), int_lit(0), i_id]);
+    let fn_substr_t = Box::new(Type::Fn(triple_t.clone(), str_t.clone()));
+    let fn_substr_lit =
+        Expr::Literal(fn_substr_t, Val::Fn(BuiltInFunction::StringSubstring));
+    let body = Expr::Apply(
+        str_t.clone(),
+        Box::new(fn_substr_lit),
+        Box::new(triple),
+        Span::new(""),
+    );
+    let fn_t = Box::new(Type::Fn(int_t.clone(), str_t.clone()));
+    let fn_expr = Expr::Fn(
+        fn_t,
+        vec![Match {
+            pat: i_pat,
+            expr: body,
+        }],
+        Span::new(""),
+    );
+
+    let tabulate = if ordered {
+        BuiltInFunction::ListTabulate
+    } else {
+        BuiltInFunction::BagTabulate
+    };
+    let coll_t = if ordered {
+        Box::new(Type::List(str_t.clone()))
+    } else {
+        Box::new(Type::Bag(str_t.clone()))
+    };
+    let exp = call2(tabulate, count, fn_expr, coll_t);
+
+    let mut free = free_names_in(s);
+    free.remove(pat_name);
+
+    let generator = Generator::new(
+        pat.clone(),
+        exp,
+        Cardinality::Finite,
+        free,
+        true,
+        true,
+        vec![source_constraint.clone()],
     );
     cache.add(pat_name.to_string(), generator);
     true
@@ -393,6 +485,61 @@ fn references(expr: &Expr, name: &str) -> bool {
     matches!(expr, Expr::Identifier(_, n) if n == name)
 }
 
+/// If `expr` is `String.isPrefix p s` (curried, i.e.
+/// `Apply(Apply(StringIsPrefix, p), s)`) where `p` references the
+/// named pattern, returns `s`.
+///
+/// `String.isPrefix` may surface in either of two shapes depending
+/// on whether the inliner has already lowered structure-field
+/// access to a `Literal(Fn(...))`:
+///
+///   1. `Apply(Apply(Literal(Fn(StringIsPrefix)), p), s)`
+///   2. `Apply(Apply(Apply(RecordSelector(_, slot),
+///                         Identifier("String")), p), s)`
+///
+/// At the point the Expander runs (immediately after resolution,
+/// before `inliner::inline_decl`), shape 2 is the common form;
+/// shape 1 will appear once we move the Expander after inlining.
+fn is_string_prefix_call<'a>(
+    expr: &'a Expr,
+    pat_name: &str,
+) -> Option<&'a Expr> {
+    let Expr::Apply(_, outer_fn, s, _) = expr else {
+        return None;
+    };
+    let Expr::Apply(_, mid_fn, p, _) = outer_fn.as_ref() else {
+        return None;
+    };
+    if !references(p, pat_name) {
+        return None;
+    }
+    if as_builtin_fn(mid_fn) == Some(BuiltInFunction::StringIsPrefix) {
+        return Some(s);
+    }
+    None
+}
+
+/// Resolves an expression to a built-in function, if it is one. Handles
+/// both an inlined literal and a record-selector application against a
+/// builtin structure (e.g. `Apply(RecordSelector(_, slot),
+/// Identifier("String"))`).
+fn as_builtin_fn(expr: &Expr) -> Option<BuiltInFunction> {
+    match expr {
+        Expr::Literal(_, Val::Fn(f)) => Some(*f),
+        Expr::Apply(_, f, a, _) => {
+            if let Expr::RecordSelector(t, slot) = f.as_ref()
+                && let Expr::Identifier(_, struct_name) = a.as_ref()
+                && let Type::Fn(record_t, _) = t.as_ref()
+                && let Some(field_name) = record_t.field_name(*slot)
+            {
+                return lookup_struct_field(struct_name, field_name);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 /// Splits an `andalso`-rooted expression into its conjuncts. Anything
 /// else is returned as a single-element vector.
 pub fn split_conjuncts(expr: &Expr) -> Vec<Expr> {
@@ -427,6 +574,13 @@ fn binop_int(f: BuiltInFunction, a: Expr, b: Expr) -> Expr {
     let fn_expr = Expr::Literal(fn_t.clone(), Val::Fn(f));
     let arg = Expr::Tuple(pair_t, vec![a, b]);
     Expr::Apply(int_t, Box::new(fn_expr), Box::new(arg), Span::new(""))
+}
+
+fn call1(f: BuiltInFunction, a: Expr, result_t: Box<Type>) -> Expr {
+    let arg_t = a.type_();
+    let fn_t = Box::new(Type::Fn(arg_t, result_t.clone()));
+    let fn_expr = Expr::Literal(fn_t, Val::Fn(f));
+    Expr::Apply(result_t, Box::new(fn_expr), Box::new(a), Span::new(""))
 }
 
 fn call2(f: BuiltInFunction, a: Expr, b: Expr, result_t: Box<Type>) -> Expr {

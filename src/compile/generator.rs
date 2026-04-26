@@ -96,7 +96,7 @@ impl Generator {
 ///
 /// Append-only: refinements add a new generator without removing
 /// the old. `best(pat)` returns the most-recent entry.
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 pub struct Cache {
     by_pat: HashMap<String, Vec<Generator>>,
 }

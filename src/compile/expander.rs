@@ -33,7 +33,7 @@ use crate::compile::generator::Cache;
 use crate::compile::generators::{maybe_generator, split_conjuncts};
 use crate::compile::library::BuiltInFunction;
 use crate::compile::span::Span;
-use crate::compile::types::Type;
+use crate::compile::types::{PrimitiveType, Type};
 use crate::eval::val::Val;
 
 /// If `expr` is a `From`, `Exists`, or `Forall` containing one or
@@ -205,9 +205,7 @@ fn and_all(conjuncts: Vec<Expr>) -> Expr {
     let mut iter = conjuncts.into_iter();
     let first = iter.next().expect("at least one conjunct");
     iter.fold(first, |lhs, rhs| {
-        let bool_t = Box::new(Type::Primitive(
-            crate::compile::types::PrimitiveType::Bool,
-        ));
+        let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
         let pair_t =
             Box::new(Type::Tuple(vec![(*bool_t).clone(), (*bool_t).clone()]));
         let fn_t = Box::new(Type::Fn(pair_t.clone(), bool_t.clone()));
