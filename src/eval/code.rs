@@ -28,6 +28,7 @@ use crate::eval::bound::{
 };
 use crate::eval::char::Char;
 use crate::eval::comparator::{Comparator, NaturalComparator};
+use crate::eval::date;
 use crate::eval::discrete::Discrete;
 use crate::eval::either::Either;
 use crate::eval::frame::FrameDef;
@@ -1895,6 +1896,18 @@ pub enum Eager0 {
     ListNil,
     MathE,
     MathPi,
+    MonthApr,
+    MonthAug,
+    MonthDec,
+    MonthFeb,
+    MonthJan,
+    MonthJul,
+    MonthJun,
+    MonthMar,
+    MonthMay,
+    MonthNov,
+    MonthOct,
+    MonthSep,
     OptionNone,
     OrderEqual,
     OrderGreater,
@@ -1912,6 +1925,13 @@ pub enum Eager0 {
     VariantNone,
     VariantUnit,
     VectorMaxLen,
+    WeekdayFri,
+    WeekdayMon,
+    WeekdaySat,
+    WeekdaySun,
+    WeekdayThu,
+    WeekdayTue,
+    WeekdayWed,
 }
 
 impl Eager0 {
@@ -1932,6 +1952,42 @@ impl Eager0 {
             ListNil => Val::List(vec![]),
             MathE => Val::Real(Math::E),
             MathPi => Val::Real(Math::PI),
+            MonthApr => {
+                Val::Constructor(val::MONTH_APR_ORDINAL, Box::new(Val::Unit))
+            }
+            MonthAug => {
+                Val::Constructor(val::MONTH_AUG_ORDINAL, Box::new(Val::Unit))
+            }
+            MonthDec => {
+                Val::Constructor(val::MONTH_DEC_ORDINAL, Box::new(Val::Unit))
+            }
+            MonthFeb => {
+                Val::Constructor(val::MONTH_FEB_ORDINAL, Box::new(Val::Unit))
+            }
+            MonthJan => {
+                Val::Constructor(val::MONTH_JAN_ORDINAL, Box::new(Val::Unit))
+            }
+            MonthJul => {
+                Val::Constructor(val::MONTH_JUL_ORDINAL, Box::new(Val::Unit))
+            }
+            MonthJun => {
+                Val::Constructor(val::MONTH_JUN_ORDINAL, Box::new(Val::Unit))
+            }
+            MonthMar => {
+                Val::Constructor(val::MONTH_MAR_ORDINAL, Box::new(Val::Unit))
+            }
+            MonthMay => {
+                Val::Constructor(val::MONTH_MAY_ORDINAL, Box::new(Val::Unit))
+            }
+            MonthNov => {
+                Val::Constructor(val::MONTH_NOV_ORDINAL, Box::new(Val::Unit))
+            }
+            MonthOct => {
+                Val::Constructor(val::MONTH_OCT_ORDINAL, Box::new(Val::Unit))
+            }
+            MonthSep => {
+                Val::Constructor(val::MONTH_SEP_ORDINAL, Box::new(Val::Unit))
+            }
             OptionNone => Val::Unit,
             OrderEqual => Val::Order(Order(Ordering::Equal)),
             OrderGreater => Val::Order(Order(Ordering::Greater)),
@@ -1952,6 +2008,27 @@ impl Eager0 {
             VariantNone => variant::none(),
             VariantUnit => variant::unit(),
             VectorMaxLen => Val::Int(Vector::max_len()),
+            WeekdayFri => {
+                Val::Constructor(val::WEEKDAY_FRI_ORDINAL, Box::new(Val::Unit))
+            }
+            WeekdayMon => {
+                Val::Constructor(val::WEEKDAY_MON_ORDINAL, Box::new(Val::Unit))
+            }
+            WeekdaySat => {
+                Val::Constructor(val::WEEKDAY_SAT_ORDINAL, Box::new(Val::Unit))
+            }
+            WeekdaySun => {
+                Val::Constructor(val::WEEKDAY_SUN_ORDINAL, Box::new(Val::Unit))
+            }
+            WeekdayThu => {
+                Val::Constructor(val::WEEKDAY_THU_ORDINAL, Box::new(Val::Unit))
+            }
+            WeekdayTue => {
+                Val::Constructor(val::WEEKDAY_TUE_ORDINAL, Box::new(Val::Unit))
+            }
+            WeekdayWed => {
+                Val::Constructor(val::WEEKDAY_WED_ORDINAL, Box::new(Val::Unit))
+            }
         }
     }
 
@@ -1968,6 +2045,7 @@ impl Eager0 {
 #[allow(clippy::enum_variant_names)]
 pub enum EagerF0 {
     // lint: sort until '#}'
+    DateLocalOffset,
     SysClearEnv,
     SysEnv,
     SysPlan,
@@ -1986,6 +2064,7 @@ impl EagerF0 {
 
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
+            DateLocalOffset => date::local_offset(r.session),
             SysClearEnv => {
                 // Reset the session environment to the initial state.
                 // Emit an effect to clear the environment.
@@ -2095,6 +2174,8 @@ pub enum EagerF1 {
     CharChr,
     CharPred,
     CharSucc,
+    DateDate,
+    DateFromTimeLocal,
     IntAbs,
     InteractUse,
     InteractUseSilently,
@@ -2161,6 +2242,10 @@ impl EagerF1 {
             CharChr => Char::chr(a0.expect_int(), span.unwrap()),
             CharPred => Char::pred(a0.expect_char(), span.unwrap()),
             CharSucc => Char::succ(a0.expect_char(), span.unwrap()),
+            DateDate => date::make_date(a0.expect_list(), span.unwrap()),
+            DateFromTimeLocal => {
+                Ok(date::from_time_local(a0.expect_time(), r.session))
+            }
             IntAbs => {
                 let i = a0.expect_int();
                 if i == i32::MIN {
@@ -2263,6 +2348,19 @@ pub enum Eager1 {
     CharToLower,
     CharToString,
     CharToUpper,
+    DateDay,
+    DateFromString,
+    DateFromTimeUniv,
+    DateHour,
+    DateIsDst,
+    DateMinute,
+    DateMonthFn,
+    DateSecond,
+    DateToString,
+    DateToTime,
+    DateWeekDay,
+    DateYear,
+    DateYearDay,
     DescendingDesc,
     EitherAsLeft,
     EitherAsRight,
@@ -2423,6 +2521,19 @@ impl Eager1 {
             CharToLower => Val::Char(Char::to_lower(a0.expect_char())),
             CharToString => Val::String(Char::to_string(a0.expect_char())),
             CharToUpper => Val::Char(Char::to_upper(a0.expect_char())),
+            DateDay => date::day(a0.expect_date()),
+            DateFromString => date::from_string(&a0.expect_string()),
+            DateFromTimeUniv => date::from_time_univ(a0.expect_time()),
+            DateHour => date::hour(a0.expect_date()),
+            DateIsDst => date::is_dst(a0.expect_date()),
+            DateMinute => date::minute(a0.expect_date()),
+            DateMonthFn => date::month(a0.expect_date()),
+            DateSecond => date::second(a0.expect_date()),
+            DateToString => date::to_string(a0.expect_date()),
+            DateToTime => date::to_time(a0.expect_date()),
+            DateWeekDay => date::week_day(a0.expect_date()),
+            DateYear => date::year(a0.expect_date()),
+            DateYearDay => date::year_day(a0.expect_date()),
             DescendingDesc => Val::Constructor(val::DESC_ORDINAL, Box::new(a0)),
             EitherAsLeft => Either::as_left(&a0),
             EitherAsRight => Either::as_right(&a0),
@@ -2700,6 +2811,8 @@ pub enum Eager2 {
     CharLt,
     CharNe,
     CharNotContains,
+    DateCompare,
+    DateFmt,
     FnConst,
     FnEqual,
     FnNotEqual,
@@ -2811,6 +2924,8 @@ impl Eager2 {
                 &a0.expect_string(),
                 a1.expect_char(),
             )),
+            DateCompare => date::compare(a0.expect_date(), a1.expect_date()),
+            DateFmt => date::fmt(&a0.expect_string(), a1.expect_date()),
             FnConst => a0,
             FnEqual => Val::Bool(a0 == a1),
             FnNotEqual => Val::Bool(a0 != a1),
@@ -3784,6 +3899,24 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::CharToLower.implements(&mut b, CharToLower);
     Eager1::CharToString.implements(&mut b, CharToString);
     Eager1::CharToUpper.implements(&mut b, CharToUpper);
+    Eager2::DateCompare.implements(&mut b, DateCompare);
+    EagerF1::DateDate.implements(&mut b, DateDate);
+    Eager1::DateDay.implements(&mut b, DateDay);
+    Eager2::DateFmt.implements(&mut b, DateFmt);
+    Eager1::DateFromString.implements(&mut b, DateFromString);
+    EagerF1::DateFromTimeLocal.implements(&mut b, DateFromTimeLocal);
+    Eager1::DateFromTimeUniv.implements(&mut b, DateFromTimeUniv);
+    Eager1::DateHour.implements(&mut b, DateHour);
+    Eager1::DateIsDst.implements(&mut b, DateIsDst);
+    EagerF0::DateLocalOffset.implements(&mut b, DateLocalOffset);
+    Eager1::DateMinute.implements(&mut b, DateMinute);
+    Eager1::DateMonthFn.implements(&mut b, DateMonthFn);
+    Eager1::DateSecond.implements(&mut b, DateSecond);
+    Eager1::DateToString.implements(&mut b, DateToString);
+    Eager1::DateToTime.implements(&mut b, DateToTime);
+    Eager1::DateWeekDay.implements(&mut b, DateWeekDay);
+    Eager1::DateYear.implements(&mut b, DateYear);
+    Eager1::DateYearDay.implements(&mut b, DateYearDay);
     Eager1::DescendingDesc.implements(&mut b, DescendingDesc);
     EagerF2::EitherApp.implements(&mut b, EitherApp);
     EagerF2::EitherAppLeft.implements(&mut b, EitherAppLeft);
@@ -3918,6 +4051,18 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::MathSqrt.implements(&mut b, MathSqrt);
     Eager1::MathTan.implements(&mut b, MathTan);
     Eager1::MathTanh.implements(&mut b, MathTanh);
+    Eager0::MonthApr.implements(&mut b, MonthApr);
+    Eager0::MonthAug.implements(&mut b, MonthAug);
+    Eager0::MonthDec.implements(&mut b, MonthDec);
+    Eager0::MonthFeb.implements(&mut b, MonthFeb);
+    Eager0::MonthJan.implements(&mut b, MonthJan);
+    Eager0::MonthJul.implements(&mut b, MonthJul);
+    Eager0::MonthJun.implements(&mut b, MonthJun);
+    Eager0::MonthMar.implements(&mut b, MonthMar);
+    Eager0::MonthMay.implements(&mut b, MonthMay);
+    Eager0::MonthNov.implements(&mut b, MonthNov);
+    Eager0::MonthOct.implements(&mut b, MonthOct);
+    Eager0::MonthSep.implements(&mut b, MonthSep);
     EagerF2::OptionApp.implements(&mut b, OptionApp);
     EagerF2::OptionCompose.implements(&mut b, OptionCompose);
     EagerF2::OptionComposePartial.implements(&mut b, OptionComposePartial);
@@ -4101,6 +4246,13 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     EagerF2::VectorSub.implements(&mut b, VectorSub);
     EagerF2::VectorTabulate.implements(&mut b, VectorTabulate);
     EagerF3::VectorUpdate.implements(&mut b, VectorUpdate);
+    Eager0::WeekdayFri.implements(&mut b, WeekdayFri);
+    Eager0::WeekdayMon.implements(&mut b, WeekdayMon);
+    Eager0::WeekdaySat.implements(&mut b, WeekdaySat);
+    Eager0::WeekdaySun.implements(&mut b, WeekdaySun);
+    Eager0::WeekdayThu.implements(&mut b, WeekdayThu);
+    Eager0::WeekdayTue.implements(&mut b, WeekdayTue);
+    Eager0::WeekdayWed.implements(&mut b, WeekdayWed);
 
     b.build()
 });

@@ -21,6 +21,7 @@ use crate::compile::types::Type;
 use crate::eval::code::{
     Code, EvalEnv, Frame as CodeFrame, Frame, Impl, LIBRARY,
 };
+use crate::eval::date;
 use crate::eval::frame::FrameDef;
 use crate::eval::order::Order;
 use crate::eval::real::Real;
@@ -54,6 +55,31 @@ pub const RANGE_POINT_ORDINAL: usize = usize::MAX - 19;
 pub const CONTINUOUS_SET_ORDINAL: usize = usize::MAX - 20;
 pub const DISCRETE_SET_ORDINAL: usize = usize::MAX - 21;
 
+/// Sentinel ordinals for the 7 nullary constructors of the `weekday`
+/// datatype. Stored values are `Val::Constructor(o, Box::new(Val::Unit))`.
+pub const WEEKDAY_MON_ORDINAL: usize = usize::MAX - 30;
+pub const WEEKDAY_TUE_ORDINAL: usize = usize::MAX - 31;
+pub const WEEKDAY_WED_ORDINAL: usize = usize::MAX - 32;
+pub const WEEKDAY_THU_ORDINAL: usize = usize::MAX - 33;
+pub const WEEKDAY_FRI_ORDINAL: usize = usize::MAX - 34;
+pub const WEEKDAY_SAT_ORDINAL: usize = usize::MAX - 35;
+pub const WEEKDAY_SUN_ORDINAL: usize = usize::MAX - 36;
+
+/// Sentinel ordinals for the 12 nullary constructors of the `month`
+/// datatype. Stored values are `Val::Constructor(o, Box::new(Val::Unit))`.
+pub const MONTH_JAN_ORDINAL: usize = usize::MAX - 40;
+pub const MONTH_FEB_ORDINAL: usize = usize::MAX - 41;
+pub const MONTH_MAR_ORDINAL: usize = usize::MAX - 42;
+pub const MONTH_APR_ORDINAL: usize = usize::MAX - 43;
+pub const MONTH_MAY_ORDINAL: usize = usize::MAX - 44;
+pub const MONTH_JUN_ORDINAL: usize = usize::MAX - 45;
+pub const MONTH_JUL_ORDINAL: usize = usize::MAX - 46;
+pub const MONTH_AUG_ORDINAL: usize = usize::MAX - 47;
+pub const MONTH_SEP_ORDINAL: usize = usize::MAX - 48;
+pub const MONTH_OCT_ORDINAL: usize = usize::MAX - 49;
+pub const MONTH_NOV_ORDINAL: usize = usize::MAX - 50;
+pub const MONTH_DEC_ORDINAL: usize = usize::MAX - 51;
+
 /// Runtime value.
 ///
 /// The [Val::Typed], [Val::Named], [Val::Labeled], and [Val::Type] variants are
@@ -75,6 +101,9 @@ pub enum Val {
     /// `Time(nanoseconds)` represents a `time` value as a 64-bit signed
     /// nanosecond count from the Unix epoch (or as a duration).
     Time(i64),
+    /// `Date(nanoseconds)` represents a `date` value as a 64-bit signed
+    /// nanosecond count from the Unix epoch.
+    Date(i64),
     List(Vec<Val>),
     /// Built-in function.
     Fn(BuiltInFunction),
@@ -240,6 +269,13 @@ impl Val {
         }
     }
 
+    pub(crate) fn expect_date(&self) -> i64 {
+        match self {
+            Val::Date(t) => *t,
+            _ => panic!("Expected date"),
+        }
+    }
+
     pub(crate) fn maybe_bool(&self) -> Option<bool> {
         match self {
             Val::Bool(b) => Some(*b),
@@ -335,6 +371,7 @@ impl Display for Val {
                     write!(f, "#{} {}", ordinal, v)
                 }
             }
+            Val::Date(d) => write!(f, "{}", date::format_iso(*d)),
             Val::Fn(func) => write!(f, "{:?}", func),
             Val::Inl(v) => write!(f, "INL {}", v),
             Val::Inr(v) => write!(f, "INR {}", v),
@@ -421,6 +458,10 @@ impl Hash for Val {
             Val::Time(t) => {
                 22.hash(state);
                 t.hash(state);
+            }
+            Val::Date(d) => {
+                23.hash(state);
+                d.hash(state);
             }
             Val::List(vs) => {
                 7.hash(state);
