@@ -201,7 +201,7 @@ end;
 > val it = "some:a" : string
 Sys.planEx "~1";
 > val it =
->   "val it = let val someA = Option.SOME \"a\" in case someA of SOME(\"0\") => \"some0\" | SOME(s) => \"some:\" ^ s | NONE => \"none\" end"
+>   "val it = let val someA = SOME \"a\" in case someA of SOME(\"0\") => \"some0\" | SOME(s) => \"some:\" ^ s | NONE => \"none\" end"
 >   : string
 Sys.planEx "0";
 > val it = "val it = \"some:\" ^ \"a\"" : string

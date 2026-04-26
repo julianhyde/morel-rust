@@ -304,13 +304,21 @@ impl Display for Val {
             Val::Fn(func) => {
                 let name = func.name();
                 // Symbolic operator names (e.g. `^`, `+`, `=`) are shown as
-                // `op name`; alphabetic names use their dotted form (e.g.
-                // `Option.valOf`).
-                if name
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || c == '.' || c == '_')
+                // `op name`. Constructor names (e.g. `SOME`, `INL`,
+                // `LESS`) are shown unqualified, since they're parsed
+                // and resolved without their structure name. Other
+                // alphabetic names use their dotted form
+                // (e.g. `Option.valOf`).
+                if name.is_empty()
+                    || name
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '.' || c == '_')
                 {
-                    write!(f, "{}", func.full_name())
+                    if func.is_constructor() {
+                        write!(f, "{}", name)
+                    } else {
+                        write!(f, "{}", func.full_name())
+                    }
                 } else {
                     write!(f, "op {}", name)
                 }
