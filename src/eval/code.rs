@@ -303,22 +303,22 @@ pub enum Code {
     /// `Range.contains` handles element types whose order differs from
     /// the natural ordering (e.g. `descending`).
     RangeContains(CmpRef, Box<Code>, Box<Code>),
-    /// `RangeContinuousSetOf(cmp, ranges_code)` evaluates the input
+    /// `RangeCsOf(cmp, ranges_code)` evaluates the input
     /// list of ranges and returns a normalized `continuous_set` — a
     /// `Val::Constructor(CONTINUOUS_SET_ORDINAL, ...)` wrapping the
     /// merged range list. The pre-built type-directed comparator
     /// handles element types with non-natural ordering.
-    RangeContinuousSetOf(CmpRef, Box<Code>),
-    /// `RangeDiscreteSetComplement(discrete, set_code)` evaluates a
+    RangeCsOf(CmpRef, Box<Code>),
+    /// `RangeDsComplement(discrete, set_code)` evaluates a
     /// `discrete_set` and returns its complement as a `discrete_set`,
     /// using the pre-built `Discrete` stepper to step across discrete
     /// boundaries.
-    RangeDiscreteSetComplement(DiscreteRef, Box<Code>),
-    /// `RangeDiscreteSetOf(cmp, discrete, ranges_code)` mirrors
-    /// `RangeContinuousSetOf` but additionally uses a pre-built
+    RangeDsComplement(DiscreteRef, Box<Code>),
+    /// `RangeDsOf(cmp, discrete, ranges_code)` mirrors
+    /// `RangeCsOf` but additionally uses a pre-built
     /// `Discrete` stepper to merge ranges that are adjacent in the
     /// discrete domain (e.g. `[1,3] ∪ [4,7] → [1,7]` for `int`).
-    RangeDiscreteSetOf(CmpRef, DiscreteRef, Box<Code>),
+    RangeDsOf(CmpRef, DiscreteRef, Box<Code>),
     /// `RangeEnumerate(cmp, discrete, set_code)` evaluates a
     /// `discrete_set` and returns the `Val::List` of values it
     /// covers, in ascending order. Used to implement both
@@ -680,11 +680,9 @@ impl Code {
             }
             Code::RaiseIllegalArgument(_, _) => *mode == EvalMode::EagerF0,
             Code::RangeContains(_, _, _) => *mode == EvalMode::EagerF0,
-            Code::RangeContinuousSetOf(_, _) => *mode == EvalMode::EagerF0,
-            Code::RangeDiscreteSetComplement(_, _) => {
-                *mode == EvalMode::EagerF0
-            }
-            Code::RangeDiscreteSetOf(_, _, _) => *mode == EvalMode::EagerF0,
+            Code::RangeCsOf(_, _) => *mode == EvalMode::EagerF0,
+            Code::RangeDsComplement(_, _) => *mode == EvalMode::EagerF0,
+            Code::RangeDsOf(_, _, _) => *mode == EvalMode::EagerF0,
             Code::RangeEnumerate(_, _, _) => *mode == EvalMode::EagerF0,
             Code::Tuple(_) => *mode == EvalMode::EagerF0,
         }
@@ -944,7 +942,7 @@ impl Code {
                 let value = value_code.eval_f0(r, f)?;
                 Ok(Val::Bool(range_contains(&*cmp.0, &range, &value)))
             }
-            Code::RangeContinuousSetOf(cmp, ranges_code) => {
+            Code::RangeCsOf(cmp, ranges_code) => {
                 let ranges = ranges_code.eval_f0(r, f)?;
                 let merged = crate::eval::bound::from_ranges(
                     ranges.expect_list(),
@@ -956,7 +954,7 @@ impl Code {
                     Box::new(Val::List(merged)),
                 ))
             }
-            Code::RangeDiscreteSetComplement(discrete, set_code) => {
+            Code::RangeDsComplement(discrete, set_code) => {
                 let set = set_code.eval_f0(r, f)?;
                 let ranges = match &set {
                     Val::Constructor(val::DISCRETE_SET_ORDINAL, inner) => {
@@ -974,7 +972,7 @@ impl Code {
                     Box::new(Val::List(complemented)),
                 ))
             }
-            Code::RangeDiscreteSetOf(cmp, discrete, ranges_code) => {
+            Code::RangeDsOf(cmp, discrete, ranges_code) => {
                 let ranges = ranges_code.eval_f0(r, f)?;
                 let merged = crate::eval::bound::from_ranges(
                     ranges.expect_list(),
@@ -2168,15 +2166,17 @@ pub enum Eager1 {
     RangeAtMost,
     RangeClosed,
     RangeClosedOpen,
-    RangeComplement,
-    RangeContinuousSetOf,
-    RangeDiscreteSetOf,
+    RangeCsComplement,
+    RangeCsOf,
+    RangeCsRanges,
+    RangeDsComplement,
+    RangeDsOf,
+    RangeDsRanges,
     RangeGreaterThan,
     RangeLessThan,
     RangeOpen,
     RangeOpenClosed,
     RangePoint,
-    RangeRanges,
     RangeToBag,
     RangeToList,
     RealAbs,
@@ -2312,7 +2312,7 @@ impl Eager1 {
             RangeClosedOpen => {
                 Val::Constructor(val::RANGE_CLOSED_OPEN_ORDINAL, Box::new(a0))
             }
-            RangeComplement => {
+            RangeCsComplement => {
                 // Continuous complement: no Discrete needed, so the
                 // Eager1 fallback handles every call directly.
                 let inner = match a0 {
@@ -2330,7 +2330,7 @@ impl Eager1 {
                     Box::new(Val::List(complemented)),
                 )
             }
-            RangeContinuousSetOf => {
+            RangeCsOf => {
                 // Fallback when the compiler did not intercept the
                 // call (e.g. partial application). Uses
                 // `NaturalComparator`, which is correct for primitive
@@ -2346,13 +2346,50 @@ impl Eager1 {
                     Box::new(Val::List(merged)),
                 )
             }
-            RangeDiscreteSetOf => {
+            RangeCsRanges => {
+                // `ranges : 'a continuous_set -> 'a range list`. The
+                // wrapper stores a Val::List of ranges; just unwrap it.
+                match a0 {
+                    Val::Constructor(val::CONTINUOUS_SET_ORDINAL, inner) => {
+                        *inner
+                    }
+                    other => panic!(
+                        "Range.ranges: expected continuous_set, got {:?}",
+                        other
+                    ),
+                }
+            }
+            RangeDsComplement => {
+                // Fallback for partial application. Direct calls go
+                // through Code::RangeDsComplement which carries
+                // a `Discrete`; without type information we cannot build
+                // one here, so panic clearly.
+                panic!(
+                    "Range.complement on discrete_set: partial application is \
+                     not supported; invoke with a concrete discrete_set \
+                     argument"
+                )
+            }
+            RangeDsOf => {
                 // Fallback when the compiler did not intercept the
                 // call. Without type information we cannot validate
                 // discreteness or merge step-adjacent ranges; wrap the
                 // input as-is. The compile intercept is the correct
                 // path for all direct calls.
                 Val::Constructor(val::DISCRETE_SET_ORDINAL, Box::new(a0))
+            }
+            RangeDsRanges => {
+                // `ranges : 'a discrete_set -> 'a range list`. The
+                // wrapper stores a Val::List of ranges; just unwrap it.
+                match a0 {
+                    Val::Constructor(val::DISCRETE_SET_ORDINAL, inner) => {
+                        *inner
+                    }
+                    other => panic!(
+                        "Range.ranges: expected discrete_set, got {:?}",
+                        other
+                    ),
+                }
             }
             RangeGreaterThan => {
                 Val::Constructor(val::RANGE_GREATER_THAN_ORDINAL, Box::new(a0))
@@ -2368,22 +2405,6 @@ impl Eager1 {
             }
             RangePoint => {
                 Val::Constructor(val::RANGE_POINT_ORDINAL, Box::new(a0))
-            }
-            RangeRanges => {
-                // `ranges : 'a continuous_set | 'a discrete_set -> 'a
-                // range list`. Both wrappers store a Val::List of
-                // ranges; just unwrap it.
-                match a0 {
-                    Val::Constructor(val::CONTINUOUS_SET_ORDINAL, inner)
-                    | Val::Constructor(val::DISCRETE_SET_ORDINAL, inner) => {
-                        *inner
-                    }
-                    other => panic!(
-                        "Range.ranges: expected continuous_set or \
-                         discrete_set, got {:?}",
-                        other
-                    ),
-                }
             }
             RangeToBag | RangeToList => {
                 // Fallback for partial application. Without type info
@@ -3700,16 +3721,20 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::RangeAtMost.implements(&mut b, RangeAtMost);
     Eager1::RangeClosed.implements(&mut b, RangeClosed);
     Eager1::RangeClosedOpen.implements(&mut b, RangeClosedOpen);
-    Eager1::RangeComplement.implements(&mut b, RangeComplement);
     Eager2::RangeContains.implements(&mut b, RangeContains);
-    Eager1::RangeContinuousSetOf.implements(&mut b, RangeContinuousSetOf);
-    Eager1::RangeDiscreteSetOf.implements(&mut b, RangeDiscreteSetOf);
+    Eager1::RangeCsComplement.implements(&mut b, RangeCsComplement);
+    Eager2::RangeContains.implements(&mut b, RangeCsContains);
+    Eager1::RangeCsOf.implements(&mut b, RangeCsOf);
+    Eager1::RangeCsRanges.implements(&mut b, RangeCsRanges);
+    Eager1::RangeDsComplement.implements(&mut b, RangeDsComplement);
+    Eager2::RangeContains.implements(&mut b, RangeDsContains);
+    Eager1::RangeDsOf.implements(&mut b, RangeDsOf);
+    Eager1::RangeDsRanges.implements(&mut b, RangeDsRanges);
     Eager1::RangeGreaterThan.implements(&mut b, RangeGreaterThan);
     Eager1::RangeLessThan.implements(&mut b, RangeLessThan);
     Eager1::RangeOpen.implements(&mut b, RangeOpen);
     Eager1::RangeOpenClosed.implements(&mut b, RangeOpenClosed);
     Eager1::RangePoint.implements(&mut b, RangePoint);
-    Eager1::RangeRanges.implements(&mut b, RangeRanges);
     Eager1::RangeToBag.implements(&mut b, RangeToBag);
     Eager1::RangeToList.implements(&mut b, RangeToList);
     Eager1::RealFromInt.implements(&mut b, Real);

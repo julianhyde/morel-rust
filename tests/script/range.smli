@@ -20,19 +20,19 @@
  *)
 
 (* Range structure *)
-(* NOTE: morel-rust uses permissive declared types for the overloaded
-   functions `complement`, `contains`, and `ranges` (each accepts more
-   than one wrapper kind), so the structure's type signature shows
-   `'a -> 'a` etc. rather than morel-java's `'a continuous_set -> ...`
-   form. Underlying behaviour is identical. *)
+(* NOTE: morel-rust's `Range` structure exposes only the field that
+   does not need type-directed dispatch — `Range.contains` for the
+   plain `range` type, plus `continuousSetOf`, `discreteSetOf`, `toBag`,
+   `toList`. The set-typed variants of `contains`, `complement`, and
+   `ranges` (which morel-java aliases as `$csContains`, `$dsContains`,
+   etc.) are reachable only via postfix syntax (e.g. `s.contains x`)
+   in morel-rust. *)
 Range;
-> val it =
->   {complement=fn,contains=fn,continuousSetOf=fn,discreteSetOf=fn,ranges=fn,
->    toBag=fn,toList=fn}
->   : {complement:'a -> 'a, contains:'b -> 'c -> bool,
->      continuousSetOf:'d range list -> 'd continuous_set,
->      discreteSetOf:'e range list -> 'e discrete_set, ranges:'f -> 'g range list,
->      toBag:'h discrete_set -> 'h bag, toList:'i discrete_set -> 'i list}
+> val it = {contains=fn,continuousSetOf=fn,discreteSetOf=fn,toBag=fn,toList=fn}
+>   : {contains:'a range -> 'a -> bool,
+>      continuousSetOf:'b range list -> 'b continuous_set,
+>      discreteSetOf:'c range list -> 'c discrete_set,
+>      toBag:'d discrete_set -> 'd bag, toList:'e discrete_set -> 'e list}
 
 (*) Constructors.
 POINT 5 : int range;
@@ -297,10 +297,8 @@ ds.contains 5;
 > val it = false : bool
 
 (*) ranges returns the list of ranges in a continuous_set.
-(*) NOTE: morel-rust's permissive overload typing leaves the result's
-(*) element type as `'a`; morel-java prints `int range list`.
 cs.ranges ();
-> val it = [CLOSED (1,3),CLOSED (7,9)] : 'a range list
+> val it = [CLOSED (1,3),CLOSED (7,9)] : int range list
 
 (*) toList enumerates values of a discrete_set in ascending order.
 (Range.discreteSetOf [CLOSED (5, 10)]).toList ();

@@ -740,18 +740,33 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Range", name = "CLOSED_OPEN", global = true))]
     #[strum(props(type = "forall 1 'a * 'a -> 'a range", constructor = true))]
     RangeClosedOpen,
-    #[strum(props(p = "Range", name = "complement"))]
-    #[strum(props(type = "forall 1 'a -> 'a"))]
-    RangeComplement,
     #[strum(props(p = "Range", name = "contains"))]
-    #[strum(props(type = "forall 2 'a -> 'b -> bool"))]
+    #[strum(props(type = "forall 1 'a range -> 'a -> bool"))]
     RangeContains,
+    #[strum(props(name = "$csComplement"))]
+    #[strum(props(type = "forall 1 'a continuous_set -> 'a continuous_set"))]
+    RangeCsComplement,
+    #[strum(props(name = "$csContains"))]
+    #[strum(props(type = "forall 1 'a continuous_set -> 'a -> bool"))]
+    RangeCsContains,
     #[strum(props(p = "Range", name = "continuousSetOf"))]
     #[strum(props(type = "forall 1 'a range list -> 'a continuous_set"))]
-    RangeContinuousSetOf,
+    RangeCsOf,
+    #[strum(props(name = "$csRanges"))]
+    #[strum(props(type = "forall 1 'a continuous_set -> 'a range list"))]
+    RangeCsRanges,
+    #[strum(props(name = "$dsComplement"))]
+    #[strum(props(type = "forall 1 'a discrete_set -> 'a discrete_set"))]
+    RangeDsComplement,
+    #[strum(props(name = "$dsContains"))]
+    #[strum(props(type = "forall 1 'a discrete_set -> 'a -> bool"))]
+    RangeDsContains,
     #[strum(props(p = "Range", name = "discreteSetOf"))]
     #[strum(props(type = "forall 1 'a range list -> 'a discrete_set"))]
-    RangeDiscreteSetOf,
+    RangeDsOf,
+    #[strum(props(name = "$dsRanges"))]
+    #[strum(props(type = "forall 1 'a discrete_set -> 'a range list"))]
+    RangeDsRanges,
     #[strum(props(p = "Range", name = "GREATER_THAN", global = true))]
     #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
     RangeGreaterThan,
@@ -767,9 +782,6 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Range", name = "POINT", global = true))]
     #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
     RangePoint,
-    #[strum(props(p = "Range", name = "ranges"))]
-    #[strum(props(type = "forall 2 'a -> 'b range list"))]
-    RangeRanges,
     #[strum(props(p = "Range", name = "toBag"))]
     #[strum(props(type = "forall 1 'a discrete_set -> 'a bag"))]
     RangeToBag,

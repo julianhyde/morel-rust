@@ -695,11 +695,11 @@ impl<'a> Compiler<'a> {
                             // which itself would have rejected a
                             // non-discrete type.
                         }
-                        // Intercept Range.complement: if the argument
-                        // is a discrete_set, use the Discrete-aware
-                        // complement; otherwise fall through to the
-                        // continuous-set Eager1 fallback.
-                        if *f == BuiltInFunction::RangeComplement
+                        // Intercept Range.complement on a discrete_set:
+                        // use the Discrete-aware complement. The
+                        // continuous-set variant is handled by the
+                        // Eager1 fallback for RangeCsComplement.
+                        if *f == BuiltInFunction::RangeDsComplement
                             && let Type::Data(name, args) = a.type_().as_ref()
                             && name == "discrete_set"
                             && !args.is_empty()
@@ -713,7 +713,7 @@ impl<'a> Compiler<'a> {
                                 )
                             {
                                 let arg = self.compile_arg(cx, a);
-                                return Code::RangeDiscreteSetComplement(
+                                return Code::RangeDsComplement(
                                     code::DiscreteRef(discrete),
                                     Box::new(arg),
                                 );
@@ -723,8 +723,8 @@ impl<'a> Compiler<'a> {
                         // Range.discreteSetOf to build type-directed
                         // helpers from the element type inside `'a
                         // range list`.
-                        if *f == BuiltInFunction::RangeContinuousSetOf
-                            || *f == BuiltInFunction::RangeDiscreteSetOf
+                        if *f == BuiltInFunction::RangeCsOf
+                            || *f == BuiltInFunction::RangeDsOf
                         {
                             let elem_type = match a.type_().as_ref() {
                                 Type::List(r) => match r.as_ref() {
@@ -744,11 +744,8 @@ impl<'a> Compiler<'a> {
                                 &self.type_map.constructor_arg_types,
                             ));
                             let arg = self.compile_arg(cx, a);
-                            if *f == BuiltInFunction::RangeContinuousSetOf {
-                                return Code::RangeContinuousSetOf(
-                                    cmp,
-                                    Box::new(arg),
-                                );
+                            if *f == BuiltInFunction::RangeCsOf {
+                                return Code::RangeCsOf(cmp, Box::new(arg));
                             }
                             // discreteSetOf: also build a Discrete.
                             // If the element type is not discrete,
@@ -760,7 +757,7 @@ impl<'a> Compiler<'a> {
                                 &self.type_map.constructor_arg_types,
                             ) {
                                 Ok(discrete) => {
-                                    return Code::RangeDiscreteSetOf(
+                                    return Code::RangeDsOf(
                                         cmp,
                                         code::DiscreteRef(discrete),
                                         Box::new(arg),
@@ -990,12 +987,16 @@ impl<'a> Compiler<'a> {
                         );
                     }
 
-                    // Intercept `Range.contains r x` to build a
+                    // Intercept `Range.contains r x` (or its set-typed
+                    // variants `$csContains` / `$dsContains`) to build a
                     // type-directed comparator from the element type.
-                    if let Expr::Literal(
-                        _,
-                        Val::Fn(BuiltInFunction::RangeContains),
-                    ) = middle_f.as_ref()
+                    if let Expr::Literal(_, Val::Fn(f)) = middle_f.as_ref()
+                        && matches!(
+                            f,
+                            BuiltInFunction::RangeContains
+                                | BuiltInFunction::RangeCsContains
+                                | BuiltInFunction::RangeDsContains
+                        )
                     {
                         let elem_type = *a.type_();
                         let cmp = CmpRef(comparator::comparator_for_with(

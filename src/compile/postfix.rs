@@ -52,10 +52,11 @@ pub fn postfix_dispatch(
         CharSucc, CharToLower, CharToString, CharToUpper, IntAbs, IntCompare,
         IntMax, IntMin, IntRem, IntSameSign, IntSign, IntToString, ListDrop,
         ListHd, ListLength, ListNth, ListNull, ListTake, ListTl, OptionGetOpt,
-        OptionIsSome, OptionValOf, RangeComplement, RangeContains, RangeRanges,
-        RangeToBag, RangeToList, RealAbs, RealCeil, RealCompare, RealFloor,
-        RealMax, RealMin, RealRem, RealSign, RealToString, RealTrunc,
-        StringExplode, StringSize, StringSub, StringSubstring,
+        OptionIsSome, OptionValOf, RangeContains, RangeCsComplement,
+        RangeCsContains, RangeCsRanges, RangeDsComplement, RangeDsContains,
+        RangeDsRanges, RangeToBag, RangeToList, RealAbs, RealCeil, RealCompare,
+        RealFloor, RealMax, RealMin, RealRem, RealSign, RealToString,
+        RealTrunc, StringExplode, StringSize, StringSub, StringSubstring,
     };
     use PostfixKind::{Curried2, Tupled2, Tupled3, Unary};
     let ty = peel_type(recv_type);
@@ -174,20 +175,26 @@ pub fn postfix_dispatch(
             Some((OptionValOf, Unary))
         }
         // Range
-        ("contains", Type::Data(n, _))
-            if n == "range" || n == "continuous_set" || n == "discrete_set" =>
-        {
+        ("contains", Type::Data(n, _)) if n == "range" => {
             Some((RangeContains, Curried2))
         }
-        ("ranges", Type::Data(n, _))
-            if n == "continuous_set" || n == "discrete_set" =>
-        {
-            Some((RangeRanges, Unary))
+        ("contains", Type::Data(n, _)) if n == "continuous_set" => {
+            Some((RangeCsContains, Curried2))
         }
-        ("complement", Type::Data(n, _))
-            if n == "continuous_set" || n == "discrete_set" =>
-        {
-            Some((RangeComplement, Unary))
+        ("contains", Type::Data(n, _)) if n == "discrete_set" => {
+            Some((RangeDsContains, Curried2))
+        }
+        ("ranges", Type::Data(n, _)) if n == "continuous_set" => {
+            Some((RangeCsRanges, Unary))
+        }
+        ("ranges", Type::Data(n, _)) if n == "discrete_set" => {
+            Some((RangeDsRanges, Unary))
+        }
+        ("complement", Type::Data(n, _)) if n == "continuous_set" => {
+            Some((RangeCsComplement, Unary))
+        }
+        ("complement", Type::Data(n, _)) if n == "discrete_set" => {
+            Some((RangeDsComplement, Unary))
         }
         ("toList", Type::Data(n, _)) if n == "discrete_set" => {
             Some((RangeToList, Unary))

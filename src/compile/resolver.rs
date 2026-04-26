@@ -1995,10 +1995,11 @@ fn postfix_return_type(
         CharSucc, CharToLower, CharToString, CharToUpper, IntAbs, IntCompare,
         IntMax, IntMin, IntRem, IntSameSign, IntSign, IntToString, ListDrop,
         ListHd, ListLength, ListNth, ListNull, ListTake, ListTl, OptionGetOpt,
-        OptionIsSome, OptionValOf, RangeComplement, RangeContains, RangeRanges,
-        RangeToBag, RangeToList, RealAbs, RealCeil, RealCompare, RealFloor,
-        RealMax, RealMin, RealRem, RealSign, RealToString, RealTrunc,
-        StringExplode, StringSize, StringSub, StringSubstring,
+        OptionIsSome, OptionValOf, RangeContains, RangeCsComplement,
+        RangeCsContains, RangeCsRanges, RangeDsComplement, RangeDsContains,
+        RangeDsRanges, RangeToBag, RangeToList, RealAbs, RealCeil, RealCompare,
+        RealFloor, RealMax, RealMin, RealRem, RealSign, RealToString,
+        RealTrunc, StringExplode, StringSize, StringSub, StringSubstring,
     };
     fn prim(p: PrimitiveType) -> Box<Type> {
         Box::new(Type::Primitive(p))
@@ -2095,11 +2096,12 @@ fn postfix_return_type(
             }
         }
         // Range methods
-        // contains accepts range / continuous_set / discrete_set
-        // and returns bool.
-        RangeContains => prim(PrimitiveType::Bool),
-        // ranges: 'a continuous_set | 'a discrete_set -> 'a range list
-        RangeRanges => match peel_type(recv_type) {
+        // contains: 'a {range,continuous_set,discrete_set} -> 'a -> bool.
+        RangeContains | RangeCsContains | RangeDsContains => {
+            prim(PrimitiveType::Bool)
+        }
+        // ranges: 'a {continuous_set,discrete_set} -> 'a range list.
+        RangeCsRanges | RangeDsRanges => match peel_type(recv_type) {
             Type::Data(_, args) if !args.is_empty() => {
                 Box::new(Type::List(Box::new(Type::Data(
                     "range".to_string(),
@@ -2122,8 +2124,8 @@ fn postfix_return_type(
             }
             _ => clone_box(recv_type),
         },
-        // complement: 'a continuous_set | 'a discrete_set -> same
-        RangeComplement => clone_box(recv_type),
+        // complement: 'a {continuous_set,discrete_set} -> same
+        RangeCsComplement | RangeDsComplement => clone_box(recv_type),
         // Fallback: use the receiver's type (conservative).
         _ => clone_box(recv_type),
     }
