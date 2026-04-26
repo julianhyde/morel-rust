@@ -20,9 +20,6 @@
  * (Originally, such queries used a 'suchthat' keyword, but that keyword
  * has since been removed.)
  *)
-set("mode", "validate");
-> val it = () : unit
-
 (* ------------------------------------------------------ *)
 (* Convert predicates into ranges. *)
 from i where i > 0 andalso i < 10;
@@ -33,10 +30,18 @@ from i where i > 0 andalso i < 4 yield {j = i + 1} order DESC j;
 > val it = [{j=4},{j=3},{j=2}] : {j:int} list
 from i where i > 0 andalso i < 10 andalso i mod 3 = 2;
 > val it = [2,5,8] : int bag
+
+(* `orelse` requires the union generator (Phase 6+); validate-only
+   for now. *)
+set("mode", "validate");
+> val it = () : unit
 from i where i = 0 orelse i = 12;
 > val it = [0,12] : int bag
 from i where i > 0 andalso i < 10 orelse i > 12 andalso i <= 15;
 > val it = [1,2,3,4,5,6,7,8,9,13,14,15] : int bag
+set("mode", "evaluate");
+> val it = () : unit
+
 from i
 where i > 0 andalso i < 10
 join b
@@ -104,10 +109,16 @@ from i
   take 5;
 > val it = [20,19,18,17,16] : int list
 
+(* `through` desugaring of an unbounded scan is not yet supported;
+   validate-only. *)
+set("mode", "validate");
+> val it = () : unit
 from i
   where i >= 0 andalso i <= 10
   through j in (fn bag => Bag.`take` (bag, 3));
 > val it = [0,1,2] : int bag
+set("mode", "evaluate");
+> val it = () : unit
 
 exists i
   where i >= 0 andalso i <= 100;
@@ -130,10 +141,6 @@ forall i
   where i >= 40 andalso i < 50
   require i + 100 < 155;
 > val it = true : bool
-
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) 'on' in 'from'
 from i in [1, 2, 3],
