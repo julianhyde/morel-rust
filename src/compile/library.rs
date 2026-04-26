@@ -1074,6 +1074,13 @@ impl BuiltInFunction {
         }
     }
 
+    /// Returns the structure (package) this function belongs to, e.g.
+    /// `"String"` for `String.size`. Returns `None` for top-level
+    /// functions like `bag` or `vector`.
+    pub(crate) fn package(&self) -> Option<&'static str> {
+        self.get_str("p")
+    }
+
     pub(crate) fn is_constructor(&self) -> bool {
         self.get_bool("constructor").is_some_and(|b| b)
     }

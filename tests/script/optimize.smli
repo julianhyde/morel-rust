@@ -273,7 +273,7 @@ val greeting = "hello";
 String.size greeting;
 > val it = 5 : int
 Sys.planEx "0";
-> val it = "val it = String.size \"hello\"" : string
+> val it = "val it = #size String \"hello\"" : string
 
 (*) An atomic boolean from a previous compile unit is inlined.
 val flag = true;
