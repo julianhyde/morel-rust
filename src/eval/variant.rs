@@ -245,10 +245,11 @@ pub(crate) fn constant(arg: Val) -> Val {
             Type::Data("order".to_string(), vec![]),
             Val::Order(Order(Ordering::Greater)),
         ),
-        _ => variant_of(
-            Type::Named(vec![], name.clone()),
-            Val::Constructor(0, Box::new(Val::Unit)),
-        ),
+        // Unknown constructor: store the name in `Type::Named` and use
+        // `Val::Unit` as the value. Pretty-printing of `Type::Named`
+        // emits the name. Full support requires a runtime constructor
+        // table linking names to their parent datatypes.
+        _ => variant_of(Type::Named(vec![], name.clone()), Val::Unit),
     }
 }
 
@@ -256,7 +257,8 @@ pub(crate) fn constant(arg: Val) -> Val {
 /// unary constructor of a built-in datatype, identified by name and
 /// payload variant. Supports `SOME` (option), `INL`/`INR` (either),
 /// and `DESC` (descending). Unknown names fall back to a placeholder
-/// representation that pretty-prints crudely.
+/// representation that pretty-prints the constructor name and the
+/// payload variant as `NAME payload`.
 pub(crate) fn construct(arg: Val) -> Val {
     use crate::eval::val::DESC_ORDINAL;
 
@@ -270,31 +272,41 @@ pub(crate) fn construct(arg: Val) -> Val {
         other => panic!("Expected string name, got {:?}", other),
     };
     let payload = iter.next().unwrap();
-    let (inner_type, inner_val) = match payload {
-        Val::Variant(boxed) => *boxed,
-        other => panic!("Expected variant payload, got {:?}", other),
-    };
     match name.as_str() {
-        "SOME" => variant_of(
-            Type::Data("option".to_string(), vec![inner_type]),
-            Val::Some(Box::new(inner_val)),
-        ),
-        "INL" => variant_of(
-            Type::Data("either".to_string(), vec![inner_type, fresh_var()]),
-            Val::Inl(Box::new(inner_val)),
-        ),
-        "INR" => variant_of(
-            Type::Data("either".to_string(), vec![fresh_var(), inner_type]),
-            Val::Inr(Box::new(inner_val)),
-        ),
-        "DESC" => variant_of(
-            Type::Data("descending".to_string(), vec![inner_type]),
-            Val::Constructor(DESC_ORDINAL, Box::new(inner_val)),
-        ),
-        _ => variant_of(
-            Type::Named(vec![], name.clone()),
-            Val::Constructor(0, Box::new(inner_val)),
-        ),
+        "SOME" | "INL" | "INR" | "DESC" => {
+            let (inner_type, inner_val) = match payload {
+                Val::Variant(boxed) => *boxed,
+                other => panic!("Expected variant payload, got {:?}", other),
+            };
+            match name.as_str() {
+                "SOME" => variant_of(
+                    Type::Data("option".to_string(), vec![inner_type]),
+                    Val::Some(Box::new(inner_val)),
+                ),
+                "INL" => variant_of(
+                    Type::Data(
+                        "either".to_string(),
+                        vec![inner_type, fresh_var()],
+                    ),
+                    Val::Inl(Box::new(inner_val)),
+                ),
+                "INR" => variant_of(
+                    Type::Data(
+                        "either".to_string(),
+                        vec![fresh_var(), inner_type],
+                    ),
+                    Val::Inr(Box::new(inner_val)),
+                ),
+                "DESC" => variant_of(
+                    Type::Data("descending".to_string(), vec![inner_type]),
+                    Val::Constructor(DESC_ORDINAL, Box::new(inner_val)),
+                ),
+                _ => unreachable!(),
+            }
+        }
+        // Unknown constructor: keep the payload wrapped as a variant so
+        // its inner type/value print recursively in the fallback display.
+        _ => variant_of(Type::Named(vec![], name.clone()), payload),
     }
 }
 
@@ -422,9 +434,28 @@ fn append(buf: &mut String, inner_type: &Type, inner_val: &Val) {
             }
             buf.push(']');
         }
-        // CONSTANT / CONSTRUCT for arbitrary named datatypes — for now
-        // these defer to a placeholder; full support requires datatype
-        // lookup in the type system.
+        // Unknown named types: CONSTANT (Val::Unit) or CONSTRUCT
+        // (Val::Variant payload). We don't have full datatype lookup,
+        // so emit `CONSTANT "name"` / `CONSTRUCT ("name", payload)`.
+        Type::Named(_, name) => match inner_val {
+            Val::Unit => {
+                buf.push_str("CONSTANT \"");
+                buf.push_str(name);
+                buf.push('"');
+            }
+            Val::Variant(boxed) => {
+                let (payload_type, payload_val) = boxed.as_ref();
+                buf.push_str("CONSTRUCT (\"");
+                buf.push_str(name);
+                buf.push_str("\", ");
+                append(buf, payload_type, payload_val);
+                buf.push(')');
+            }
+            _ => panic!(
+                "Variant.print: unexpected value {:?} for named type {:?}",
+                inner_val, name
+            ),
+        },
         _ => panic!(
             "Variant.print: unsupported inner type {:?} for value {:?}",
             inner_type, inner_val

@@ -444,10 +444,38 @@ impl Pretty {
                     value.expect_list(),
                 )?;
             }
-            Type::Named(_, _) => {
-                // For arbitrary named types we don't have rich display
-                // logic; print the value via its `Display` impl.
-                write!(buf, "{}", value)?;
+            Type::Named(_, name) => {
+                // For arbitrary named types (used as a placeholder for
+                // unknown `CONSTANT`/`CONSTRUCT` constructors), `name`
+                // is the constructor name and the value is either:
+                //   - `Val::Unit` for a nullary `CONSTANT`,
+                //   - a `Val::Variant` payload for a unary `CONSTRUCT`,
+                //     printed recursively with its own inner type, so
+                //     nested `CONSTANT`/`CONSTRUCT` round-trip cleanly.
+                self.pretty_raw(buf, indent, line_end, depth, name)?;
+                match value {
+                    Val::Unit => {}
+                    Val::Variant(boxed) => {
+                        buf.push(' ');
+                        let need_parens =
+                            !matches!(boxed.0, Type::Primitive(_));
+                        if need_parens {
+                            buf.push('(');
+                        }
+                        let (inner_type, inner_val) = boxed.as_ref();
+                        self.pretty1(
+                            buf, indent, line_end, depth, inner_type,
+                            inner_val, 0, 0,
+                        )?;
+                        if need_parens {
+                            buf.push(')');
+                        }
+                    }
+                    _ => {
+                        buf.push(' ');
+                        write!(buf, "{}", value)?;
+                    }
+                }
             }
             Type::Primitive(prim_type) => {
                 self.pretty_primitive(buf, prim_type, value)?;
