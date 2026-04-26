@@ -595,21 +595,44 @@ impl<'a> Compiler<'a> {
         pcx: Option<&Context>,
         expr: &Expr,
     ) -> Code {
-        if let Expr::Case(_, scrut, matches, span) = expr {
-            let scrut_code = self.compile_expr(cx, pcx, scrut);
-            let mut codes = vec![scrut_code];
-            for m in matches {
-                let pat_code = self.compile_pat(cx, &m.pat);
-                let body_code = self.compile_tail_expr(cx, pcx, &m.expr);
-                codes.push(pat_code);
-                codes.push(body_code);
+        match expr {
+            Expr::Case(_, scrut, matches, span) => {
+                let scrut_code = self.compile_expr(cx, pcx, scrut);
+                let mut codes = vec![scrut_code];
+                for m in matches {
+                    let pat_code = self.compile_pat(cx, &m.pat);
+                    let body_code = self.compile_tail_expr(cx, pcx, &m.expr);
+                    codes.push(pat_code);
+                    codes.push(body_code);
+                }
+                Code::new_match(&codes, Some(span.clone()))
             }
-            Code::new_match(&codes, Some(span.clone()))
-        } else {
-            // Compile normally, then convert any top-level Apply-like
-            // Code variant into TailApply.
-            let code = self.compile_expr(cx, pcx, expr);
-            Self::tailify(code)
+            Expr::Let(_, decl_list, body) => {
+                let mut bindings = Vec::new();
+                let mut match_codes = Vec::new();
+                for d in decl_list {
+                    self.compile_decl(
+                        cx,
+                        d,
+                        None,
+                        &HashSet::new(),
+                        &mut match_codes,
+                        bindings.as_mut(),
+                        None,
+                    );
+                }
+                let cx1 = cx.bind_all(&bindings);
+                // Body is in tail position relative to the enclosing
+                // expression.
+                let body_code = self.compile_tail_expr(&cx1, Some(cx), body);
+                Code::new_let(&match_codes, body_code)
+            }
+            _ => {
+                // Compile normally, then convert any top-level Apply-like
+                // Code variant into TailApply.
+                let code = self.compile_expr(cx, pcx, expr);
+                Self::tailify(code)
+            }
         }
     }
 

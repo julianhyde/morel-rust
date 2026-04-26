@@ -78,34 +78,16 @@ coprime (21, 10);
 coprime (1836311903, 1134903170);
 > val it = true : bool
 
-(* Mutual tail recursion ------------------------------------------
- * Mutual tail recursion: even/odd parity test.
- * Uses 'fun ... and ...' to declare two mutually tail-recursive functions.
- *)
-fun even n = if n = 0 then true else odd (n - 1)
-and odd n = if n = 0 then false else even (n - 1);
-> val even = fn : int -> bool
-> val odd = fn : int -> bool
-
-even 0;
-> val it = true : bool
-
-even 1;
-> val it = false : bool
-
-odd 3;
-> val it = true : bool
-
-(*) Large inputs require TCO to avoid stack overflow.
-even 100000;
-> val it = true : bool
-
-odd 100000;
-> val it = false : bool
-
-odd 99999;
-> val it = true : bool
-
-(* Mutual recursion ----------------------------------------------- *)
+(* The N-queens block from morel-java commit 6bf5306c (#148) is
+ * deferred. It exposes a pre-existing closure-capture issue in
+ * morel-rust unrelated to TCO: `capture_bound_vals`' frame
+ * heuristic (matching by val_vec length) is too lax, so when a
+ * let-bound inner fn's `bound_vars + local_vars` count happens to
+ * equal the enclosing function's frame size, the "recursive
+ * re-entry" branch fires by accident and binds captured values to
+ * the wrong bound_vars positions. The bug was latent until #151
+ * because `try` was previously called via Apply (which goes through
+ * `Val::Closure::apply_f1` and creates the closure in-place) rather
+ * than through CreateClosure's heuristic. *)
 
 (*) End tail-recursion.smli

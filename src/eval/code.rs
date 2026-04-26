@@ -834,11 +834,16 @@ impl Code {
                 result_code.eval_f0(r, f)
             }
             Code::Link(slot, _name) => {
-                // Resolve via the shell-wide LinkTable and return as a
-                // Val::Code so callers can apply it (used by Code::TailApply).
+                // Resolve via the shell-wide LinkTable and evaluate the
+                // linked code in the current frame so that
+                // [`Code::CreateClosure`] (for capturing functions)
+                // produces a [`Val::Closure`] with captured bound values
+                // before [`Code::TailApply`] wraps it in a tail-call
+                // sentinel. For non-capturing [`Code::Fn`] this returns
+                // [`Val::Code`].
                 let code = r.shell.link_table.borrow().get(*slot);
                 if let Some(code) = code {
-                    Ok(Val::Code(code))
+                    code.eval_f0(r, f)
                 } else {
                     panic!("Link slot {} not filled", slot)
                 }
@@ -1028,8 +1033,21 @@ impl Code {
             }
             Code::TailApply(fn_code, arg_code) => {
                 // Tail-call: package fn and arg as a sentinel that the
-                // trampoline in `Frame::create_bind_and_eval` will bounce on.
-                let fn_ = fn_code.eval_f0(r, f)?;
+                // trampoline in `Frame::create_bind_and_eval` will bounce
+                // on. Resolve `Val::Code(Link)` here in the current frame,
+                // because the trampoline does not have access to the
+                // outer frame needed by [`Code::CreateClosure`] to capture
+                // its bound values.
+                let mut fn_ = fn_code.eval_f0(r, f)?;
+                while let Val::Code(code) = &fn_
+                    && let Code::Link(slot, _) = code.as_ref()
+                {
+                    let inner = r.shell.link_table.borrow().get(*slot);
+                    match inner {
+                        Some(inner) => fn_ = inner.eval_f0(r, f)?,
+                        None => break,
+                    }
+                }
                 let arg = arg_code.eval_f0(r, f)?;
                 Ok(Val::TailCall(Box::new(fn_), Box::new(arg)))
             }
