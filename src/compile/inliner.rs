@@ -132,6 +132,7 @@ impl Expr {
                 Expr::Case(t.clone(), expr2, matches2, span.clone())
             }
             Expr::Current(_) => self.clone(),
+            Expr::Extent(_) => self.clone(),
             Expr::Fn(t, match_list, span) => {
                 let mut match_list2 = Vec::new();
                 for m in match_list {

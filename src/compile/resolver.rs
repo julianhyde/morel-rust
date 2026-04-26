@@ -1527,6 +1527,21 @@ impl<'a> Resolver<'a> {
                 let singleton = CoreExpr::List(list_type, vec![resolved_expr]);
                 builder.scan_with_condition(resolved_pat, singleton, None);
             }
+            AstStepKind::ScanExtent(pat) => {
+                // `from p` (or `join p`) with no explicit source: the
+                // variable `p` is unbounded. Lower to a scan over an
+                // `Extent(t)` placeholder; predicate inversion (Phase
+                // 1+) replaces the placeholder with a real generator
+                // derived from surrounding `where` predicates. Until
+                // then, programs that reach code generation containing
+                // an Extent are rejected with a clean error.
+                let resolved_pat = self.resolve_pat(pat);
+                let elem_type = resolved_pat.type_();
+                let extent_type =
+                    Box::new(Type::Bag(Box::new(elem_type.as_ref().clone())));
+                let extent = CoreExpr::Extent(extent_type);
+                builder.scan_with_condition(resolved_pat, extent, None);
+            }
             AstStepKind::Skip(expr) => {
                 let resolved_expr = self.resolve_expr(expr);
                 builder.skip(resolved_expr);
@@ -1578,11 +1593,6 @@ impl<'a> Resolver<'a> {
             AstStepKind::Yield(expr) => {
                 let resolved_expr = self.resolve_expr(expr);
                 builder.yield_(resolved_expr);
-            }
-            _ => {
-                // For now, fall back to the old resolve_step for unsupported
-                // step types.
-                todo!("resolve_from_step: {:?}", step.kind)
             }
         }
     }

@@ -2261,8 +2261,8 @@ impl TypeResolver {
                 field_vars,
                 steps2,
             ),
-            StepKind::ScanExtent(pat) => self.deduce_scan_step_type(
-                p, pat, true, None, &None, &step.span, field_vars, steps2,
+            StepKind::ScanExtent(pat) => self.deduce_scan_extent_step_type(
+                p, pat, &step.span, field_vars, steps2,
             ),
             StepKind::Skip(expr) => {
                 let v = self.unifier.variable();
@@ -2403,6 +2403,50 @@ impl TypeResolver {
 
         let mut triple = Triple::new(p.root_env.clone(), env4, v, Some(c));
         triple.ordered = scan_ordered;
+        Ok(triple)
+    }
+
+    /// Deduces the type of a scan-extent step — `from p` (or
+    /// `join p`) with no explicit source. The variable `p` is
+    /// unbounded; later phases of compilation invert any
+    /// surrounding `where` predicates to derive a generator. For
+    /// now we just allocate a fresh type variable for the pattern
+    /// and re-emit the same kind in the typed step list.
+    fn deduce_scan_extent_step_type(
+        &mut self,
+        p: &Triple,
+        pat: &Pat,
+        span: &Span,
+        field_vars: &mut Vec<(String, Var)>,
+        steps: &mut Vec<Step>,
+    ) -> Result<Triple, Error> {
+        let v0 = self.variable();
+        let mut term_map = Vec::new();
+        let pat2 = self.deduce_pat_type(&*p.env, pat, &mut term_map, &v0);
+
+        let mut env_builder = p.env.builder();
+        for (name, term) in &term_map {
+            env_builder.push(name.clone(), term.clone());
+            let v = self.term_to_variable(term);
+            self.reg_expr(&ExprKind::Identifier(name.clone()), span, None, &v);
+            field_vars.push((name.clone(), v));
+        }
+        let v = self.field_var(field_vars, true);
+        let is_first_scan = term_map.len() == field_vars.len();
+        let v_current = if is_first_scan { v0 } else { v };
+        env_builder.push("current".to_string(), Term::Variable(v_current));
+        let env4 = env_builder.build();
+
+        // Output collection's element type is `v`; output collection
+        // kind defaults to bag (the natural choice for an enumerated
+        // extent — `from p where p > 0 andalso p < 5` is a bag).
+        let c = self.unifier.variable();
+        self.bag_term(Term::Variable(v), &c);
+
+        steps.push(StepKind::ScanExtent(Box::new(pat2)).spanned(span));
+
+        let mut triple = Triple::new(p.root_env.clone(), env4, v, Some(c));
+        triple.ordered = false;
         Ok(triple)
     }
 
