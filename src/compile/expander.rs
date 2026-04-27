@@ -28,7 +28,9 @@
 //! Phase 1 doesn't need (no outer-scope filtering, no recursive
 //! function inlining, no case/exists/string-prefix).
 
-use crate::compile::core::{Decl, Expr, Match, Pat, Step, StepKind, ValBind};
+use crate::compile::core::{
+    Decl, Expr, Match, Pat, Step, StepEnv, StepKind, ValBind,
+};
 use crate::compile::generator::Cache;
 use crate::compile::generators::{maybe_generator, split_conjuncts};
 use crate::compile::library::BuiltInFunction;
@@ -257,44 +259,77 @@ fn expand_steps(steps: Vec<Step>, env: &FnEnv) -> Vec<Step> {
     let mut cache = Cache::new();
     derive_generators(&steps, &mut cache, env);
 
-    // Phase B: rebuild the steps. Replace each Scan-over-Extent with
-    // the best generator's expression. Decompose every Where into
-    // conjuncts and drop those whose text appears in a sealed
-    // generator's provenance. Other steps pass through.
+    // Phase B: collect every Scan-over-Extent's (pat, env) pair in
+    // the order they appear in `steps`, then topologically sort by
+    // generator dependencies. A scan whose generator references
+    // another unbounded pattern must come after that pattern's
+    // scan. Without this, e.g.
+    //   `from dno, name, v where v elem scott.depts
+    //                       where dno = v.deptno`
+    // would emit `Scan(dno, [v.deptno])` before `v` is bound.
+    let extent_scans: Vec<(Pat, StepEnv)> = steps
+        .iter()
+        .filter_map(|s| match &s.kind {
+            StepKind::Scan(p, source, _)
+                if matches!(source.as_ref(), Expr::Extent(_)) =>
+            {
+                Some(((**p).clone(), s.env.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let ordered_scans = topo_order(&extent_scans, &cache);
+
+    // Phase C: rebuild the steps. Replace each Scan-over-Extent
+    // with the next entry from `ordered_scans` and the best
+    // generator's expression. Decompose every Where into conjuncts
+    // and drop those whose text appears in a sealed generator's
+    // provenance. Other steps pass through.
     let provenance: Vec<Expr> =
         cache.sealed_provenance().into_iter().cloned().collect();
     let mut out = Vec::with_capacity(steps.len());
+    let mut scan_idx = 0;
     for step in steps {
         match step.kind {
             StepKind::Scan(pat, source, cond)
                 if matches!(source.as_ref(), Expr::Extent(_)) =>
             {
-                let Pat::Identifier(_, n) = pat.as_ref() else {
-                    // Phase 1 only handles plain identifier patterns
-                    // for unbounded vars. Compound patterns will be
-                    // added in later phases.
+                if !matches!(pat.as_ref(), Pat::Identifier(_, _))
+                    || scan_idx >= ordered_scans.len()
+                {
+                    // Compound patterns and overflow positions are
+                    // passed through unchanged; the compiler will
+                    // emit the clean "unbounded variable" error.
                     out.push(Step::new(
                         StepKind::Scan(pat, source, cond),
                         step.env,
                     ));
                     continue;
+                }
+                let (next_pat, next_env) = ordered_scans[scan_idx].clone();
+                scan_idx += 1;
+                let name = match &next_pat {
+                    Pat::Identifier(_, n) => n.clone(),
+                    _ => unreachable!(),
                 };
-                let name = n.clone();
                 if let Some(generator) = cache.best(&name) {
                     out.push(Step::new(
                         StepKind::Scan(
-                            pat,
+                            Box::new(next_pat),
                             Box::new(generator.exp.clone()),
                             cond,
                         ),
-                        step.env,
+                        next_env,
                     ));
                 } else {
-                    // No generator — leave the Extent in place; the
-                    // compiler will emit the clean error.
+                    let extent = Expr::Extent(next_pat.type_());
                     out.push(Step::new(
-                        StepKind::Scan(pat, source, cond),
-                        step.env,
+                        StepKind::Scan(
+                            Box::new(next_pat),
+                            Box::new(extent),
+                            cond,
+                        ),
+                        next_env,
                     ));
                 }
             }
@@ -320,6 +355,65 @@ fn expand_steps(steps: Vec<Step>, env: &FnEnv) -> Vec<Step> {
         }
     }
     out
+}
+
+/// Topologically sorts the unbounded scans by generator
+/// dependency: a scan whose generator references pattern `q` is
+/// emitted *after* `q`'s own scan. Cycles fall back to the original
+/// order for the cycle members.
+fn topo_order(
+    extent_scans: &[(Pat, StepEnv)],
+    cache: &Cache,
+) -> Vec<(Pat, StepEnv)> {
+    use std::collections::HashSet;
+    let names: Vec<String> = extent_scans
+        .iter()
+        .filter_map(|(p, _)| match p {
+            Pat::Identifier(_, n) => Some(n.clone()),
+            _ => None,
+        })
+        .collect();
+    let unbounded: HashSet<&str> = names.iter().map(String::as_str).collect();
+    let mut emitted: HashSet<String> = HashSet::new();
+    let mut order: Vec<(Pat, StepEnv)> = Vec::with_capacity(extent_scans.len());
+    let mut remaining: Vec<(Pat, StepEnv)> = extent_scans.to_vec();
+    let mut last_size = remaining.len() + 1;
+    while !remaining.is_empty() && remaining.len() < last_size {
+        last_size = remaining.len();
+        let mut still: Vec<(Pat, StepEnv)> = Vec::new();
+        for (p, e) in remaining.drain(..) {
+            let Pat::Identifier(_, ref n) = p else {
+                order.push((p, e));
+                continue;
+            };
+            let n = n.clone();
+            // The scan is ready if every free pattern of its
+            // generator is either NOT an unbounded scan in this
+            // from (i.e. outer-scope or a bounded scan) or has
+            // already been emitted.
+            let ready = match cache.best(&n) {
+                Some(g) => g.free_pats.iter().all(|fp| {
+                    !unbounded.contains(fp.as_str())
+                        || emitted.contains(fp.as_str())
+                }),
+                None => true,
+            };
+            if ready {
+                emitted.insert(n);
+                order.push((p, e));
+            } else {
+                still.push((p, e));
+            }
+        }
+        remaining = still;
+    }
+    // Anything left is part of a cycle (or has missing deps);
+    // append it in original order so we at least preserve the
+    // surface arrangement.
+    for entry in remaining {
+        order.push(entry);
+    }
+    order
 }
 
 fn derive_generators(steps: &[Step], cache: &mut Cache, env: &FnEnv) {
