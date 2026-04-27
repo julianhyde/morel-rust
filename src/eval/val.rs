@@ -101,9 +101,12 @@ pub enum Val {
     /// `Time(nanoseconds)` represents a `time` value as a 64-bit signed
     /// nanosecond count from the Unix epoch (or as a duration).
     Time(i64),
-    /// `Date(nanoseconds)` represents a `date` value as a 64-bit signed
-    /// nanosecond count from the Unix epoch.
-    Date(i64),
+    /// `Date(utc_nanos, offset_secs)` represents a `date` value: an
+    /// instant (UTC nanoseconds since the Unix epoch) plus a local
+    /// timezone offset in seconds east of UTC. Field accessors like
+    /// `Date.year` use the local broken-down time (`utc_nanos +
+    /// offset_secs * 1e9`).
+    Date(i64, i32),
     List(Vec<Val>),
     /// Built-in function.
     Fn(BuiltInFunction),
@@ -269,9 +272,9 @@ impl Val {
         }
     }
 
-    pub(crate) fn expect_date(&self) -> i64 {
+    pub(crate) fn expect_date(&self) -> (i64, i32) {
         match self {
-            Val::Date(t) => *t,
+            Val::Date(t, o) => (*t, *o),
             _ => panic!("Expected date"),
         }
     }
@@ -371,7 +374,7 @@ impl Display for Val {
                     write!(f, "#{} {}", ordinal, v)
                 }
             }
-            Val::Date(d) => write!(f, "{}", date::format_iso(*d)),
+            Val::Date(d, o) => write!(f, "{}", date::format_iso(*d, *o)),
             Val::Fn(func) => write!(f, "{:?}", func),
             Val::Inl(v) => write!(f, "INL {}", v),
             Val::Inr(v) => write!(f, "INR {}", v),
@@ -459,9 +462,10 @@ impl Hash for Val {
                 22.hash(state);
                 t.hash(state);
             }
-            Val::Date(d) => {
+            Val::Date(d, o) => {
                 23.hash(state);
                 d.hash(state);
+                o.hash(state);
             }
             Val::List(vs) => {
                 7.hash(state);

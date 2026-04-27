@@ -2242,7 +2242,9 @@ impl EagerF1 {
             CharChr => Char::chr(a0.expect_int(), span.unwrap()),
             CharPred => Char::pred(a0.expect_char(), span.unwrap()),
             CharSucc => Char::succ(a0.expect_char(), span.unwrap()),
-            DateDate => date::make_date(a0.expect_list(), span.unwrap()),
+            DateDate => {
+                date::make_date(a0.expect_list(), span.unwrap(), r.session)
+            }
             DateFromTimeLocal => {
                 Ok(date::from_time_local(a0.expect_time(), r.session))
             }
@@ -2521,19 +2523,52 @@ impl Eager1 {
             CharToLower => Val::Char(Char::to_lower(a0.expect_char())),
             CharToString => Val::String(Char::to_string(a0.expect_char())),
             CharToUpper => Val::Char(Char::to_upper(a0.expect_char())),
-            DateDay => date::day(a0.expect_date()),
+            DateDay => {
+                let (n, o) = a0.expect_date();
+                date::day(n, o)
+            }
             DateFromString => date::from_string(&a0.expect_string()),
             DateFromTimeUniv => date::from_time_univ(a0.expect_time()),
-            DateHour => date::hour(a0.expect_date()),
-            DateIsDst => date::is_dst(a0.expect_date()),
-            DateMinute => date::minute(a0.expect_date()),
-            DateMonthFn => date::month(a0.expect_date()),
-            DateSecond => date::second(a0.expect_date()),
-            DateToString => date::to_string(a0.expect_date()),
-            DateToTime => date::to_time(a0.expect_date()),
-            DateWeekDay => date::week_day(a0.expect_date()),
-            DateYear => date::year(a0.expect_date()),
-            DateYearDay => date::year_day(a0.expect_date()),
+            DateHour => {
+                let (n, o) = a0.expect_date();
+                date::hour(n, o)
+            }
+            DateIsDst => {
+                let (n, o) = a0.expect_date();
+                date::is_dst(n, o)
+            }
+            DateMinute => {
+                let (n, o) = a0.expect_date();
+                date::minute(n, o)
+            }
+            DateMonthFn => {
+                let (n, o) = a0.expect_date();
+                date::month(n, o)
+            }
+            DateSecond => {
+                let (n, o) = a0.expect_date();
+                date::second(n, o)
+            }
+            DateToString => {
+                let (n, o) = a0.expect_date();
+                date::to_string(n, o)
+            }
+            DateToTime => {
+                let (n, o) = a0.expect_date();
+                date::to_time(n, o)
+            }
+            DateWeekDay => {
+                let (n, o) = a0.expect_date();
+                date::week_day(n, o)
+            }
+            DateYear => {
+                let (n, o) = a0.expect_date();
+                date::year(n, o)
+            }
+            DateYearDay => {
+                let (n, o) = a0.expect_date();
+                date::year_day(n, o)
+            }
             DescendingDesc => Val::Constructor(val::DESC_ORDINAL, Box::new(a0)),
             EitherAsLeft => Either::as_left(&a0),
             EitherAsRight => Either::as_right(&a0),
@@ -2924,8 +2959,15 @@ impl Eager2 {
                 &a0.expect_string(),
                 a1.expect_char(),
             )),
-            DateCompare => date::compare(a0.expect_date(), a1.expect_date()),
-            DateFmt => date::fmt(&a0.expect_string(), a1.expect_date()),
+            DateCompare => {
+                let (n0, _) = a0.expect_date();
+                let (n1, _) = a1.expect_date();
+                date::compare(n0, n1)
+            }
+            DateFmt => {
+                let (n, o) = a1.expect_date();
+                date::fmt(&a0.expect_string(), n, o)
+            }
             FnConst => a0,
             FnEqual => Val::Bool(a0 == a1),
             FnNotEqual => Val::Bool(a0 != a1),

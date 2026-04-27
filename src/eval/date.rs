@@ -17,24 +17,28 @@
 
 //! Implementation of the `Date` structure of the SML Basis Library.
 //!
-//! Date values are stored as 64-bit signed nanosecond counts since
-//! the Unix epoch (1970-01-01T00:00:00Z), the same representation
-//! as `Time` values.
+//! Date values are stored as `(utc_nanos, offset_secs)` — an instant
+//! (nanoseconds since the Unix epoch) plus a local timezone offset in
+//! seconds east of UTC. Field accessors like `Date.year` use the
+//! local broken-down time (`utc_nanos + offset_secs * 1e9`).
 
 use crate::compile::library::BuiltInExn;
 use crate::compile::span::Span;
 use crate::eval::order::Order;
 use crate::eval::session::Session;
 use crate::eval::val::{
-    self, MONTH_APR_ORDINAL, MONTH_AUG_ORDINAL, MONTH_DEC_ORDINAL,
-    MONTH_FEB_ORDINAL, MONTH_JAN_ORDINAL, MONTH_JUL_ORDINAL, MONTH_JUN_ORDINAL,
-    MONTH_MAR_ORDINAL, MONTH_MAY_ORDINAL, MONTH_NOV_ORDINAL, MONTH_OCT_ORDINAL,
-    MONTH_SEP_ORDINAL, Val, WEEKDAY_FRI_ORDINAL, WEEKDAY_MON_ORDINAL,
-    WEEKDAY_SAT_ORDINAL, WEEKDAY_SUN_ORDINAL, WEEKDAY_THU_ORDINAL,
-    WEEKDAY_TUE_ORDINAL, WEEKDAY_WED_ORDINAL,
+    MONTH_APR_ORDINAL, MONTH_AUG_ORDINAL, MONTH_DEC_ORDINAL, MONTH_FEB_ORDINAL,
+    MONTH_JAN_ORDINAL, MONTH_JUL_ORDINAL, MONTH_JUN_ORDINAL, MONTH_MAR_ORDINAL,
+    MONTH_MAY_ORDINAL, MONTH_NOV_ORDINAL, MONTH_OCT_ORDINAL, MONTH_SEP_ORDINAL,
+    Val, WEEKDAY_FRI_ORDINAL, WEEKDAY_MON_ORDINAL, WEEKDAY_SAT_ORDINAL,
+    WEEKDAY_SUN_ORDINAL, WEEKDAY_THU_ORDINAL, WEEKDAY_TUE_ORDINAL,
+    WEEKDAY_WED_ORDINAL,
 };
 use crate::shell::main::MorelError;
 use crate::shell::prop::{Prop, PropVal};
+use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono_tz::Tz;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const NS_PER_SEC: i64 = 1_000_000_000;
 const SECS_PER_DAY: i64 = 86_400;
@@ -183,17 +187,19 @@ fn day_of_year(y: i32, m: u32, d: u32) -> u32 {
     total + d - 1
 }
 
-/// Decomposes nanoseconds since epoch into broken-down UTC fields.
-fn break_down(nanos: i64) -> Broken {
-    let mut secs = nanos.div_euclid(NS_PER_SEC);
-    let mut days = secs.div_euclid(SECS_PER_DAY);
-    secs = secs.rem_euclid(SECS_PER_DAY);
-    let hour = (secs / SECS_PER_HOUR) as u32;
-    let minute = ((secs % SECS_PER_HOUR) / SECS_PER_MIN) as u32;
-    let second = (secs % SECS_PER_MIN) as u32;
+/// Decomposes UTC nanoseconds plus an offset into broken-down local
+/// fields.
+fn break_down(utc_nanos: i64, offset_secs: i32) -> Broken {
+    let local_nanos =
+        utc_nanos.wrapping_add((offset_secs as i64).wrapping_mul(NS_PER_SEC));
+    let secs = local_nanos.div_euclid(NS_PER_SEC);
+    let days = secs.div_euclid(SECS_PER_DAY);
+    let day_secs = secs.rem_euclid(SECS_PER_DAY);
+    let hour = (day_secs / SECS_PER_HOUR) as u32;
+    let minute = ((day_secs % SECS_PER_HOUR) / SECS_PER_MIN) as u32;
+    let second = (day_secs % SECS_PER_MIN) as u32;
     // Compute weekday: 1970-01-01 was a Thursday (weekday = 3 with Mon=0).
     let weekday = ((days.rem_euclid(7) + 3).rem_euclid(7)) as u32;
-    let _ = &mut days;
     let (y, m, d) = civil_from_days(days);
     let yearday = day_of_year(y, m, d);
     Broken {
@@ -208,87 +214,142 @@ fn break_down(nanos: i64) -> Broken {
     }
 }
 
-/// Formats a date value as ISO-8601 (e.g. `1970-01-01T00:00Z`).
-pub(crate) fn format_iso(nanos: i64) -> String {
-    let b = break_down(nanos);
+/// Formats an offset (seconds east of UTC) as an ISO-8601 suffix:
+/// `Z` for zero, otherwise `+HH:MM` or `-HH:MM`.
+fn format_offset(offset_secs: i32) -> String {
+    if offset_secs == 0 {
+        "Z".to_string()
+    } else {
+        let sign = if offset_secs < 0 { '-' } else { '+' };
+        let abs = offset_secs.unsigned_abs();
+        let h = abs / 3600;
+        let m = (abs % 3600) / 60;
+        format!("{}{:02}:{:02}", sign, h, m)
+    }
+}
+
+/// Formats a date value as ISO-8601 (e.g. `1970-01-01T00:00Z` or
+/// `1969-12-31T19:00-05:00`).
+pub(crate) fn format_iso(utc_nanos: i64, offset_secs: i32) -> String {
+    let b = break_down(utc_nanos, offset_secs);
+    let suffix = format_offset(offset_secs);
     if b.second == 0 {
         format!(
-            "{:04}-{:02}-{:02}T{:02}:{:02}Z",
-            b.year, b.month, b.day, b.hour, b.minute
+            "{:04}-{:02}-{:02}T{:02}:{:02}{}",
+            b.year, b.month, b.day, b.hour, b.minute, suffix
         )
     } else {
         format!(
-            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-            b.year, b.month, b.day, b.hour, b.minute, b.second
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}",
+            b.year, b.month, b.day, b.hour, b.minute, b.second, suffix
         )
     }
 }
 
+/// Reads the `timeZone` property as a `chrono_tz::Tz`. Defaults to UTC
+/// when unset or unparseable.
+fn session_tz(session: &Session) -> Tz {
+    if let Some(PropVal::String(s)) =
+        session.config.get_optional(Prop::TimeZone)
+        && let Ok(tz) = s.parse::<Tz>()
+    {
+        return tz;
+    }
+    Tz::UTC
+}
+
+/// Returns the offset (seconds east of UTC) for the given UTC instant
+/// in the given timezone.
+fn tz_offset_at(tz: Tz, utc_nanos: i64) -> i32 {
+    use chrono::offset::Offset;
+    let secs = utc_nanos.div_euclid(NS_PER_SEC);
+    let nsec = utc_nanos.rem_euclid(NS_PER_SEC) as u32;
+    let dt: DateTime<Utc> = Utc
+        .timestamp_opt(secs, nsec)
+        .single()
+        .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
+    let local = dt.with_timezone(&tz);
+    local.offset().fix().local_minus_utc()
+}
+
 /// `Date.fromTimeUniv t`: converts a time to a UTC date.
 pub(crate) fn from_time_univ(t: i64) -> Val {
-    Val::Date(t)
+    Val::Date(t, 0)
 }
 
-/// `Date.fromTimeLocal t`: converts a time to a local date. With
-/// `timeZone` property = "UTC", same as `fromTimeUniv`.
-pub(crate) fn from_time_local(t: i64, _session: &Session) -> Val {
-    // For now, we only support UTC.
-    Val::Date(t)
+/// `Date.fromTimeLocal t`: converts a time to a local date in the
+/// timezone given by the `timeZone` property.
+pub(crate) fn from_time_local(t: i64, session: &Session) -> Val {
+    let tz = session_tz(session);
+    Val::Date(t, tz_offset_at(tz, t))
 }
 
-/// `Date.toTime d`: converts a date to a time.
-pub(crate) fn to_time(d: i64) -> Val {
-    Val::Time(d)
+/// `Date.toTime d`: converts a date to a time (the underlying UTC
+/// instant).
+pub(crate) fn to_time(utc_nanos: i64, _offset_secs: i32) -> Val {
+    Val::Time(utc_nanos)
 }
 
-/// `Date.localOffset ()`: returns the local timezone offset as a time.
-pub(crate) fn local_offset(_session: &Session) -> Val {
-    // Only UTC supported.
-    Val::Time(0)
+/// `Date.localOffset ()`: returns the local timezone offset (UTC -
+/// local) as a positive duration. Per the SML basis spec, this is the
+/// offset to *add* to a UTC time to obtain local time, expressed as a
+/// non-negative magnitude. For zones west of UTC it is the absolute
+/// value of the offset.
+pub(crate) fn local_offset(session: &Session) -> Val {
+    let tz = session_tz(session);
+    let now_secs = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs() as i64,
+        Err(_) => 0,
+    };
+    let offset = tz_offset_at(tz, now_secs * NS_PER_SEC);
+    // SML: offset is non-negative, meaning "magnitude west of UTC" for
+    // western zones and 0 for UTC. We follow morel-java which returns
+    // the absolute value.
+    Val::Time((offset.unsigned_abs() as i64) * NS_PER_SEC)
 }
 
 /// `Date.year d`.
-pub(crate) fn year(d: i64) -> Val {
-    Val::Int(break_down(d).year)
+pub(crate) fn year(utc_nanos: i64, offset_secs: i32) -> Val {
+    Val::Int(break_down(utc_nanos, offset_secs).year)
 }
 
 /// `Date.month d`.
-pub(crate) fn month(d: i64) -> Val {
-    month_val(break_down(d).month)
+pub(crate) fn month(utc_nanos: i64, offset_secs: i32) -> Val {
+    month_val(break_down(utc_nanos, offset_secs).month)
 }
 
 /// `Date.day d`.
-pub(crate) fn day(d: i64) -> Val {
-    Val::Int(break_down(d).day as i32)
+pub(crate) fn day(utc_nanos: i64, offset_secs: i32) -> Val {
+    Val::Int(break_down(utc_nanos, offset_secs).day as i32)
 }
 
 /// `Date.hour d`.
-pub(crate) fn hour(d: i64) -> Val {
-    Val::Int(break_down(d).hour as i32)
+pub(crate) fn hour(utc_nanos: i64, offset_secs: i32) -> Val {
+    Val::Int(break_down(utc_nanos, offset_secs).hour as i32)
 }
 
 /// `Date.minute d`.
-pub(crate) fn minute(d: i64) -> Val {
-    Val::Int(break_down(d).minute as i32)
+pub(crate) fn minute(utc_nanos: i64, offset_secs: i32) -> Val {
+    Val::Int(break_down(utc_nanos, offset_secs).minute as i32)
 }
 
 /// `Date.second d`.
-pub(crate) fn second(d: i64) -> Val {
-    Val::Int(break_down(d).second as i32)
+pub(crate) fn second(utc_nanos: i64, offset_secs: i32) -> Val {
+    Val::Int(break_down(utc_nanos, offset_secs).second as i32)
 }
 
 /// `Date.weekDay d`.
-pub(crate) fn week_day(d: i64) -> Val {
-    weekday_val(break_down(d).weekday)
+pub(crate) fn week_day(utc_nanos: i64, offset_secs: i32) -> Val {
+    weekday_val(break_down(utc_nanos, offset_secs).weekday)
 }
 
 /// `Date.yearDay d`.
-pub(crate) fn year_day(d: i64) -> Val {
-    Val::Int(break_down(d).yearday as i32)
+pub(crate) fn year_day(utc_nanos: i64, offset_secs: i32) -> Val {
+    Val::Int(break_down(utc_nanos, offset_secs).yearday as i32)
 }
 
 /// `Date.isDst d`.
-pub(crate) fn is_dst(_d: i64) -> Val {
+pub(crate) fn is_dst(_utc_nanos: i64, _offset_secs: i32) -> Val {
     // NONE — DST information not available.
     Val::Unit
 }
@@ -299,10 +360,12 @@ pub(crate) fn compare(d1: i64, d2: i64) -> Val {
 }
 
 /// `Date.date {year, month, day, hour, minute, second, offset}`.
-/// The record is passed as a tuple of 7 values in field order:
-/// day, hour, minute, month, offset, second, year (alphabetical).
 /// Raises `Date` if any field is out of range.
-pub(crate) fn make_date(args: &[Val], span: &Span) -> Result<Val, MorelError> {
+pub(crate) fn make_date(
+    args: &[Val],
+    span: &Span,
+    session: &Session,
+) -> Result<Val, MorelError> {
     // Records sort fields alphabetically: day, hour, minute, month, offset,
     // second, year.
     assert_eq!(args.len(), 7);
@@ -327,22 +390,43 @@ pub(crate) fn make_date(args: &[Val], span: &Span) -> Result<Val, MorelError> {
     }
 
     let days = days_from_civil(year, m, day as u32);
-    let secs = days * SECS_PER_DAY
+    let local_secs = days * SECS_PER_DAY
         + hour as i64 * SECS_PER_HOUR
         + minute as i64 * SECS_PER_MIN
         + second as i64;
-    let mut nanos = secs * NS_PER_SEC;
-    // If offset is SOME t, subtract it (offset is east-of-UTC).
-    if let Val::Some(boxed) = offset {
-        let off = boxed.expect_time();
-        nanos -= off;
-    }
-    Ok(Val::Date(nanos))
+    let local_nanos = local_secs * NS_PER_SEC;
+
+    // Determine offset. If `offset` field is SOME t, use t directly
+    // (interpreted as east-of-UTC magnitude per SML convention).
+    // Otherwise use the session's timeZone property.
+    let offset_secs: i32 = if let Val::Some(boxed) = offset {
+        let off_nanos = boxed.expect_time();
+        (off_nanos / NS_PER_SEC) as i32
+    } else {
+        let tz = session_tz(session);
+        // Approximate: get offset at the local-as-utc instant.
+        let utc_guess = local_nanos;
+        // Use NaiveDate to find offset of the local datetime in tz.
+        let naive = NaiveDate::from_ymd_opt(year, m, day as u32)
+            .and_then(|d| {
+                d.and_hms_opt(hour as u32, minute as u32, second as u32)
+            })
+            .unwrap_or_default();
+        match tz.from_local_datetime(&naive).single() {
+            Some(local_dt) => {
+                use chrono::offset::Offset;
+                local_dt.offset().fix().local_minus_utc()
+            }
+            None => tz_offset_at(tz, utc_guess),
+        }
+    };
+    let utc_nanos = local_nanos - (offset_secs as i64) * NS_PER_SEC;
+    Ok(Val::Date(utc_nanos, offset_secs))
 }
 
 /// `Date.toString d`: e.g. `"Wed Dec 31 00:00:00 1969"`.
-pub(crate) fn to_string(d: i64) -> Val {
-    let b = break_down(d);
+pub(crate) fn to_string(utc_nanos: i64, offset_secs: i32) -> Val {
+    let b = break_down(utc_nanos, offset_secs);
     Val::String(format!(
         "{} {} {:02} {:02}:{:02}:{:02} {:04}",
         WEEKDAY_NAMES_SHORT[b.weekday as usize],
@@ -356,10 +440,9 @@ pub(crate) fn to_string(d: i64) -> Val {
 }
 
 /// `Date.fmt fmt d`: format with strftime-style directives. Supports
-/// `%Y`, `%m`, `%d`, `%H`, `%M`, `%S`, `%A`, `%a`, `%B`, `%b`, `%j`,
-/// `%%`.
-pub(crate) fn fmt(format: &str, d: i64) -> Val {
-    let b = break_down(d);
+/// `%Y`, `%m`, `%d`, `%H`, `%M`, `%S`, `%a`, `%b`, `%j`, `%%`.
+pub(crate) fn fmt(format: &str, utc_nanos: i64, offset_secs: i32) -> Val {
+    let b = break_down(utc_nanos, offset_secs);
     let mut out = String::new();
     let mut chars = format.chars().peekable();
     while let Some(c) = chars.next() {
@@ -442,15 +525,5 @@ pub(crate) fn from_string(s: &str) -> Val {
         + hour as i64 * SECS_PER_HOUR
         + minute as i64 * SECS_PER_MIN
         + second as i64;
-    Val::Some(Box::new(Val::Date(secs * NS_PER_SEC)))
+    Val::Some(Box::new(Val::Date(secs * NS_PER_SEC, 0)))
 }
-
-/// Helper: avoid unused-import warning for Prop/PropVal until the
-/// timezone-aware implementation lands.
-#[allow(dead_code)]
-fn _use_prop(p: Option<PropVal>, _: Prop) -> Option<PropVal> {
-    p
-}
-
-#[allow(dead_code)]
-const _USE_VAL: usize = val::CONTINUOUS_SET_ORDINAL;

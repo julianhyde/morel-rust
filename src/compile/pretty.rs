@@ -772,9 +772,9 @@ impl Pretty {
             return write!(buf, "{}", t).map_err(|_| fmt::Error);
         }
         if name == "date"
-            && let Val::Date(d) = value
+            && let Val::Date(d, o) = value
         {
-            return write!(buf, "{}", date::format_iso(*d))
+            return write!(buf, "{}", date::format_iso(*d, *o))
                 .map_err(|_| fmt::Error);
         }
         if name == "weekday"
