@@ -270,6 +270,13 @@ mod tests {
     /// Sanity-check a few well-known dispatches. If any of these fail
     /// the auto-inference probably regressed.
     #[test]
+    fn debug_date_to_time() {
+        let f = BuiltInFunction::DateToTime;
+        let ty = f.get_type();
+        eprintln!("DateToTime type = {:?}", ty);
+    }
+
+    #[test]
     fn known_dispatches_present() {
         for (method, recv) in [
             ("only", "bag"),
