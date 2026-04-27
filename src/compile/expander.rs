@@ -28,7 +28,9 @@
 //! Phase 1 doesn't need (no outer-scope filtering, no recursive
 //! function inlining, no case/exists/string-prefix).
 
-use crate::compile::core::{Decl, Expr, Match, Pat, Step, StepKind, ValBind};
+use crate::compile::core::{
+    Decl, Expr, Match, Pat, Step, StepEnv, StepKind, ValBind,
+};
 use crate::compile::generator::Cache;
 use crate::compile::generators::{maybe_generator, split_conjuncts};
 use crate::compile::library::BuiltInFunction;
@@ -44,37 +46,47 @@ use std::collections::HashMap;
 /// `f arg`.
 pub type FnEnv = HashMap<String, (Pat, Expr)>;
 
+/// Map of user-defined datatype name → its constructor names in
+/// declaration order. Lets `finite_extent` enumerate values of
+/// `Type::Data(name, _)` for constraint-free unbounded patterns
+/// (e.g. `from c, d where c <> d` over a `Color`).
+pub type DatatypeMap = HashMap<String, Vec<String>>;
+
 /// Convenience wrapper for callers that don't have a function
 /// environment available (e.g. the resolver, which calls this
 /// before `expand_decl` runs the full tree-walk pass).
-pub fn expand_from(expr: Expr) -> Expr {
+pub fn expand_from(expr: Expr, datatypes: &DatatypeMap) -> Expr {
     let env = FnEnv::new();
-    expand_from_with(expr, &env)
+    expand_from_with(expr, &env, datatypes)
 }
 
 /// If `expr` is a `From`, `Exists`, or `Forall` containing one or
 /// more Scans over Extents, rewrite it by deriving generators from
 /// `where` clauses and using them as the scan sources. Otherwise
 /// returns `expr` unchanged.
-pub fn expand_from_with(expr: Expr, env: &FnEnv) -> Expr {
+pub fn expand_from_with(
+    expr: Expr,
+    env: &FnEnv,
+    datatypes: &DatatypeMap,
+) -> Expr {
     match expr {
         Expr::From(t, steps) => {
             if !has_extent_scan(&steps) {
                 return Expr::From(t, steps);
             }
-            Expr::From(t, expand_steps(steps, env))
+            Expr::From(t, expand_steps(steps, env, datatypes))
         }
         Expr::Exists(t, steps) => {
             if !has_extent_scan(&steps) {
                 return Expr::Exists(t, steps);
             }
-            Expr::Exists(t, expand_steps(steps, env))
+            Expr::Exists(t, expand_steps(steps, env, datatypes))
         }
         Expr::Forall(t, steps) => {
             if !has_extent_scan(&steps) {
                 return Expr::Forall(t, steps);
             }
-            Expr::Forall(t, expand_steps(steps, env))
+            Expr::Forall(t, expand_steps(steps, env, datatypes))
         }
         _ => expr,
     }
@@ -86,22 +98,22 @@ pub fn expand_from_with(expr: Expr, env: &FnEnv) -> Expr {
 /// is the entry point used after the resolver finishes, so that
 /// `maybe_function` can inline let-bound predicates that the
 /// per-query passes inside `resolve_query` couldn't see.
-pub fn expand_decl(decl: Decl) -> Decl {
+pub fn expand_decl(decl: Decl, datatypes: &DatatypeMap) -> Decl {
     let env = FnEnv::new();
-    walk_decl(decl, &env)
+    walk_decl(decl, &env, datatypes)
 }
 
-fn walk_decl(decl: Decl, env: &FnEnv) -> Decl {
+fn walk_decl(decl: Decl, env: &FnEnv, datatypes: &DatatypeMap) -> Decl {
     match decl {
         Decl::NonRecVal(b) => {
             let mut b2 = (*b).clone();
-            b2.expr = walk_expr(b2.expr, env);
+            b2.expr = walk_expr(b2.expr, env, datatypes);
             Decl::NonRecVal(Box::new(b2))
         }
         Decl::RecVal(binds) => {
             let mut new_binds = Vec::with_capacity(binds.len());
             for mut b in binds {
-                b.expr = walk_expr(b.expr, env);
+                b.expr = walk_expr(b.expr, env, datatypes);
                 new_binds.push(b);
             }
             Decl::RecVal(new_binds)
@@ -110,7 +122,7 @@ fn walk_decl(decl: Decl, env: &FnEnv) -> Decl {
     }
 }
 
-fn walk_expr(expr: Expr, env: &FnEnv) -> Expr {
+fn walk_expr(expr: Expr, env: &FnEnv, datatypes: &DatatypeMap) -> Expr {
     match expr {
         Expr::Let(t, decls, body) => {
             // Extend the environment with single-arg `fn` bindings
@@ -119,31 +131,33 @@ fn walk_expr(expr: Expr, env: &FnEnv) -> Expr {
             for d in &decls {
                 collect_fn_bindings(d, &mut env2);
             }
-            let new_decls: Vec<Decl> =
-                decls.into_iter().map(|d| walk_decl(d, &env2)).collect();
-            let new_body = Box::new(walk_expr(*body, &env2));
+            let new_decls: Vec<Decl> = decls
+                .into_iter()
+                .map(|d| walk_decl(d, &env2, datatypes))
+                .collect();
+            let new_body = Box::new(walk_expr(*body, &env2, datatypes));
             Expr::Let(t, new_decls, new_body)
         }
         Expr::From(_, _) | Expr::Exists(_, _) | Expr::Forall(_, _) => {
             // Recurse into nested expressions first (so inner
             // sub-queries also benefit from the env), then run the
             // expander on the resulting top-level expression.
-            let inner = walk_query_steps(expr, env);
-            expand_from_with(inner, env)
+            let inner = walk_query_steps(expr, env, datatypes);
+            expand_from_with(inner, env, datatypes)
         }
         Expr::Apply(t, f, a, span) => Expr::Apply(
             t,
-            Box::new(walk_expr(*f, env)),
-            Box::new(walk_expr(*a, env)),
+            Box::new(walk_expr(*f, env, datatypes)),
+            Box::new(walk_expr(*a, env, datatypes)),
             span,
         ),
         Expr::Case(t, subject, arms, span) => Expr::Case(
             t,
-            Box::new(walk_expr(*subject, env)),
+            Box::new(walk_expr(*subject, env, datatypes)),
             arms.into_iter()
                 .map(|m| Match {
                     pat: m.pat,
-                    expr: walk_expr(m.expr, env),
+                    expr: walk_expr(m.expr, env, datatypes),
                 })
                 .collect(),
             span,
@@ -153,23 +167,29 @@ fn walk_expr(expr: Expr, env: &FnEnv) -> Expr {
             arms.into_iter()
                 .map(|m| Match {
                     pat: m.pat,
-                    expr: walk_expr(m.expr, env),
+                    expr: walk_expr(m.expr, env, datatypes),
                 })
                 .collect(),
             span,
         ),
         Expr::Tuple(t, items) => Expr::Tuple(
             t,
-            items.into_iter().map(|e| walk_expr(e, env)).collect(),
+            items
+                .into_iter()
+                .map(|e| walk_expr(e, env, datatypes))
+                .collect(),
         ),
         Expr::List(t, items) => Expr::List(
             t,
-            items.into_iter().map(|e| walk_expr(e, env)).collect(),
+            items
+                .into_iter()
+                .map(|e| walk_expr(e, env, datatypes))
+                .collect(),
         ),
         Expr::Aggregate(t, e1, e2) => Expr::Aggregate(
             t,
-            Box::new(walk_expr(*e1, env)),
-            Box::new(walk_expr(*e2, env)),
+            Box::new(walk_expr(*e1, env, datatypes)),
+            Box::new(walk_expr(*e2, env, datatypes)),
         ),
         other => other,
     }
@@ -178,7 +198,7 @@ fn walk_expr(expr: Expr, env: &FnEnv) -> Expr {
 /// Walk inside a `From`/`Exists`/`Forall`'s steps so that
 /// expressions embedded in `Where`, `Yield`, and other step kinds
 /// get the same treatment. The query's outer wrapper is recreated.
-fn walk_query_steps(expr: Expr, env: &FnEnv) -> Expr {
+fn walk_query_steps(expr: Expr, env: &FnEnv, datatypes: &DatatypeMap) -> Expr {
     let (kind, t, steps) = match expr {
         Expr::From(t, s) => ('f', t, s),
         Expr::Exists(t, s) => ('e', t, s),
@@ -191,24 +211,24 @@ fn walk_query_steps(expr: Expr, env: &FnEnv) -> Expr {
             let new_kind = match s.kind {
                 StepKind::Scan(p, source, cond) => StepKind::Scan(
                     p,
-                    Box::new(walk_expr(*source, env)),
-                    cond.map(|c| Box::new(walk_expr(*c, env))),
+                    Box::new(walk_expr(*source, env, datatypes)),
+                    cond.map(|c| Box::new(walk_expr(*c, env, datatypes))),
                 ),
                 StepKind::Where(c) => {
-                    StepKind::Where(Box::new(walk_expr(*c, env)))
+                    StepKind::Where(Box::new(walk_expr(*c, env, datatypes)))
                 }
                 StepKind::Yield(e) => {
-                    StepKind::Yield(Box::new(walk_expr(*e, env)))
+                    StepKind::Yield(Box::new(walk_expr(*e, env, datatypes)))
                 }
                 StepKind::Order(e) => {
-                    StepKind::Order(Box::new(walk_expr(*e, env)))
+                    StepKind::Order(Box::new(walk_expr(*e, env, datatypes)))
                 }
                 StepKind::Compute(e) => {
-                    StepKind::Compute(Box::new(walk_expr(*e, env)))
+                    StepKind::Compute(Box::new(walk_expr(*e, env, datatypes)))
                 }
                 StepKind::Group(k, a) => StepKind::Group(
-                    Box::new(walk_expr(*k, env)),
-                    a.map(|e| Box::new(walk_expr(*e, env))),
+                    Box::new(walk_expr(*k, env, datatypes)),
+                    a.map(|e| Box::new(walk_expr(*e, env, datatypes))),
                 ),
                 other => other,
             };
@@ -252,49 +272,286 @@ fn has_extent_scan(steps: &[Step]) -> bool {
     })
 }
 
-fn expand_steps(steps: Vec<Step>, env: &FnEnv) -> Vec<Step> {
+/// Pre-pass: rewrite each `where (x, y, …) elem coll` whose left-
+/// hand tuple is exactly the names of some unbounded patterns in
+/// this from. The matched ScanExtents are merged into a single
+/// `Scan(Tuple([x, y, …]), coll)` step (mirroring the user-typed
+/// `from (x, y, …) in coll`), and the original `elem` conjunct
+/// is dropped from the surrounding `Where`.
+///
+/// The merged scan is placed at the position of the *last* of the
+/// matched ScanExtents, so later steps that reference any of the
+/// destructured names see them as bound.
+fn decompose_tuple_elems(steps: Vec<Step>) -> Vec<Step> {
+    use std::collections::HashSet;
+
+    // Gather all ScanExtent positions and the names they bind.
+    let mut extent_index: HashMap<String, usize> = HashMap::new();
+    for (i, step) in steps.iter().enumerate() {
+        if let StepKind::Scan(p, source, _) = &step.kind
+            && matches!(source.as_ref(), Expr::Extent(_))
+            && let Pat::Identifier(_, n) = p.as_ref()
+        {
+            extent_index.insert(n.clone(), i);
+        }
+    }
+    if extent_index.is_empty() {
+        return steps;
+    }
+
+    // For each where-step, decompose its conjuncts and identify
+    // which ones are tuple-elem candidates we can merge.
+    //
+    // (positions_to_drop, replacement_at_position, conjunct_index_to_drop)
+    let mut drop_positions: HashSet<usize> = HashSet::new();
+    let mut replacement_at: HashMap<usize, Step> = HashMap::new();
+    // Per Where step: which conjunct indices to drop.
+    let mut where_drops: HashMap<usize, HashSet<usize>> = HashMap::new();
+
+    for (wi, step) in steps.iter().enumerate() {
+        let StepKind::Where(cond) = &step.kind else {
+            continue;
+        };
+        let conjuncts = split_conjuncts(cond);
+        for (ci, c) in conjuncts.iter().enumerate() {
+            // Look for `Apply(ListElem, Tuple(_, [tuple_lhs, coll]))`
+            // where `tuple_lhs` is a Tuple of Identifiers, all of
+            // which are ScanExtent-bound and not yet claimed.
+            let Expr::Apply(_, f, arg, _) = c else {
+                continue;
+            };
+            let Expr::Literal(_, Val::Fn(BuiltInFunction::ListElem)) =
+                f.as_ref()
+            else {
+                continue;
+            };
+            let Expr::Tuple(_, args) = arg.as_ref() else {
+                continue;
+            };
+            if args.len() != 2 {
+                continue;
+            }
+            let Expr::Tuple(_tuple_t, ids) = &args[0] else {
+                continue;
+            };
+            let coll = &args[1];
+
+            // Each component must be either:
+            //   * an Identifier naming a not-yet-claimed ScanExtent
+            //     (becomes a Pat::Identifier in the merged scan), or
+            //   * a Literal (becomes a Pat::Literal — narrows the
+            //     scan to records whose field equals that constant).
+            // Anything else (a free expression, a non-extent
+            // identifier, etc.) makes us skip this conjunct and let
+            // the per-pattern generator pipeline handle it.
+            let mut named_pats: Vec<Pat> = Vec::with_capacity(ids.len());
+            let mut positions: Vec<usize> = Vec::with_capacity(ids.len());
+            let mut bound_names: Vec<String> = Vec::new();
+            let mut ok = true;
+            for id in ids {
+                match id {
+                    Expr::Identifier(t, n) => {
+                        let Some(pos) = extent_index.get(n) else {
+                            ok = false;
+                            break;
+                        };
+                        if drop_positions.contains(pos)
+                            || replacement_at.contains_key(pos)
+                            || bound_names.contains(n)
+                        {
+                            ok = false;
+                            break;
+                        }
+                        named_pats.push(Pat::Identifier(t.clone(), n.clone()));
+                        positions.push(*pos);
+                        bound_names.push(n.clone());
+                    }
+                    Expr::Literal(t, v) => {
+                        named_pats.push(Pat::Literal(t.clone(), v.clone()));
+                    }
+                    _ => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            // Need at least one identifier to merge — otherwise this
+            // is a constant `elem` that doesn't bind anything.
+            if !ok || positions.is_empty() {
+                continue;
+            }
+
+            // Build the merged Scan. Element type = first named
+            // pat's tuple type (i.e. the tuple type from the LHS).
+            let tuple_t = match &args[0] {
+                Expr::Tuple(t, _) => t.clone(),
+                _ => continue,
+            };
+            let tuple_pat = Pat::Tuple(tuple_t.clone(), named_pats);
+            let scan = Step::new(
+                StepKind::Scan(
+                    Box::new(tuple_pat),
+                    Box::new(coll.clone()),
+                    None,
+                ),
+                step.env.clone(),
+            );
+
+            // Place the scan at the position of the *last* matched
+            // ScanExtent; the others get dropped.
+            let last_pos = *positions.iter().max().unwrap();
+            for p in &positions {
+                if *p != last_pos {
+                    drop_positions.insert(*p);
+                }
+            }
+            replacement_at.insert(last_pos, scan);
+
+            // Mark the conjunct for removal from this Where.
+            where_drops.entry(wi).or_default().insert(ci);
+        }
+    }
+
+    if drop_positions.is_empty() && replacement_at.is_empty() {
+        return steps;
+    }
+
+    // Rebuild the step list applying the replacements.
+    let mut out: Vec<Step> = Vec::with_capacity(steps.len());
+    for (i, step) in steps.into_iter().enumerate() {
+        if drop_positions.contains(&i) {
+            continue;
+        }
+        if let Some(repl) = replacement_at.remove(&i) {
+            out.push(repl);
+            continue;
+        }
+        // For Where steps, drop matched conjuncts.
+        if let Some(drops) = where_drops.get(&i)
+            && let StepKind::Where(cond) = &step.kind
+        {
+            let conjuncts = split_conjuncts(cond);
+            let kept: Vec<Expr> = conjuncts
+                .into_iter()
+                .enumerate()
+                .filter(|(ci, _)| !drops.contains(ci))
+                .map(|(_, c)| c)
+                .collect();
+            if kept.is_empty() {
+                // Whole where becomes vacuous; drop it.
+                continue;
+            }
+            let new_cond = and_all(kept);
+            out.push(Step::new(StepKind::Where(Box::new(new_cond)), step.env));
+            continue;
+        }
+        out.push(step);
+    }
+    out
+}
+
+fn expand_steps(
+    steps: Vec<Step>,
+    env: &FnEnv,
+    datatypes: &DatatypeMap,
+) -> Vec<Step> {
+    // Phase 0 (pre-pass): merge tuple-pattern `elem` conjuncts
+    // with the corresponding ScanExtents. A `where (x, y) elem
+    // coll` constraint, combined with `ScanExtent(x)` and
+    // `ScanExtent(y)`, becomes a single `Scan(Tuple([x, y]), coll)`
+    // — equivalent to writing `from (x, y) in coll`. Without this
+    // step the per-pattern generators couldn't preserve the
+    // tuple's correlation between `x` and `y`.
+    let steps = decompose_tuple_elems(steps);
+
     // Phase A: derive generators by scanning where-clauses.
     let mut cache = Cache::new();
-    derive_generators(&steps, &mut cache, env);
+    derive_generators(&steps, &mut cache, env, datatypes);
 
-    // Phase B: rebuild the steps. Replace each Scan-over-Extent with
-    // the best generator's expression. Decompose every Where into
-    // conjuncts and drop those whose text appears in a sealed
-    // generator's provenance. Other steps pass through.
+    // Phase B: collect every Scan-over-Extent's (pat, env) pair in
+    // the order they appear in `steps`, then topologically sort by
+    // generator dependencies. A scan whose generator references
+    // another unbounded pattern must come after that pattern's
+    // scan. Without this, e.g.
+    //   `from dno, name, v where v elem scott.depts
+    //                       where dno = v.deptno`
+    // would emit `Scan(dno, [v.deptno])` before `v` is bound.
+    let extent_scans: Vec<(Pat, StepEnv)> = steps
+        .iter()
+        .filter_map(|s| match &s.kind {
+            StepKind::Scan(p, source, _)
+                if matches!(source.as_ref(), Expr::Extent(_)) =>
+            {
+                Some(((**p).clone(), s.env.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let ordered_scans = topo_order(&extent_scans, &cache);
+
+    // Phase C: rebuild the steps. Replace each Scan-over-Extent
+    // with the next entry from `ordered_scans` and the best
+    // generator's expression. Decompose every Where into conjuncts
+    // and drop those whose text appears in a sealed generator's
+    // provenance. Other steps pass through.
     let provenance: Vec<Expr> =
         cache.sealed_provenance().into_iter().cloned().collect();
     let mut out = Vec::with_capacity(steps.len());
+    let mut scan_idx = 0;
     for step in steps {
         match step.kind {
             StepKind::Scan(pat, source, cond)
                 if matches!(source.as_ref(), Expr::Extent(_)) =>
             {
-                let Pat::Identifier(_, n) = pat.as_ref() else {
-                    // Phase 1 only handles plain identifier patterns
-                    // for unbounded vars. Compound patterns will be
-                    // added in later phases.
+                if !matches!(pat.as_ref(), Pat::Identifier(_, _))
+                    || scan_idx >= ordered_scans.len()
+                {
+                    // Compound patterns and overflow positions are
+                    // passed through unchanged; the compiler will
+                    // emit the clean "unbounded variable" error.
                     out.push(Step::new(
                         StepKind::Scan(pat, source, cond),
                         step.env,
                     ));
                     continue;
+                }
+                let (next_pat, next_env) = ordered_scans[scan_idx].clone();
+                scan_idx += 1;
+                let name = match &next_pat {
+                    Pat::Identifier(_, n) => n.clone(),
+                    _ => unreachable!(),
                 };
-                let name = n.clone();
                 if let Some(generator) = cache.best(&name) {
+                    // Combine the original Scan's condition (always
+                    // None for ScanExtent today, but be defensive)
+                    // with the generator's extra row filter.
+                    let merged_cond = match (
+                        cond.map(|c| *c),
+                        generator.extra_filter.clone(),
+                    ) {
+                        (None, None) => None,
+                        (Some(c), None) | (None, Some(c)) => Some(Box::new(c)),
+                        (Some(c), Some(f)) => {
+                            Some(Box::new(and_all(vec![c, f])))
+                        }
+                    };
                     out.push(Step::new(
                         StepKind::Scan(
-                            pat,
+                            Box::new(next_pat),
                             Box::new(generator.exp.clone()),
-                            cond,
+                            merged_cond,
                         ),
-                        step.env,
+                        next_env,
                     ));
                 } else {
-                    // No generator — leave the Extent in place; the
-                    // compiler will emit the clean error.
+                    let extent = Expr::Extent(next_pat.type_());
                     out.push(Step::new(
-                        StepKind::Scan(pat, source, cond),
-                        step.env,
+                        StepKind::Scan(
+                            Box::new(next_pat),
+                            Box::new(extent),
+                            cond,
+                        ),
+                        next_env,
                     ));
                 }
             }
@@ -322,7 +579,71 @@ fn expand_steps(steps: Vec<Step>, env: &FnEnv) -> Vec<Step> {
     out
 }
 
-fn derive_generators(steps: &[Step], cache: &mut Cache, env: &FnEnv) {
+/// Topologically sorts the unbounded scans by generator
+/// dependency: a scan whose generator references pattern `q` is
+/// emitted *after* `q`'s own scan. Cycles fall back to the original
+/// order for the cycle members.
+fn topo_order(
+    extent_scans: &[(Pat, StepEnv)],
+    cache: &Cache,
+) -> Vec<(Pat, StepEnv)> {
+    use std::collections::HashSet;
+    let names: Vec<String> = extent_scans
+        .iter()
+        .filter_map(|(p, _)| match p {
+            Pat::Identifier(_, n) => Some(n.clone()),
+            _ => None,
+        })
+        .collect();
+    let unbounded: HashSet<&str> = names.iter().map(String::as_str).collect();
+    let mut emitted: HashSet<String> = HashSet::new();
+    let mut order: Vec<(Pat, StepEnv)> = Vec::with_capacity(extent_scans.len());
+    let mut remaining: Vec<(Pat, StepEnv)> = extent_scans.to_vec();
+    let mut last_size = remaining.len() + 1;
+    while !remaining.is_empty() && remaining.len() < last_size {
+        last_size = remaining.len();
+        let mut still: Vec<(Pat, StepEnv)> = Vec::new();
+        for (p, e) in remaining.drain(..) {
+            let Pat::Identifier(_, ref n) = p else {
+                order.push((p, e));
+                continue;
+            };
+            let n = n.clone();
+            // The scan is ready if every free pattern of its
+            // generator is either NOT an unbounded scan in this
+            // from (i.e. outer-scope or a bounded scan) or has
+            // already been emitted.
+            let ready = match cache.best(&n) {
+                Some(g) => g.free_pats.iter().all(|fp| {
+                    !unbounded.contains(fp.as_str())
+                        || emitted.contains(fp.as_str())
+                }),
+                None => true,
+            };
+            if ready {
+                emitted.insert(n);
+                order.push((p, e));
+            } else {
+                still.push((p, e));
+            }
+        }
+        remaining = still;
+    }
+    // Anything left is part of a cycle (or has missing deps);
+    // append it in original order so we at least preserve the
+    // surface arrangement.
+    for entry in remaining {
+        order.push(entry);
+    }
+    order
+}
+
+fn derive_generators(
+    steps: &[Step],
+    cache: &mut Cache,
+    env: &FnEnv,
+    datatypes: &DatatypeMap,
+) {
     // Collect all Where conjuncts visible in this from. The morel-java
     // Expander does this in step order, but for Phase 1 (leaf-only,
     // no dependencies between generators) the order doesn't matter.
@@ -354,6 +675,7 @@ fn derive_generators(steps: &[Step], cache: &mut Cache, env: &FnEnv) {
                 ordered,
                 &all_constraints,
                 env,
+                datatypes,
             );
         }
     }
@@ -367,7 +689,7 @@ fn provenance_contains(provenance: &[Expr], conjunct: &Expr) -> bool {
 /// Adequate for matching `where` conjuncts against generator
 /// provenance — no alpha-renaming is needed because both sides come
 /// from the same surface query.
-fn expr_eq(a: &Expr, b: &Expr) -> bool {
+pub(crate) fn expr_eq(a: &Expr, b: &Expr) -> bool {
     match (a, b) {
         (Expr::Literal(t1, v1), Expr::Literal(t2, v2)) => t1 == t2 && v1 == v2,
         (Expr::Identifier(t1, n1), Expr::Identifier(t2, n2)) => {
@@ -389,7 +711,7 @@ fn expr_eq(a: &Expr, b: &Expr) -> bool {
     }
 }
 
-fn and_all(conjuncts: Vec<Expr>) -> Expr {
+pub(crate) fn and_all(conjuncts: Vec<Expr>) -> Expr {
     let mut iter = conjuncts.into_iter();
     let first = iter.next().expect("at least one conjunct");
     iter.fold(first, |lhs, rhs| {

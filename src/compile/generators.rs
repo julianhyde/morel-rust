@@ -24,7 +24,7 @@
 //! constructor patterns.
 
 use crate::compile::core::{Binding, Expr, Match, Pat};
-use crate::compile::expander::FnEnv;
+use crate::compile::expander::{DatatypeMap, FnEnv, and_all, expr_eq};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::generator::{Cache, Cardinality, Generator};
 use crate::compile::library::{BuiltInFunction, lookup_struct_field};
@@ -50,6 +50,7 @@ pub fn maybe_generator(
     ordered: bool,
     constraints: &[Expr],
     fn_env: &FnEnv,
+    datatypes: &DatatypeMap,
 ) -> bool {
     // Phase A: classify each conjunct.
     let mut elem_match: Option<&Expr> = None;
@@ -134,6 +135,7 @@ pub fn maybe_generator(
         ordered,
         constraints,
         fn_env,
+        datatypes,
     ) {
         return true;
     }
@@ -145,22 +147,42 @@ pub fn maybe_generator(
         ordered,
         constraints,
         fn_env,
+        datatypes,
     ) {
         return true;
     }
-    if maybe_case(cache, pat, pat_name, pat_type, ordered, constraints, fn_env)
-    {
+    if maybe_case(
+        cache,
+        pat,
+        pat_name,
+        pat_type,
+        ordered,
+        constraints,
+        fn_env,
+        datatypes,
+    ) {
         return true;
     }
-    if maybe_union(cache, pat, pat_name, pat_type, ordered, constraints, fn_env)
-    {
+    if maybe_union(
+        cache,
+        pat,
+        pat_name,
+        pat_type,
+        ordered,
+        constraints,
+        fn_env,
+        datatypes,
+    ) {
         return true;
     }
-    // Fallback: a bool pattern's extent is just `[true, false]`.
+    // Fallback: enumerate all values of the pattern's type, when
+    // that type is finite (bool, option of finite, tuple of
+    // finite, user datatype with all-nullary constructors).
     // Surrounding `where` conjuncts filter as needed (e.g.
-    // `not b` keeps only `false`).
-    if matches!(pat_type, Type::Primitive(PrimitiveType::Bool)) {
-        return create_bool_extent_generator(cache, pat, pat_name);
+    // `not b` keeps only `false`, `Option.getOpt i` keeps only
+    // the tuples whose option/default product is true).
+    if let Some(extent) = finite_extent(pat_type, datatypes) {
+        return create_finite_extent_generator(cache, pat, pat_name, extent);
     }
     false
 }
@@ -312,26 +334,20 @@ fn create_range_generator(
     true
 }
 
-/// Generator of last resort for a `bool` pattern: yield both
-/// `true` and `false`. Cheap, finite, and lets the surrounding
-/// `where` clause filter (e.g. `not b` keeps just `false`).
-fn create_bool_extent_generator(
+/// Generator of last resort: yield every value of the pattern's
+/// type, provided the type is finite. The surrounding `where`
+/// clause filters down. Used for `from b where not b` (single
+/// bool), `from i where Option.getOpt i` (tuple of bool option *
+/// bool), etc.
+fn create_finite_extent_generator(
     cache: &mut Cache,
     pat: &Pat,
     pat_name: &str,
+    extent: Expr,
 ) -> bool {
-    let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
-    let list_t = Box::new(Type::List(bool_t.clone()));
-    let exp = Expr::List(
-        list_t,
-        vec![
-            Expr::Literal(bool_t.clone(), Val::Bool(true)),
-            Expr::Literal(bool_t, Val::Bool(false)),
-        ],
-    );
     let generator = Generator::new(
         pat.clone(),
-        exp,
+        extent,
         Cardinality::Finite,
         BTreeSet::new(),
         true,
@@ -340,6 +356,150 @@ fn create_bool_extent_generator(
     );
     cache.add(pat_name.to_string(), generator);
     true
+}
+
+/// Returns a Core list expression containing every value of `t`,
+/// or `None` if `t` is infinite (int, real, string, …) or
+/// references a feature this builder doesn't yet handle (user
+/// datatype, list, fn, …). Built-in types covered: `bool`,
+/// `'a option` for finite `'a`, tuples of finite components, and
+/// user datatypes whose constructors are all nullary.
+fn finite_extent(t: &Type, datatypes: &DatatypeMap) -> Option<Expr> {
+    match t {
+        Type::Primitive(PrimitiveType::Bool) => Some(bool_extent_list()),
+        Type::Data(name, args) if name == "option" && args.len() == 1 => {
+            let inner = finite_extent(&args[0], datatypes)?;
+            Some(option_extent_list(&args[0], inner))
+        }
+        Type::Data(name, _) => {
+            let constructors = datatypes.get(name)?;
+            // Phase 1 of datatype extents: only nullary
+            // constructors. Constructors that take arguments would
+            // need the arg type's extent, plus a way to construct
+            // `Val::Constructor(ord, val)` in Core for each one.
+            Some(datatype_extent_list(t, name, constructors))
+        }
+        Type::Tuple(types) => {
+            let mut extents = Vec::with_capacity(types.len());
+            for ti in types {
+                extents.push(finite_extent(ti, datatypes)?);
+            }
+            Some(tuple_extent_cartesian(types, extents))
+        }
+        _ => None,
+    }
+}
+
+/// Produces a list-expression of every nullary-constructor value of
+/// the given datatype. `data_t` is the datatype's `Type`, `name` is
+/// the datatype name, and `constructors` is the constructor list in
+/// declaration order.
+fn datatype_extent_list(
+    data_t: &Type,
+    _name: &str,
+    constructors: &[String],
+) -> Expr {
+    let data_t_box = Box::new(data_t.clone());
+    let list_t = Box::new(Type::List(data_t_box.clone()));
+    // Each constructor is a global `CoreExpr::Identifier` after
+    // resolution — that's how the user-typed `BLUE` reaches Core.
+    // It carries the datatype's `Type::Data` directly (constants
+    // have no parameter). The compiler later re-interprets the
+    // identifier through the resolver/eval lookup tables.
+    let elems: Vec<Expr> = constructors
+        .iter()
+        .map(|cname| Expr::Identifier(data_t_box.clone(), cname.clone()))
+        .collect();
+    Expr::List(list_t, elems)
+}
+
+fn bool_extent_list() -> Expr {
+    let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
+    let list_t = Box::new(Type::List(bool_t.clone()));
+    // `false` first, `true` second — matches morel-java's
+    // ordering for tuple enumeration over bool components, and
+    // also matches `compare` semantics (false < true).
+    Expr::List(
+        list_t,
+        vec![
+            Expr::Literal(bool_t.clone(), Val::Bool(false)),
+            Expr::Literal(bool_t, Val::Bool(true)),
+        ],
+    )
+}
+
+fn option_extent_list(inner_t: &Type, inner_extent: Expr) -> Expr {
+    let inner_t_box = Box::new(inner_t.clone());
+    let option_t =
+        Box::new(Type::Data("option".to_string(), vec![inner_t.clone()]));
+    let list_t = Box::new(Type::List(option_t.clone()));
+
+    // NONE: Expr::Literal carrying the OptionNone built-in value.
+    // The compiler converts this to `Code::new_constant(t,
+    // Val::Unit)` (the runtime encoding of `NONE`).
+    let none_expr =
+        Expr::Literal(option_t.clone(), Val::Fn(BuiltInFunction::OptionNone));
+
+    // SOME : 'a -> 'a option
+    let some_fn_t = Box::new(Type::Fn(inner_t_box.clone(), option_t.clone()));
+    let some_fn_expr =
+        Expr::Literal(some_fn_t, Val::Fn(BuiltInFunction::OptionSome));
+
+    let inner_elems = match inner_extent {
+        Expr::List(_, vs) => vs,
+        _ => return none_expr, // shouldn't happen
+    };
+
+    let mut elems = Vec::with_capacity(inner_elems.len() + 1);
+    elems.push(none_expr);
+    for v in inner_elems {
+        elems.push(Expr::Apply(
+            option_t.clone(),
+            Box::new(some_fn_expr.clone()),
+            Box::new(v),
+            Span::new(""),
+        ));
+    }
+    Expr::List(list_t, elems)
+}
+
+fn tuple_extent_cartesian(types: &[Type], extents: Vec<Expr>) -> Expr {
+    let tuple_t = Box::new(Type::Tuple(types.to_vec()));
+    let list_t = Box::new(Type::List(tuple_t.clone()));
+
+    // Each `extents[i]` is `Expr::List(_, values_i)`. Compute the
+    // cartesian product of the value lists, then build a
+    // tuple-list whose entries are the product tuples.
+    let value_lists: Vec<Vec<Expr>> = extents
+        .into_iter()
+        .map(|e| match e {
+            Expr::List(_, vs) => vs,
+            _ => Vec::new(),
+        })
+        .collect();
+
+    let products = cartesian_product(&value_lists);
+    let elems: Vec<Expr> = products
+        .into_iter()
+        .map(|values| Expr::Tuple(tuple_t.clone(), values))
+        .collect();
+    Expr::List(list_t, elems)
+}
+
+fn cartesian_product(lists: &[Vec<Expr>]) -> Vec<Vec<Expr>> {
+    let mut acc: Vec<Vec<Expr>> = vec![Vec::new()];
+    for list in lists {
+        let mut next = Vec::with_capacity(acc.len() * list.len());
+        for prefix in &acc {
+            for v in list {
+                let mut row = prefix.clone();
+                row.push(v.clone());
+                next.push(row);
+            }
+        }
+        acc = next;
+    }
+    acc
 }
 
 /// Inverts `String.isPrefix p s` (where `p` is the pattern, `s` is
@@ -445,6 +605,7 @@ fn maybe_exists(
     ordered: bool,
     constraints: &[Expr],
     fn_env: &FnEnv,
+    datatypes: &DatatypeMap,
 ) -> bool {
     use crate::compile::core::{Step, StepEnv, StepKind};
 
@@ -491,6 +652,7 @@ fn maybe_exists(
         let mut probe = Cache::new();
         if !maybe_generator(
             &mut probe, pat, pat_name, pat_type, ordered, &augmented, fn_env,
+            datatypes,
         ) {
             continue;
         }
@@ -611,6 +773,7 @@ fn maybe_function(
     ordered: bool,
     constraints: &[Expr],
     fn_env: &FnEnv,
+    datatypes: &DatatypeMap,
 ) -> bool {
     if fn_env.is_empty() {
         return false;
@@ -654,6 +817,7 @@ fn maybe_function(
         env2.remove(fn_name);
         if !maybe_generator(
             &mut probe, pat, pat_name, pat_type, ordered, &augmented, &env2,
+            datatypes,
         ) {
             continue;
         }
@@ -661,6 +825,28 @@ fn maybe_function(
             Some(g) => g.clone(),
             None => continue,
         };
+
+        // Identify inlined conjuncts that the chosen leaf strategy
+        // didn't fold into `inner_gen.exp`. They came from the
+        // function body and aren't visible in any surrounding
+        // `where` step, so without an explicit row filter they'd
+        // be silently dropped. Attach the AND of unconsumed inner
+        // conjuncts as `extra_filter`; the rebuild emits it as
+        // the Scan's per-row condition.
+        let inner_conjuncts2 = split_conjuncts(&inlined);
+        let unconsumed: Vec<Expr> = inner_conjuncts2
+            .into_iter()
+            .filter(|ic| !inner_gen.provenance.iter().any(|p| expr_eq(p, ic)))
+            .collect();
+        if !unconsumed.is_empty() {
+            let combined = and_all(unconsumed);
+            inner_gen.extra_filter =
+                Some(match inner_gen.extra_filter.take() {
+                    Some(existing) => and_all(vec![existing, combined]),
+                    None => combined,
+                });
+        }
+
         // Add the original function-call conjunct to provenance so
         // the surrounding `where` can drop it.
         inner_gen.provenance.push(c.clone());
@@ -691,6 +877,7 @@ fn maybe_case(
     ordered: bool,
     constraints: &[Expr],
     fn_env: &FnEnv,
+    datatypes: &DatatypeMap,
 ) -> bool {
     for (idx, c) in constraints.iter().enumerate() {
         let Expr::Case(_, subject, arms, _) = c else {
@@ -716,6 +903,7 @@ fn maybe_case(
                 idx,
                 &inner_conjuncts,
                 fn_env,
+                datatypes,
                 c,
             ) {
                 return true;
@@ -745,6 +933,7 @@ fn maybe_case(
             idx,
             &[or_expr],
             fn_env,
+            datatypes,
             c,
         ) {
             return true;
@@ -846,6 +1035,7 @@ fn try_recurse(
     skip_idx: usize,
     replacements: &[Expr],
     fn_env: &FnEnv,
+    datatypes: &DatatypeMap,
     original: &Expr,
 ) -> bool {
     let mut augmented: Vec<Expr> =
@@ -859,6 +1049,7 @@ fn try_recurse(
     let mut probe = Cache::new();
     if !maybe_generator(
         &mut probe, pat, pat_name, pat_type, ordered, &augmented, fn_env,
+        datatypes,
     ) {
         return false;
     }
@@ -898,6 +1089,7 @@ fn maybe_union(
     ordered: bool,
     constraints: &[Expr],
     fn_env: &FnEnv,
+    datatypes: &DatatypeMap,
 ) -> bool {
     for c in constraints {
         let branches = split_orelse(c);
@@ -920,6 +1112,7 @@ fn maybe_union(
                 ordered,
                 &branch_conjuncts,
                 fn_env,
+                datatypes,
             ) {
                 all_ok = false;
                 break;

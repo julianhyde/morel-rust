@@ -103,16 +103,10 @@ from i
   take 5;
 > val it = [20,19,18,17,16] : int list
 
-(* `through` desugaring of an unbounded scan is not yet supported;
-   validate-only. *)
-set("mode", "validate");
-> val it = () : unit
 from i
   where i >= 0 andalso i <= 10
   through j in (fn bag => Bag.`take` (bag, 3));
 > val it = [0,1,2] : int bag
-set("mode", "evaluate");
-> val it = () : unit
 
 exists i
   where i >= 0 andalso i <= 100;
@@ -216,9 +210,6 @@ join c in [6, 7] on b + c = 10,
     d in [7, 8];
 > val it = [{a=2,b=4,c=6,d=7},{a=2,b=4,c=6,d=8}]
 >   : {a:int, b:int, c:int, d:int} list
-
-set("mode", "validate");
-> val it = () : unit
 
 from dno, name, loc
 where {deptno = dno, dname = name, loc} elem scott.depts
@@ -405,6 +396,8 @@ from s where isPrefix (s, "abcd");
 
 (*) An integer function with external extent.
 (*) Given j, k we could generate finite i.
+set("mode", "validate");
+> val it = () : unit
 fun isBetween (i, j, k) =
   i <= j andalso j <= k;
 > val isBetween = fn : 'a * 'a * 'a -> bool
@@ -412,8 +405,6 @@ fun isBetween (i, j, k) =
 from i where isBetween (i, 5, 8);
 > val it = [5, 6, 7, 8] : int list
 *)
-
-
 set("mode", "evaluate");
 > val it = () : unit
 
@@ -475,8 +466,6 @@ val edges = [
  {x = 2, y = 3}];
 > val edges = [{x=1,y=2},{x=2,y=3}] : {x:int, y:int} list
 
-set("mode", "validate");
-> val it = () : unit
 fun edge (x, y) = {x, y} elem edges;
 > val edge = fn : int * int -> bool
 (* TODO
@@ -491,10 +480,6 @@ from p where path p;
 > val it = [(1,2),(2,3),(1,3)] : (int * int) list
 *)
 
-
-set("mode", "evaluate");
-> val it = () : unit
-
 (* More edges *)
 (*
    1 --> 4 ----+
@@ -505,14 +490,8 @@ set("mode", "evaluate");
 val edges = [(1, 2), (2, 3), (1, 4), (4, 2), (4, 3)];
 > val edges = [(1,2),(2,3),(1,4),(4,2),(4,3)] : (int * int) list
 
-set("mode", "validate");
-> val it = () : unit
 fun edge (x, y) = (x, y) elem edges;
 > val edge = fn : int * int -> bool
-
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) Return points that are 2 hops apart.
 (*
@@ -559,9 +538,6 @@ val barPatrons = [
 >    {bar="cask",patron="scooby"},{bar="cask",patron="shaggy"},
 >    {bar="cask",patron="velma"}] : {bar:string, patron:string} list
 
-set("mode", "validate");
-> val it = () : unit
-
 val barBeers = [
   {bar =  "squirrel", beer =  "ipa", price =  2},
   {bar =  "squirrel", beer =  "pale", price =  2},
@@ -573,10 +549,6 @@ val barBeers = [
 >    {bar="squirrel",beer="amber",price=3},{bar="cask",beer="stout",price=4},
 >    {bar="cask",beer="ipa",price=5}] : {bar:string, beer:string, price:int} list
 
-
-set("mode", "evaluate");
-> val it = () : unit
-
 val patronBeers = [
   {patron =  "shaggy", beer = "amber"},
   {patron =  "fred", beer = "amber"},
@@ -584,9 +556,6 @@ val patronBeers = [
 > val patronBeers =
 >   [{beer="amber",patron="shaggy"},{beer="amber",patron="fred"},
 >    {beer="stout",patron="velma"}] : {beer:string, patron:string} list
-
-set("mode", "validate");
-> val it = () : unit
 
 fun frequents (patron, bar) =
   {patron, bar} elem barPatrons;
@@ -796,11 +765,8 @@ enumerate cousin2;
 *)
 
 
-set("mode", "evaluate");
-> val it = () : unit
-
-(* -------------------------------------------------------------------
- * Coloring Australia using three colors.
+(*----------------------------------------------------------------- *)
+(* Coloring Australia using three colors.
  * (From "Basic Modelling in MiniZinc".)
  *
  * Australia has six federated states (New South Wales, Queensland,
@@ -828,8 +794,6 @@ set("mode", "evaluate");
 datatype Color = BLUE | GREEN | RED;
 > datatype Color = BLUE | GREEN | RED
 
-set("mode", "validate");
-> val it = () : unit
 from wa, nt, sa, q, nsw, v, t
 where q = RED
   andalso t = GREEN

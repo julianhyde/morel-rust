@@ -2479,11 +2479,15 @@ impl TypeResolver {
         let step = StepKind::Yield(Box::new(expr2.clone()));
         steps2.push(step.spanned(span));
 
-        // Output collection type. We initially produce list; the
-        // FromBuilder uses its `ordered` flag to determine if the actual
-        // output should be bag.
+        // Output collection kind matches the input (yield changes the
+        // element type from `p.v` to `v6` but doesn't reorder/group).
+        // Without this, queries inside an enclosing expression (e.g.
+        // `let … in from … yield … end`) read the from's type from
+        // the type_map and see `list` even when the from_builder
+        // computes `bag` — because the type_map's collection-kind
+        // entry was hard-coded to `list_term` regardless of input.
         let c6 = self.variable();
-        self.list_term(Term::Variable(v6), &c6);
+        self.is_list_or_bag_matching_input(&p.c.unwrap(), &p.v, &c6, &v6);
 
         let mut envs = p.env.builder();
         if let ExprKind::Record(with, labeled_exprs) = expr2.kind {
