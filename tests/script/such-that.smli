@@ -196,6 +196,14 @@ from b where not b;
 from b where b;
 > val it = [true] : bool bag
 
+(* Nested `from` with outer-scope reference -------------- *)
+from source in [1, 2, 3, 4, 5]
+yield {source, doubled = (from x where x = source * 2)};
+> val it =
+>   [{doubled=[2],source=1},{doubled=[4],source=2},{doubled=[6],source=3},
+>    {doubled=[8],source=4},{doubled=[10],source=5}]
+>   : {doubled:int bag, source:int} list
+
 (*) 'on' in 'from'
 from i in [1, 2, 3],
   j in [2, 3, 4] on j = i;
