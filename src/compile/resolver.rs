@@ -48,6 +48,10 @@ use std::collections::{HashSet, VecDeque};
 pub fn resolve(resolved: &Resolved) -> (CoreDecl, Vec<(String, Span)>) {
     let resolver = Resolver::new(&resolved.type_map, resolved.base_line);
     let decl = resolver.resolve_decl(&resolved.decl);
+    // Run the predicate-inversion pass over the whole resolved decl,
+    // accumulating let-bound function definitions as we walk so that
+    // `maybe_function` can inline them.
+    let decl = expander::expand_decl(decl);
     (decl, resolver.errors.into_inner())
 }
 

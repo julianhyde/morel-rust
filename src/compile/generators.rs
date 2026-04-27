@@ -24,14 +24,16 @@
 //! constructor patterns.
 
 use crate::compile::core::{Binding, Expr, Match, Pat};
+use crate::compile::expander::FnEnv;
 use crate::compile::free_finder::free_names_in;
 use crate::compile::generator::{Cache, Cardinality, Generator};
 use crate::compile::library::{BuiltInFunction, lookup_struct_field};
+use crate::compile::replacer::substitute;
 use crate::compile::span::Span;
 use crate::compile::type_env::Id;
 use crate::compile::types::{PrimitiveType, Type};
 use crate::eval::val::Val;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 /// Tries to derive a generator for `pat` from the conjuncts in
 /// `constraints`. Returns `true` if a generator was added to the
@@ -47,6 +49,7 @@ pub fn maybe_generator(
     pat_type: &Type,
     ordered: bool,
     constraints: &[Expr],
+    fn_env: &FnEnv,
 ) -> bool {
     // Phase A: classify each conjunct.
     let mut elem_match: Option<&Expr> = None;
@@ -123,7 +126,26 @@ pub fn maybe_generator(
             cache, pat, pat_name, ordered, s, c,
         );
     }
-    if maybe_exists(cache, pat, pat_name, pat_type, ordered, constraints) {
+    if maybe_exists(
+        cache,
+        pat,
+        pat_name,
+        pat_type,
+        ordered,
+        constraints,
+        fn_env,
+    ) {
+        return true;
+    }
+    if maybe_function(
+        cache,
+        pat,
+        pat_name,
+        pat_type,
+        ordered,
+        constraints,
+        fn_env,
+    ) {
         return true;
     }
     false
@@ -378,6 +400,7 @@ fn maybe_exists(
     pat_type: &Type,
     ordered: bool,
     constraints: &[Expr],
+    fn_env: &FnEnv,
 ) -> bool {
     use crate::compile::core::{Step, StepEnv, StepKind};
 
@@ -423,7 +446,7 @@ fn maybe_exists(
         // adding to the real cache.
         let mut probe = Cache::new();
         if !maybe_generator(
-            &mut probe, pat, pat_name, pat_type, ordered, &augmented,
+            &mut probe, pat, pat_name, pat_type, ordered, &augmented, fn_env,
         ) {
             continue;
         }
@@ -522,6 +545,82 @@ fn maybe_exists(
         // Suppress unused `from_t` warning (the type is implicit
         // in the new wrap).
         let _ = from_t;
+        return true;
+    }
+    false
+}
+
+/// Recognises a constraint of the form `f arg` where `f` is a let-
+/// bound single-argument function (i.e. `val rec f = fn p => body`).
+/// Inlines the body with `p` substituted by `arg`, expands any
+/// resulting `andalso` into multiple conjuncts, and recursively
+/// runs `maybe_generator` on the augmented constraint set.
+///
+/// A small "in-progress" stack guards against infinite inlining
+/// of recursive functions; recursion stays unsupported in Phase 3
+/// (it lands in 3ec81171 / Phase 7).
+fn maybe_function(
+    cache: &mut Cache,
+    pat: &Pat,
+    pat_name: &str,
+    pat_type: &Type,
+    ordered: bool,
+    constraints: &[Expr],
+    fn_env: &FnEnv,
+) -> bool {
+    if fn_env.is_empty() {
+        return false;
+    }
+    for (idx, c) in constraints.iter().enumerate() {
+        // Recognise both the inlined form (`Apply(Literal(Fn(_)),
+        // arg)`, which doesn't apply here) and the un-inlined
+        // identifier form: `Apply(Identifier(name), arg)`.
+        let Expr::Apply(_, f, arg, _) = c else {
+            continue;
+        };
+        let Expr::Identifier(_, fn_name) = f.as_ref() else {
+            continue;
+        };
+        let Some((param_pat, body)) = fn_env.get(fn_name) else {
+            continue;
+        };
+        // Only handle single-identifier param for now.
+        let Pat::Identifier(_, param_name) = param_pat else {
+            continue;
+        };
+        let mut subst_map: HashMap<String, Expr> = HashMap::new();
+        subst_map.insert(param_name.clone(), (**arg).clone());
+        let inlined = substitute(body, &subst_map);
+        // Decompose `andalso`; merge with the rest of the outer
+        // constraints.
+        let inner_conjuncts = split_conjuncts(&inlined);
+        let mut augmented: Vec<Expr> =
+            Vec::with_capacity(constraints.len() - 1 + inner_conjuncts.len());
+        for (j, oc) in constraints.iter().enumerate() {
+            if j != idx {
+                augmented.push(oc.clone());
+            }
+        }
+        augmented.extend(inner_conjuncts);
+
+        // Probe with a fresh cache so we don't pollute on failure.
+        let mut probe = Cache::new();
+        // Pass an env *without* this fn so we don't recurse on it.
+        let mut env2 = fn_env.clone();
+        env2.remove(fn_name);
+        if !maybe_generator(
+            &mut probe, pat, pat_name, pat_type, ordered, &augmented, &env2,
+        ) {
+            continue;
+        }
+        let mut inner_gen = match probe.best(pat_name) {
+            Some(g) => g.clone(),
+            None => continue,
+        };
+        // Add the original function-call conjunct to provenance so
+        // the surrounding `where` can drop it.
+        inner_gen.provenance.push(c.clone());
+        cache.add(pat_name.to_string(), inner_gen);
         return true;
     }
     false
