@@ -879,9 +879,7 @@ impl Pretty {
                 if !matches!(f.get_impl(), code::Impl::E0(_)) {
                     panic!("Expected list, got non-nullary Val::Fn({:?})", f);
                 }
-                return self.pretty_raw(
-                    buf, indent, line_end, depth, f.name(),
-                );
+                return self.pretty_raw(buf, indent, line_end, depth, f.name());
             }
             Val::List(list) => list,
             Val::Order(o) => {

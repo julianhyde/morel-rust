@@ -38,6 +38,7 @@ use crate::shell::main::MorelError;
 use crate::shell::prop::{Prop, PropVal};
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
+use std::fmt::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const NS_PER_SEC: i64 = 1_000_000_000;
@@ -127,8 +128,31 @@ const MONTH_NAMES_SHORT: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
     "Nov", "Dec",
 ];
+const MONTH_NAMES_FULL: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
 const WEEKDAY_NAMES_SHORT: [&str; 7] =
     ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const WEEKDAY_NAMES_FULL: [&str; 7] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+];
 
 /// Howard Hinnant's `civil_from_days`: converts a count of days since
 /// 1970-01-01 into a (year, month, day) triple.
@@ -439,38 +463,100 @@ pub(crate) fn to_string(utc_nanos: i64, offset_secs: i32) -> Val {
     ))
 }
 
-/// `Date.fmt fmt d`: format with strftime-style directives. Supports
-/// `%Y`, `%m`, `%d`, `%H`, `%M`, `%S`, `%a`, `%b`, `%j`, `%%`.
+/// `Date.fmt fmt d`: format with strftime-style directives, matching
+/// the subset implemented by SML/NJ.
+///
+/// Supported directives:
+/// `%a` `%A` `%b` `%B` `%c` `%d` `%H` `%I` `%j` `%m` `%M` `%p` `%S`
+/// `%U` `%w` `%x` `%X` `%y` `%Y` `%%`. An unrecognized `%X` is
+/// emitted as the bare letter `X` (the `%` is stripped). A trailing
+/// `%` is preserved.
 pub(crate) fn fmt(format: &str, utc_nanos: i64, offset_secs: i32) -> Val {
     let b = break_down(utc_nanos, offset_secs);
+    Val::String(strftime(format, &b))
+}
+
+fn strftime(format: &str, b: &Broken) -> String {
     let mut out = String::new();
     let mut chars = format.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '%'
-            && let Some(&next) = chars.peek()
-        {
-            chars.next();
-            match next {
-                'Y' => out.push_str(&format!("{:04}", b.year)),
-                'm' => out.push_str(&format!("{:02}", b.month)),
-                'd' => out.push_str(&format!("{:02}", b.day)),
-                'H' => out.push_str(&format!("{:02}", b.hour)),
-                'M' => out.push_str(&format!("{:02}", b.minute)),
-                'S' => out.push_str(&format!("{:02}", b.second)),
-                'b' => out.push_str(MONTH_NAMES_SHORT[(b.month - 1) as usize]),
-                'a' => out.push_str(WEEKDAY_NAMES_SHORT[b.weekday as usize]),
-                'j' => out.push_str(&format!("{:03}", b.yearday + 1)),
-                '%' => out.push('%'),
-                _ => {
-                    out.push('%');
-                    out.push(next);
-                }
+        if c == '%' {
+            match chars.next() {
+                None => out.push('%'),
+                Some(d) => emit_directive(&mut out, d, b),
             }
         } else {
             out.push(c);
         }
     }
-    Val::String(out)
+    out
+}
+
+fn emit_directive(out: &mut String, d: char, b: &Broken) {
+    // Sunday-based weekday: 0=Sun, 1=Mon, ..., 6=Sat. Internal storage
+    // uses Mon=0..Sun=6, so we map.
+    let sun_wday = (b.weekday + 1) % 7;
+    // 12-hour clock: 0->12, 1..11->1..11, 12->12, 13..23->1..11.
+    let hour12 = (b.hour + 11) % 12 + 1;
+    let pm = b.hour >= 12;
+    match d {
+        'a' => out.push_str(WEEKDAY_NAMES_SHORT[b.weekday as usize]),
+        'A' => out.push_str(WEEKDAY_NAMES_FULL[b.weekday as usize]),
+        'b' | 'h' => {
+            // %h is an alias for %b in some locales; SML/NJ does not
+            // support %h, but emitting %b here is harmless and slightly
+            // more useful.
+            out.push_str(MONTH_NAMES_SHORT[(b.month - 1) as usize]);
+        }
+        'B' => out.push_str(MONTH_NAMES_FULL[(b.month - 1) as usize]),
+        'c' => {
+            // ctime-style with space-padded day of month.
+            let _ = write!(
+                out,
+                "{} {} {:>2} {:02}:{:02}:{:02} {:04}",
+                WEEKDAY_NAMES_SHORT[b.weekday as usize],
+                MONTH_NAMES_SHORT[(b.month - 1) as usize],
+                b.day,
+                b.hour,
+                b.minute,
+                b.second,
+                b.year
+            );
+        }
+        'd' => out.push_str(&format!("{:02}", b.day)),
+        'H' => out.push_str(&format!("{:02}", b.hour)),
+        'I' => out.push_str(&format!("{:02}", hour12)),
+        'j' => out.push_str(&format!("{:03}", b.yearday + 1)),
+        'm' => out.push_str(&format!("{:02}", b.month)),
+        'M' => out.push_str(&format!("{:02}", b.minute)),
+        'p' => out.push_str(if pm { "PM" } else { "AM" }),
+        'S' => out.push_str(&format!("{:02}", b.second)),
+        'U' => {
+            // Week of year, Sunday is first day. Days before the first
+            // Sunday are in week 00.
+            let week = (b.yearday + 7 - sun_wday) / 7;
+            out.push_str(&format!("{:02}", week));
+        }
+        'w' => out.push_str(&sun_wday.to_string()),
+        'x' => {
+            let _ = write!(
+                out,
+                "{:02}/{:02}/{:02}",
+                b.month,
+                b.day,
+                b.year.rem_euclid(100)
+            );
+        }
+        'X' => {
+            let _ =
+                write!(out, "{:02}:{:02}:{:02}", b.hour, b.minute, b.second);
+        }
+        'y' => out.push_str(&format!("{:02}", b.year.rem_euclid(100))),
+        'Y' => out.push_str(&format!("{:04}", b.year)),
+        '%' => out.push('%'),
+        // Unrecognized directive: emit the bare letter (% stripped).
+        other => out.push(other),
+    }
 }
 
 /// `Date.fromString s`: parse a date string in `ctime` format

@@ -954,6 +954,82 @@ Date.compare (Date.fromTimeUniv (Time.zeroTime), Date.fromTimeUniv (Time.fromSec
 Date.fmt "%Y-%m-%d" (Date.fromTimeUniv (Time.zeroTime));
 > val it = "1970-01-01" : string
 
+(*) Date.fmt: comprehensive test of every supported directive on
+(*) Fri Mar 15 2024 14:30:45.
+val sample = Date.date {year=2024, month=Mar, day=15, hour=14, minute=30, second=45, offset=NONE};
+> val sample = 2024-03-15T14:30:45Z : date
+Date.fmt "%a" sample;
+> val it = "Fri" : string
+Date.fmt "%A" sample;
+> val it = "Friday" : string
+Date.fmt "%b" sample;
+> val it = "Mar" : string
+Date.fmt "%B" sample;
+> val it = "March" : string
+Date.fmt "%c" sample;
+> val it = "Fri Mar 15 14:30:45 2024" : string
+Date.fmt "%d" sample;
+> val it = "15" : string
+Date.fmt "%H" sample;
+> val it = "14" : string
+Date.fmt "%I" sample;
+> val it = "02" : string
+Date.fmt "%j" sample;
+> val it = "075" : string
+Date.fmt "%m" sample;
+> val it = "03" : string
+Date.fmt "%M" sample;
+> val it = "30" : string
+Date.fmt "%p" sample;
+> val it = "PM" : string
+Date.fmt "%S" sample;
+> val it = "45" : string
+Date.fmt "%U" sample;
+> val it = "10" : string
+Date.fmt "%w" sample;
+> val it = "5" : string
+Date.fmt "%x" sample;
+> val it = "03/15/24" : string
+Date.fmt "%X" sample;
+> val it = "14:30:45" : string
+Date.fmt "%y" sample;
+> val it = "24" : string
+Date.fmt "%Y" sample;
+> val it = "2024" : string
+Date.fmt "%%" sample;
+> val it = "%" : string
+(*) %c uses space-padded day; toString uses zero-padded day.
+val short_day = Date.date {year=2024, month=Mar, day=5, hour=4, minute=3, second=2, offset=NONE};
+> val short_day = 2024-03-05T04:03:02Z : date
+Date.fmt "%c" short_day;
+> val it = "Tue Mar  5 04:03:02 2024" : string
+Date.toString short_day;
+> val it = "Tue Mar 05 04:03:02 2024" : string
+(*) %I and %p edge cases at midnight and noon.
+Date.fmt "%I %p" (Date.date {year=2024, month=Mar, day=15, hour=0, minute=0, second=0, offset=NONE});
+> val it = "12 AM" : string
+Date.fmt "%I %p" (Date.date {year=2024, month=Mar, day=15, hour=12, minute=0, second=0, offset=NONE});
+> val it = "12 PM" : string
+(*) %j edge cases: Jan 1 and a leap-year Dec 31.
+Date.fmt "%j" (Date.date {year=2024, month=Jan, day=1, hour=0, minute=0, second=0, offset=NONE});
+> val it = "001" : string
+Date.fmt "%j" (Date.date {year=2024, month=Dec, day=31, hour=0, minute=0, second=0, offset=NONE});
+> val it = "366" : string
+(*) %w (Sunday-based) for a known Sunday and Monday.
+Date.fmt "%w" (Date.date {year=2024, month=Jan, day=7, hour=0, minute=0, second=0, offset=NONE});
+> val it = "0" : string
+Date.fmt "%w" (Date.date {year=2024, month=Jan, day=8, hour=0, minute=0, second=0, offset=NONE});
+> val it = "1" : string
+(*) Unrecognized directive: % is stripped, the letter remains.
+Date.fmt "%E" sample;
+> val it = "E" : string
+(*) Trailing % is preserved.
+Date.fmt "%" sample;
+> val it = "%" : string
+(*) Literal text mixed with directives.
+Date.fmt "abc%defGHI" sample;
+> val it = "abc15efGHI" : string
+
 (*) Non-UTC timezone: switch to America/New_York and verify the same
 (*) UTC instant produces a local date with negative offset. EST is
 (*) UTC-5 in January (no DST).
@@ -4852,11 +4928,11 @@ Sys.env ();
 >    ("it","unit -> (string * string) list"),("nan","real"),
 >    ("nil","forall 'a. 'a bag"),("nil","forall 'a. 'a list"),
 >    ("noneInt","int option"),("p","string -> bool"),("plusOne","int -> int"),
->    ("plusThree","int -> int"),("print","'a -> unit"),
+>    ("plusThree","int -> int"),("print","'a -> unit"),("sample","date"),
 >    ("scott",
 >     "{bonuses:{comm:real, ename:string, job:string, sal:real} bag, depts:{deptno:int, dname:string, loc:string} bag, emps:{comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag, salgrades:{grade:int, hisal:real, losal:real} bag}"),
->    ("ten","(bool,int) either"),("timesTwo","int -> int"),("true","bool"),
->    ("yes","(bool,int) either")] : (string * string) list
+>    ("short_day","date"),("ten","(bool,int) either"),("timesTwo","int -> int"),
+>    ("true","bool"),("yes","(bool,int) either")] : (string * string) list
 
 env;
 > val it = fn : unit -> (string * string) list
@@ -4936,11 +5012,11 @@ env ();
 >    ("it","unit -> (string * string) list"),("nan","real"),
 >    ("nil","forall 'a. 'a bag"),("nil","forall 'a. 'a list"),
 >    ("noneInt","int option"),("p","string -> bool"),("plusOne","int -> int"),
->    ("plusThree","int -> int"),("print","'a -> unit"),
+>    ("plusThree","int -> int"),("print","'a -> unit"),("sample","date"),
 >    ("scott",
 >     "{bonuses:{comm:real, ename:string, job:string, sal:real} bag, depts:{deptno:int, dname:string, loc:string} bag, emps:{comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag, salgrades:{grade:int, hisal:real, losal:real} bag}"),
->    ("ten","(bool,int) either"),("timesTwo","int -> int"),("true","bool"),
->    ("yes","(bool,int) either")] : (string * string) list
+>    ("short_day","date"),("ten","(bool,int) either"),("timesTwo","int -> int"),
+>    ("true","bool"),("yes","(bool,int) either")] : (string * string) list
 
 (*) val plan : unit -> string
 Sys.plan;
