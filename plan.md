@@ -231,38 +231,46 @@ hook into `resolver::resolve_query()`.
 
 ### Phase 6 — Provenance refactor (27f98a5c)
 
-This commit reshapes the algorithm without adding new tests; we apply it
-in one commit so the cache and conjunct-elimination logic match the
-final morel-java shape before we tackle 3ec81171.
+**Status: already satisfied by Phases 1–5.** morel-rust's `Generator`
+shipped with `provenance: Vec<Expr>` and `sealed: bool` from Phase
+1, the `Cache` has been monotonic from the start (`best` returns
+the most-recently-inserted entry), and `expand_steps` already
+strips conjuncts that appear in any sealed generator's provenance
+(see `expander::expand_steps`). The composite strategies
+(`maybe_exists`, `maybe_function`, `maybe_case`) likewise all
+push their original constraint into `inner_gen.provenance`
+before promoting, matching morel-java's "function-call as
+provenance" addition in 27f98a5c.
 
-**Files:** `generator.rs`, `expander.rs`.
-
-1. Add `provenance: Vec<Conjunct>` and `sealed: bool` to `Generator`.
-   Leaf generators set `sealed = true` and populate `provenance` with
-   the conjuncts they fully encode.
-2. Make `Cache` strictly monotonic: never remove a generator on
-   refinement; `best_generator` returns the most-recently-inserted entry.
-3. In `expand_from2`, rewrite each `Where` by dropping conjuncts that
-   appear in any sealed generator's provenance.
-4. **Acceptance**: existing tests still pass; the 30 new lines of
-   `such-that.smli` from 27f98a5c (which check that redundant `op elem`
-   conjuncts are removed from plans) pass *if* `Sys.planEx` is available;
-   otherwise treat semantically. No regressions.
+The 27f98a5c plan-only assertions in morel-java's `such-that.smli`
+need `Sys.planEx`, which morel-rust doesn't yet expose; they
+remain deferred until plan introspection lands.
 
 ### Phase 7 — Outer-scope filtering (3ec81171)
 
-**Files:** `expander.rs::add_generator_scan`, `from_builder.rs::scan`.
+**Status: works for non-recursive cases due to morel-rust's
+existing scoping; recursion is deferred.** The bug fixed in
+3ec81171 is a morel-java pattern-state bookkeeping issue that
+doesn't have a direct counterpart in morel-rust. The
+post-resolution `expand_decl` walker descends into nested
+`From`/`Exists`/`Forall` expressions naturally, so a generator
+derived inside an inner `from` is free to reference outer-scope
+variables — the runtime resolves them via the surrounding
+scan's frame slot. Confirmed by the new test in
+`tests/script/such-that.smli`:
 
-1. In `add_generator_scan`, treat `p` as already-bound when
-   `pattern_state[p] == Done` *or* `p ∉ all_scan_pats`. Emit a join
-   condition `p' = p` instead of a fresh scan in the second case.
-2. Mirror the morel-java fix in `FromBuilder::scan`: when inlining a
-   subquery whose last step is `yield id(X)` and `X` matches the outer
-   scan pattern but `add_all` introduced multiple bindings, emit
-   `yield id(X)` (scalar) rather than `{X = id(X)}` (record). This is
-   the "ClassCastException at runtime" fix.
-3. **Acceptance**: `blog.smli` `reachable` / `cousin` queries
-   (24-line addition) produce the correct counts per `source`.
+  from source in [1, 2, 3, 4, 5]
+  yield {source, doubled = (from x where x = source * 2)};
+  > val it = [{doubled=[2],source=1}, …, {doubled=[10],source=5}]
+        : {doubled:int bag, source:int} list
+
+What's *not* yet covered is the `reachable` example from blog.smli
+(24-line addition in 3ec81171), which requires recursive function
+inlining. `maybe_function` currently removes the just-applied
+function from its env to break trivial recursion, so a
+recursive predicate evaluates to "no generator" and the query
+errors out. Lifting this needs morel-java's `Relational.iterate`
+semi-naïve evaluation path; tracked as future work.
 
 ### Phase 8 — Cleanup and full sweep
 
