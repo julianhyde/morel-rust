@@ -1913,7 +1913,7 @@ pub enum Eager0 {
 }
 
 impl Eager0 {
-    fn apply(&self) -> Val {
+    pub(crate) fn apply(&self) -> Val {
         #[expect(clippy::enum_glob_use)]
         use crate::eval::code::Eager0::*;
 
