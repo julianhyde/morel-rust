@@ -385,7 +385,12 @@ pub enum BuiltInFunction {
     #[strum(props(p = "General", name = "o", alias = "op o"))]
     #[strum(props(type = "forall 3 ('a -> 'b) * ('c -> 'a) -> 'c -> 'b"))]
     GeneralO,
-    #[strum(props(p = "Int", name = "abs", type = "int -> int"))]
+    #[strum(props(
+        p = "Int",
+        name = "abs",
+        type = "int -> int",
+        throws = "Overflow"
+    ))]
     IntAbs,
     #[strum(props(p = "Int", name = "compare", type = "int * int -> `order`"))]
     IntCompare,
