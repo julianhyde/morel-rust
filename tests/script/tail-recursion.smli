@@ -100,13 +100,16 @@ outer (10, 20);
 > val it = 20 : int
 
 (* The N-queens block from morel-java commit 6bf5306c (#148) is
- * deferred. After fixing the simpler closure-capture issue above,
- * the N-queens test still hits a separate problem in `Code::Link`'s
- * `eval_f0`: a Link to a recursive let-bound `fn` whose linked code
- * is `Code::CreateClosure` evaluates the CreateClosure in the
- * caller's frame (try's frame for a tail call to `addQueen`),
- * whereas the bind_codes reference the let-binder's frame (addQueen).
- * Resolving that needs the link layer to remember which frame the
- * CreateClosure should capture from, which is a separate fix. *)
+ * deferred. It exposes a separate, pre-existing issue: a
+ * closure-bound recursive `fun` (here: `try`, defined inside
+ * `addQueen`'s let) is referenced via the `LinkTable` from a
+ * deeper nested closure (`fn () => try (j + 1)`), and
+ * `Code::Link` resolves to the `Code::CreateClosure` for `try`
+ * which then captures from the *current* frame (the inner
+ * fn's), not the let-binder's (`addQueen`'s). The standard fix
+ * is to capture closure-bound recursive fns lexically (with
+ * cyclic-Arc initialisation for the self-slot) instead of
+ * routing them through the link table. That is a structural
+ * refactor of `Val::Closure` and is left as a follow-up. *)
 
 (*) End tail-recursion.smli
