@@ -1186,10 +1186,24 @@ impl BuiltInFunction {
         self.get_str("name").unwrap()
     }
 
+    /// Returns the parent structure name (the `p` strum prop), e.g.
+    /// `"Time"` for `TimeFmt` or `"List"` for `ListHd`. None for
+    /// functions that aren't part of a structure.
+    pub(crate) fn parent(&self) -> Option<&'static str> {
+        self.get_str("p")
+    }
+
+    /// Returns the name of the exception this function may raise (the
+    /// `throws` strum prop), e.g. `"Subscript"` for `ListNth`. None
+    /// if the function never raises.
+    pub(crate) fn throws_name(&self) -> Option<&'static str> {
+        self.get_str("throws")
+    }
+
     /// Returns "p.name" if there is a package `p`, otherwise just "name".
     pub(crate) fn full_name(&self) -> String {
         let name = self.get_str("name").unwrap();
-        if let Some(p) = self.get_str("p") {
+        if let Some(p) = self.parent() {
             format!("{}.{}", p, name)
         } else {
             name.to_string()
