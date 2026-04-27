@@ -2081,7 +2081,7 @@ impl EagerF0 {
 /// are eagerly evaluated before the function is called -- but allows the
 /// implementation to have side effects such as modifying the state of the
 /// session.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, strum_macros::Display)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum_macros::Display)]
 pub enum EagerF1 {
     // lint: sort until '#}'
     BagHd,
@@ -2905,7 +2905,7 @@ impl Eager2 {
 /// are eagerly evaluated before the function is called -- but allows the
 /// implementation to have side effects such as modifying the state of the
 /// session.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, strum_macros::Display)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum_macros::Display)]
 pub enum EagerF2 {
     // lint: sort until '#}'
     BagAll,
@@ -3276,7 +3276,7 @@ impl EagerF2 {
 /// values). The arguments are eagerly evaluated before the function is called
 /// -- but allows the implementation to have side effects such as modifying the
 /// state of the session.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, strum_macros::Display)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum_macros::Display)]
 pub enum EagerF3 {
     // lint: sort until '#}'
     BagFold,

@@ -1132,6 +1132,28 @@ impl<'a> Resolver<'a> {
                     span.clone(),
                 )
             }
+            PostfixKind::Curried2Rev => {
+                // `recv.m a` — build the curried call `m a recv`,
+                // i.e. `Apply(Apply(m, a), recv)`. Used when the
+                // receiver appears in the second curried position
+                // (e.g. `Time.fmt : int -> time -> string`).
+                let c_arg = self.resolve_expr(arg);
+                let recv_t = c_recv.type_();
+                let intermediate_t =
+                    Box::new(Type::Fn(recv_t.clone(), t.clone()));
+                let inner = CoreExpr::Apply(
+                    intermediate_t,
+                    Box::new(fn_literal),
+                    Box::new(c_arg),
+                    span.clone(),
+                );
+                CoreExpr::Apply(
+                    t,
+                    Box::new(inner),
+                    Box::new(c_recv),
+                    span.clone(),
+                )
+            }
         }
     }
 
