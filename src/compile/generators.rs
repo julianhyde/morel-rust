@@ -152,6 +152,16 @@ pub fn maybe_generator(
     {
         return true;
     }
+    if maybe_union(cache, pat, pat_name, pat_type, ordered, constraints, fn_env)
+    {
+        return true;
+    }
+    // Fallback: a bool pattern's extent is just `[true, false]`.
+    // Surrounding `where` conjuncts filter as needed (e.g.
+    // `not b` keeps only `false`).
+    if matches!(pat_type, Type::Primitive(PrimitiveType::Bool)) {
+        return create_bool_extent_generator(cache, pat, pat_name);
+    }
     false
 }
 
@@ -297,6 +307,36 @@ fn create_range_generator(
         true,
         true,
         provenance,
+    );
+    cache.add(pat_name.to_string(), generator);
+    true
+}
+
+/// Generator of last resort for a `bool` pattern: yield both
+/// `true` and `false`. Cheap, finite, and lets the surrounding
+/// `where` clause filter (e.g. `not b` keeps just `false`).
+fn create_bool_extent_generator(
+    cache: &mut Cache,
+    pat: &Pat,
+    pat_name: &str,
+) -> bool {
+    let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
+    let list_t = Box::new(Type::List(bool_t.clone()));
+    let exp = Expr::List(
+        list_t,
+        vec![
+            Expr::Literal(bool_t.clone(), Val::Bool(true)),
+            Expr::Literal(bool_t, Val::Bool(false)),
+        ],
+    );
+    let generator = Generator::new(
+        pat.clone(),
+        exp,
+        Cardinality::Finite,
+        BTreeSet::new(),
+        true,
+        false, // unsealed: doesn't subsume any specific predicate
+        Vec::new(),
     );
     cache.add(pat_name.to_string(), generator);
     true
@@ -630,15 +670,19 @@ fn maybe_function(
     false
 }
 
-/// Recognises a constraint of the form `case e of arm-pat => body`
-/// where the arm-pat is an identifier (Phase 4) or — eventually —
-/// a multi-arm boolean discriminator (Phase 5).
+/// Recognises a constraint of the form `case e of …` and, when
+/// possible, derives a generator for the unbounded pattern.
 ///
-/// For the single-arm case `case e of name => body`, the arm
-/// rebinds `e` to `name` inside `body`; we therefore substitute
-/// every free occurrence of `name` in `body` with `e`, expand
-/// `andalso` chains in the result, and merge the conjuncts back
-/// into the constraint pool.
+/// Phase 4 handled the single-arm case (`case e of name => body`).
+/// Phase 5 extends to:
+///   * multi-arm with literal-pattern → `true` arms (collect the
+///     literals into an elem-generator), and
+///   * single arm with id-pattern + body referencing the rebound
+///     identifier (carried over from Phase 4).
+///
+/// Mixed-shape multi-arm (literal arms + a variable-arm with a
+/// non-trivial condition) needs a union strategy and lands in
+/// Phase 6's maybeUnion.
 fn maybe_case(
     cache: &mut Cache,
     pat: &Pat,
@@ -652,49 +696,307 @@ fn maybe_case(
         let Expr::Case(_, subject, arms, _) = c else {
             continue;
         };
-        if arms.len() != 1 {
-            // Multi-arm case lands in Phase 5.
+
+        // 4a: single-arm case `case e of name => body` rebinds the
+        // subject to `name` inside `body`.
+        if arms.len() == 1
+            && let Some(name) = arm_id_pat(&arms[0])
+        {
+            let mut subst_map: HashMap<String, Expr> = HashMap::new();
+            subst_map.insert(name, (**subject).clone());
+            let inlined = substitute(&arms[0].expr, &subst_map);
+            let inner_conjuncts = split_conjuncts(&inlined);
+            if try_recurse(
+                cache,
+                pat,
+                pat_name,
+                pat_type,
+                ordered,
+                constraints,
+                idx,
+                &inner_conjuncts,
+                fn_env,
+                c,
+            ) {
+                return true;
+            }
             continue;
         }
-        let arm = &arms[0];
-        // Single-arm case: the arm pattern rebinds the subject.
-        // Phase 4 only handles identifier arm-patterns; tuple /
-        // record / constructor arms come in Phase 5.
-        let Pat::Identifier(_, name) = &arm.pat else {
+
+        // 5a: build a per-arm constraint and combine with `orelse`.
+        // Each arm contributes:
+        //   * literal pattern + body=`true`  ⇒  `subject = lit`
+        //   * literal pattern + body=`false` ⇒  no contribution
+        //   * id pattern + body              ⇒  `body[id := subject]`
+        //   * wildcard + body=`false`        ⇒  no contribution (terminal
+        //                                          no-match arm)
+        // (Constructor patterns and exclusion-constraints from
+        // false-arms are deferred to a later phase.)
+        let Some(or_expr) = arms_to_orelse(subject, arms) else {
             continue;
         };
+        if try_recurse(
+            cache,
+            pat,
+            pat_name,
+            pat_type,
+            ordered,
+            constraints,
+            idx,
+            &[or_expr],
+            fn_env,
+            c,
+        ) {
+            return true;
+        }
+    }
+    false
+}
 
-        let mut subst_map: HashMap<String, Expr> = HashMap::new();
-        subst_map.insert(name.clone(), (**subject).clone());
-        let inlined = substitute(&arm.expr, &subst_map);
-        let inner_conjuncts = split_conjuncts(&inlined);
+/// Builds an `orelse`-chained boolean expression from a list of
+/// case arms. Returns `None` if any arm is in a shape we don't yet
+/// know how to invert (constructor pattern, tuple pattern, etc.).
+fn arms_to_orelse(subject: &Expr, arms: &[Match]) -> Option<Expr> {
+    let mut branches: Vec<Expr> = Vec::with_capacity(arms.len());
+    for arm in arms {
+        match (&arm.pat, &arm.expr) {
+            (Pat::Literal(t, v), body) => {
+                let lit = Expr::Literal(t.clone(), v.clone());
+                let eq = make_eq_for_type(t, subject.clone(), lit);
+                if let Expr::Literal(_, Val::Bool(true)) = body {
+                    branches.push(eq);
+                } else if let Expr::Literal(_, Val::Bool(false)) = body {
+                    // No contribution (and an exclusion constraint
+                    // should be added to subsequent arms — we don't
+                    // yet do that).
+                } else {
+                    return None;
+                }
+            }
+            (Pat::Identifier(_, name), body) => {
+                if let Expr::Literal(_, Val::Bool(false)) = body {
+                    // Terminal "no-match" arm; contributes nothing.
+                    continue;
+                }
+                let mut subst_map: HashMap<String, Expr> = HashMap::new();
+                subst_map.insert(name.clone(), subject.clone());
+                let body2 = substitute(body, &subst_map);
+                branches.push(body2);
+            }
+            (Pat::Wildcard(_), body) => {
+                if let Expr::Literal(_, Val::Bool(false)) = body {
+                    // Terminal no-match arm.
+                    continue;
+                }
+                // A `_ => non-false` body would always match — we'd
+                // need to enumerate the subject's type to handle it.
+                // Skip for now.
+                return None;
+            }
+            _ => return None,
+        }
+    }
+    if branches.is_empty() {
+        return None;
+    }
+    let mut iter = branches.into_iter();
+    let first = iter.next().unwrap();
+    Some(iter.fold(first, make_orelse))
+}
 
-        let mut augmented: Vec<Expr> =
-            Vec::with_capacity(constraints.len() - 1 + inner_conjuncts.len());
-        for (j, oc) in constraints.iter().enumerate() {
-            if j != idx {
-                augmented.push(oc.clone());
+fn make_eq_for_type(t: &Type, lhs: Expr, rhs: Expr) -> Expr {
+    let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
+    let arg_t = Box::new(Type::Tuple(vec![(*t).clone(), (*t).clone()]));
+    let f = match t {
+        Type::Primitive(PrimitiveType::Int) => BuiltInFunction::IntEq,
+        Type::Primitive(PrimitiveType::Real) => BuiltInFunction::RealEq,
+        Type::Primitive(PrimitiveType::String) => BuiltInFunction::StringEq,
+        Type::Primitive(PrimitiveType::Char) => BuiltInFunction::CharEq,
+        Type::Primitive(PrimitiveType::Bool) => BuiltInFunction::BoolEq,
+        _ => BuiltInFunction::GEq,
+    };
+    let fn_t = Box::new(Type::Fn(arg_t.clone(), bool_t.clone()));
+    let fn_lit = Expr::Literal(fn_t, Val::Fn(f));
+    let arg = Expr::Tuple(arg_t, vec![lhs, rhs]);
+    Expr::Apply(bool_t, Box::new(fn_lit), Box::new(arg), Span::new(""))
+}
+
+fn make_orelse(lhs: Expr, rhs: Expr) -> Expr {
+    let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
+    let pair_t =
+        Box::new(Type::Tuple(vec![(*bool_t).clone(), (*bool_t).clone()]));
+    let fn_t = Box::new(Type::Fn(pair_t.clone(), bool_t.clone()));
+    let fn_lit = Expr::Literal(fn_t, Val::Fn(BuiltInFunction::BoolOrElse));
+    let arg = Expr::Tuple(pair_t, vec![lhs, rhs]);
+    Expr::Apply(bool_t, Box::new(fn_lit), Box::new(arg), Span::new(""))
+}
+
+/// Helper: re-runs `maybe_generator` with `replacements` substituted
+/// for the constraint at index `idx`, then promotes the generator
+/// (if any) into the real `cache` after adding the original
+/// constraint to its provenance.
+#[allow(clippy::too_many_arguments)]
+fn try_recurse(
+    cache: &mut Cache,
+    pat: &Pat,
+    pat_name: &str,
+    pat_type: &Type,
+    ordered: bool,
+    constraints: &[Expr],
+    skip_idx: usize,
+    replacements: &[Expr],
+    fn_env: &FnEnv,
+    original: &Expr,
+) -> bool {
+    let mut augmented: Vec<Expr> =
+        Vec::with_capacity(constraints.len() - 1 + replacements.len());
+    for (j, oc) in constraints.iter().enumerate() {
+        if j != skip_idx {
+            augmented.push(oc.clone());
+        }
+    }
+    augmented.extend(replacements.iter().cloned());
+    let mut probe = Cache::new();
+    if !maybe_generator(
+        &mut probe, pat, pat_name, pat_type, ordered, &augmented, fn_env,
+    ) {
+        return false;
+    }
+    let mut inner_gen = match probe.best(pat_name) {
+        Some(g) => g.clone(),
+        None => return false,
+    };
+    inner_gen.provenance.push(original.clone());
+    cache.add(pat_name.to_string(), inner_gen);
+    true
+}
+
+/// If a single-arm match is `name => body`, returns `name`.
+fn arm_id_pat(m: &Match) -> Option<String> {
+    if let Pat::Identifier(_, n) = &m.pat {
+        Some(n.clone())
+    } else {
+        None
+    }
+}
+
+/// Recognises a constraint of the form
+///   `branch_1 orelse branch_2 [orelse branch_3 ...]`
+/// (decomposed via the BoolOrElse builtin), derives a generator
+/// for each branch by recursing `maybe_generator` with that
+/// branch as the only constraint, and concatenates the resulting
+/// expressions with `Bag.concat`/`List.concat`.
+///
+/// The combined generator is unsealed: it doesn't subsume any
+/// individual branch as a where-conjunct (the surrounding `where`
+/// will keep the original `orelse` for correctness).
+fn maybe_union(
+    cache: &mut Cache,
+    pat: &Pat,
+    pat_name: &str,
+    pat_type: &Type,
+    ordered: bool,
+    constraints: &[Expr],
+    fn_env: &FnEnv,
+) -> bool {
+    for c in constraints {
+        let branches = split_orelse(c);
+        if branches.len() < 2 {
+            continue;
+        }
+        let mut sub_gens: Vec<Generator> = Vec::with_capacity(branches.len());
+        let mut all_ok = true;
+        for branch in &branches {
+            // Split each branch into its top-level `andalso`
+            // conjuncts so leaf strategies see e.g. `i > 0` and
+            // `i < 10` as separate constraints.
+            let branch_conjuncts = split_conjuncts(branch);
+            let mut probe = Cache::new();
+            if !maybe_generator(
+                &mut probe,
+                pat,
+                pat_name,
+                pat_type,
+                ordered,
+                &branch_conjuncts,
+                fn_env,
+            ) {
+                all_ok = false;
+                break;
+            }
+            if let Some(g) = probe.best(pat_name) {
+                sub_gens.push(g.clone());
+            } else {
+                all_ok = false;
+                break;
             }
         }
-        augmented.extend(inner_conjuncts);
-
-        let mut probe = Cache::new();
-        if !maybe_generator(
-            &mut probe, pat, pat_name, pat_type, ordered, &augmented, fn_env,
-        ) {
+        if !all_ok {
             continue;
         }
-        let mut inner_gen = match probe.best(pat_name) {
-            Some(g) => g.clone(),
-            None => continue,
+
+        // Build `Bag.concat [g1.exp, g2.exp, ...]` (or
+        // `List.concat …`).
+        let elem_t = pat.type_();
+        let coll_t = if ordered {
+            Box::new(Type::List(elem_t.clone()))
+        } else {
+            Box::new(Type::Bag(elem_t.clone()))
         };
-        // Mark the original `case` conjunct as subsumed by the
-        // generator so the surrounding `where` can drop it.
-        inner_gen.provenance.push(c.clone());
-        cache.add(pat_name.to_string(), inner_gen);
+        let list_of_coll_t = Box::new(Type::List(Box::new((*coll_t).clone())));
+        let exps: Vec<Expr> = sub_gens.iter().map(|g| g.exp.clone()).collect();
+        let arg_list = Expr::List(list_of_coll_t.clone(), exps);
+        let concat_fn = if ordered {
+            BuiltInFunction::ListConcat
+        } else {
+            BuiltInFunction::BagConcat
+        };
+        let fn_t = Box::new(Type::Fn(list_of_coll_t, coll_t.clone()));
+        let fn_lit = Expr::Literal(fn_t, Val::Fn(concat_fn));
+        let exp = Expr::Apply(
+            coll_t,
+            Box::new(fn_lit),
+            Box::new(arg_list),
+            Span::new(""),
+        );
+
+        let mut free: BTreeSet<String> = BTreeSet::new();
+        for g in &sub_gens {
+            for n in &g.free_pats {
+                free.insert(n.clone());
+            }
+        }
+
+        let generator = Generator::new(
+            pat.clone(),
+            exp,
+            Cardinality::Finite,
+            free,
+            false, // not unique — branches may overlap
+            false, // unsealed: composite
+            vec![c.clone()],
+        );
+        cache.add(pat_name.to_string(), generator);
         return true;
     }
     false
+}
+
+/// Flattens `a orelse b orelse c …` into `[a, b, c, …]`.
+/// Returns a single-element list if `expr` isn't an orelse.
+fn split_orelse(expr: &Expr) -> Vec<Expr> {
+    let mut out = Vec::new();
+    push_orelse(expr, &mut out);
+    out
+}
+
+fn push_orelse(expr: &Expr, out: &mut Vec<Expr>) {
+    if let Some((lhs, rhs)) = call2_args(expr, &[BuiltInFunction::BoolOrElse]) {
+        push_orelse(lhs, out);
+        push_orelse(rhs, out);
+    } else {
+        out.push(expr.clone());
+    }
 }
 
 // ---------------------------------------------------------------------------
