@@ -177,6 +177,13 @@ in
 end;
 > val it = [2,4] : int bag
 
+(* Single-arm case --------------------------------------- *)
+from x where case x of y => y elem [1,2];
+> val it = [1,2] : int bag
+
+from x where case x of y => y > 0 andalso y < 5;
+> val it = [1,2,3,4] : int bag
+
 (*) 'on' in 'from'
 from i in [1, 2, 3],
   j in [2, 3, 4] on j = i;
