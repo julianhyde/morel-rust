@@ -148,6 +148,10 @@ pub fn maybe_generator(
     ) {
         return true;
     }
+    if maybe_case(cache, pat, pat_name, pat_type, ordered, constraints, fn_env)
+    {
+        return true;
+    }
     false
 }
 
@@ -619,6 +623,73 @@ fn maybe_function(
         };
         // Add the original function-call conjunct to provenance so
         // the surrounding `where` can drop it.
+        inner_gen.provenance.push(c.clone());
+        cache.add(pat_name.to_string(), inner_gen);
+        return true;
+    }
+    false
+}
+
+/// Recognises a constraint of the form `case e of arm-pat => body`
+/// where the arm-pat is an identifier (Phase 4) or — eventually —
+/// a multi-arm boolean discriminator (Phase 5).
+///
+/// For the single-arm case `case e of name => body`, the arm
+/// rebinds `e` to `name` inside `body`; we therefore substitute
+/// every free occurrence of `name` in `body` with `e`, expand
+/// `andalso` chains in the result, and merge the conjuncts back
+/// into the constraint pool.
+fn maybe_case(
+    cache: &mut Cache,
+    pat: &Pat,
+    pat_name: &str,
+    pat_type: &Type,
+    ordered: bool,
+    constraints: &[Expr],
+    fn_env: &FnEnv,
+) -> bool {
+    for (idx, c) in constraints.iter().enumerate() {
+        let Expr::Case(_, subject, arms, _) = c else {
+            continue;
+        };
+        if arms.len() != 1 {
+            // Multi-arm case lands in Phase 5.
+            continue;
+        }
+        let arm = &arms[0];
+        // Single-arm case: the arm pattern rebinds the subject.
+        // Phase 4 only handles identifier arm-patterns; tuple /
+        // record / constructor arms come in Phase 5.
+        let Pat::Identifier(_, name) = &arm.pat else {
+            continue;
+        };
+
+        let mut subst_map: HashMap<String, Expr> = HashMap::new();
+        subst_map.insert(name.clone(), (**subject).clone());
+        let inlined = substitute(&arm.expr, &subst_map);
+        let inner_conjuncts = split_conjuncts(&inlined);
+
+        let mut augmented: Vec<Expr> =
+            Vec::with_capacity(constraints.len() - 1 + inner_conjuncts.len());
+        for (j, oc) in constraints.iter().enumerate() {
+            if j != idx {
+                augmented.push(oc.clone());
+            }
+        }
+        augmented.extend(inner_conjuncts);
+
+        let mut probe = Cache::new();
+        if !maybe_generator(
+            &mut probe, pat, pat_name, pat_type, ordered, &augmented, fn_env,
+        ) {
+            continue;
+        }
+        let mut inner_gen = match probe.best(pat_name) {
+            Some(g) => g.clone(),
+            None => continue,
+        };
+        // Mark the original `case` conjunct as subsumed by the
+        // generator so the surrounding `where` can drop it.
         inner_gen.provenance.push(c.clone());
         cache.add(pat_name.to_string(), inner_gen);
         return true;
