@@ -23,11 +23,12 @@
 //! add string-prefix, function inlining, exists, case, and
 //! constructor patterns.
 
-use crate::compile::core::{Expr, Match, Pat};
+use crate::compile::core::{Binding, Expr, Match, Pat};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::generator::{Cache, Cardinality, Generator};
 use crate::compile::library::{BuiltInFunction, lookup_struct_field};
 use crate::compile::span::Span;
+use crate::compile::type_env::Id;
 use crate::compile::types::{PrimitiveType, Type};
 use crate::eval::val::Val;
 use std::collections::BTreeSet;
@@ -121,6 +122,9 @@ pub fn maybe_generator(
         return create_string_prefix_generator(
             cache, pat, pat_name, ordered, s, c,
         );
+    }
+    if maybe_exists(cache, pat, pat_name, pat_type, ordered, constraints) {
+        return true;
     }
     false
 }
@@ -347,6 +351,180 @@ fn create_string_prefix_generator(
     );
     cache.add(pat_name.to_string(), generator);
     true
+}
+
+// ---------------------------------------------------------------------------
+// Complex strategies
+// ---------------------------------------------------------------------------
+
+/// Recognises a constraint of the form
+/// `exists s1 in c1 [, s2 in c2, ...] where pred`
+/// (which morel-rust resolves to a `From` whose last step is
+/// `StepKind::Exists`). When the inner `where` predicate, combined
+/// with the outer constraints, yields a generator for `pat` whose
+/// free patterns include any inner scan-pat, we wrap the inner
+/// scans around the inner generator and yield `pat` with `distinct`.
+///
+/// Example: `from p where (exists s in ["abcd","ant"] where
+/// String.isPrefix p s)` becomes
+/// `from s in ["abcd","ant"]
+///   join p in Bag.tabulate(String.size s + 1,
+///                          fn i => String.substring(s, 0, i))
+///   yield p distinct`.
+fn maybe_exists(
+    cache: &mut Cache,
+    pat: &Pat,
+    pat_name: &str,
+    pat_type: &Type,
+    ordered: bool,
+    constraints: &[Expr],
+) -> bool {
+    use crate::compile::core::{Step, StepEnv, StepKind};
+
+    for (idx, c) in constraints.iter().enumerate() {
+        let Expr::From(from_t, steps) = c else {
+            continue;
+        };
+        // Last step must be `Exists` for this to be an
+        // `exists` expression.
+        if !matches!(steps.last().map(|s| &s.kind), Some(StepKind::Exists)) {
+            continue;
+        }
+
+        // Drop the trailing Exists; collect inner scans and
+        // where-conjuncts.
+        let inner_steps = &steps[..steps.len() - 1];
+        let mut inner_scans: Vec<Step> = Vec::new();
+        let mut inner_conjuncts: Vec<Expr> = Vec::new();
+        for s in inner_steps {
+            match &s.kind {
+                StepKind::Scan(_, _, _) => inner_scans.push(s.clone()),
+                StepKind::Where(cond) => {
+                    inner_conjuncts.extend(split_conjuncts(cond));
+                }
+                _ => {} // skip yields, groups, orders, etc. — Phase 3a is
+                        // intentionally narrow.
+            }
+        }
+
+        // Build the augmented constraint set: outer minus this
+        // exists, plus inner conjuncts.
+        let mut augmented: Vec<Expr> =
+            Vec::with_capacity(constraints.len() - 1 + inner_conjuncts.len());
+        for (j, oc) in constraints.iter().enumerate() {
+            if j != idx {
+                augmented.push(oc.clone());
+            }
+        }
+        augmented.extend(inner_conjuncts);
+
+        // Try to derive a generator from the augmented set, into
+        // a temporary cache so we can inspect the result before
+        // adding to the real cache.
+        let mut probe = Cache::new();
+        if !maybe_generator(
+            &mut probe, pat, pat_name, pat_type, ordered, &augmented,
+        ) {
+            continue;
+        }
+        let inner_gen = match probe.best(pat_name) {
+            Some(g) => g.clone(),
+            None => continue,
+        };
+
+        // Find inner scans that bind any of the generator's free
+        // patterns. If none, the generator stands on its own and
+        // we can just promote it.
+        let inner_names: BTreeSet<String> = inner_scans
+            .iter()
+            .filter_map(|s| match &s.kind {
+                StepKind::Scan(p, _, _) => match p.as_ref() {
+                    Pat::Identifier(_, n) => Some(n.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        let needed: Vec<&Step> = inner_scans
+            .iter()
+            .filter(|s| {
+                if let StepKind::Scan(p, _, _) = &s.kind
+                    && let Pat::Identifier(_, n) = p.as_ref()
+                {
+                    inner_gen.free_pats.contains(n)
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        if needed.is_empty() {
+            // The generator doesn't depend on the inner scans;
+            // just promote it.
+            cache.add(pat_name.to_string(), inner_gen);
+            return true;
+        }
+
+        // Wrap: build `from <needed-scans> join pat in inner_gen.exp
+        //        yield pat distinct`.
+        let elem_t = pat.type_();
+        let coll_t = if ordered {
+            Box::new(Type::List(elem_t.clone()))
+        } else {
+            Box::new(Type::Bag(elem_t.clone()))
+        };
+        let mut new_steps: Vec<Step> = Vec::new();
+        for s in &needed {
+            new_steps.push((*s).clone());
+        }
+        // join pat in inner_gen.exp
+        let scan_env = StepEnv::new(
+            vec![Binding::new(Id::new(pat_name, 0), elem_t.clone())],
+            true,
+            ordered,
+        );
+        new_steps.push(Step::new(
+            StepKind::Scan(
+                Box::new(pat.clone()),
+                Box::new(inner_gen.exp.clone()),
+                None,
+            ),
+            scan_env.clone(),
+        ));
+        // yield pat
+        new_steps.push(Step::new(
+            StepKind::Yield(Box::new(Expr::Identifier(
+                elem_t.clone(),
+                pat_name.to_string(),
+            ))),
+            scan_env.clone(),
+        ));
+        // distinct
+        new_steps.push(Step::new(StepKind::Distinct, scan_env));
+
+        let exp = Expr::From(coll_t, new_steps);
+
+        let mut free = inner_gen.free_pats.clone();
+        for n in &inner_names {
+            free.remove(n);
+        }
+        let provenance = vec![c.clone()];
+        let unsealed = Generator::new(
+            pat.clone(),
+            exp,
+            Cardinality::Finite,
+            free,
+            false, // not unique — distinct handles dedup
+            false, // unsealed: composite
+            provenance,
+        );
+        cache.add(pat_name.to_string(), unsealed);
+        // Suppress unused `from_t` warning (the type is implicit
+        // in the new wrap).
+        let _ = from_t;
+        return true;
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------

@@ -155,6 +155,11 @@ from s in ["abcd", "ant"], p where String.isPrefix p s;
 from s in ["abcd", "ant"], p where String.isPrefix p s yield p distinct;
 > val it = ["","a","ab","abc","abcd","an","ant"] : string bag
 
+(* Exists as a `where` constraint --------------------- *)
+from p where (exists s in ["abcd", "ant"] where String.isPrefix p s)
+order p;
+> val it = ["","a","ab","abc","abcd","an","ant"] : string list
+
 (*) 'on' in 'from'
 from i in [1, 2, 3],
   j in [2, 3, 4] on j = i;
