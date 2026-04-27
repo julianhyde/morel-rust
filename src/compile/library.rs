@@ -1036,7 +1036,7 @@ pub enum BuiltInFunction {
     TimeCompare,
     /// `Time.fmt n t`: formats `t` as decimal seconds with `n` fractional
     /// digits.
-    #[strum(props(p = "Time", name = "fmt"))]
+    #[strum(props(p = "Time", name = "fmt", throws = "Size"))]
     #[strum(props(type = "int -> time -> string"))]
     TimeFmt,
     /// `Time.fromMicroseconds n`: time from microseconds.

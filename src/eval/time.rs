@@ -94,9 +94,12 @@ pub(crate) fn to_real(v: i64) -> Val {
 }
 
 /// `Time.fmt n t`: format `t` as decimal seconds with `n` fractional
-/// digits.
-pub(crate) fn fmt(n: i32, v: i64) -> Val {
-    Val::String(format(n, v))
+/// digits. Raises `Size` if `n < 0`.
+pub(crate) fn fmt(n: i32, v: i64, span: &Span) -> Result<Val, MorelError> {
+    if n < 0 {
+        return Err(MorelError::Runtime(BuiltInExn::Size, span.clone()));
+    }
+    Ok(Val::String(format(n, v)))
 }
 
 /// `Time.toString t`: equivalent to `fmt 3 t`.
@@ -134,27 +137,61 @@ pub(crate) fn now(session: &Session) -> Val {
     t(dur.as_nanos() as i64)
 }
 
-/// Format `t` as decimal seconds with `n` fractional digits.
+/// Format `t` as decimal seconds with `n` fractional digits, using
+/// IEEE-754-style "round half to even" (banker's rounding) at the
+/// requested precision. `n` must be non-negative.
 fn format(n: i32, t: i64) -> String {
+    debug_assert!(n >= 0);
     let neg = t < 0;
-    let abs = t.unsigned_abs();
-    let secs = abs / 1_000_000_000;
+    let abs = t.unsigned_abs() as i128;
+    // For n <= 9, round to the nearest unit of 10^(9-n) nanoseconds
+    // using banker's rounding. For n > 9, no rounding is needed
+    // (the extra digits are zeros).
     let mut s = String::new();
     if neg {
         s.push('~');
     }
-    s.push_str(&secs.to_string());
-    if n > 0 {
-        s.push('.');
+    if n <= 9 {
+        let n = n as u32;
+        let scale = 10_i128.pow(9 - n);
+        let units_per_sec = 10_i128.pow(n);
+        let scaled = round_half_to_even(abs, scale);
+        let secs = scaled / units_per_sec;
+        let frac = scaled - secs * units_per_sec;
+        s.push_str(&secs.to_string());
+        if n > 0 {
+            s.push('.');
+            s.push_str(&format!("{:0width$}", frac, width = n as usize));
+        }
+    } else {
+        let secs = abs / 1_000_000_000;
         let nanos = (abs % 1_000_000_000) as u32;
-        let frac = format!("{:09}", nanos);
-        let take = (n as usize).min(9);
-        s.push_str(&frac[..take]);
-        for _ in take..n as usize {
+        s.push_str(&secs.to_string());
+        s.push('.');
+        s.push_str(&format!("{:09}", nanos));
+        for _ in 9..n as usize {
             s.push('0');
         }
     }
     s
+}
+
+/// Returns `numerator / scale`, rounded to the nearest integer, with
+/// ties resolved toward the nearest even integer (banker's rounding).
+/// Both arguments must be non-negative; `scale` must be positive.
+fn round_half_to_even(numerator: i128, scale: i128) -> i128 {
+    debug_assert!(numerator >= 0 && scale > 0);
+    let q = numerator / scale;
+    let r2 = (numerator - q * scale) * 2;
+    if r2 < scale {
+        q
+    } else if r2 > scale {
+        q + 1
+    } else if q % 2 == 0 {
+        q
+    } else {
+        q + 1
+    }
 }
 
 /// Parses an ISO-8601 instant string like `"2024-01-01T00:00:00Z"` to

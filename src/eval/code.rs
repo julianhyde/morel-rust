@@ -2761,7 +2761,6 @@ pub enum Eager2 {
     StringNe,
     TimeAdd,
     TimeCompare,
-    TimeFmt,
     TimeGe,
     TimeGt,
     TimeLe,
@@ -2932,7 +2931,6 @@ impl Eager2 {
                 use crate::eval::order::Order;
                 Val::Order(Order(a0.expect_time().cmp(&a1.expect_time())))
             }
-            TimeFmt => time::fmt(a0.expect_int(), a1.expect_time()),
             TimeGe => Val::Bool(a0.expect_time() >= a1.expect_time()),
             TimeGt => Val::Bool(a0.expect_time() > a1.expect_time()),
             TimeLe => Val::Bool(a0.expect_time() <= a1.expect_time()),
@@ -3018,6 +3016,7 @@ pub enum EagerF2 {
     StringTokens,
     StringTranslate,
     SysSet,
+    TimeFmt,
     VectorAll,
     VectorApp,
     VectorAppi,
@@ -3291,6 +3290,9 @@ impl EagerF2 {
                 let val = a1;
                 r.emit_effect(Effect::SetShellProp(prop, val));
                 Ok(Val::Unit)
+            }
+            TimeFmt => {
+                time::fmt(a0.expect_int(), a1.expect_time(), span.unwrap())
             }
             VectorAll => Ok(Val::Bool(List::all(r, f, &a0, a1.expect_list())?)),
             VectorApp => {
@@ -4042,7 +4044,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     EagerF1::SysUnset.implements(&mut b, SysUnset);
     Eager2::TimeAdd.implements(&mut b, TimeAdd);
     Eager2::TimeCompare.implements(&mut b, TimeCompare);
-    Eager2::TimeFmt.implements(&mut b, TimeFmt);
+    EagerF2::TimeFmt.implements(&mut b, TimeFmt);
     Eager1::TimeFromMicroseconds.implements(&mut b, TimeFromMicroseconds);
     Eager1::TimeFromMilliseconds.implements(&mut b, TimeFromMilliseconds);
     Eager1::TimeFromNanoseconds.implements(&mut b, TimeFromNanoseconds);
