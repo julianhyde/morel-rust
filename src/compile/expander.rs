@@ -500,11 +500,24 @@ fn expand_steps(steps: Vec<Step>, env: &FnEnv) -> Vec<Step> {
                     _ => unreachable!(),
                 };
                 if let Some(generator) = cache.best(&name) {
+                    // Combine the original Scan's condition (always
+                    // None for ScanExtent today, but be defensive)
+                    // with the generator's extra row filter.
+                    let merged_cond = match (
+                        cond.map(|c| *c),
+                        generator.extra_filter.clone(),
+                    ) {
+                        (None, None) => None,
+                        (Some(c), None) | (None, Some(c)) => Some(Box::new(c)),
+                        (Some(c), Some(f)) => {
+                            Some(Box::new(and_all(vec![c, f])))
+                        }
+                    };
                     out.push(Step::new(
                         StepKind::Scan(
                             Box::new(next_pat),
                             Box::new(generator.exp.clone()),
-                            cond,
+                            merged_cond,
                         ),
                         next_env,
                     ));
@@ -648,7 +661,7 @@ fn provenance_contains(provenance: &[Expr], conjunct: &Expr) -> bool {
 /// Adequate for matching `where` conjuncts against generator
 /// provenance — no alpha-renaming is needed because both sides come
 /// from the same surface query.
-fn expr_eq(a: &Expr, b: &Expr) -> bool {
+pub(crate) fn expr_eq(a: &Expr, b: &Expr) -> bool {
     match (a, b) {
         (Expr::Literal(t1, v1), Expr::Literal(t2, v2)) => t1 == t2 && v1 == v2,
         (Expr::Identifier(t1, n1), Expr::Identifier(t2, n2)) => {
@@ -670,7 +683,7 @@ fn expr_eq(a: &Expr, b: &Expr) -> bool {
     }
 }
 
-fn and_all(conjuncts: Vec<Expr>) -> Expr {
+pub(crate) fn and_all(conjuncts: Vec<Expr>) -> Expr {
     let mut iter = conjuncts.into_iter();
     let first = iter.next().expect("at least one conjunct");
     iter.fold(first, |lhs, rhs| {

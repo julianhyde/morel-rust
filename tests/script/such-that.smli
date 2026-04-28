@@ -242,9 +242,6 @@ where {deptno = dno, dname = name, loc = "CHICAGO"} elem scott.depts
 where dno > 20;
 > val it = [{dno=30,name="SALES"}] : {dno:int, name:string} bag
 
-set("mode", "validate");
-> val it = () : unit
-
 (*) Variables 'dno', 'name' are infinite until constrained by conditions.
 from v, dno, name
 where v elem scott.depts
@@ -285,11 +282,17 @@ where dno > 20
 yield {dno = #deptno v, name = #dname v};
 > val it = [{dno=30,name="SALES"}] : {dno:int, name:string} bag
 
+set("mode", "validate");
+> val it = () : unit
+
 (*) We can iterate over a finite datatype
 from i
 where Option.getOpt i;
 > val it = [(NONE,true),(SOME true,false),(SOME true,true)]
 >   : (bool option * bool) bag
+
+set("mode", "evaluate");
+> val it = () : unit
 
 (*) If the expression is 'elem set' we can deduce the extent.
 from e
@@ -405,6 +408,8 @@ from s where isPrefix (s, "abcd");
 
 (*) An integer function with external extent.
 (*) Given j, k we could generate finite i.
+set("mode", "validate");
+> val it = () : unit
 fun isBetween (i, j, k) =
   i <= j andalso j <= k;
 > val isBetween = fn : 'a * 'a * 'a -> bool
@@ -412,8 +417,6 @@ fun isBetween (i, j, k) =
 from i where isBetween (i, 5, 8);
 > val it = [5, 6, 7, 8] : int list
 *)
-
-
 set("mode", "evaluate");
 > val it = () : unit
 

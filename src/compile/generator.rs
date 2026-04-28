@@ -68,6 +68,13 @@ pub struct Generator {
     pub sealed: bool,
     /// Original `where` conjuncts this generator subsumes.
     pub provenance: Vec<Expr>,
+    /// Extra per-row predicate(s) the generator must apply but
+    /// can't fold into `exp`. Used when function inlining brings
+    /// in conjuncts that are not consumed by the chosen leaf
+    /// strategy (e.g. `fun isClerk e = e elem coll andalso
+    /// e.job = "CLERK"` — the elem-strategy consumes the first
+    /// conjunct, the second becomes a row filter on the scan).
+    pub extra_filter: Option<Expr>,
 }
 
 impl Generator {
@@ -88,6 +95,7 @@ impl Generator {
             unique,
             sealed,
             provenance,
+            extra_filter: None,
         }
     }
 }
