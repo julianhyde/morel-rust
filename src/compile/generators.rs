@@ -24,7 +24,7 @@
 //! constructor patterns.
 
 use crate::compile::core::{Binding, Expr, Match, Pat};
-use crate::compile::expander::FnEnv;
+use crate::compile::expander::{FnEnv, and_all, expr_eq};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::generator::{Cache, Cardinality, Generator};
 use crate::compile::library::{BuiltInFunction, lookup_struct_field};
@@ -661,6 +661,28 @@ fn maybe_function(
             Some(g) => g.clone(),
             None => continue,
         };
+
+        // Identify inlined conjuncts that the chosen leaf strategy
+        // didn't fold into `inner_gen.exp`. They came from the
+        // function body and aren't visible in any surrounding
+        // `where` step, so without an explicit row filter they'd
+        // be silently dropped. Attach the AND of unconsumed inner
+        // conjuncts as `extra_filter`; the rebuild emits it as
+        // the Scan's per-row condition.
+        let inner_conjuncts2 = split_conjuncts(&inlined);
+        let unconsumed: Vec<Expr> = inner_conjuncts2
+            .into_iter()
+            .filter(|ic| !inner_gen.provenance.iter().any(|p| expr_eq(p, ic)))
+            .collect();
+        if !unconsumed.is_empty() {
+            let combined = and_all(unconsumed);
+            inner_gen.extra_filter =
+                Some(match inner_gen.extra_filter.take() {
+                    Some(existing) => and_all(vec![existing, combined]),
+                    None => combined,
+                });
+        }
+
         // Add the original function-call conjunct to provenance so
         // the surrounding `where` can drop it.
         inner_gen.provenance.push(c.clone());
