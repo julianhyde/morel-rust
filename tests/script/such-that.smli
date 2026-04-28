@@ -103,16 +103,10 @@ from i
   take 5;
 > val it = [20,19,18,17,16] : int list
 
-(* `through` desugaring of an unbounded scan is not yet supported;
-   validate-only. *)
-set("mode", "validate");
-> val it = () : unit
 from i
   where i >= 0 andalso i <= 10
   through j in (fn bag => Bag.`take` (bag, 3));
 > val it = [0,1,2] : int bag
-set("mode", "evaluate");
-> val it = () : unit
 
 exists i
   where i >= 0 andalso i <= 100;
