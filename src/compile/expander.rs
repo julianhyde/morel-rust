@@ -254,7 +254,194 @@ fn has_extent_scan(steps: &[Step]) -> bool {
     })
 }
 
+/// Pre-pass: rewrite each `where (x, y, …) elem coll` whose left-
+/// hand tuple is exactly the names of some unbounded patterns in
+/// this from. The matched ScanExtents are merged into a single
+/// `Scan(Tuple([x, y, …]), coll)` step (mirroring the user-typed
+/// `from (x, y, …) in coll`), and the original `elem` conjunct
+/// is dropped from the surrounding `Where`.
+///
+/// The merged scan is placed at the position of the *last* of the
+/// matched ScanExtents, so later steps that reference any of the
+/// destructured names see them as bound.
+fn decompose_tuple_elems(steps: Vec<Step>) -> Vec<Step> {
+    use std::collections::HashSet;
+
+    // Gather all ScanExtent positions and the names they bind.
+    let mut extent_index: HashMap<String, usize> = HashMap::new();
+    for (i, step) in steps.iter().enumerate() {
+        if let StepKind::Scan(p, source, _) = &step.kind
+            && matches!(source.as_ref(), Expr::Extent(_))
+            && let Pat::Identifier(_, n) = p.as_ref()
+        {
+            extent_index.insert(n.clone(), i);
+        }
+    }
+    if extent_index.is_empty() {
+        return steps;
+    }
+
+    // For each where-step, decompose its conjuncts and identify
+    // which ones are tuple-elem candidates we can merge.
+    //
+    // (positions_to_drop, replacement_at_position, conjunct_index_to_drop)
+    let mut drop_positions: HashSet<usize> = HashSet::new();
+    let mut replacement_at: HashMap<usize, Step> = HashMap::new();
+    // Per Where step: which conjunct indices to drop.
+    let mut where_drops: HashMap<usize, HashSet<usize>> = HashMap::new();
+
+    for (wi, step) in steps.iter().enumerate() {
+        let StepKind::Where(cond) = &step.kind else {
+            continue;
+        };
+        let conjuncts = split_conjuncts(cond);
+        for (ci, c) in conjuncts.iter().enumerate() {
+            // Look for `Apply(ListElem, Tuple(_, [tuple_lhs, coll]))`
+            // where `tuple_lhs` is a Tuple of Identifiers, all of
+            // which are ScanExtent-bound and not yet claimed.
+            let Expr::Apply(_, f, arg, _) = c else {
+                continue;
+            };
+            let Expr::Literal(_, Val::Fn(BuiltInFunction::ListElem)) =
+                f.as_ref()
+            else {
+                continue;
+            };
+            let Expr::Tuple(_, args) = arg.as_ref() else {
+                continue;
+            };
+            if args.len() != 2 {
+                continue;
+            }
+            let Expr::Tuple(_tuple_t, ids) = &args[0] else {
+                continue;
+            };
+            let coll = &args[1];
+
+            // Each component must be either:
+            //   * an Identifier naming a not-yet-claimed ScanExtent
+            //     (becomes a Pat::Identifier in the merged scan), or
+            //   * a Literal (becomes a Pat::Literal — narrows the
+            //     scan to records whose field equals that constant).
+            // Anything else (a free expression, a non-extent
+            // identifier, etc.) makes us skip this conjunct and let
+            // the per-pattern generator pipeline handle it.
+            let mut named_pats: Vec<Pat> = Vec::with_capacity(ids.len());
+            let mut positions: Vec<usize> = Vec::with_capacity(ids.len());
+            let mut bound_names: Vec<String> = Vec::new();
+            let mut ok = true;
+            for id in ids {
+                match id {
+                    Expr::Identifier(t, n) => {
+                        let Some(pos) = extent_index.get(n) else {
+                            ok = false;
+                            break;
+                        };
+                        if drop_positions.contains(pos)
+                            || replacement_at.contains_key(pos)
+                            || bound_names.contains(n)
+                        {
+                            ok = false;
+                            break;
+                        }
+                        named_pats.push(Pat::Identifier(t.clone(), n.clone()));
+                        positions.push(*pos);
+                        bound_names.push(n.clone());
+                    }
+                    Expr::Literal(t, v) => {
+                        named_pats.push(Pat::Literal(t.clone(), v.clone()));
+                    }
+                    _ => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            // Need at least one identifier to merge — otherwise this
+            // is a constant `elem` that doesn't bind anything.
+            if !ok || positions.is_empty() {
+                continue;
+            }
+
+            // Build the merged Scan. Element type = first named
+            // pat's tuple type (i.e. the tuple type from the LHS).
+            let tuple_t = match &args[0] {
+                Expr::Tuple(t, _) => t.clone(),
+                _ => continue,
+            };
+            let tuple_pat = Pat::Tuple(tuple_t.clone(), named_pats);
+            let scan = Step::new(
+                StepKind::Scan(
+                    Box::new(tuple_pat),
+                    Box::new(coll.clone()),
+                    None,
+                ),
+                step.env.clone(),
+            );
+
+            // Place the scan at the position of the *last* matched
+            // ScanExtent; the others get dropped.
+            let last_pos = *positions.iter().max().unwrap();
+            for p in &positions {
+                if *p != last_pos {
+                    drop_positions.insert(*p);
+                }
+            }
+            replacement_at.insert(last_pos, scan);
+
+            // Mark the conjunct for removal from this Where.
+            where_drops.entry(wi).or_default().insert(ci);
+        }
+    }
+
+    if drop_positions.is_empty() && replacement_at.is_empty() {
+        return steps;
+    }
+
+    // Rebuild the step list applying the replacements.
+    let mut out: Vec<Step> = Vec::with_capacity(steps.len());
+    for (i, step) in steps.into_iter().enumerate() {
+        if drop_positions.contains(&i) {
+            continue;
+        }
+        if let Some(repl) = replacement_at.remove(&i) {
+            out.push(repl);
+            continue;
+        }
+        // For Where steps, drop matched conjuncts.
+        if let Some(drops) = where_drops.get(&i)
+            && let StepKind::Where(cond) = &step.kind
+        {
+            let conjuncts = split_conjuncts(cond);
+            let kept: Vec<Expr> = conjuncts
+                .into_iter()
+                .enumerate()
+                .filter(|(ci, _)| !drops.contains(ci))
+                .map(|(_, c)| c)
+                .collect();
+            if kept.is_empty() {
+                // Whole where becomes vacuous; drop it.
+                continue;
+            }
+            let new_cond = and_all(kept);
+            out.push(Step::new(StepKind::Where(Box::new(new_cond)), step.env));
+            continue;
+        }
+        out.push(step);
+    }
+    out
+}
+
 fn expand_steps(steps: Vec<Step>, env: &FnEnv) -> Vec<Step> {
+    // Phase 0 (pre-pass): merge tuple-pattern `elem` conjuncts
+    // with the corresponding ScanExtents. A `where (x, y) elem
+    // coll` constraint, combined with `ScanExtent(x)` and
+    // `ScanExtent(y)`, becomes a single `Scan(Tuple([x, y]), coll)`
+    // — equivalent to writing `from (x, y) in coll`. Without this
+    // step the per-pattern generators couldn't preserve the
+    // tuple's correlation between `x` and `y`.
+    let steps = decompose_tuple_elems(steps);
+
     // Phase A: derive generators by scanning where-clauses.
     let mut cache = Cache::new();
     derive_generators(&steps, &mut cache, env);
