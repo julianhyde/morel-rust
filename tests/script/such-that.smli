@@ -217,9 +217,6 @@ join c in [6, 7] on b + c = 10,
 > val it = [{a=2,b=4,c=6,d=7},{a=2,b=4,c=6,d=8}]
 >   : {a:int, b:int, c:int, d:int} list
 
-set("mode", "validate");
-> val it = () : unit
-
 from dno, name, loc
 where {deptno = dno, dname = name, loc} elem scott.depts
   andalso dno > 20;
@@ -244,6 +241,9 @@ from dno, name
 where {deptno = dno, dname = name, loc = "CHICAGO"} elem scott.depts
 where dno > 20;
 > val it = [{dno=30,name="SALES"}] : {dno:int, name:string} bag
+
+set("mode", "validate");
+> val it = () : unit
 
 (*) Variables 'dno', 'name' are infinite until constrained by conditions.
 from v, dno, name
