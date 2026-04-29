@@ -16,12 +16,12 @@
  * language governing permissions and limitations under the
  * License.
  *
- * Tail-call optimization (TCO) and recursion patterns.
- * The eight numbered patterns below are the canonical recursion
- * shapes catalogued in
- * https://github.com/hydromatic/morel-rust/issues/39.
- * TCO is tracked in
- * https://github.com/hydromatic/morel/issues/151.
+ * This test illustrates various patterns of recursion, some of
+ * which ran into implementation issues (e.g. closures failing
+ * to capture necessary values) at one point. Many of these
+ * examples benefit from tail-call optimization (TCO); without
+ * TCO, several of these examples overflow stack even on modest
+ * input sizes.
  *)
 
 (* Pattern 1: Simple self-recursion ------------------------------ *)
@@ -41,9 +41,13 @@ in
 end;
 > val it = 1000 : int
 
-(*) Needs TCO to handle large inputs (depth > ~1,000).
-let fun resum (m, n) = if m = 0 then n else resum (m - 1, n + 1)
-in resum (1000000, 0) end;
+(* Needs tail-call optimization (TCO) to handle large depths
+ * (depth > ~1,000). *)
+let
+  fun resum (m, n) = if m = 0 then n else resum (m - 1, n + 1)
+in
+  resum (1000000, 0)
+end;
 > val it = 1000000 : int
 
 (* Pattern 3: Top-level mutual recursion (`fun ... and ...`) ----- *)
@@ -65,8 +69,8 @@ even2 100000;
 odd2 100000;
 > val it = false : bool
 
-(*) coprime: a single self-recursive fn that's also tail-recursive
-(*) regardless of branch.
+(* coprime: a single self-recursive fn that's also tail-recursive
+ * regardless of branch. *)
 fun coprime (a, b) =
   if a < 1 orelse b < 1 then false
   else if a = 1 orelse b = 1 then true
@@ -87,8 +91,11 @@ coprime (1836311903, 1134903170);
 
 (* Pattern 4: Closure captures outer vars ------------------------ *)
 fun f4 (i, fc) =
-  let fun g4 j = f4 (i + 1, fc)
-  in if i > 3 then 0 else g4 1 end;
+  let
+    fun g4 j = f4 (i + 1, fc)
+  in
+    if i > 3 then 0 else g4 1
+  end;
 > val f4 = fn : int * 'a -> int
 
 f4 (1, fn () => 99);
@@ -115,7 +122,8 @@ fun threat (x, y) (x', y') =
   x = x' orelse y = y' orelse abs (x - x') = abs (y - y');
 > val threat = fn : int * int -> int * int -> bool
 
-(*) 'conflict' returns true if a position conflicts with any queen in the list.
+(* 'conflict' returns true if a position conflicts with any queen in
+ * the list. *)
 fun conflict pos = List.`exists` (threat pos);
 > val conflict = fn : int * int -> (int * int) list -> bool
 
@@ -189,8 +197,35 @@ queens 28;
 
 *)
 
-(* Pattern 7: `val rec ... and` with tuple pattern --------------- *)
-(*) `val rec (x, y) = (1, 2)` is morel-specific; SML/NJ rejects it.
+(*) A one-function solution to N queens.
+fun queens' n =
+  let
+    fun threat (x, y) (x', y') =
+      x = x' orelse y = y' orelse abs (x - x') = abs (y - y')
+    fun conflict pos =
+      List.`exists` (threat pos)
+    fun addQueen (i, n, qs, fc) =
+      let
+        fun try j =
+          if j > n then fc ()
+          else if conflict (i, j) qs then try (j + 1)
+          else if i = n then SOME ((i, j) :: qs)
+          else addQueen (i + 1, n, (i, j) :: qs, fn () => try (j + 1))
+      in
+        try 1
+      end
+  in
+    addQueen (1, n, [], fn () => NONE)
+  end;
+> val queens'  =  fn : int -> (int * int) list option
+
+(*) The single-function algorithm gives the same solution.
+queens' 8;
+> val it = SOME [(8,4),(7,2),(6,7),(5,3),(4,6),(3,8),(2,5),(1,1)] : (int * int) list option
+
+(* Pattern 7: `val rec ... and` with tuple pattern ------------------
+ * `val rec (x, y) = (1, 2)` is morel-specific; SML/NJ rejects it.
+ *)
 let
   val rec (x, y) = (1, 2)
   and f = fn n => if n = 1 then 1 else n * f (n - 1)
@@ -199,11 +234,12 @@ in
 end;
 > val it = 123 : int
 
-(* Pattern 8: Mutually recursive let-rec SCC --------------------- *)
-(*) Per GHC inlining, (f, g, h), (g, p, q) are strongly connected
-(*) components of the dependency graph. The compiler must terminate
-(*) on this declaration; the closures must cross-reference each
-(*) other correctly at runtime.
+(* Pattern 8: Mutually recursive let-rec SCC ------------------------
+ * Per GHC inlining, (f, g, h), (g, p, q) are strongly connected
+ * components of the dependency graph. The compiler must terminate
+ * on this declaration; the closures must cross-reference each
+ * other correctly at runtime.
+ *)
 val p =
   let
     val rec f = fn i => g (i + 1)
