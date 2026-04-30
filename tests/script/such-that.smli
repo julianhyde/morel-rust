@@ -396,8 +396,6 @@ from s where isPrefix (s, "abcd");
 
 (*) An integer function with external extent.
 (*) Given j, k we could generate finite i.
-set("mode", "validate");
-> val it = () : unit
 fun isBetween (i, j, k) =
   i <= j andalso j <= k;
 > val isBetween = fn : 'a * 'a * 'a -> bool
@@ -405,8 +403,6 @@ fun isBetween (i, j, k) =
 from i where isBetween (i, 5, 8);
 > val it = [5, 6, 7, 8] : int list
 *)
-set("mode", "evaluate");
-> val it = () : unit
 
 (* ------------------------------------------------------ *)
 (* Convenience function that converts a predicate to a
