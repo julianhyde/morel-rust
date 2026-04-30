@@ -794,8 +794,6 @@ enumerate cousin2;
 datatype Color = BLUE | GREEN | RED;
 > datatype Color = BLUE | GREEN | RED
 
-set("mode", "validate");
-> val it = () : unit
 from wa, nt, sa, q, nsw, v, t
 where q = RED
   andalso t = GREEN
