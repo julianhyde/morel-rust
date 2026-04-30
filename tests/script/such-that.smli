@@ -276,17 +276,11 @@ where dno > 20
 yield {dno = #deptno v, name = #dname v};
 > val it = [{dno=30,name="SALES"}] : {dno:int, name:string} bag
 
-set("mode", "validate");
-> val it = () : unit
-
 (*) We can iterate over a finite datatype
 from i
 where Option.getOpt i;
 > val it = [(NONE,true),(SOME true,false),(SOME true,true)]
 >   : (bool option * bool) bag
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) If the expression is 'elem set' we can deduce the extent.
 from e
