@@ -51,7 +51,8 @@ pub fn resolve(resolved: &Resolved) -> (CoreDecl, Vec<(String, Span)>) {
     // Run the predicate-inversion pass over the whole resolved decl,
     // accumulating let-bound function definitions as we walk so that
     // `maybe_function` can inline them.
-    let decl = expander::expand_decl(decl);
+    let decl =
+        expander::expand_decl(decl, &resolved.type_map.datatype_constructors);
     (decl, resolver.errors.into_inner())
 }
 
@@ -514,6 +515,7 @@ impl<'a> Resolver<'a> {
                     builder
                         .build_simplify()
                         .expect("Failed to build EXISTS expression"),
+                    &self.type_map.datatype_constructors,
                 )
             }
             ExprKind::Fn(matches) => CoreExpr::Fn(
@@ -540,6 +542,7 @@ impl<'a> Resolver<'a> {
                     builder
                         .build_simplify()
                         .expect("Failed to build FORALL expression"),
+                    &self.type_map.datatype_constructors,
                 );
 
                 // Apply "not" to the exists result.
@@ -750,7 +753,7 @@ impl<'a> Resolver<'a> {
                     Type::Primitive(PrimitiveType::Bool) => {
                         self.call2(t, BuiltInFunction::BoolNe, &span, a0, a1)
                     }
-                    _ => todo!("resolve {:?}", a0),
+                    _ => self.call2(t, BuiltInFunction::GNe, &span, a0, a1),
                 }
             }
             ExprKind::OpSection(name) => {
@@ -1408,6 +1411,7 @@ impl<'a> Resolver<'a> {
                 builder
                     .build_simplify()
                     .expect("Failed to build From expression"),
+                &self.type_map.datatype_constructors,
             );
 
             // Apply the function to the query result.
@@ -1443,6 +1447,7 @@ impl<'a> Resolver<'a> {
             builder
                 .build_simplify()
                 .expect("Failed to build From expression"),
+            &self.type_map.datatype_constructors,
         )
     }
 

@@ -46,37 +46,47 @@ use std::collections::HashMap;
 /// `f arg`.
 pub type FnEnv = HashMap<String, (Pat, Expr)>;
 
+/// Map of user-defined datatype name → its constructor names in
+/// declaration order. Lets `finite_extent` enumerate values of
+/// `Type::Data(name, _)` for constraint-free unbounded patterns
+/// (e.g. `from c, d where c <> d` over a `Color`).
+pub type DatatypeMap = HashMap<String, Vec<String>>;
+
 /// Convenience wrapper for callers that don't have a function
 /// environment available (e.g. the resolver, which calls this
 /// before `expand_decl` runs the full tree-walk pass).
-pub fn expand_from(expr: Expr) -> Expr {
+pub fn expand_from(expr: Expr, datatypes: &DatatypeMap) -> Expr {
     let env = FnEnv::new();
-    expand_from_with(expr, &env)
+    expand_from_with(expr, &env, datatypes)
 }
 
 /// If `expr` is a `From`, `Exists`, or `Forall` containing one or
 /// more Scans over Extents, rewrite it by deriving generators from
 /// `where` clauses and using them as the scan sources. Otherwise
 /// returns `expr` unchanged.
-pub fn expand_from_with(expr: Expr, env: &FnEnv) -> Expr {
+pub fn expand_from_with(
+    expr: Expr,
+    env: &FnEnv,
+    datatypes: &DatatypeMap,
+) -> Expr {
     match expr {
         Expr::From(t, steps) => {
             if !has_extent_scan(&steps) {
                 return Expr::From(t, steps);
             }
-            Expr::From(t, expand_steps(steps, env))
+            Expr::From(t, expand_steps(steps, env, datatypes))
         }
         Expr::Exists(t, steps) => {
             if !has_extent_scan(&steps) {
                 return Expr::Exists(t, steps);
             }
-            Expr::Exists(t, expand_steps(steps, env))
+            Expr::Exists(t, expand_steps(steps, env, datatypes))
         }
         Expr::Forall(t, steps) => {
             if !has_extent_scan(&steps) {
                 return Expr::Forall(t, steps);
             }
-            Expr::Forall(t, expand_steps(steps, env))
+            Expr::Forall(t, expand_steps(steps, env, datatypes))
         }
         _ => expr,
     }
@@ -88,22 +98,22 @@ pub fn expand_from_with(expr: Expr, env: &FnEnv) -> Expr {
 /// is the entry point used after the resolver finishes, so that
 /// `maybe_function` can inline let-bound predicates that the
 /// per-query passes inside `resolve_query` couldn't see.
-pub fn expand_decl(decl: Decl) -> Decl {
+pub fn expand_decl(decl: Decl, datatypes: &DatatypeMap) -> Decl {
     let env = FnEnv::new();
-    walk_decl(decl, &env)
+    walk_decl(decl, &env, datatypes)
 }
 
-fn walk_decl(decl: Decl, env: &FnEnv) -> Decl {
+fn walk_decl(decl: Decl, env: &FnEnv, datatypes: &DatatypeMap) -> Decl {
     match decl {
         Decl::NonRecVal(b) => {
             let mut b2 = (*b).clone();
-            b2.expr = walk_expr(b2.expr, env);
+            b2.expr = walk_expr(b2.expr, env, datatypes);
             Decl::NonRecVal(Box::new(b2))
         }
         Decl::RecVal(binds) => {
             let mut new_binds = Vec::with_capacity(binds.len());
             for mut b in binds {
-                b.expr = walk_expr(b.expr, env);
+                b.expr = walk_expr(b.expr, env, datatypes);
                 new_binds.push(b);
             }
             Decl::RecVal(new_binds)
@@ -112,7 +122,7 @@ fn walk_decl(decl: Decl, env: &FnEnv) -> Decl {
     }
 }
 
-fn walk_expr(expr: Expr, env: &FnEnv) -> Expr {
+fn walk_expr(expr: Expr, env: &FnEnv, datatypes: &DatatypeMap) -> Expr {
     match expr {
         Expr::Let(t, decls, body) => {
             // Extend the environment with single-arg `fn` bindings
@@ -121,31 +131,33 @@ fn walk_expr(expr: Expr, env: &FnEnv) -> Expr {
             for d in &decls {
                 collect_fn_bindings(d, &mut env2);
             }
-            let new_decls: Vec<Decl> =
-                decls.into_iter().map(|d| walk_decl(d, &env2)).collect();
-            let new_body = Box::new(walk_expr(*body, &env2));
+            let new_decls: Vec<Decl> = decls
+                .into_iter()
+                .map(|d| walk_decl(d, &env2, datatypes))
+                .collect();
+            let new_body = Box::new(walk_expr(*body, &env2, datatypes));
             Expr::Let(t, new_decls, new_body)
         }
         Expr::From(_, _) | Expr::Exists(_, _) | Expr::Forall(_, _) => {
             // Recurse into nested expressions first (so inner
             // sub-queries also benefit from the env), then run the
             // expander on the resulting top-level expression.
-            let inner = walk_query_steps(expr, env);
-            expand_from_with(inner, env)
+            let inner = walk_query_steps(expr, env, datatypes);
+            expand_from_with(inner, env, datatypes)
         }
         Expr::Apply(t, f, a, span) => Expr::Apply(
             t,
-            Box::new(walk_expr(*f, env)),
-            Box::new(walk_expr(*a, env)),
+            Box::new(walk_expr(*f, env, datatypes)),
+            Box::new(walk_expr(*a, env, datatypes)),
             span,
         ),
         Expr::Case(t, subject, arms, span) => Expr::Case(
             t,
-            Box::new(walk_expr(*subject, env)),
+            Box::new(walk_expr(*subject, env, datatypes)),
             arms.into_iter()
                 .map(|m| Match {
                     pat: m.pat,
-                    expr: walk_expr(m.expr, env),
+                    expr: walk_expr(m.expr, env, datatypes),
                 })
                 .collect(),
             span,
@@ -155,23 +167,29 @@ fn walk_expr(expr: Expr, env: &FnEnv) -> Expr {
             arms.into_iter()
                 .map(|m| Match {
                     pat: m.pat,
-                    expr: walk_expr(m.expr, env),
+                    expr: walk_expr(m.expr, env, datatypes),
                 })
                 .collect(),
             span,
         ),
         Expr::Tuple(t, items) => Expr::Tuple(
             t,
-            items.into_iter().map(|e| walk_expr(e, env)).collect(),
+            items
+                .into_iter()
+                .map(|e| walk_expr(e, env, datatypes))
+                .collect(),
         ),
         Expr::List(t, items) => Expr::List(
             t,
-            items.into_iter().map(|e| walk_expr(e, env)).collect(),
+            items
+                .into_iter()
+                .map(|e| walk_expr(e, env, datatypes))
+                .collect(),
         ),
         Expr::Aggregate(t, e1, e2) => Expr::Aggregate(
             t,
-            Box::new(walk_expr(*e1, env)),
-            Box::new(walk_expr(*e2, env)),
+            Box::new(walk_expr(*e1, env, datatypes)),
+            Box::new(walk_expr(*e2, env, datatypes)),
         ),
         other => other,
     }
@@ -180,7 +198,7 @@ fn walk_expr(expr: Expr, env: &FnEnv) -> Expr {
 /// Walk inside a `From`/`Exists`/`Forall`'s steps so that
 /// expressions embedded in `Where`, `Yield`, and other step kinds
 /// get the same treatment. The query's outer wrapper is recreated.
-fn walk_query_steps(expr: Expr, env: &FnEnv) -> Expr {
+fn walk_query_steps(expr: Expr, env: &FnEnv, datatypes: &DatatypeMap) -> Expr {
     let (kind, t, steps) = match expr {
         Expr::From(t, s) => ('f', t, s),
         Expr::Exists(t, s) => ('e', t, s),
@@ -193,24 +211,24 @@ fn walk_query_steps(expr: Expr, env: &FnEnv) -> Expr {
             let new_kind = match s.kind {
                 StepKind::Scan(p, source, cond) => StepKind::Scan(
                     p,
-                    Box::new(walk_expr(*source, env)),
-                    cond.map(|c| Box::new(walk_expr(*c, env))),
+                    Box::new(walk_expr(*source, env, datatypes)),
+                    cond.map(|c| Box::new(walk_expr(*c, env, datatypes))),
                 ),
                 StepKind::Where(c) => {
-                    StepKind::Where(Box::new(walk_expr(*c, env)))
+                    StepKind::Where(Box::new(walk_expr(*c, env, datatypes)))
                 }
                 StepKind::Yield(e) => {
-                    StepKind::Yield(Box::new(walk_expr(*e, env)))
+                    StepKind::Yield(Box::new(walk_expr(*e, env, datatypes)))
                 }
                 StepKind::Order(e) => {
-                    StepKind::Order(Box::new(walk_expr(*e, env)))
+                    StepKind::Order(Box::new(walk_expr(*e, env, datatypes)))
                 }
                 StepKind::Compute(e) => {
-                    StepKind::Compute(Box::new(walk_expr(*e, env)))
+                    StepKind::Compute(Box::new(walk_expr(*e, env, datatypes)))
                 }
                 StepKind::Group(k, a) => StepKind::Group(
-                    Box::new(walk_expr(*k, env)),
-                    a.map(|e| Box::new(walk_expr(*e, env))),
+                    Box::new(walk_expr(*k, env, datatypes)),
+                    a.map(|e| Box::new(walk_expr(*e, env, datatypes))),
                 ),
                 other => other,
             };
@@ -432,7 +450,11 @@ fn decompose_tuple_elems(steps: Vec<Step>) -> Vec<Step> {
     out
 }
 
-fn expand_steps(steps: Vec<Step>, env: &FnEnv) -> Vec<Step> {
+fn expand_steps(
+    steps: Vec<Step>,
+    env: &FnEnv,
+    datatypes: &DatatypeMap,
+) -> Vec<Step> {
     // Phase 0 (pre-pass): merge tuple-pattern `elem` conjuncts
     // with the corresponding ScanExtents. A `where (x, y) elem
     // coll` constraint, combined with `ScanExtent(x)` and
@@ -444,7 +466,7 @@ fn expand_steps(steps: Vec<Step>, env: &FnEnv) -> Vec<Step> {
 
     // Phase A: derive generators by scanning where-clauses.
     let mut cache = Cache::new();
-    derive_generators(&steps, &mut cache, env);
+    derive_generators(&steps, &mut cache, env, datatypes);
 
     // Phase B: collect every Scan-over-Extent's (pat, env) pair in
     // the order they appear in `steps`, then topologically sort by
@@ -616,7 +638,12 @@ fn topo_order(
     order
 }
 
-fn derive_generators(steps: &[Step], cache: &mut Cache, env: &FnEnv) {
+fn derive_generators(
+    steps: &[Step],
+    cache: &mut Cache,
+    env: &FnEnv,
+    datatypes: &DatatypeMap,
+) {
     // Collect all Where conjuncts visible in this from. The morel-java
     // Expander does this in step order, but for Phase 1 (leaf-only,
     // no dependencies between generators) the order doesn't matter.
@@ -648,6 +675,7 @@ fn derive_generators(steps: &[Step], cache: &mut Cache, env: &FnEnv) {
                 ordered,
                 &all_constraints,
                 env,
+                datatypes,
             );
         }
     }
