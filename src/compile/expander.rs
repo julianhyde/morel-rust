@@ -29,7 +29,7 @@
 //! function inlining, no case/exists/string-prefix).
 
 use crate::compile::core::{
-    Decl, Expr, Match, Pat, Step, StepEnv, StepKind, ValBind,
+    Binding, Decl, Expr, Match, Pat, Step, StepEnv, StepKind, ValBind,
 };
 use crate::compile::generator::Cache;
 use crate::compile::generators::{maybe_generator, split_conjuncts};
@@ -37,7 +37,7 @@ use crate::compile::library::BuiltInFunction;
 use crate::compile::span::Span;
 use crate::compile::types::{PrimitiveType, Type};
 use crate::eval::val::Val;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Map of let-bound function name → (parameter pattern, body
 /// expression). Populated as `expand_decl` walks down through
@@ -283,7 +283,7 @@ fn has_extent_scan(steps: &[Step]) -> bool {
 /// matched ScanExtents, so later steps that reference any of the
 /// destructured names see them as bound.
 fn decompose_tuple_elems(steps: Vec<Step>) -> Vec<Step> {
-    use std::collections::HashSet;
+    use HashSet;
 
     // Gather all ScanExtent positions and the names they bind.
     let mut extent_index: HashMap<String, usize> = HashMap::new();
@@ -490,41 +490,87 @@ fn expand_steps(
     let ordered_scans = topo_order(&extent_scans, &cache);
 
     // Phase C: rebuild the steps. Replace each Scan-over-Extent
-    // with the next entry from `ordered_scans` and the best
-    // generator's expression. Decompose every Where into conjuncts
-    // and drop those whose text appears in a sealed generator's
+    // with its generator's expression, but defer emission until
+    // the generator's free patterns are bound by earlier scans
+    // (regular `from x in coll` or already-emitted unbounded
+    // scans). Decompose every Where into conjuncts and drop
+    // those whose text appears in a sealed generator's
     // provenance. Other steps pass through.
+    // Names introduced by *this* from's scans (regular and
+    // unbounded). Used to decide whether a generator's free-pat
+    // dependency must be emitted before it; names from outer
+    // scopes (let-bound vals, function parameters, …) are always
+    // in scope and don't gate scan ordering.
+    let from_names: HashSet<String> = {
+        let mut s = HashSet::new();
+        for st in &steps {
+            if let StepKind::Scan(p, _, _) = &st.kind {
+                let mut bs: Vec<Binding> = Vec::new();
+                Binding::collect_bindings(p, &mut bs);
+                for b in bs {
+                    s.insert(b.id.name);
+                }
+            }
+        }
+        s
+    };
+
     let provenance: Vec<Expr> =
         cache.sealed_provenance().into_iter().cloned().collect();
     let mut out = Vec::with_capacity(steps.len());
     let mut scan_idx = 0;
-    for step in steps {
-        match step.kind {
-            StepKind::Scan(pat, source, cond)
-                if matches!(source.as_ref(), Expr::Extent(_)) =>
-            {
-                if !matches!(pat.as_ref(), Pat::Identifier(_, _))
-                    || scan_idx >= ordered_scans.len()
-                {
-                    // Compound patterns and overflow positions are
-                    // passed through unchanged; the compiler will
-                    // emit the clean "unbounded variable" error.
-                    out.push(Step::new(
-                        StepKind::Scan(pat, source, cond),
-                        step.env,
-                    ));
+    let mut bound_names: HashSet<String> = HashSet::new();
+    // Bindings ordered as scans are emitted; used to rebuild the
+    // step env when we reorder ScanExtents past regular Scans.
+    let mut bound_bindings: Vec<Binding> = Vec::new();
+    // ScanExtents waiting on their free-pat dependencies. Each
+    // entry is (next_pat, next_env, original_cond).
+    let mut deferred: Vec<(Pat, StepEnv, Option<Box<Expr>>)> = Vec::new();
+
+    let try_flush = |bound_names: &mut HashSet<String>,
+                     bound_bindings: &mut Vec<Binding>,
+                     deferred: &mut Vec<(Pat, StepEnv, Option<Box<Expr>>)>,
+                     out: &mut Vec<Step>| {
+        let mut progress = true;
+        while progress {
+            progress = false;
+            let mut still: Vec<(Pat, StepEnv, Option<Box<Expr>>)> = Vec::new();
+            for (next_pat, orig_env, cond) in deferred.drain(..) {
+                let Pat::Identifier(_, n) = &next_pat else {
+                    still.push((next_pat, orig_env, cond));
+                    continue;
+                };
+                let name = n.clone();
+                let ready = match cache.best(&name) {
+                    Some(g) => g.free_pats.iter().all(|fp| {
+                        // Outer-scope names are always in scope;
+                        // only require from-step names to be
+                        // bound by an earlier emitted scan.
+                        !from_names.contains(fp.as_str())
+                            || bound_names.contains(fp.as_str())
+                    }),
+                    None => true,
+                };
+                if !ready {
+                    still.push((next_pat, orig_env, cond));
                     continue;
                 }
-                let (next_pat, next_env) = ordered_scans[scan_idx].clone();
-                scan_idx += 1;
-                let name = match &next_pat {
-                    Pat::Identifier(_, n) => n.clone(),
-                    _ => unreachable!(),
-                };
+                // Add the new pattern's bindings.
+                let mut bs: Vec<Binding> = Vec::new();
+                Binding::collect_bindings(&next_pat, &mut bs);
+                for b in bs {
+                    if !bound_names.contains(&b.id.name) {
+                        bound_names.insert(b.id.name.clone());
+                        bound_bindings.push(b);
+                    }
+                }
+                let new_atom = bound_bindings.len() == 1;
+                let new_env = StepEnv::new(
+                    bound_bindings.clone(),
+                    new_atom,
+                    orig_env.ordered,
+                );
                 if let Some(generator) = cache.best(&name) {
-                    // Combine the original Scan's condition (always
-                    // None for ScanExtent today, but be defensive)
-                    // with the generator's extra row filter.
                     let merged_cond = match (
                         cond.map(|c| *c),
                         generator.extra_filter.clone(),
@@ -541,7 +587,7 @@ fn expand_steps(
                             Box::new(generator.exp.clone()),
                             merged_cond,
                         ),
-                        next_env,
+                        new_env,
                     ));
                 } else {
                     let extent = Expr::Extent(next_pat.type_());
@@ -551,18 +597,76 @@ fn expand_steps(
                             Box::new(extent),
                             cond,
                         ),
-                        next_env,
+                        new_env,
                     ));
                 }
+                progress = true;
+            }
+            *deferred = still;
+        }
+    };
+
+    for step in steps {
+        match step.kind {
+            StepKind::Scan(pat, source, cond)
+                if matches!(source.as_ref(), Expr::Extent(_)) =>
+            {
+                if !matches!(pat.as_ref(), Pat::Identifier(_, _))
+                    || scan_idx >= ordered_scans.len()
+                {
+                    out.push(Step::new(
+                        StepKind::Scan(pat, source, cond),
+                        step.env,
+                    ));
+                    continue;
+                }
+                let (next_pat, next_env) = ordered_scans[scan_idx].clone();
+                scan_idx += 1;
+                deferred.push((next_pat, next_env, cond));
+                try_flush(
+                    &mut bound_names,
+                    &mut bound_bindings,
+                    &mut deferred,
+                    &mut out,
+                );
+            }
+            StepKind::Scan(pat, source, cond) => {
+                // Regular Scan: emit, then try to flush deferred.
+                let mut bs: Vec<Binding> = Vec::new();
+                Binding::collect_bindings(&pat, &mut bs);
+                for b in bs {
+                    if !bound_names.contains(&b.id.name) {
+                        bound_names.insert(b.id.name.clone());
+                        bound_bindings.push(b);
+                    }
+                }
+                let new_atom = bound_bindings.len() == 1;
+                let new_env = StepEnv::new(
+                    bound_bindings.clone(),
+                    new_atom,
+                    step.env.ordered,
+                );
+                out.push(Step::new(StepKind::Scan(pat, source, cond), new_env));
+                try_flush(
+                    &mut bound_names,
+                    &mut bound_bindings,
+                    &mut deferred,
+                    &mut out,
+                );
             }
             StepKind::Where(condition) => {
+                try_flush(
+                    &mut bound_names,
+                    &mut bound_bindings,
+                    &mut deferred,
+                    &mut out,
+                );
                 let conjuncts = split_conjuncts(&condition);
                 let kept: Vec<Expr> = conjuncts
                     .into_iter()
                     .filter(|c| !provenance_contains(&provenance, c))
                     .collect();
                 if kept.is_empty() {
-                    // Conjunction reduced to true; drop the Where.
                     continue;
                 }
                 let new_cond = and_all(kept);
@@ -572,9 +676,24 @@ fn expand_steps(
                 ));
             }
             other => {
+                try_flush(
+                    &mut bound_names,
+                    &mut bound_bindings,
+                    &mut deferred,
+                    &mut out,
+                );
                 out.push(Step::new(other, step.env));
             }
         }
+    }
+    // Emit any still-deferred scans best-effort; they'll surface
+    // as "pattern X is not grounded" at compile time.
+    for (next_pat, next_env, cond) in deferred {
+        let extent = Expr::Extent(next_pat.type_());
+        out.push(Step::new(
+            StepKind::Scan(Box::new(next_pat), Box::new(extent), cond),
+            next_env,
+        ));
     }
     out
 }
@@ -587,7 +706,7 @@ fn topo_order(
     extent_scans: &[(Pat, StepEnv)],
     cache: &Cache,
 ) -> Vec<(Pat, StepEnv)> {
-    use std::collections::HashSet;
+    use HashSet;
     let names: Vec<String> = extent_scans
         .iter()
         .filter_map(|(p, _)| match p {
