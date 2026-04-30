@@ -36,6 +36,27 @@ from i where i = 0 orelse i = 12;
 from i where i > 0 andalso i < 10 orelse i > 12 andalso i <= 15;
 > val it = [1,2,3,4,5,6,7,8,9,13,14,15] : int bag
 
+(* In the following case, we solve for x given a value of y. This
+   requires predicate-inversion because it cannot be solved using
+   ranges alone. *)
+from x, y in [0, 2, 9] where x > y andalso x < y + 5;
+> val it =
+>   [{x=1,y=0},{x=2,y=0},{x=3,y=0},{x=4,y=0},{x=3,y=2},{x=4,y=2},{x=5,y=2},
+>    {x=6,y=2},{x=10,y=9},{x=11,y=9},{x=12,y=9},{x=13,y=9}] : {x:int, y:int} bag
+
+(* Predicate cannot be inverted.
+ * With symbolic math we could deduce that the solution is [~2,3],
+ * but we don't have symbolic math.
+ *
+ * morel-rust note: morel-java reports `pattern x_1 is not grounded`
+ * (with the resolver-rename suffix `_1`); morel-rust uses the
+ * surface name `'x'` and omits the `raised at:` line because the
+ * runtime span isn't propagated for compile-time-emitted errors.
+ * The functionality (rejecting an un-invertible predicate at
+ * evaluation) is the same. *)
+from x where (x + 2) * (x - 3) = 0;
+> java.lang.IllegalArgumentException: pattern 'x' is not grounded
+
 from i
 where i > 0 andalso i < 10
 join b
