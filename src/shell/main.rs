@@ -1425,7 +1425,12 @@ impl Display for MorelError {
             }
             MorelError::IllegalArgument(msg, loc) => {
                 write!(f, "java.lang.IllegalArgumentException: {}", msg)?;
-                write!(f, "\n  raised at: {}", loc)
+                let loc_str = format!("{}", loc);
+                if loc_str.is_empty() {
+                    Ok(())
+                } else {
+                    write!(f, "\n  raised at: {}", loc_str)
+                }
             }
             MorelError::EarlyReturn => {
                 write!(f, "EarlyReturn (internal signal)")

@@ -1864,7 +1864,22 @@ impl<'a> Compiler<'a> {
                     element_type,
                 );
                 let pat_code = self.compile_pat(cx, pat);
-                let expr_code = self.compile_expr(cx, None, expr);
+                // If the source is still an `Expr::Extent`, predicate
+                // inversion failed to ground this pattern; emit a
+                // runtime error matching morel-java's "pattern X is
+                // not grounded" rather than panicking.
+                let expr_code = if let Expr::Extent(_) = expr.as_ref() {
+                    let name = match pat.as_ref() {
+                        Pat::Identifier(_, n) => n.clone(),
+                        _ => "_".to_string(),
+                    };
+                    Code::RaiseIllegalArgument(
+                        format!("pattern '{}' is not grounded", name),
+                        Span::new(""),
+                    )
+                } else {
+                    self.compile_expr(cx, None, expr)
+                };
                 let condition_code = if let Some(condition_expr) = cond {
                     self.compile_expr(cx, None, condition_expr)
                 } else {
