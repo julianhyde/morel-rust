@@ -156,11 +156,13 @@ pub fn maybe_generator(
     {
         return true;
     }
-    // Fallback: a bool pattern's extent is just `[true, false]`.
-    // Surrounding `where` conjuncts filter as needed (e.g.
-    // `not b` keeps only `false`).
-    if matches!(pat_type, Type::Primitive(PrimitiveType::Bool)) {
-        return create_bool_extent_generator(cache, pat, pat_name);
+    // Fallback: enumerate all values of the pattern's type, when
+    // that type is finite (bool, option of finite, tuple of
+    // finite). Surrounding `where` conjuncts filter as needed
+    // (e.g. `not b` keeps only `false`, `Option.getOpt i` keeps
+    // only the tuples whose option/default product is true).
+    if let Some(extent) = finite_extent(pat_type) {
+        return create_finite_extent_generator(cache, pat, pat_name, extent);
     }
     false
 }
@@ -312,26 +314,20 @@ fn create_range_generator(
     true
 }
 
-/// Generator of last resort for a `bool` pattern: yield both
-/// `true` and `false`. Cheap, finite, and lets the surrounding
-/// `where` clause filter (e.g. `not b` keeps just `false`).
-fn create_bool_extent_generator(
+/// Generator of last resort: yield every value of the pattern's
+/// type, provided the type is finite. The surrounding `where`
+/// clause filters down. Used for `from b where not b` (single
+/// bool), `from i where Option.getOpt i` (tuple of bool option *
+/// bool), etc.
+fn create_finite_extent_generator(
     cache: &mut Cache,
     pat: &Pat,
     pat_name: &str,
+    extent: Expr,
 ) -> bool {
-    let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
-    let list_t = Box::new(Type::List(bool_t.clone()));
-    let exp = Expr::List(
-        list_t,
-        vec![
-            Expr::Literal(bool_t.clone(), Val::Bool(true)),
-            Expr::Literal(bool_t, Val::Bool(false)),
-        ],
-    );
     let generator = Generator::new(
         pat.clone(),
-        exp,
+        extent,
         Cardinality::Finite,
         BTreeSet::new(),
         true,
@@ -340,6 +336,118 @@ fn create_bool_extent_generator(
     );
     cache.add(pat_name.to_string(), generator);
     true
+}
+
+/// Returns a Core list expression containing every value of `t`,
+/// or `None` if `t` is infinite (int, real, string, …) or
+/// references a feature this builder doesn't yet handle (user
+/// datatype, list, fn, …). Built-in types covered: `bool`,
+/// `'a option` for finite `'a`, tuples of finite components.
+fn finite_extent(t: &Type) -> Option<Expr> {
+    match t {
+        Type::Primitive(PrimitiveType::Bool) => Some(bool_extent_list()),
+        Type::Data(name, args) if name == "option" && args.len() == 1 => {
+            let inner = finite_extent(&args[0])?;
+            Some(option_extent_list(&args[0], inner))
+        }
+        Type::Tuple(types) => {
+            let mut extents = Vec::with_capacity(types.len());
+            for ti in types {
+                extents.push(finite_extent(ti)?);
+            }
+            Some(tuple_extent_cartesian(types, extents))
+        }
+        _ => None,
+    }
+}
+
+fn bool_extent_list() -> Expr {
+    let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
+    let list_t = Box::new(Type::List(bool_t.clone()));
+    // `false` first, `true` second — matches morel-java's
+    // ordering for tuple enumeration over bool components, and
+    // also matches `compare` semantics (false < true).
+    Expr::List(
+        list_t,
+        vec![
+            Expr::Literal(bool_t.clone(), Val::Bool(false)),
+            Expr::Literal(bool_t, Val::Bool(true)),
+        ],
+    )
+}
+
+fn option_extent_list(inner_t: &Type, inner_extent: Expr) -> Expr {
+    let inner_t_box = Box::new(inner_t.clone());
+    let option_t =
+        Box::new(Type::Data("option".to_string(), vec![inner_t.clone()]));
+    let list_t = Box::new(Type::List(option_t.clone()));
+
+    // NONE: Expr::Literal carrying the OptionNone built-in value.
+    // The compiler converts this to `Code::new_constant(t,
+    // Val::Unit)` (the runtime encoding of `NONE`).
+    let none_expr =
+        Expr::Literal(option_t.clone(), Val::Fn(BuiltInFunction::OptionNone));
+
+    // SOME : 'a -> 'a option
+    let some_fn_t = Box::new(Type::Fn(inner_t_box.clone(), option_t.clone()));
+    let some_fn_expr =
+        Expr::Literal(some_fn_t, Val::Fn(BuiltInFunction::OptionSome));
+
+    let inner_elems = match inner_extent {
+        Expr::List(_, vs) => vs,
+        _ => return none_expr, // shouldn't happen
+    };
+
+    let mut elems = Vec::with_capacity(inner_elems.len() + 1);
+    elems.push(none_expr);
+    for v in inner_elems {
+        elems.push(Expr::Apply(
+            option_t.clone(),
+            Box::new(some_fn_expr.clone()),
+            Box::new(v),
+            Span::new(""),
+        ));
+    }
+    Expr::List(list_t, elems)
+}
+
+fn tuple_extent_cartesian(types: &[Type], extents: Vec<Expr>) -> Expr {
+    let tuple_t = Box::new(Type::Tuple(types.to_vec()));
+    let list_t = Box::new(Type::List(tuple_t.clone()));
+
+    // Each `extents[i]` is `Expr::List(_, values_i)`. Compute the
+    // cartesian product of the value lists, then build a
+    // tuple-list whose entries are the product tuples.
+    let value_lists: Vec<Vec<Expr>> = extents
+        .into_iter()
+        .map(|e| match e {
+            Expr::List(_, vs) => vs,
+            _ => Vec::new(),
+        })
+        .collect();
+
+    let products = cartesian_product(&value_lists);
+    let elems: Vec<Expr> = products
+        .into_iter()
+        .map(|values| Expr::Tuple(tuple_t.clone(), values))
+        .collect();
+    Expr::List(list_t, elems)
+}
+
+fn cartesian_product(lists: &[Vec<Expr>]) -> Vec<Vec<Expr>> {
+    let mut acc: Vec<Vec<Expr>> = vec![Vec::new()];
+    for list in lists {
+        let mut next = Vec::with_capacity(acc.len() * list.len());
+        for prefix in &acc {
+            for v in list {
+                let mut row = prefix.clone();
+                row.push(v.clone());
+                next.push(row);
+            }
+        }
+        acc = next;
+    }
+    acc
 }
 
 /// Inverts `String.isPrefix p s` (where `p` is the pattern, `s` is
