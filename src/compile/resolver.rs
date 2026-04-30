@@ -573,7 +573,7 @@ impl<'a> Resolver<'a> {
                     Type::Primitive(PrimitiveType::Char) => {
                         self.call2(t, BuiltInFunction::CharGt, &span, a0, a1)
                     }
-                    _ => todo!("resolve {:?}", a0),
+                    _ => self.call2(t, BuiltInFunction::GGt, &span, a0, a1),
                 }
             }
             ExprKind::GreaterThanOrEqual(a0, a1) => {
@@ -590,7 +590,7 @@ impl<'a> Resolver<'a> {
                     Type::Primitive(PrimitiveType::Char) => {
                         self.call2(t, BuiltInFunction::CharGe, &span, a0, a1)
                     }
-                    _ => todo!("resolve {:?}", a0),
+                    _ => self.call2(t, BuiltInFunction::GGe, &span, a0, a1),
                 }
             }
             ExprKind::Identifier(name) => {
@@ -668,7 +668,7 @@ impl<'a> Resolver<'a> {
                     Type::Primitive(PrimitiveType::Char) => {
                         self.call2(t, BuiltInFunction::CharLt, &span, a0, a1)
                     }
-                    _ => todo!("resolve {:?}", a0),
+                    _ => self.call2(t, BuiltInFunction::GLt, &span, a0, a1),
                 }
             }
             ExprKind::LessThanOrEqual(a0, a1) => {
@@ -685,7 +685,7 @@ impl<'a> Resolver<'a> {
                     Type::Primitive(PrimitiveType::Char) => {
                         self.call2(t, BuiltInFunction::CharLe, &span, a0, a1)
                     }
-                    _ => todo!("resolve {:?}", a0),
+                    _ => self.call2(t, BuiltInFunction::GLe, &span, a0, a1),
                 }
             }
             ExprKind::Let(decls, body) => {
