@@ -151,6 +151,36 @@ forall i
   require i + 100 < 155;
 > val it = true : bool
 
+exists x, y
+  where (x, y) elem [(1, 2), (1, 3), (4, 3)];
+> val it = true : bool
+
+exists x
+  where (x, 2) elem [(1, 2), (1, 3), (4, 3)];
+> val it = true : bool
+
+exists x
+  where (x, 0) elem [(1, 2), (1, 3), (4, 3)];
+> val it = false : bool
+
+(*) w, y unused
+exists w, x, y
+  where (x, 2) elem [(1, 2), (1, 3), (4, 3)];
+> val it = true : bool
+
+exists w, x, y
+  where (x, 0) elem [(1, 2), (1, 3), (4, 3)];
+> val it = false : bool
+
+exists w, x where x = 3;
+> val it = true : bool
+
+exists w, x where x = 3 andalso x < 10;
+> val it = true : bool
+
+exists w, x where x = 3 andalso x > 10;
+> val it = false : bool
+
 (* String.isPrefix p s --------------------------------- *)
 from p where String.isPrefix p "abcd";
 > val it = ["","a","ab","abc","abcd"] : string bag
