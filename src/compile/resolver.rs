@@ -46,13 +46,27 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Converts an AST to a Core tree.
 pub fn resolve(resolved: &Resolved) -> (CoreDecl, Vec<(String, Span)>) {
+    let session_fns = expander::FnEnv::new();
+    resolve_with_session_fns(resolved, &session_fns)
+}
+
+/// Same as `resolve`, but seeds the predicate-inversion pass
+/// with session-level function bindings from earlier statements
+/// (hydromatic/morel#223).
+pub fn resolve_with_session_fns(
+    resolved: &Resolved,
+    session_fns: &expander::FnEnv,
+) -> (CoreDecl, Vec<(String, Span)>) {
     let resolver = Resolver::new(&resolved.type_map, resolved.base_line);
     let decl = resolver.resolve_decl(&resolved.decl);
     // Run the predicate-inversion pass over the whole resolved decl,
     // accumulating let-bound function definitions as we walk so that
     // `maybe_function` can inline them.
-    let decl =
-        expander::expand_decl(decl, &resolved.type_map.datatype_constructors);
+    let decl = expander::expand_decl_with_session(
+        decl,
+        &resolved.type_map.datatype_constructors,
+        session_fns,
+    );
     (decl, resolver.errors.into_inner())
 }
 

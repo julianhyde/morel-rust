@@ -35,7 +35,7 @@ use crate::compile::generator::Cache;
 use crate::compile::generators::{maybe_generator, split_conjuncts};
 use crate::compile::library::BuiltInFunction;
 use crate::compile::span::Span;
-use crate::compile::types::{PrimitiveType, Type};
+use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
 use std::collections::{HashMap, HashSet};
 
@@ -101,6 +101,27 @@ pub fn expand_from_with(
 pub fn expand_decl(decl: Decl, datatypes: &DatatypeMap) -> Decl {
     let env = FnEnv::new();
     walk_decl(decl, &env, datatypes)
+}
+
+/// Same as [`expand_decl`], but seeds the inlining environment
+/// with cross-statement function bindings the session has
+/// accumulated from earlier `fun` / `val` decls. Lets predicate
+/// inversion inline a function declared in a previous shell
+/// statement (hydromatic/morel#223).
+pub fn expand_decl_with_session(
+    decl: Decl,
+    datatypes: &DatatypeMap,
+    session_fns: &FnEnv,
+) -> Decl {
+    walk_decl(decl, session_fns, datatypes)
+}
+
+/// Walks a Core decl and records any single-arm `fn p => body`
+/// value-bindings into `env`. Mirrors `collect_fn_bindings` but
+/// is exposed for the shell, which tracks session-level fn
+/// definitions for cross-statement predicate inversion.
+pub fn collect_session_fn_bindings(decl: &Decl, env: &mut FnEnv) {
+    collect_fn_bindings(decl, env);
 }
 
 fn walk_decl(decl: Decl, env: &FnEnv, datatypes: &DatatypeMap) -> Decl {
@@ -306,22 +327,30 @@ fn inline_tuple_fn_calls_in_where(
         let Some((param_pat, body)) = fn_env.get(fn_name) else {
             return c.clone();
         };
-        let Pat::Tuple(_, sub_pats) = param_pat else {
-            return c.clone();
-        };
-        let Expr::Tuple(_, arg_elems) = arg.as_ref() else {
-            return c.clone();
-        };
-        if sub_pats.len() != arg_elems.len() {
-            return c.clone();
-        }
         let mut subst_map: HashMap<String, Expr> = HashMap::new();
-        for (sp, ae) in sub_pats.iter().zip(arg_elems.iter()) {
-            if let Pat::Identifier(_, n) = sp {
-                subst_map.insert(n.clone(), ae.clone());
-            } else {
-                return c.clone();
+        match param_pat {
+            // `fun f x = body` — substitute the whole arg.
+            Pat::Identifier(_, n) => {
+                subst_map.insert(n.clone(), (**arg).clone());
             }
+            // `fun f (a, b) = body` — destructure a literal tuple
+            // arg into its components.
+            Pat::Tuple(_, sub_pats) => {
+                let Expr::Tuple(_, arg_elems) = arg.as_ref() else {
+                    return c.clone();
+                };
+                if sub_pats.len() != arg_elems.len() {
+                    return c.clone();
+                }
+                for (sp, ae) in sub_pats.iter().zip(arg_elems.iter()) {
+                    if let Pat::Identifier(_, n) = sp {
+                        subst_map.insert(n.clone(), ae.clone());
+                    } else {
+                        return c.clone();
+                    }
+                }
+            }
+            _ => return c.clone(),
         }
         substitute(body, &subst_map)
     };
@@ -461,9 +490,67 @@ fn lift_nested_exists_in_where(steps: Vec<Step>) -> Vec<Step> {
     // just reuse the last step's env as a starting point.
     let trailing_env = steps.last().unwrap().env.clone();
 
+    // Last position of a Where that had a conjunct lifted. For
+    // from-outers, we splice lifted scans + synth yield + distinct
+    // *immediately after* that Where, so user-supplied trailing
+    // steps (yield, distinct, order, …) operate on the post-lift
+    // {outer-bindings-only} record stream.
+    let last_lift_where_pos: Option<usize> = where_drops.keys().copied().max();
+
+    // Build the synthetic yield + distinct (for from-outer only).
+    let build_yield_distinct = |new_inner_scans: &mut Vec<Step>,
+                                new_inner_conjuncts: &mut Vec<Expr>|
+     -> Vec<Step> {
+        let mut buf: Vec<Step> = Vec::new();
+        buf.append(new_inner_scans);
+        if !new_inner_conjuncts.is_empty() {
+            let cond = and_all(std::mem::take(new_inner_conjuncts));
+            buf.push(Step::new(
+                StepKind::Where(Box::new(cond)),
+                trailing_env.clone(),
+            ));
+        }
+        if !outer_bindings.is_empty() {
+            let yield_expr = if outer_bindings.len() == 1 {
+                Expr::Identifier(
+                    Box::new((*outer_bindings[0].type_).clone()),
+                    outer_bindings[0].id.name.clone(),
+                )
+            } else {
+                use std::collections::BTreeMap;
+                let fields: BTreeMap<Label, Type> = outer_bindings
+                    .iter()
+                    .map(|b| {
+                        (Label::String(b.id.name.clone()), (*b.type_).clone())
+                    })
+                    .collect();
+                let rec_t = Box::new(Type::Record(false, fields));
+                let mut sorted = outer_bindings.clone();
+                sorted.sort_by(|a, b| a.id.name.cmp(&b.id.name));
+                let items: Vec<Expr> = sorted
+                    .iter()
+                    .map(|b| {
+                        Expr::Identifier(
+                            Box::new((*b.type_).clone()),
+                            b.id.name.clone(),
+                        )
+                    })
+                    .collect();
+                Expr::Tuple(rec_t, items)
+            };
+            buf.push(Step::new(
+                StepKind::Yield(Box::new(yield_expr)),
+                trailing_env.clone(),
+            ));
+            buf.push(Step::new(StepKind::Distinct, trailing_env.clone()));
+        }
+        buf
+    };
+
     // Rebuild.
     let mut out: Vec<Step> = Vec::with_capacity(steps.len());
     let mut inserted_lifted = false;
+    let n_steps = steps.len();
     for (i, step) in steps.into_iter().enumerate() {
         // Drop matched conjuncts from the Where that contained them.
         if let Some(drops) = where_drops.get(&i)
@@ -479,8 +566,23 @@ fn lift_nested_exists_in_where(steps: Vec<Step>) -> Vec<Step> {
             if !kept.is_empty() {
                 out.push(Step::new(
                     StepKind::Where(Box::new(and_all(kept))),
-                    step.env,
+                    step.env.clone(),
                 ));
+            }
+            // For from-outer, splice lifted block right here (the
+            // last Where to lose a conjunct gets the splice; any
+            // earlier ones are absorbed into the same
+            // `new_inner_*` accumulators).
+            if !outer_is_exists
+                && !inserted_lifted
+                && Some(i) == last_lift_where_pos
+            {
+                let block = build_yield_distinct(
+                    &mut new_inner_scans,
+                    &mut new_inner_conjuncts,
+                );
+                out.extend(block);
+                inserted_lifted = true;
             }
             continue;
         }
@@ -504,34 +606,17 @@ fn lift_nested_exists_in_where(steps: Vec<Step>) -> Vec<Step> {
         }
         out.push(step);
     }
+    let _ = n_steps; // (kept in case we need bounds checks later)
 
-    // For `from` outers, append lifted steps + yield + distinct.
+    // Fallback: if we never spliced (e.g. the lifted Where had
+    // no `kept` conjuncts, so it was suppressed), append at the
+    // end. Preserves the original behaviour for the common case.
     if !outer_is_exists && !inserted_lifted {
-        for s in new_inner_scans.drain(..) {
-            out.push(s);
-        }
-        if !new_inner_conjuncts.is_empty() {
-            let cond = and_all(std::mem::take(&mut new_inner_conjuncts));
-            out.push(Step::new(
-                StepKind::Where(Box::new(cond)),
-                trailing_env.clone(),
-            ));
-        }
-        // Yield + distinct preserves "one row per outer-bound
-        // value" cardinality. We only build the yield for a
-        // single outer binding; multi-binding outers would need
-        // a record yield, which we don't synthesise here yet.
-        if outer_bindings.len() == 1 {
-            let yield_expr = Expr::Identifier(
-                Box::new((*outer_bindings[0].type_).clone()),
-                outer_bindings[0].id.name.clone(),
-            );
-            out.push(Step::new(
-                StepKind::Yield(Box::new(yield_expr)),
-                trailing_env.clone(),
-            ));
-            out.push(Step::new(StepKind::Distinct, trailing_env));
-        }
+        let block = build_yield_distinct(
+            &mut new_inner_scans,
+            &mut new_inner_conjuncts,
+        );
+        out.extend(block);
     }
     out
 }
@@ -670,7 +755,136 @@ fn prune_unused_scan_extents(steps: Vec<Step>) -> Vec<Step> {
         .collect()
 }
 
+/// Reorders steps so every `Where`'s free names are bound by
+/// an earlier `Scan`. `decompose_tuple_elems` may drop an
+/// extent Scan and insert the merged Scan further down the
+/// list, leaving a `Where` step that referenced the dropped
+/// name out of order. This pass walks left-to-right, holds
+/// back any `Where` whose names aren't yet bound, and emits
+/// it once a later `Scan` supplies the missing binding.
+///
+/// `Distinct`, `Order`, `Take`, `Skip` are "binding-preserving"
+/// (don't change which names are in scope) — held Wheres can
+/// pass through them and still be emitted later. `Yield` and
+/// `Group` re-project bindings, so any held Where must be
+/// emitted before them (best-effort; an unbound Where is left
+/// in its original position to surface as a runtime error).
+fn reorder_wheres_after_scans(steps: Vec<Step>) -> Vec<Step> {
+    use crate::compile::free_finder::free_names_in;
+
+    let mut bound: HashSet<String> = HashSet::new();
+    let mut held: Vec<(Box<Expr>, StepEnv)> = Vec::new();
+    let mut out: Vec<Step> = Vec::with_capacity(steps.len());
+
+    fn try_release(
+        bound: &HashSet<String>,
+        held: &mut Vec<(Box<Expr>, StepEnv)>,
+        out: &mut Vec<Step>,
+    ) {
+        let mut i = 0;
+        while i < held.len() {
+            let free = free_names_in(&held[i].0);
+            if free.iter().all(|n| bound.contains(n)) {
+                let (cond, env) = held.remove(i);
+                out.push(Step::new(StepKind::Where(cond), env));
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    for step in steps {
+        match step.kind {
+            StepKind::Scan(p, source, cond) => {
+                let mut bs: Vec<Binding> = Vec::new();
+                Binding::collect_bindings(&p, &mut bs);
+                for b in bs {
+                    bound.insert(b.id.name);
+                }
+                out.push(Step::new(StepKind::Scan(p, source, cond), step.env));
+                try_release(&bound, &mut held, &mut out);
+            }
+            StepKind::Where(cond) => {
+                let free = free_names_in(&cond);
+                if free.iter().all(|n| bound.contains(n)) {
+                    out.push(Step::new(StepKind::Where(cond), step.env));
+                } else {
+                    held.push((cond, step.env));
+                }
+            }
+            StepKind::Distinct
+            | StepKind::Order(_)
+            | StepKind::Take(_)
+            | StepKind::Skip(_) => {
+                // Binding-preserving — held Wheres can wait past
+                // these and still be released by a later Scan.
+                out.push(Step::new(step.kind, step.env));
+            }
+            other => {
+                // Yield / Group / Compute / Exists / etc. change
+                // or terminate the binding scope. Flush any
+                // still-held Wheres before emitting this step.
+                for (cond, env) in held.drain(..) {
+                    out.push(Step::new(StepKind::Where(cond), env));
+                }
+                out.push(Step::new(other, step.env));
+            }
+        }
+    }
+    for (cond, env) in held {
+        out.push(Step::new(StepKind::Where(cond), env));
+    }
+    out
+}
+
+/// Iteratively merges tuple-elem conjuncts until a fixed point.
+/// Each pass turns a `Scan(name, Extent)` matched in a tuple-
+/// elem into a regular Scan that binds `name` from the elem
+/// collection. After the merge, that name is "already bound"
+/// in subsequent passes, so e.g. `(y, z) elem coll` whose `y`
+/// was just merged becomes matchable in pass 2 as an
+/// already-bound + extent pair.
 fn decompose_tuple_elems(steps: Vec<Step>) -> Vec<Step> {
+    let mut current = steps;
+    loop {
+        let before = step_signature(&current);
+        let after = decompose_tuple_elems_once(current);
+        let after_sig = step_signature(&after);
+        current = after;
+        if before == after_sig {
+            return current;
+        }
+    }
+}
+
+/// Coarse fingerprint of the step list used to detect fixed
+/// point in the iterative decompose. Captures step kinds and
+/// the names introduced by each Scan; ignores expression
+/// equality.
+fn step_signature(steps: &[Step]) -> Vec<String> {
+    steps
+        .iter()
+        .map(|s| match &s.kind {
+            StepKind::Scan(p, _, _) => {
+                let mut bs: Vec<Binding> = Vec::new();
+                Binding::collect_bindings(p, &mut bs);
+                let names: Vec<String> =
+                    bs.into_iter().map(|b| b.id.name).collect();
+                format!("Scan({})", names.join(","))
+            }
+            StepKind::Where(_) => "Where".into(),
+            StepKind::Yield(_) => "Yield".into(),
+            StepKind::Order(_) => "Order".into(),
+            StepKind::Group(_, _) => "Group".into(),
+            StepKind::Compute(_) => "Compute".into(),
+            StepKind::Distinct => "Distinct".into(),
+            StepKind::Exists => "Exists".into(),
+            other => format!("{:?}", other),
+        })
+        .collect()
+}
+
+fn decompose_tuple_elems_once(steps: Vec<Step>) -> Vec<Step> {
     use HashSet;
 
     // Gather all ScanExtent positions and the names they bind.
@@ -988,10 +1202,17 @@ fn expand_steps(
     // `decompose_tuple_elems` to merge ScanExtents for *all*
     // tuple components into one Scan, so the inlining has to
     // happen at the from-level pre-pass.
+    // Inline first — turning `isHappy p` into the inlined exists
+    // body — so that `lift_nested_exists_in_where` can see the
+    // newly-revealed inner exists conjunct.
+    let steps = inline_tuple_fn_calls_in_where(steps, env);
     let steps = lift_nested_exists_in_where(steps);
+    // Inline again, now that lift has surfaced the inner exists's
+    // conjuncts at the outer Where level.
     let steps = inline_tuple_fn_calls_in_where(steps, env);
     let steps = inline_tuple_case_in_where(steps);
     let steps = decompose_tuple_elems(steps);
+    let steps = reorder_wheres_after_scans(steps);
 
     // Phase 0b: prune fully-unused ScanExtents from `exists` /
     // `forall` queries. `exists w, x, y where (x, 2) elem coll`
@@ -1185,6 +1406,16 @@ fn expand_steps(
                 let mut bs: Vec<Binding> = Vec::new();
                 Binding::collect_bindings(&pat, &mut bs);
                 for b in bs {
+                    // Synthetic `__decomp$N` names introduced by
+                    // `decompose_tuple_elems` exist only to bind a
+                    // tuple component to a fresh slot for the
+                    // post-filter; they're not user-visible
+                    // scope, so we keep them out of the step env's
+                    // bindings list (which drives the implicit
+                    // yield's projection).
+                    if b.id.name.starts_with("__decomp$") {
+                        continue;
+                    }
                     if !bound_names.contains(&b.id.name) {
                         bound_names.insert(b.id.name.clone());
                         bound_bindings.push(b);

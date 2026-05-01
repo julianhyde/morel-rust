@@ -22,6 +22,7 @@
 #![allow(clippy::redundant_closure)]
 
 use crate::compile::core::{Decl, Expr};
+use crate::compile::expander::collect_session_fn_bindings;
 use crate::compile::inliner::Env;
 use crate::compile::library::{
     BuiltInExn, BuiltInFunction, name_to_fn, name_to_rec,
@@ -1056,7 +1057,9 @@ impl Shell {
 
     /// Evaluates a parsed AST node.
     fn evaluate_node(&mut self, resolved: &Resolved) -> ShellResult<String> {
-        let (decl, resolve_errors) = resolver::resolve(resolved);
+        let session_fns = self.session.borrow().fn_bindings.clone();
+        let (decl, resolve_errors) =
+            resolver::resolve_with_session_fns(resolved, &session_fns);
         if let Some((msg, span)) = resolve_errors.first() {
             return Ok(format!(
                 "{} Error: {}\n  raised at: {}\n",
@@ -1132,6 +1135,7 @@ impl Shell {
                     bindings.clear();
                     let mut session = self.session.borrow_mut();
                     session.type_bindings.clear();
+                    session.fn_bindings.clear();
 
                     // Reset type_env to initial state (FunTypeEnv).
                     let empty_type_env = EmptyTypeEnv {};
@@ -1202,6 +1206,13 @@ impl Shell {
         // during evaluation does not see the current statement's own
         // bindings (e.g. the implicit `it`).
         self.session.borrow_mut().commit_bindings(resolved);
+
+        // Record any single-arm `fn p => body` value-bindings for
+        // future statements' predicate inversion (#223).
+        collect_session_fn_bindings(
+            &decl,
+            &mut self.session.borrow_mut().fn_bindings,
+        );
 
         Ok(result)
     }

@@ -20,6 +20,8 @@
  * (Originally, such queries used a 'suchthat' keyword, but that keyword
  * has since been removed.)
  *)
+Sys.set ("printLength", 64);
+> val it = () : unit
 (*----------------------------------------------------------------- *)
 (* Convert predicates into ranges. *)
 from i where i > 0 andalso i < 10;
@@ -44,8 +46,7 @@ from x, y in [0, 2, 9] where x > y andalso x < y + 5;
 >   [{x=1,y=0},{x=2,y=0},{x=3,y=0},{x=4,y=0},{x=3,y=2},{x=4,y=2},{x=5,y=2},
 >    {x=6,y=2},{x=10,y=9},{x=11,y=9},{x=12,y=9},{x=13,y=9}] : {x:int, y:int} bag
 
-(* Similar, but we know the values of x. y's range is derived
- * from the symbolic offset in `x < y + 5` ⇒ `y > x - 5`. *)
+(* Similar, but we know the values of x. *)
 from x in [3, 5, 7], y where x > y andalso x < y + 5 yield y;
 > val it = [~1,0,1,2,1,2,3,4,3,4,5,6] : int bag
 
@@ -54,11 +55,8 @@ from x in [3, 5, 7], y where x > y andalso x < y + 5 yield y;
  * but we don't have symbolic math.
  *
  * morel-rust note: morel-java reports `pattern x_1 is not grounded`
- * (with the resolver-rename suffix `_1`); morel-rust uses the
- * surface name `'x'` and omits the `raised at:` line because the
- * runtime span isn't propagated for compile-time-emitted errors.
- * The functionality (rejecting an un-invertible predicate at
- * evaluation) is the same. *)
+ * with the resolver-rename suffix; morel-rust uses the surface
+ * name `'x'`. *)
 from x where (x + 2) * (x - 3) = 0;
 > java.lang.IllegalArgumentException: pattern 'x' is not grounded
 
@@ -89,8 +87,9 @@ where j > 4 andalso j < 7
 >   [{i=1,j=5,k=9,m=13},{i=1,j=5,k=9,m=14},{i=1,j=5,k=10,m=13},
 >    {i=1,j=5,k=10,m=14},{i=1,j=6,k=9,m=13},{i=1,j=6,k=9,m=14},
 >    {i=1,j=6,k=10,m=13},{i=1,j=6,k=10,m=14},{i=2,j=5,k=9,m=13},
->    {i=2,j=5,k=9,m=14},{i=2,j=5,k=10,m=13},{i=2,j=5,k=10,m=14},...]
->   : {i:int, j:int, k:int, m:int} bag
+>    {i=2,j=5,k=9,m=14},{i=2,j=5,k=10,m=13},{i=2,j=5,k=10,m=14},
+>    {i=2,j=6,k=9,m=13},{i=2,j=6,k=9,m=14},{i=2,j=6,k=10,m=13},
+>    {i=2,j=6,k=10,m=14}] : {i:int, j:int, k:int, m:int} bag
 
 (*----------------------------------------------------------------- *)
 (* Unbounded variables with `take` and other clauses. *)
@@ -186,28 +185,21 @@ exists w, x where x = 3 andalso x < 10;
 exists w, x where x = 3 andalso x > 10;
 > val it = false : bool
 
-(*) Reversed pattern via case: a single-arm `case` over a tuple of
-(*) unbounded variables, with a tuple sub-pattern, beta-reduces
-(*) to a tuple-elem constraint that grounds both variables.
+(*) Reversed pattern via case
 from x, y where case (y, x) of (a, b) => (a, b) elem [(1,true),(2,false)];
 > val it = [{x=true,y=1},{x=false,y=2}] : {x:bool, y:int} bag
 
-(*) Nested exists: inner exists's scans + conjuncts are lifted to
-(*) the outer exists, so `(x, y) elem coll` grounds both x and y.
 exists x
   where (exists y
     where (x, y) elem [(1, 2), (1, 3), (4, 3)]);
 > val it = true : bool
 
-(*) `from` outer: lift introduces an explicit `yield x distinct`
-(*) to preserve the original "one row per outer-bound x" cardinality.
 from x
   where exists y
     where (x, y) elem [(1, 2), (1, 3), (4, 3)];
 > val it = [1,4] : int bag
 
-(*) Eliminate duplicates: (_, 2, 3) occurs twice, but only one
-(*) row per outer y survives the `yield y distinct`.
+(*) Be sure to eliminate duplicates. (_, 2, 3) occurs twice in the list.
 from y
   where exists x
     where (x, y, 3) elem [(1, 2, 3), (2, 3, 4), (5, 4, 3), (4, 2, 3)];
@@ -247,6 +239,22 @@ in
   from n where isNum n andalso isEven n
 end;
 > val it = [2,4] : int bag
+
+val nums = [1, 2, 3, 4, 5];
+> val nums = [1,2,3,4,5] : int list
+fun isNum n = n elem nums;
+> val isNum = fn : int -> bool
+fun isEven n = n mod 2 = 0;
+> val isEven = fn : int -> bool
+from n where isNum n andalso isEven n;
+> val it = [2,4] : int bag
+
+fun isSmall n = n elem [1, 2];
+> val isSmall = fn : int -> bool
+fun isLarge n = n elem [10, 20];
+> val isLarge = fn : int -> bool
+from n where isSmall n orelse isLarge n;
+> val it = [1,2,10,20] : int bag
 
 (* Single-arm case ------------------------------------------------ *)
 from x where case x of y => y elem [1,2];
@@ -395,10 +403,7 @@ in
 end;
 > val it = ["SMITH","JONES","SCOTT","ADAMS","FORD"] : string bag
 
-(*) Previously MainTest.testFromSuchThat. A let-bound predicate
-(*) over a tuple-pattern parameter, applied to two unbounded
-(*) variables, gets inlined and decomposed into a tuple-elem
-(*) constraint, then merged with the unbounded scans.
+(*) Previously MainTest.testFromSuchThat
 let
   val emps = [
     {id = 100, name = "Fred", deptno = 10},
@@ -416,33 +421,30 @@ end;
 > val it = [{d=30,n="Shaggy"},{d=30,n="Scooby"}] : {d:int, n:string} bag
 
 (*) As previous, but 'fun' followed by 'from' without using 'let'
-(*) TODO should return same as previous, currently can't inline fun declared separately
 fun isEmp e =
   e elem scott.emps;
 > val isEmp = fn
 >   :
 >     {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
 >      job:string, mgr:int, sal:real} -> bool
-(*
 from e
   where isEmp e andalso e.deptno = 20
   yield e.ename;
-*)
+> val it = ["SMITH","JONES","SCOTT","ADAMS","FORD"] : string bag
 
 (*) Similar to 'isEmp' but with a conjunctive condition.
-let
-  fun isClerk e =
-    e elem scott.emps andalso e.job = "CLERK"
-in
-  from e
-    where isClerk e andalso e.deptno = 20
-    yield e.ename
-end;
+fun isClerk e =
+  e elem scott.emps andalso e.job = "CLERK";
+> val isClerk = fn
+>   :
+>     {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
+>      job:string, mgr:int, sal:real} -> bool
+from e
+  where isClerk e andalso e.deptno = 20
+  yield e.ename;
 > val it = ["SMITH","ADAMS"] : string bag
 
 (*) A disjunctive condition prevents the extent.
-(*) TODO: throw an error, rather than returning an empty list
-(*
 let
   fun isEmp50 e =
     e elem scott.emps orelse e.deptno = 50
@@ -451,29 +453,26 @@ in
     where isEmp50 e
     yield e.ename
 end;
-*)
+> java.lang.IllegalArgumentException: pattern 'e' is not grounded
 
 (*) A function with external extent.
-(* TODO enable when we have types
-fun hasJob (e, job) =
+fun hasJob (e: typeof (Bag.hd scott.emps),
+            job) =
   e.job = job;
- *)
+> val hasJob = fn
+>   :
+>     {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
+>      job:string, mgr:int, sal:real} * string -> bool
 
 (*) Valid, because the argument has an extent.
-(*
-let
-  fun hasJob (e, job) =
-    e.job = job
-in
-  from e in scott.emps,
-      j
-    where hasJob (e, j)
-    yield j
-end;
-val it =
-  ["CLERK","SALESMAN","SALESMAN","MANAGER","SALESMAN","MANAGER","MANAGER",
-   "ANALYST","PRESIDENT","SALESMAN","CLERK","CLERK",...] : string list
-*)
+from e in scott.emps,
+    j
+  where hasJob (e, j)
+  yield j;
+> val it =
+>   ["CLERK","SALESMAN","SALESMAN","MANAGER","SALESMAN","MANAGER","MANAGER",
+>    "ANALYST","PRESIDENT","SALESMAN","CLERK","CLERK","ANALYST","CLERK"]
+>   : string bag
 
 (*) Invalid, because the argument has no extent.
 (*) TODO should give error 'e not grounded'
@@ -521,6 +520,20 @@ val enumerate = fn : ('a -> bool) -> 'a list
 (*
 enumerate isEmp;
 *)
+
+(* Join inversion ------------------------------------------------- *)
+let
+  fun empInDept (empno, deptno) =
+    exists e in scott.emps where e.empno = empno andalso e.deptno = deptno
+  fun deptName(deptno, dname) =
+    exists d in scott.depts where d.deptno = deptno andalso d.dname = dname
+  fun empInDeptName(empno, dname) =
+    exists deptno where empInDept(empno, deptno) andalso deptName(deptno, dname)
+in
+  from empno
+    where empInDeptName(empno, "SALES")
+end;
+> val it = [7499,7521,7654,7698,7844,7900] : int bag
 
 (*----------------------------------------------------------------- *)
 (* The following example from Souffle,
@@ -592,25 +605,32 @@ val edges = [(1, 2), (2, 3), (1, 4), (4, 2), (4, 3)];
 fun edge (x, y) = (x, y) elem edges;
 > val edge = fn : int * int -> bool
 
-(*) Return points that are 2 hops apart.
-(*
-from x, y, z where edge (x, y) andalso edge (y, z) andalso x <> z
-  group x, z;
-*)
+from x, y where edge (x, y);
+> val it = [{x=1,y=2},{x=2,y=3},{x=1,y=4},{x=4,y=2},{x=4,y=3}]
+>   : {x:int, y:int} bag
 
-(* Previous is equivalent to following. (Which implies a theorem connecting
-   'exists' with 'group' and variable elimination.) *)
-(*
+(*) Return points that are 2 hops apart.
+let
+  fun edge (x, y) = (x, y) elem edges
+in
+  from x, y, z where edge (x, y) andalso edge (y, z) andalso x <> z
+    group {x, z}
+end;
+> val it = [{x=1,z=3},{x=1,z=2},{x=4,z=3}] : {x:int, z:int} list
+
+(* Previous is equivalent to following. (Which implies a theorem
+ * connecting 'exists' with 'group' and variable elimination.) *)
 from x, z
-  where exists (from y where edge (x, y) andalso edge (y, z))
-  andalso x <> z;
-*)
+  where (exists y where edge (x, y) andalso edge (y, z))
+    andalso x <> z
+  distinct;
+> val it = [{x=1,z=3},{x=1,z=2},{x=4,z=3}] : {x:int, z:int} bag
 
 (*) Also equivalent.
-(*
-from x, z where exists (
-   from y where edge (x, y) andalso edge (y, z) andalso x <> z);
-*)
+from x, z
+  where (exists y where edge (x, y) andalso edge (y, z) andalso x <> z)
+  distinct;
+> val it = [{x=1,z=3},{x=1,z=2},{x=4,z=3}] : {x:int, z:int} bag
 
 (*) Also equivalent.
 (*
@@ -642,11 +662,13 @@ val barBeers = [
   {bar =  "squirrel", beer =  "pale", price =  2},
   {bar =  "squirrel", beer =  "amber", price =  3},
   {bar =  "cask", beer =  "stout", price =  4},
-  {bar =  "cask", beer =  "ipa", price =  5}];
+  {bar =  "cask", beer =  "ipa", price =  5},
+  {bar =  "big_al", beer =  "pale", price =  1}];
 > val barBeers =
 >   [{bar="squirrel",beer="ipa",price=2},{bar="squirrel",beer="pale",price=2},
 >    {bar="squirrel",beer="amber",price=3},{bar="cask",beer="stout",price=4},
->    {bar="cask",beer="ipa",price=5}] : {bar:string, beer:string, price:int} list
+>    {bar="cask",beer="ipa",price=5},{bar="big_al",beer="pale",price=1}]
+>   : {bar:string, beer:string, price:int} list
 
 val patronBeers = [
   {patron =  "shaggy", beer = "amber"},
@@ -681,6 +703,12 @@ fun happy patron =
       andalso sells (bar, beer, price));
 > val happy = fn : string -> bool
 *)
+fun happy patron =
+  exists bar, beer, price
+      where frequents (patron, bar)
+      andalso likes (patron, beer)
+      andalso sells (bar, beer, price);
+> val happy = fn : string -> bool
 
 (* Find happy patrons. Shaggy is happy because the Squirrel and Cask sell
    Amber; Velma is happy because Cask sells Stout. Fred and Scooby are not
@@ -689,6 +717,8 @@ fun happy patron =
 from p where happy p;
 > val it = ["shaggy", "velma"] : string list
 *)
+from p where happy p;
+> val it = ["shaggy","velma"] : string bag
 
 (* A beer is considered cheap if there are at least two bars that sell it for
  * under $3.
@@ -708,12 +738,22 @@ fun cheap beer =
         andalso bar1 <> bar2);
 > val cheap = fn : string -> bool
 *)
+fun cheap beer =
+  exists bar1, price1, bar2, price2
+    where sells (bar1, beer, price1)
+      andalso sells (bar2, beer, price2)
+      andalso price1 < 3
+      andalso price2 < 3
+      andalso bar1 <> bar2;
+> val cheap = fn : string -> bool
 
 (*) Pale is cheap
 (* TODO
 from b where cheap b;
 > val it = ["pale"] : string list
 *)
+from b where cheap b;
+> val it = ["pale"] : string bag
 
 (* A rule is safe if:
  * 1. Each distinguished variable,
@@ -783,6 +823,9 @@ fun caskSells b =
   exists (from beer, price where sells ("cask", beer, price));
 > val caskSells = fn : 'a -> bool
 *)
+fun caskSells b =
+  exists price where sells ("cask", b, price);
+> val caskSells = fn : string -> bool
 
 (* TODO
 from p where exists (
