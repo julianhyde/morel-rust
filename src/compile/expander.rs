@@ -347,6 +347,195 @@ fn inline_tuple_fn_calls_in_where(
         .collect()
 }
 
+/// Lifts the inner Scans and Where conjuncts of any Where
+/// conjunct that is itself a nested `exists`-like expression
+/// into the outer steps. Equivalence:
+///
+///   exists x where (exists y where P(x, y))
+///     ≡ exists x, y where P(x, y)
+///
+///   from x where (exists y where P(x, y))
+///     ≡ from x, y where P(x, y) yield x distinct
+///
+/// The lift lets later passes (`decompose_tuple_elems`, the
+/// per-pattern generator pipeline) see the inner constraints
+/// alongside the outer scans, so e.g. `(x, y) elem coll` can be
+/// merged into a single Scan(Tuple([x, y]), coll) that grounds
+/// both x and y.
+///
+/// For `from` outers we synthesise a `yield (...)` over the
+/// original outer-bound names plus a `distinct` to preserve the
+/// original cardinality (one row per outer-bound combination,
+/// not per inner-iteration).
+fn lift_nested_exists_in_where(steps: Vec<Step>) -> Vec<Step> {
+    use crate::compile::generators::split_conjuncts;
+
+    // First pass: find conjuncts that are inner exists, collect
+    // their scans + conjuncts, and remember which to drop.
+    let mut new_inner_scans: Vec<Step> = Vec::new();
+    let mut new_inner_conjuncts: Vec<Expr> = Vec::new();
+    let mut where_drops: HashMap<usize, HashSet<usize>> = HashMap::new();
+    for (wi, step) in steps.iter().enumerate() {
+        let StepKind::Where(cond) = &step.kind else {
+            continue;
+        };
+        let conjuncts = split_conjuncts(cond);
+        for (ci, c) in conjuncts.iter().enumerate() {
+            // Match both `Expr::Exists` and `Expr::From` whose
+            // last step is `Exists` — the resolver represents
+            // a parenthesised `(exists ... where ...)` as the
+            // latter, where the trailing Exists turns a bag
+            // into a bool.
+            let inner_steps = match c {
+                Expr::Exists(_, s) => s,
+                Expr::From(_, s)
+                    if matches!(
+                        s.last().map(|s| &s.kind),
+                        Some(StepKind::Exists)
+                    ) =>
+                {
+                    s
+                }
+                _ => continue,
+            };
+            if !matches!(
+                inner_steps.last().map(|s| &s.kind),
+                Some(StepKind::Exists)
+            ) {
+                continue;
+            }
+            // Promote inner Scans (including ScanExtents) and
+            // Where conjuncts. Skip yields/groups/orders — those
+            // wouldn't show up in a plain exists query but we
+            // ignore them defensively.
+            let mut ok = true;
+            let mut promoted_scans: Vec<Step> = Vec::new();
+            let mut promoted_conjuncts: Vec<Expr> = Vec::new();
+            for s in &inner_steps[..inner_steps.len() - 1] {
+                match &s.kind {
+                    StepKind::Scan(_, _, _) => {
+                        promoted_scans.push(s.clone());
+                    }
+                    StepKind::Where(ic) => {
+                        promoted_conjuncts.extend(split_conjuncts(ic));
+                    }
+                    _ => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if !ok {
+                continue;
+            }
+            new_inner_scans.extend(promoted_scans);
+            new_inner_conjuncts.extend(promoted_conjuncts);
+            where_drops.entry(wi).or_default().insert(ci);
+        }
+    }
+
+    if new_inner_scans.is_empty() && new_inner_conjuncts.is_empty() {
+        return steps;
+    }
+
+    let outer_is_exists =
+        matches!(steps.last().map(|s| &s.kind), Some(StepKind::Exists));
+
+    // For `from` outers, capture the bindings emitted by the
+    // outer's pre-lift Scans so we can yield only those, then
+    // distinct to preserve cardinality.
+    let outer_bindings: Vec<Binding> = if outer_is_exists {
+        Vec::new()
+    } else {
+        let mut bs: Vec<Binding> = Vec::new();
+        for s in &steps {
+            if let StepKind::Scan(p, _, _) = &s.kind {
+                Binding::collect_bindings(p, &mut bs);
+            }
+        }
+        bs
+    };
+
+    // Pick a step env that represents the post-lift scope. For
+    // exists/forall the trailing-step env is fine; for `from` we
+    // just reuse the last step's env as a starting point.
+    let trailing_env = steps.last().unwrap().env.clone();
+
+    // Rebuild.
+    let mut out: Vec<Step> = Vec::with_capacity(steps.len());
+    let mut inserted_lifted = false;
+    for (i, step) in steps.into_iter().enumerate() {
+        // Drop matched conjuncts from the Where that contained them.
+        if let Some(drops) = where_drops.get(&i)
+            && let StepKind::Where(cond) = &step.kind
+        {
+            let conjuncts = split_conjuncts(cond);
+            let kept: Vec<Expr> = conjuncts
+                .into_iter()
+                .enumerate()
+                .filter(|(ci, _)| !drops.contains(ci))
+                .map(|(_, c)| c)
+                .collect();
+            if !kept.is_empty() {
+                out.push(Step::new(
+                    StepKind::Where(Box::new(and_all(kept))),
+                    step.env,
+                ));
+            }
+            continue;
+        }
+        // For exists/forall, insert lifted steps just before the
+        // trailing Exists.
+        if outer_is_exists
+            && matches!(step.kind, StepKind::Exists)
+            && !inserted_lifted
+        {
+            for s in new_inner_scans.drain(..) {
+                out.push(s);
+            }
+            if !new_inner_conjuncts.is_empty() {
+                let cond = and_all(std::mem::take(&mut new_inner_conjuncts));
+                out.push(Step::new(
+                    StepKind::Where(Box::new(cond)),
+                    trailing_env.clone(),
+                ));
+            }
+            inserted_lifted = true;
+        }
+        out.push(step);
+    }
+
+    // For `from` outers, append lifted steps + yield + distinct.
+    if !outer_is_exists && !inserted_lifted {
+        for s in new_inner_scans.drain(..) {
+            out.push(s);
+        }
+        if !new_inner_conjuncts.is_empty() {
+            let cond = and_all(std::mem::take(&mut new_inner_conjuncts));
+            out.push(Step::new(
+                StepKind::Where(Box::new(cond)),
+                trailing_env.clone(),
+            ));
+        }
+        // Yield + distinct preserves "one row per outer-bound
+        // value" cardinality. We only build the yield for a
+        // single outer binding; multi-binding outers would need
+        // a record yield, which we don't synthesise here yet.
+        if outer_bindings.len() == 1 {
+            let yield_expr = Expr::Identifier(
+                Box::new((*outer_bindings[0].type_).clone()),
+                outer_bindings[0].id.name.clone(),
+            );
+            out.push(Step::new(
+                StepKind::Yield(Box::new(yield_expr)),
+                trailing_env.clone(),
+            ));
+            out.push(Step::new(StepKind::Distinct, trailing_env));
+        }
+    }
+    out
+}
+
 /// Beta-reduces single-arm `case (e1, …, en) of (a1, …, an) =>
 /// body` to `body[ai := ei]` in Where conjuncts. Lets
 /// `decompose_tuple_elems` see e.g. `(y, x) elem coll` even when
@@ -799,6 +988,7 @@ fn expand_steps(
     // `decompose_tuple_elems` to merge ScanExtents for *all*
     // tuple components into one Scan, so the inlining has to
     // happen at the from-level pre-pass.
+    let steps = lift_nested_exists_in_where(steps);
     let steps = inline_tuple_fn_calls_in_where(steps, env);
     let steps = inline_tuple_case_in_where(steps);
     let steps = decompose_tuple_elems(steps);
