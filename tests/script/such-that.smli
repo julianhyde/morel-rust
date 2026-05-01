@@ -181,6 +181,12 @@ exists w, x where x = 3 andalso x < 10;
 exists w, x where x = 3 andalso x > 10;
 > val it = false : bool
 
+(*) Reversed pattern via case: a single-arm `case` over a tuple of
+(*) unbounded variables, with a tuple sub-pattern, beta-reduces
+(*) to a tuple-elem constraint that grounds both variables.
+from x, y where case (y, x) of (a, b) => (a, b) elem [(1,true),(2,false)];
+> val it = [{x=true,y=1},{x=false,y=2}] : {x:bool, y:int} bag
+
 (* String.isPrefix p s --------------------------------- *)
 from p where String.isPrefix p "abcd";
 > val it = ["","a","ab","abc","abcd"] : string bag

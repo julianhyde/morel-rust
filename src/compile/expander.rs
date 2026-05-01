@@ -347,6 +347,62 @@ fn inline_tuple_fn_calls_in_where(
         .collect()
 }
 
+/// Beta-reduces single-arm `case (e1, …, en) of (a1, …, an) =>
+/// body` to `body[ai := ei]` in Where conjuncts. Lets
+/// `decompose_tuple_elems` see e.g. `(y, x) elem coll` even when
+/// the user wrote `case (y, x) of (a, b) => (a, b) elem coll`.
+fn inline_tuple_case_in_where(steps: Vec<Step>) -> Vec<Step> {
+    use crate::compile::generators::split_conjuncts;
+    use crate::compile::replacer::substitute;
+    let try_inline = |c: &Expr| -> Expr {
+        let Expr::Case(_, subject, arms, _) = c else {
+            return c.clone();
+        };
+        if arms.len() != 1 {
+            return c.clone();
+        }
+        let arm = &arms[0];
+        let Pat::Tuple(_, sub_pats) = &arm.pat else {
+            return c.clone();
+        };
+        let Expr::Tuple(_, arg_elems) = subject.as_ref() else {
+            return c.clone();
+        };
+        if sub_pats.len() != arg_elems.len() {
+            return c.clone();
+        }
+        let mut subst_map: HashMap<String, Expr> = HashMap::new();
+        for (sp, ae) in sub_pats.iter().zip(arg_elems.iter()) {
+            if let Pat::Identifier(_, n) = sp {
+                subst_map.insert(n.clone(), ae.clone());
+            } else {
+                return c.clone();
+            }
+        }
+        substitute(&arm.expr, &subst_map)
+    };
+    steps
+        .into_iter()
+        .map(|s| match s.kind {
+            StepKind::Where(cond) => {
+                let conjuncts: Vec<Expr> = split_conjuncts(&cond)
+                    .into_iter()
+                    .map(|c| try_inline(&c))
+                    .collect();
+                let new_cond = if conjuncts.is_empty() {
+                    *cond
+                } else {
+                    let mut iter = conjuncts.into_iter();
+                    let first = iter.next().unwrap();
+                    iter.fold(first, |a, b| and_all(vec![a, b]))
+                };
+                Step::new(StepKind::Where(Box::new(new_cond)), s.env)
+            }
+            other => Step::new(other, s.env),
+        })
+        .collect()
+}
+
 /// Drops `ScanExtent` steps whose pattern name doesn't appear in
 /// any of the from's other steps (whose result is `bool` —
 /// `exists` / `forall` — so unconstrained, unread bindings have
@@ -744,6 +800,7 @@ fn expand_steps(
     // tuple components into one Scan, so the inlining has to
     // happen at the from-level pre-pass.
     let steps = inline_tuple_fn_calls_in_where(steps, env);
+    let steps = inline_tuple_case_in_where(steps);
     let steps = decompose_tuple_elems(steps);
 
     // Phase 0b: prune fully-unused ScanExtents from `exists` /
