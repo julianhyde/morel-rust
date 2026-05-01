@@ -44,6 +44,11 @@ from x, y in [0, 2, 9] where x > y andalso x < y + 5;
 >   [{x=1,y=0},{x=2,y=0},{x=3,y=0},{x=4,y=0},{x=3,y=2},{x=4,y=2},{x=5,y=2},
 >    {x=6,y=2},{x=10,y=9},{x=11,y=9},{x=12,y=9},{x=13,y=9}] : {x:int, y:int} bag
 
+(* Similar, but we know the values of x. y's range is derived
+ * from the symbolic offset in `x < y + 5` ⇒ `y > x - 5`. *)
+from x in [3, 5, 7], y where x > y andalso x < y + 5 yield y;
+> val it = [~1,0,1,2,1,2,3,4,3,4,5,6] : int bag
+
 (* Predicate cannot be inverted.
  * With symbolic math we could deduce that the solution is [~2,3],
  * but we don't have symbolic math.
