@@ -791,12 +791,39 @@ fn maybe_function(
         let Some((param_pat, body)) = fn_env.get(fn_name) else {
             continue;
         };
-        // Only handle single-identifier param for now.
-        let Pat::Identifier(_, param_name) = param_pat else {
-            continue;
-        };
+        // Build the substitution map. `fn x => body` substitutes
+        // `x → arg`. `fn (a, b) => body` substitutes `a → arg.0`,
+        // `b → arg.1` if `arg` is a literal tuple expression of
+        // matching arity; otherwise we'd need a record-selector
+        // application (or a let-in to materialise the tuple
+        // once), which we don't bother with here.
         let mut subst_map: HashMap<String, Expr> = HashMap::new();
-        subst_map.insert(param_name.clone(), (**arg).clone());
+        match param_pat {
+            Pat::Identifier(_, param_name) => {
+                subst_map.insert(param_name.clone(), (**arg).clone());
+            }
+            Pat::Tuple(_, sub_pats) => {
+                let Expr::Tuple(_, arg_elems) = arg.as_ref() else {
+                    continue;
+                };
+                if sub_pats.len() != arg_elems.len() {
+                    continue;
+                }
+                let mut ok = true;
+                for (sp, ae) in sub_pats.iter().zip(arg_elems.iter()) {
+                    if let Pat::Identifier(_, n) = sp {
+                        subst_map.insert(n.clone(), ae.clone());
+                    } else {
+                        ok = false;
+                        break;
+                    }
+                }
+                if !ok {
+                    continue;
+                }
+            }
+            _ => continue,
+        };
         let inlined = substitute(body, &subst_map);
         // Decompose `andalso`; merge with the rest of the outer
         // constraints.
