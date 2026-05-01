@@ -15,6 +15,7 @@
 // language governing permissions and limitations under the
 // License.
 
+use crate::compile::core::{Expr as CoreExpr, Pat as CorePat};
 use crate::compile::library::BuiltInFunction;
 use crate::compile::type_env::{
     BindType, EmptyTypeEnv, FunTypeEnv, SimpleTypeEnv, TypeEnv, TypeEnvBuilder,
@@ -65,6 +66,11 @@ pub struct Session {
     /// Accumulated overload instance types. Maps overloaded name
     /// to a list of instance types (one per `val inst` declaration).
     pub overloads: HashMap<String, Vec<Type>>,
+    /// Core function bodies of single-arm `fn p => body` value
+    /// bindings from earlier statements. Lets predicate inversion
+    /// inline a function declared in a previous shell statement
+    /// (hydromatic/morel#223).
+    pub fn_bindings: HashMap<String, (CorePat, CoreExpr)>,
 }
 
 // static SESSION_COUNTER: std::sync::atomic::AtomicUsize =
@@ -104,6 +110,7 @@ impl Session {
             datatype_constructors: HashMap::new(),
             constructor_arg_types: HashMap::new(),
             overloads,
+            fn_bindings: HashMap::new(),
         }
     }
 

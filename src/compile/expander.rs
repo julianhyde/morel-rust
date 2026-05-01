@@ -35,7 +35,7 @@ use crate::compile::generator::Cache;
 use crate::compile::generators::{maybe_generator, split_conjuncts};
 use crate::compile::library::BuiltInFunction;
 use crate::compile::span::Span;
-use crate::compile::types::{PrimitiveType, Type};
+use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
 use std::collections::{HashMap, HashSet};
 
@@ -101,6 +101,27 @@ pub fn expand_from_with(
 pub fn expand_decl(decl: Decl, datatypes: &DatatypeMap) -> Decl {
     let env = FnEnv::new();
     walk_decl(decl, &env, datatypes)
+}
+
+/// Same as [`expand_decl`], but seeds the inlining environment
+/// with cross-statement function bindings the session has
+/// accumulated from earlier `fun` / `val` decls. Lets predicate
+/// inversion inline a function declared in a previous shell
+/// statement (hydromatic/morel#223).
+pub fn expand_decl_with_session(
+    decl: Decl,
+    datatypes: &DatatypeMap,
+    session_fns: &FnEnv,
+) -> Decl {
+    walk_decl(decl, session_fns, datatypes)
+}
+
+/// Walks a Core decl and records any single-arm `fn p => body`
+/// value-bindings into `env`. Mirrors `collect_fn_bindings` but
+/// is exposed for the shell, which tracks session-level fn
+/// definitions for cross-statement predicate inversion.
+pub fn collect_session_fn_bindings(decl: &Decl, env: &mut FnEnv) {
+    collect_fn_bindings(decl, env);
 }
 
 fn walk_decl(decl: Decl, env: &FnEnv, datatypes: &DatatypeMap) -> Decl {
@@ -518,14 +539,40 @@ fn lift_nested_exists_in_where(steps: Vec<Step>) -> Vec<Step> {
             ));
         }
         // Yield + distinct preserves "one row per outer-bound
-        // value" cardinality. We only build the yield for a
-        // single outer binding; multi-binding outers would need
-        // a record yield, which we don't synthesise here yet.
-        if outer_bindings.len() == 1 {
-            let yield_expr = Expr::Identifier(
-                Box::new((*outer_bindings[0].type_).clone()),
-                outer_bindings[0].id.name.clone(),
-            );
+        // value" cardinality. Single outer binding yields the
+        // identifier directly; multi-binding outers yield a
+        // record over the original bindings.
+        if !outer_bindings.is_empty() {
+            let yield_expr = if outer_bindings.len() == 1 {
+                Expr::Identifier(
+                    Box::new((*outer_bindings[0].type_).clone()),
+                    outer_bindings[0].id.name.clone(),
+                )
+            } else {
+                use std::collections::BTreeMap;
+                let fields: BTreeMap<Label, Type> = outer_bindings
+                    .iter()
+                    .map(|b| {
+                        (Label::String(b.id.name.clone()), (*b.type_).clone())
+                    })
+                    .collect();
+                let rec_t = Box::new(Type::Record(false, fields));
+                // Items in the same order as the BTreeMap iterates
+                // (sorted by Label). Sort outer_bindings by name so
+                // the Vec<Expr> matches.
+                let mut sorted = outer_bindings.clone();
+                sorted.sort_by(|a, b| a.id.name.cmp(&b.id.name));
+                let items: Vec<Expr> = sorted
+                    .iter()
+                    .map(|b| {
+                        Expr::Identifier(
+                            Box::new((*b.type_).clone()),
+                            b.id.name.clone(),
+                        )
+                    })
+                    .collect();
+                Expr::Tuple(rec_t, items)
+            };
             out.push(Step::new(
                 StepKind::Yield(Box::new(yield_expr)),
                 trailing_env.clone(),
