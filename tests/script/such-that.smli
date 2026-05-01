@@ -620,15 +620,20 @@ from x, y, z where edge (x, y) andalso edge (y, z) andalso x <> z
   group x, z;
 *)
 
-(* Previous is equivalent to following. (Which implies a theorem connecting
-   'exists' with 'group' and variable elimination.) *)
-(*
+(* Previous is equivalent to following. (Which implies a theorem
+ * connecting 'exists' with 'group' and variable elimination.) *)
 from x, z
-  where exists (from y where edge (x, y) andalso edge (y, z))
-  andalso x <> z;
-*)
+  where (exists y where edge (x, y) andalso edge (y, z))
+    andalso x <> z
+  distinct;
+> val it = [{x=1,z=3},{x=1,z=2},{x=4,z=3}] : {x:int, z:int} bag
 
 (*) Also equivalent.
+from x, z
+  where (exists y where edge (x, y) andalso edge (y, z) andalso x <> z)
+  distinct;
+> val it = [{x=1,z=3},{x=1,z=2},{x=4,z=3}] : {x:int, z:int} bag
+
 (*
 from x, z where exists (
    from y where edge (x, y) andalso edge (y, z) andalso x <> z);
