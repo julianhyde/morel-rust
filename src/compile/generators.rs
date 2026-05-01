@@ -1231,52 +1231,20 @@ struct Bound {
 }
 
 fn is_bound_constraint(constraint: &Expr, pat_name: &str) -> bool {
-    let ops = [
-        BuiltInFunction::IntGt,
-        BuiltInFunction::IntGe,
-        BuiltInFunction::IntLt,
-        BuiltInFunction::IntLe,
-    ];
-    if let Some((lhs, rhs)) = call2_args(constraint, &ops) {
-        references(lhs, pat_name) || references(rhs, pat_name)
-    } else {
-        false
-    }
+    try_isolate_bound(constraint, pat_name).is_some()
 }
 
 /// Returns `(bound, strict)` for the pattern's lower bound, picking
 /// the first matching constraint. Strict means `>` (exclusive).
 fn lower_bound(pat_name: &str, constraints: &[Expr]) -> Option<Bound> {
     for c in constraints {
-        if let Some((lhs, rhs, op)) = call2_args_op(
-            c,
-            &[
-                BuiltInFunction::IntGt,
-                BuiltInFunction::IntGe,
-                BuiltInFunction::IntLt,
-                BuiltInFunction::IntLe,
-            ],
-        ) {
-            // p > e  or  p >= e
-            if references(lhs, pat_name)
-                && (op == BuiltInFunction::IntGt
-                    || op == BuiltInFunction::IntGe)
-            {
-                return Some(Bound {
-                    bound: rhs.clone(),
-                    strict: op == BuiltInFunction::IntGt,
-                });
-            }
-            // e < p  or  e <= p (i.e. p > e or p >= e)
-            if references(rhs, pat_name)
-                && (op == BuiltInFunction::IntLt
-                    || op == BuiltInFunction::IntLe)
-            {
-                return Some(Bound {
-                    bound: lhs.clone(),
-                    strict: op == BuiltInFunction::IntLt,
-                });
-            }
+        if let Some((op, rhs)) = try_isolate_bound(c, pat_name)
+            && (op == BuiltInFunction::IntGt || op == BuiltInFunction::IntGe)
+        {
+            return Some(Bound {
+                bound: rhs,
+                strict: op == BuiltInFunction::IntGt,
+            });
         }
     }
     None
@@ -1286,38 +1254,117 @@ fn lower_bound(pat_name: &str, constraints: &[Expr]) -> Option<Bound> {
 /// means `<` (exclusive).
 fn upper_bound(pat_name: &str, constraints: &[Expr]) -> Option<Bound> {
     for c in constraints {
-        if let Some((lhs, rhs, op)) = call2_args_op(
-            c,
-            &[
-                BuiltInFunction::IntGt,
-                BuiltInFunction::IntGe,
-                BuiltInFunction::IntLt,
-                BuiltInFunction::IntLe,
-            ],
-        ) {
-            // p < e  or  p <= e
-            if references(lhs, pat_name)
-                && (op == BuiltInFunction::IntLt
-                    || op == BuiltInFunction::IntLe)
-            {
-                return Some(Bound {
-                    bound: rhs.clone(),
-                    strict: op == BuiltInFunction::IntLt,
-                });
-            }
-            // e > p  or  e >= p (i.e. p < e or p <= e)
-            if references(rhs, pat_name)
-                && (op == BuiltInFunction::IntGt
-                    || op == BuiltInFunction::IntGe)
-            {
-                return Some(Bound {
-                    bound: lhs.clone(),
-                    strict: op == BuiltInFunction::IntGt,
-                });
-            }
+        if let Some((op, rhs)) = try_isolate_bound(c, pat_name)
+            && (op == BuiltInFunction::IntLt || op == BuiltInFunction::IntLe)
+        {
+            return Some(Bound {
+                bound: rhs,
+                strict: op == BuiltInFunction::IntLt,
+            });
         }
     }
     None
+}
+
+/// Normalises a comparison constraint into the form `pat op expr`,
+/// where `op` is one of the `Int{Lt,Le,Gt,Ge}` built-ins and
+/// `expr` doesn't reference `pat_name`. Returns `None` if the
+/// constraint isn't a comparison or `pat_name` doesn't appear in a
+/// shape we can isolate.
+///
+/// Supported shapes (with `k` not referencing `pat_name`):
+///   * `pat`              isolated already
+///   * `pat + k` or `k + pat`  (subtract `k` from the other side)
+///   * `pat - k`               (add `k` to the other side)
+fn try_isolate_bound(
+    c: &Expr,
+    pat_name: &str,
+) -> Option<(BuiltInFunction, Expr)> {
+    let ops = [
+        BuiltInFunction::IntGt,
+        BuiltInFunction::IntGe,
+        BuiltInFunction::IntLt,
+        BuiltInFunction::IntLe,
+    ];
+    let (lhs, rhs, op) = call2_args_op(c, &ops)?;
+    // Try lhs-side: `(pat ± k) op rhs` ⇒ `pat op (rhs ∓ k)`.
+    if let Some(adj) = isolate_pat_offset(lhs, pat_name)
+        && !free_names_in(rhs).contains(pat_name)
+    {
+        let new_rhs = apply_offset(rhs.clone(), adj);
+        return Some((op, new_rhs));
+    }
+    // Try rhs-side: `lhs op (pat ± k)` ⇒ flip op, then move offset:
+    // `lhs op (pat ± k)` ⇔ `(pat ± k) flip(op) lhs` ⇒
+    //   `pat flip(op) (lhs ∓ k)`.
+    if let Some(adj) = isolate_pat_offset(rhs, pat_name)
+        && !free_names_in(lhs).contains(pat_name)
+    {
+        let flipped = match op {
+            BuiltInFunction::IntLt => BuiltInFunction::IntGt,
+            BuiltInFunction::IntLe => BuiltInFunction::IntGe,
+            BuiltInFunction::IntGt => BuiltInFunction::IntLt,
+            BuiltInFunction::IntGe => BuiltInFunction::IntLe,
+            _ => return None,
+        };
+        let new_rhs = apply_offset(lhs.clone(), adj);
+        return Some((flipped, new_rhs));
+    }
+    None
+}
+
+/// If `side` has the form `pat`, `pat + k`, `k + pat`, or `pat - k`
+/// (with `k` not referencing `pat_name`), returns the offset `delta`
+/// that, when added to *the other side* of the comparison, isolates
+/// `pat`. `pat` alone gives `Some(IntLit(0))`. Returns `None` when
+/// pat is missing or appears in a shape we can't invert (e.g. `k -
+/// pat`, multiplication).
+fn isolate_pat_offset(side: &Expr, pat_name: &str) -> Option<Expr> {
+    if let Expr::Identifier(_, n) = side
+        && n == pat_name
+    {
+        return Some(int_lit(0));
+    }
+    let (a, b, op) = call2_args_op(
+        side,
+        &[BuiltInFunction::IntPlus, BuiltInFunction::IntMinus],
+    )?;
+    let a_is_pat = matches!(a, Expr::Identifier(_, n) if n == pat_name);
+    let b_is_pat = matches!(b, Expr::Identifier(_, n) if n == pat_name);
+    match op {
+        BuiltInFunction::IntPlus => {
+            // pat + k: subtract k from the other side ⇒ delta = -k.
+            if a_is_pat && !free_names_in(b).contains(pat_name) {
+                return Some(negate_int(b.clone()));
+            }
+            // k + pat: same.
+            if b_is_pat && !free_names_in(a).contains(pat_name) {
+                return Some(negate_int(a.clone()));
+            }
+            None
+        }
+        BuiltInFunction::IntMinus => {
+            // pat - k: add k to the other side ⇒ delta = +k.
+            if a_is_pat && !free_names_in(b).contains(pat_name) {
+                return Some(b.clone());
+            }
+            // k - pat: would require flipping the comparison; skip.
+            None
+        }
+        _ => None,
+    }
+}
+
+/// `expr + delta`, simplified when `delta` is the literal `0`.
+fn apply_offset(expr: Expr, delta: Expr) -> Expr {
+    if matches!(&delta, Expr::Literal(_, Val::Int(0))) {
+        return expr;
+    }
+    binop_int(BuiltInFunction::IntPlus, expr, delta)
+}
+
+fn negate_int(expr: Expr) -> Expr {
+    binop_int(BuiltInFunction::IntMinus, int_lit(0), expr)
 }
 
 // ---------------------------------------------------------------------------
