@@ -282,6 +282,84 @@ fn has_extent_scan(steps: &[Step]) -> bool {
 /// The merged scan is placed at the position of the *last* of the
 /// matched ScanExtents, so later steps that reference any of the
 /// destructured names see them as bound.
+/// Drops `ScanExtent` steps whose pattern name doesn't appear in
+/// any of the from's other steps (whose result is `bool` —
+/// `exists` / `forall` — so unconstrained, unread bindings have
+/// no effect on the answer). Only the leaf-pattern case (a
+/// single `Pat::Identifier`) is pruned; compound patterns might
+/// have non-identifier sub-patterns we don't analyse here.
+fn prune_unused_scan_extents(steps: Vec<Step>) -> Vec<Step> {
+    use crate::compile::free_finder::free_names_in;
+    // Collect names referenced by every non-(self-)scan step.
+    let mut referenced: HashSet<String> = HashSet::new();
+    for (i, s) in steps.iter().enumerate() {
+        match &s.kind {
+            StepKind::Scan(p, source, cond) => {
+                // A scan's source/condition can reference earlier
+                // patterns; we count those references. The pattern
+                // bound by *this* scan is excluded below — we want
+                // self-references not to count.
+                let bound_here: HashSet<String> = {
+                    let mut bs: Vec<Binding> = Vec::new();
+                    Binding::collect_bindings(p, &mut bs);
+                    bs.into_iter().map(|b| b.id.name).collect()
+                };
+                let _ = i;
+                for n in free_names_in(source).into_iter() {
+                    if !bound_here.contains(&n) {
+                        referenced.insert(n);
+                    }
+                }
+                if let Some(c) = cond {
+                    for n in free_names_in(c).into_iter() {
+                        if !bound_here.contains(&n) {
+                            referenced.insert(n);
+                        }
+                    }
+                }
+            }
+            StepKind::Where(c) => {
+                for n in free_names_in(c) {
+                    referenced.insert(n);
+                }
+            }
+            StepKind::Yield(e) | StepKind::Order(e) | StepKind::Compute(e) => {
+                for n in free_names_in(e) {
+                    referenced.insert(n);
+                }
+            }
+            StepKind::Group(k, a) => {
+                for n in free_names_in(k) {
+                    referenced.insert(n);
+                }
+                if let Some(agg) = a {
+                    for n in free_names_in(agg) {
+                        referenced.insert(n);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Drop any `ScanExtent(name)` whose `name` is unreferenced.
+    steps
+        .into_iter()
+        .filter(|s| match &s.kind {
+            StepKind::Scan(p, source, _)
+                if matches!(source.as_ref(), Expr::Extent(_)) =>
+            {
+                if let Pat::Identifier(_, n) = p.as_ref() {
+                    referenced.contains(n)
+                } else {
+                    true
+                }
+            }
+            _ => true,
+        })
+        .collect()
+}
+
 fn decompose_tuple_elems(steps: Vec<Step>) -> Vec<Step> {
     use HashSet;
 
@@ -464,6 +542,19 @@ fn expand_steps(
     // tuple's correlation between `x` and `y`.
     let steps = decompose_tuple_elems(steps);
 
+    // Phase 0b: prune fully-unused ScanExtents from `exists` /
+    // `forall` queries. `exists w, x, y where (x, 2) elem coll`
+    // depends only on x; w and y don't gate the answer, so
+    // morel-java drops them. We only do this for exists/forall
+    // (last step is StepKind::Exists) — for a regular `from` the
+    // iteration count of an unconstrained var would matter.
+    let steps =
+        if matches!(steps.last().map(|s| &s.kind), Some(StepKind::Exists)) {
+            prune_unused_scan_extents(steps)
+        } else {
+            steps
+        };
+
     // Phase A: derive generators by scanning where-clauses.
     let mut cache = Cache::new();
     derive_generators(&steps, &mut cache, env, datatypes);
@@ -581,14 +672,22 @@ fn expand_steps(
                             Some(Box::new(and_all(vec![c, f])))
                         }
                     };
+                    let unique = generator.unique;
                     out.push(Step::new(
                         StepKind::Scan(
                             Box::new(next_pat),
                             Box::new(generator.exp.clone()),
                             merged_cond,
                         ),
-                        new_env,
+                        new_env.clone(),
                     ));
+                    // A non-unique generator (e.g. point-orelse-
+                    // range) may produce the same value via more
+                    // than one branch. Strip duplicates so the
+                    // result has set semantics.
+                    if !unique {
+                        out.push(Step::new(StepKind::Distinct, new_env));
+                    }
                 } else {
                     let extent = Expr::Extent(next_pat.type_());
                     out.push(Step::new(
