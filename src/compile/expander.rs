@@ -1232,6 +1232,16 @@ fn expand_steps(
                 let mut bs: Vec<Binding> = Vec::new();
                 Binding::collect_bindings(&pat, &mut bs);
                 for b in bs {
+                    // Synthetic `__decomp$N` names introduced by
+                    // `decompose_tuple_elems` exist only to bind a
+                    // tuple component to a fresh slot for the
+                    // post-filter; they're not user-visible
+                    // scope, so we keep them out of the step env's
+                    // bindings list (which drives the implicit
+                    // yield's projection).
+                    if b.id.name.starts_with("__decomp$") {
+                        continue;
+                    }
                     if !bound_names.contains(&b.id.name) {
                         bound_names.insert(b.id.name.clone());
                         bound_bindings.push(b);
