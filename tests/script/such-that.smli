@@ -251,6 +251,27 @@ in
 end;
 > val it = [2,4] : int bag
 
+(*) Same as previous, but with top-level `val` and `fun` decls
+(*) (cross-decl inlining, hydromatic/morel#223).
+val nums = [1, 2, 3, 4, 5];
+> val nums = [1,2,3,4,5] : int list
+fun isNum n = n elem nums;
+> val isNum = fn : int -> bool
+fun isEven n = n mod 2 = 0;
+> val isEven = fn : int -> bool
+from n where isNum n andalso isEven n;
+> val it = [2,4] : int bag
+
+(*) Disjunction over two top-level fun-defined predicates: each
+(*) branch contributes its own collection generator and the
+(*) results are unioned (hydromatic/morel#223 + #217).
+fun isSmall n = n elem [1, 2];
+> val isSmall = fn : int -> bool
+fun isLarge n = n elem [10, 20];
+> val isLarge = fn : int -> bool
+from n where isSmall n orelse isLarge n;
+> val it = [1,2,10,20] : int bag
+
 (* Single-arm case --------------------------------------- *)
 from x where case x of y => y elem [1,2];
 > val it = [1,2] : int bag
