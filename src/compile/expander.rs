@@ -327,22 +327,30 @@ fn inline_tuple_fn_calls_in_where(
         let Some((param_pat, body)) = fn_env.get(fn_name) else {
             return c.clone();
         };
-        let Pat::Tuple(_, sub_pats) = param_pat else {
-            return c.clone();
-        };
-        let Expr::Tuple(_, arg_elems) = arg.as_ref() else {
-            return c.clone();
-        };
-        if sub_pats.len() != arg_elems.len() {
-            return c.clone();
-        }
         let mut subst_map: HashMap<String, Expr> = HashMap::new();
-        for (sp, ae) in sub_pats.iter().zip(arg_elems.iter()) {
-            if let Pat::Identifier(_, n) = sp {
-                subst_map.insert(n.clone(), ae.clone());
-            } else {
-                return c.clone();
+        match param_pat {
+            // `fun f x = body` — substitute the whole arg.
+            Pat::Identifier(_, n) => {
+                subst_map.insert(n.clone(), (**arg).clone());
             }
+            // `fun f (a, b) = body` — destructure a literal tuple
+            // arg into its components.
+            Pat::Tuple(_, sub_pats) => {
+                let Expr::Tuple(_, arg_elems) = arg.as_ref() else {
+                    return c.clone();
+                };
+                if sub_pats.len() != arg_elems.len() {
+                    return c.clone();
+                }
+                for (sp, ae) in sub_pats.iter().zip(arg_elems.iter()) {
+                    if let Pat::Identifier(_, n) = sp {
+                        subst_map.insert(n.clone(), ae.clone());
+                    } else {
+                        return c.clone();
+                    }
+                }
+            }
+            _ => return c.clone(),
         }
         substitute(body, &subst_map)
     };
@@ -1194,7 +1202,13 @@ fn expand_steps(
     // `decompose_tuple_elems` to merge ScanExtents for *all*
     // tuple components into one Scan, so the inlining has to
     // happen at the from-level pre-pass.
+    // Inline first — turning `isHappy p` into the inlined exists
+    // body — so that `lift_nested_exists_in_where` can see the
+    // newly-revealed inner exists conjunct.
+    let steps = inline_tuple_fn_calls_in_where(steps, env);
     let steps = lift_nested_exists_in_where(steps);
+    // Inline again, now that lift has surfaced the inner exists's
+    // conjuncts at the outer Where level.
     let steps = inline_tuple_fn_calls_in_where(steps, env);
     let steps = inline_tuple_case_in_where(steps);
     let steps = decompose_tuple_elems(steps);

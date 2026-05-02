@@ -708,6 +708,15 @@ fun happy patron =
       andalso sells (bar, beer, price));
 > val happy = fn : string -> bool
 *)
+(*) Enabled by hydromatic/morel#223 (cross-decl fn inlining)
+(*) plus #217's record-pattern decompose. Modern syntax —
+(*) `exists ... where ...` rather than `exists (from ...)`.
+fun happy patron =
+  exists bar, beer, price
+      where frequents (patron, bar)
+      andalso likes (patron, beer)
+      andalso sells (bar, beer, price);
+> val happy = fn : string -> bool
 
 (* Find happy patrons. Shaggy is happy because the Squirrel and Cask sell
    Amber; Velma is happy because Cask sells Stout. Fred and Scooby are not
@@ -716,6 +725,8 @@ fun happy patron =
 from p where happy p;
 > val it = ["shaggy", "velma"] : string list
 *)
+from p where happy p;
+> val it = ["shaggy","velma"] : string bag
 
 (* A beer is considered cheap if there are at least two bars that sell it for
  * under $3.
@@ -735,12 +746,25 @@ fun cheap beer =
         andalso bar1 <> bar2);
 > val cheap = fn : string -> bool
 *)
+(*) Modern syntax, enabled by hydromatic/morel#223.
+fun cheap beer =
+  exists bar1, price1, bar2, price2
+    where sells (bar1, beer, price1)
+      andalso sells (bar2, beer, price2)
+      andalso price1 < 3
+      andalso price2 < 3
+      andalso bar1 <> bar2;
+> val cheap = fn : string -> bool
 
 (*) Pale is cheap
 (* TODO
 from b where cheap b;
 > val it = ["pale"] : string list
 *)
+(*) With our barBeers (no big_al row yet), pale is sold by
+(*) only one bar, so `cheap` is empty until d0249a04.
+from b where cheap b;
+> val it = [] : string bag
 
 (* A rule is safe if:
  * 1. Each distinguished variable,
@@ -810,6 +834,14 @@ fun caskSells b =
   exists (from beer, price where sells ("cask", beer, price));
 > val caskSells = fn : 'a -> bool
 *)
+(*) Modern syntax, enabled by hydromatic/morel#223. Note that
+(*) morel-java's 84d08ec9 changed the formula from "exists beer,
+(*) price ..." (which was unsafe — `b` unused) to one that
+(*) actually uses `b`: "exists price where sells ('cask', b,
+(*) price)".
+fun caskSells b =
+  exists price where sells ("cask", b, price);
+> val caskSells = fn : string -> bool
 
 (* TODO
 from p where exists (
