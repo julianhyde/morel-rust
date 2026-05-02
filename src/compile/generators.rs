@@ -31,7 +31,7 @@ use crate::compile::library::{BuiltInFunction, lookup_struct_field};
 use crate::compile::replacer::substitute;
 use crate::compile::span::Span;
 use crate::compile::type_env::Id;
-use crate::compile::types::{PrimitiveType, Type};
+use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
 use std::collections::{BTreeSet, HashMap};
 
@@ -51,6 +51,32 @@ pub fn maybe_generator(
     constraints: &[Expr],
     fn_env: &FnEnv,
     datatypes: &DatatypeMap,
+) -> bool {
+    let empty: BTreeSet<String> = BTreeSet::new();
+    maybe_generator_with_scope(
+        cache,
+        pat,
+        pat_name,
+        pat_type,
+        ordered,
+        constraints,
+        fn_env,
+        datatypes,
+        &empty,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn maybe_generator_with_scope(
+    cache: &mut Cache,
+    pat: &Pat,
+    pat_name: &str,
+    pat_type: &Type,
+    ordered: bool,
+    constraints: &[Expr],
+    fn_env: &FnEnv,
+    datatypes: &DatatypeMap,
+    outer_scope: &BTreeSet<String>,
 ) -> bool {
     // Phase A: classify each conjunct.
     let mut elem_match: Option<&Expr> = None;
@@ -109,6 +135,17 @@ pub fn maybe_generator(
     // Phase B: synthesise leaf generators in priority order.
     if let (Some(c), Some(coll)) = (elem_match, elem_collection) {
         return create_collection_generator(cache, pat, pat_name, coll, c);
+    }
+    if maybe_record_elem_projection(
+        cache,
+        pat,
+        pat_name,
+        pat_type,
+        ordered,
+        constraints,
+        outer_scope,
+    ) {
+        return true;
     }
     if let (Some(c), Some(value)) = (point_match, point_value) {
         return create_point_generator(cache, pat, pat_name, value, c);
@@ -1120,6 +1157,226 @@ fn arm_id_pat(m: &Match) -> Option<String> {
 /// The combined generator is unsealed: it doesn't subsume any
 /// individual branch as a where-conjunct (the surrounding `where`
 /// will keep the original `orelse` for correctness).
+/// Recognises a constraint `{f1=v1, …, fk=pat_name, …} elem coll`
+/// where one tuple/record component is `pat_name` and the
+/// others are literals or outer-scope identifiers (free
+/// variables not bound by any from-step in this query). Builds
+/// a generator that scans `coll`, filters on the literal /
+/// outer-bound components, and projects the `pat_name`
+/// component. Used for queries like
+///
+///   exists price where {bar="cask", beer=b, price=price}
+///                       elem barBeers
+///
+/// where `b` is a function parameter (outer-scope) and
+/// `price` is the unbounded variable.
+fn maybe_record_elem_projection(
+    cache: &mut Cache,
+    pat: &Pat,
+    pat_name: &str,
+    _pat_type: &Type,
+    ordered: bool,
+    constraints: &[Expr],
+    outer_scope: &BTreeSet<String>,
+) -> bool {
+    for c in constraints {
+        let Some((lhs, rhs)) = call2_args(c, &[BuiltInFunction::ListElem])
+        else {
+            continue;
+        };
+        // lhs must be a tuple/record with exactly one
+        // component that's `Identifier(pat_name)` and all
+        // other components either literals or non-pat-name
+        // identifiers (assumed outer-scope).
+        let Expr::Tuple(tuple_t, ids) = lhs else {
+            continue;
+        };
+        // Field labels in alphabetical order from the type.
+        let labels: Vec<String> = match tuple_t.as_ref() {
+            Type::Record(_, fields) => fields
+                .keys()
+                .filter_map(|l| match l {
+                    Label::String(n) => Some(n.clone()),
+                    _ => None,
+                })
+                .collect(),
+            Type::Tuple(_) => {
+                // Position-indexed labels "1", "2", …
+                (1..=ids.len()).map(|i| i.to_string()).collect()
+            }
+            _ => continue,
+        };
+        if labels.len() != ids.len() {
+            continue;
+        }
+        let mut pat_field: Option<String> = None;
+        let mut filters: Vec<(String, Expr)> = Vec::new();
+        let mut ok = true;
+        for (label, id) in labels.iter().zip(ids.iter()) {
+            match id {
+                Expr::Identifier(_, n) if n == pat_name => {
+                    if pat_field.is_some() {
+                        // Multiple components claim pat_name —
+                        // skip; let decompose handle it.
+                        ok = false;
+                        break;
+                    }
+                    pat_field = Some(label.clone());
+                }
+                Expr::Identifier(_, n) => {
+                    // Only treat as filter if the name is known
+                    // to be in outer scope (function parameter,
+                    // let-bound val, …). Names not in
+                    // outer_scope are likely from-step extents
+                    // that `decompose_tuple_elems` should handle.
+                    if !outer_scope.contains(n) {
+                        ok = false;
+                        break;
+                    }
+                    filters.push((label.clone(), id.clone()));
+                }
+                Expr::Literal(_, _) => {
+                    filters.push((label.clone(), id.clone()));
+                }
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if !ok {
+            continue;
+        }
+        let Some(pat_field) = pat_field else {
+            continue;
+        };
+
+        // Build: from r in coll where r.f1 = v1 andalso …
+        //        yield #pat_field r
+        use crate::compile::core::{Step, StepEnv, StepKind};
+        use crate::compile::type_env::Id;
+
+        let row_t = match tuple_t.as_ref() {
+            Type::Record(prog, fields) => {
+                Box::new(Type::Record(*prog, fields.clone()))
+            }
+            _ => continue,
+        };
+        let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
+        let row_var = "__rep$".to_string();
+        let scan_env = StepEnv::new(
+            vec![Binding::new(Id::new(&row_var, 0), row_t.clone())],
+            true,
+            ordered,
+        );
+        let mut steps: Vec<Step> = Vec::new();
+        steps.push(Step::new(
+            StepKind::Scan(
+                Box::new(Pat::Identifier(row_t.clone(), row_var.clone())),
+                Box::new(rhs.clone()),
+                None,
+            ),
+            scan_env.clone(),
+        ));
+        // Build filter conditions: r.f = v.
+        if !filters.is_empty() {
+            let filter_exprs: Vec<Expr> = filters
+                .iter()
+                .map(|(label, value_expr)| {
+                    let field_t = match tuple_t.as_ref() {
+                        Type::Record(_, fields) => fields
+                            .get(&Label::String(label.clone()))
+                            .cloned()
+                            .map(Box::new),
+                        _ => None,
+                    };
+                    let Some(field_t) = field_t else {
+                        return Expr::Literal(bool_t.clone(), Val::Bool(false));
+                    };
+                    let slot = match tuple_t.as_ref() {
+                        Type::Record(_, fields) => fields
+                            .keys()
+                            .position(
+                                |l| matches!(l, Label::String(n) if n == label),
+                            )
+                            .unwrap(),
+                        _ => 0,
+                    };
+                    let sel_fn_t =
+                        Box::new(Type::Fn(row_t.clone(), field_t.clone()));
+                    let sel = Expr::RecordSelector(sel_fn_t.clone(), slot);
+                    let r_id = Expr::Identifier(row_t.clone(), row_var.clone());
+                    let lhs_field = Expr::Apply(
+                        field_t.clone(),
+                        Box::new(sel),
+                        Box::new(r_id),
+                        Span::new(""),
+                    );
+                    make_eq_for_type(&field_t, lhs_field, value_expr.clone())
+                })
+                .collect();
+            let cond = and_all(filter_exprs);
+            steps.push(Step::new(
+                StepKind::Where(Box::new(cond)),
+                scan_env.clone(),
+            ));
+        }
+        // Build the projection: `#pat_field r` (a record selector).
+        let pat_field_t = match tuple_t.as_ref() {
+            Type::Record(_, fields) => {
+                match fields.get(&Label::String(pat_field.clone())).cloned() {
+                    Some(t) => Box::new(t),
+                    None => continue,
+                }
+            }
+            _ => continue,
+        };
+        let pat_field_slot = match tuple_t.as_ref() {
+            Type::Record(_, fields) => fields
+                .keys()
+                .position(|l| matches!(l, Label::String(n) if n == &pat_field))
+                .unwrap(),
+            _ => 0,
+        };
+        let sel_fn_t = Box::new(Type::Fn(row_t.clone(), pat_field_t.clone()));
+        let sel = Expr::RecordSelector(sel_fn_t, pat_field_slot);
+        let r_id = Expr::Identifier(row_t.clone(), row_var.clone());
+        let yield_expr = Expr::Apply(
+            pat_field_t.clone(),
+            Box::new(sel),
+            Box::new(r_id),
+            Span::new(""),
+        );
+        let yield_env = StepEnv::new(
+            vec![Binding::new(Id::new(pat_name, 0), pat_field_t.clone())],
+            true,
+            ordered,
+        );
+        steps.push(Step::new(StepKind::Yield(Box::new(yield_expr)), yield_env));
+        let coll_t = if ordered {
+            Box::new(Type::List(pat_field_t.clone()))
+        } else {
+            Box::new(Type::Bag(pat_field_t.clone()))
+        };
+        let exp = Expr::From(coll_t, steps);
+
+        let mut free = free_names_in(&exp);
+        free.remove(pat_name);
+        let generator = Generator::new(
+            pat.clone(),
+            exp,
+            Cardinality::Finite,
+            free,
+            true,
+            true,
+            vec![c.clone()],
+        );
+        cache.add(pat_name.to_string(), generator);
+        return true;
+    }
+    false
+}
+
 /// Recognises a `case` constraint whose subject is the pattern
 /// we're trying to ground, and whose arms include constructor
 /// patterns (e.g. `INL n => n >= 5 andalso n <= 8`). For each

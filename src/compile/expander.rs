@@ -32,12 +32,12 @@ use crate::compile::core::{
     Binding, Decl, Expr, Match, Pat, Step, StepEnv, StepKind, ValBind,
 };
 use crate::compile::generator::Cache;
-use crate::compile::generators::{maybe_generator, split_conjuncts};
+use crate::compile::generators::{maybe_generator_with_scope, split_conjuncts};
 use crate::compile::library::BuiltInFunction;
 use crate::compile::span::Span;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Map of let-bound function name → (parameter pattern, body
 /// expression). Populated as `expand_decl` walks down through
@@ -69,24 +69,46 @@ pub fn expand_from_with(
     env: &FnEnv,
     datatypes: &DatatypeMap,
 ) -> Expr {
+    expand_from_with_scope(expr, env, datatypes, &BTreeSet::new())
+}
+
+/// Same as `expand_from_with` but passes a set of names known
+/// to be in outer scope (function parameters, let-bound vals)
+/// so the leaf strategies can treat them as runtime-stable
+/// filters in record-elem constraints.
+pub fn expand_from_with_scope(
+    expr: Expr,
+    env: &FnEnv,
+    datatypes: &DatatypeMap,
+    outer_scope: &BTreeSet<String>,
+) -> Expr {
     match expr {
         Expr::From(t, steps) => {
             if !has_extent_scan(&steps) {
                 return Expr::From(t, steps);
             }
-            Expr::From(t, expand_steps(steps, env, datatypes))
+            Expr::From(
+                t,
+                expand_steps_with_scope(steps, env, datatypes, outer_scope),
+            )
         }
         Expr::Exists(t, steps) => {
             if !has_extent_scan(&steps) {
                 return Expr::Exists(t, steps);
             }
-            Expr::Exists(t, expand_steps(steps, env, datatypes))
+            Expr::Exists(
+                t,
+                expand_steps_with_scope(steps, env, datatypes, outer_scope),
+            )
         }
         Expr::Forall(t, steps) => {
             if !has_extent_scan(&steps) {
                 return Expr::Forall(t, steps);
             }
-            Expr::Forall(t, expand_steps(steps, env, datatypes))
+            Expr::Forall(
+                t,
+                expand_steps_with_scope(steps, env, datatypes, outer_scope),
+            )
         }
         _ => expr,
     }
@@ -124,17 +146,54 @@ pub fn collect_session_fn_bindings(decl: &Decl, env: &mut FnEnv) {
     collect_fn_bindings(decl, env);
 }
 
+/// Adds every identifier-name bound by `pat` to `out`. Used to
+/// extend the "outer scope" set as we walk into a `Fn` body or
+/// a `Case` arm.
+fn collect_pat_names(pat: &Pat, out: &mut BTreeSet<String>) {
+    let mut bs: Vec<Binding> = Vec::new();
+    Binding::collect_bindings(pat, &mut bs);
+    for b in bs {
+        out.insert(b.id.name);
+    }
+}
+
+/// Adds every identifier-name bound by `decl`'s left-hand
+/// patterns to `out`. Used to extend the "outer scope" set as
+/// we walk into a `Let` body.
+fn collect_decl_pat_names(decl: &Decl, out: &mut BTreeSet<String>) {
+    use std::slice::from_ref;
+    let binds: &[ValBind] = match decl {
+        Decl::NonRecVal(b) => from_ref(b.as_ref()),
+        Decl::RecVal(binds) => binds.as_slice(),
+        _ => return,
+    };
+    for b in binds {
+        collect_pat_names(&b.pat, out);
+    }
+}
+
 fn walk_decl(decl: Decl, env: &FnEnv, datatypes: &DatatypeMap) -> Decl {
+    walk_decl_with_scope(decl, env, datatypes, &BTreeSet::new())
+}
+
+fn walk_decl_with_scope(
+    decl: Decl,
+    env: &FnEnv,
+    datatypes: &DatatypeMap,
+    outer_scope: &BTreeSet<String>,
+) -> Decl {
     match decl {
         Decl::NonRecVal(b) => {
             let mut b2 = (*b).clone();
-            b2.expr = walk_expr(b2.expr, env, datatypes);
+            b2.expr =
+                walk_expr_with_scope(b2.expr, env, datatypes, outer_scope);
             Decl::NonRecVal(Box::new(b2))
         }
         Decl::RecVal(binds) => {
             let mut new_binds = Vec::with_capacity(binds.len());
             for mut b in binds {
-                b.expr = walk_expr(b.expr, env, datatypes);
+                b.expr =
+                    walk_expr_with_scope(b.expr, env, datatypes, outer_scope);
                 new_binds.push(b);
             }
             Decl::RecVal(new_binds)
@@ -144,41 +203,64 @@ fn walk_decl(decl: Decl, env: &FnEnv, datatypes: &DatatypeMap) -> Decl {
 }
 
 fn walk_expr(expr: Expr, env: &FnEnv, datatypes: &DatatypeMap) -> Expr {
+    walk_expr_with_scope(expr, env, datatypes, &BTreeSet::new())
+}
+
+fn walk_expr_with_scope(
+    expr: Expr,
+    env: &FnEnv,
+    datatypes: &DatatypeMap,
+    outer_scope: &BTreeSet<String>,
+) -> Expr {
     match expr {
         Expr::Let(t, decls, body) => {
             // Extend the environment with single-arg `fn` bindings
-            // before recursing into the body.
+            // before recursing into the body. Also extend
+            // outer_scope with the let-binding's pat names so
+            // record-elem strategies treat them as runtime-stable.
             let mut env2 = env.clone();
+            let mut scope2 = outer_scope.clone();
             for d in &decls {
                 collect_fn_bindings(d, &mut env2);
+                collect_decl_pat_names(d, &mut scope2);
             }
             let new_decls: Vec<Decl> = decls
                 .into_iter()
-                .map(|d| walk_decl(d, &env2, datatypes))
+                .map(|d| walk_decl_with_scope(d, &env2, datatypes, &scope2))
                 .collect();
-            let new_body = Box::new(walk_expr(*body, &env2, datatypes));
+            let new_body = Box::new(walk_expr_with_scope(
+                *body, &env2, datatypes, &scope2,
+            ));
             Expr::Let(t, new_decls, new_body)
         }
         Expr::From(_, _) | Expr::Exists(_, _) | Expr::Forall(_, _) => {
-            // Recurse into nested expressions first (so inner
-            // sub-queries also benefit from the env), then run the
-            // expander on the resulting top-level expression.
             let inner = walk_query_steps(expr, env, datatypes);
-            expand_from_with(inner, env, datatypes)
+            expand_from_with_scope(inner, env, datatypes, outer_scope)
         }
         Expr::Apply(t, f, a, span) => Expr::Apply(
             t,
-            Box::new(walk_expr(*f, env, datatypes)),
-            Box::new(walk_expr(*a, env, datatypes)),
+            Box::new(walk_expr_with_scope(*f, env, datatypes, outer_scope)),
+            Box::new(walk_expr_with_scope(*a, env, datatypes, outer_scope)),
             span,
         ),
         Expr::Case(t, subject, arms, span) => Expr::Case(
             t,
-            Box::new(walk_expr(*subject, env, datatypes)),
+            Box::new(walk_expr_with_scope(
+                *subject,
+                env,
+                datatypes,
+                outer_scope,
+            )),
             arms.into_iter()
-                .map(|m| Match {
-                    pat: m.pat,
-                    expr: walk_expr(m.expr, env, datatypes),
+                .map(|m| {
+                    let mut scope2 = outer_scope.clone();
+                    collect_pat_names(&m.pat, &mut scope2);
+                    Match {
+                        pat: m.pat,
+                        expr: walk_expr_with_scope(
+                            m.expr, env, datatypes, &scope2,
+                        ),
+                    }
                 })
                 .collect(),
             span,
@@ -186,9 +268,15 @@ fn walk_expr(expr: Expr, env: &FnEnv, datatypes: &DatatypeMap) -> Expr {
         Expr::Fn(t, arms, span) => Expr::Fn(
             t,
             arms.into_iter()
-                .map(|m| Match {
-                    pat: m.pat,
-                    expr: walk_expr(m.expr, env, datatypes),
+                .map(|m| {
+                    let mut scope2 = outer_scope.clone();
+                    collect_pat_names(&m.pat, &mut scope2);
+                    Match {
+                        pat: m.pat,
+                        expr: walk_expr_with_scope(
+                            m.expr, env, datatypes, &scope2,
+                        ),
+                    }
                 })
                 .collect(),
             span,
@@ -197,20 +285,20 @@ fn walk_expr(expr: Expr, env: &FnEnv, datatypes: &DatatypeMap) -> Expr {
             t,
             items
                 .into_iter()
-                .map(|e| walk_expr(e, env, datatypes))
+                .map(|e| walk_expr_with_scope(e, env, datatypes, outer_scope))
                 .collect(),
         ),
         Expr::List(t, items) => Expr::List(
             t,
             items
                 .into_iter()
-                .map(|e| walk_expr(e, env, datatypes))
+                .map(|e| walk_expr_with_scope(e, env, datatypes, outer_scope))
                 .collect(),
         ),
         Expr::Aggregate(t, e1, e2) => Expr::Aggregate(
             t,
-            Box::new(walk_expr(*e1, env, datatypes)),
-            Box::new(walk_expr(*e2, env, datatypes)),
+            Box::new(walk_expr_with_scope(*e1, env, datatypes, outer_scope)),
+            Box::new(walk_expr_with_scope(*e2, env, datatypes, outer_scope)),
         ),
         other => other,
     }
@@ -226,30 +314,55 @@ fn walk_query_steps(expr: Expr, env: &FnEnv, datatypes: &DatatypeMap) -> Expr {
         Expr::Forall(t, s) => ('a', t, s),
         other => return other,
     };
+    let outer_scope = BTreeSet::new();
     let new_steps: Vec<Step> = steps
         .into_iter()
         .map(|s| {
             let new_kind = match s.kind {
                 StepKind::Scan(p, source, cond) => StepKind::Scan(
                     p,
-                    Box::new(walk_expr(*source, env, datatypes)),
-                    cond.map(|c| Box::new(walk_expr(*c, env, datatypes))),
+                    Box::new(walk_expr_with_scope(
+                        *source,
+                        env,
+                        datatypes,
+                        &outer_scope,
+                    )),
+                    cond.map(|c| {
+                        Box::new(walk_expr_with_scope(
+                            *c,
+                            env,
+                            datatypes,
+                            &outer_scope,
+                        ))
+                    }),
                 ),
-                StepKind::Where(c) => {
-                    StepKind::Where(Box::new(walk_expr(*c, env, datatypes)))
-                }
-                StepKind::Yield(e) => {
-                    StepKind::Yield(Box::new(walk_expr(*e, env, datatypes)))
-                }
-                StepKind::Order(e) => {
-                    StepKind::Order(Box::new(walk_expr(*e, env, datatypes)))
-                }
-                StepKind::Compute(e) => {
-                    StepKind::Compute(Box::new(walk_expr(*e, env, datatypes)))
-                }
+                StepKind::Where(c) => StepKind::Where(Box::new(
+                    walk_expr_with_scope(*c, env, datatypes, &outer_scope),
+                )),
+                StepKind::Yield(e) => StepKind::Yield(Box::new(
+                    walk_expr_with_scope(*e, env, datatypes, &outer_scope),
+                )),
+                StepKind::Order(e) => StepKind::Order(Box::new(
+                    walk_expr_with_scope(*e, env, datatypes, &outer_scope),
+                )),
+                StepKind::Compute(e) => StepKind::Compute(Box::new(
+                    walk_expr_with_scope(*e, env, datatypes, &outer_scope),
+                )),
                 StepKind::Group(k, a) => StepKind::Group(
-                    Box::new(walk_expr(*k, env, datatypes)),
-                    a.map(|e| Box::new(walk_expr(*e, env, datatypes))),
+                    Box::new(walk_expr_with_scope(
+                        *k,
+                        env,
+                        datatypes,
+                        &outer_scope,
+                    )),
+                    a.map(|e| {
+                        Box::new(walk_expr_with_scope(
+                            *e,
+                            env,
+                            datatypes,
+                            &outer_scope,
+                        ))
+                    }),
                 ),
                 other => other,
             };
@@ -1186,6 +1299,16 @@ fn expand_steps(
     env: &FnEnv,
     datatypes: &DatatypeMap,
 ) -> Vec<Step> {
+    expand_steps_with_scope(steps, env, datatypes, &BTreeSet::new())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn expand_steps_with_scope(
+    steps: Vec<Step>,
+    env: &FnEnv,
+    datatypes: &DatatypeMap,
+    outer_scope: &BTreeSet<String>,
+) -> Vec<Step> {
     // Phase 0 (pre-pass): merge tuple-pattern `elem` conjuncts
     // with the corresponding ScanExtents. A `where (x, y) elem
     // coll` constraint, combined with `ScanExtent(x)` and
@@ -1229,7 +1352,7 @@ fn expand_steps(
 
     // Phase A: derive generators by scanning where-clauses.
     let mut cache = Cache::new();
-    derive_generators(&steps, &mut cache, env, datatypes);
+    derive_generators(&steps, &mut cache, env, datatypes, outer_scope);
 
     // Phase B: collect every Scan-over-Extent's (pat, env) pair in
     // the order they appear in `steps`, then topologically sort by
@@ -1543,6 +1666,7 @@ fn derive_generators(
     cache: &mut Cache,
     env: &FnEnv,
     datatypes: &DatatypeMap,
+    outer_scope: &BTreeSet<String>,
 ) {
     // Collect all Where conjuncts visible in this from. The morel-java
     // Expander does this in step order, but for Phase 1 (leaf-only,
@@ -1567,7 +1691,7 @@ fn derive_generators(
             // resolver's `deduce_scan_extent_step_type`.
             let ordered = matches!(source.as_ref(), Expr::Extent(t)
                 if matches!(t.as_ref(), Type::List(_)));
-            maybe_generator(
+            maybe_generator_with_scope(
                 cache,
                 pat,
                 name,
@@ -1576,6 +1700,7 @@ fn derive_generators(
                 &all_constraints,
                 env,
                 datatypes,
+                outer_scope,
             );
         }
     }
