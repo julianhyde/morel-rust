@@ -159,6 +159,18 @@ pub fn maybe_generator_with_scope(
             constraints,
         );
     }
+    if matches!(pat_type, Type::Tuple(_))
+        && create_tuple_range_generator(
+            cache,
+            pat,
+            pat_name,
+            pat_type,
+            ordered,
+            constraints,
+        )
+    {
+        return true;
+    }
     if let (Some(c), Some(s)) = (prefix_match, prefix_string) {
         return create_string_prefix_generator(
             cache, pat, pat_name, ordered, s, c,
@@ -381,6 +393,339 @@ fn create_range_generator(
     );
     cache.add(pat_name.to_string(), generator);
     true
+}
+
+/// Recognises a constraint of the form
+///   `t >= (l1, …, lk) andalso t <= (u1, …, uk)`
+/// (or just `t = (v1, …, vk)`) where every component is a
+/// literal and the tuple type is enumerable, and emits a
+/// `Bag.fromList`/`List` of the lex-ordered values between
+/// `lo` and `hi` inclusive. Required for queries like
+///
+///   from t where t >= (false, 3) andalso t <= (false, 5)
+///
+/// where the range generator can't operate on `int` alone.
+///
+/// Returns `true` if a generator was added.
+fn create_tuple_range_generator(
+    cache: &mut Cache,
+    pat: &Pat,
+    pat_name: &str,
+    pat_type: &Type,
+    ordered: bool,
+    constraints: &[Expr],
+) -> bool {
+    // Separate component types.
+    let component_types: Vec<Type> = match pat_type {
+        Type::Tuple(ts) => ts.clone(),
+        _ => return false,
+    };
+    // Collect lo and hi tuples from the constraints. Look for
+    // `t >= lit_tuple` (or `t > …`), `t <= lit_tuple` (or `t < …`).
+    let mut lo: Option<(Vec<Val>, bool)> = None; // (vals, strict)
+    let mut hi: Option<(Vec<Val>, bool)> = None;
+    let mut bound_constraints: Vec<Expr> = Vec::new();
+    for c in constraints {
+        let Some((lhs, rhs, op)) = call2_args_op(c, &[BuiltInFunction::GEq])
+        else {
+            continue;
+        };
+        // We only handle the polymorphic comparison op `GEq` here
+        // (which dispatches by type at runtime). Either side
+        // could be the literal.
+        let _ = op;
+        // The comparison-op literal tells us whether it's >, <,
+        // >=, or <=. We don't have that info from `GEq` alone, so
+        // skip — comparisons on tuples in our codebase use
+        // primitive ops only.
+        let _ = (lhs, rhs);
+    }
+    // Comparison-by-value-on-tuples isn't supported by our
+    // codebase via `GEq`; tuples compare via specific `<`, `>`,
+    // `<=`, `>=` builtins. Look for those instead.
+    for c in constraints {
+        let result = call2_args_op(
+            c,
+            &[
+                BuiltInFunction::IntGe,
+                BuiltInFunction::IntGt,
+                BuiltInFunction::IntLe,
+                BuiltInFunction::IntLt,
+                BuiltInFunction::IntEq,
+                BuiltInFunction::GEq,
+                BuiltInFunction::GGe,
+                BuiltInFunction::GGt,
+                BuiltInFunction::GLe,
+                BuiltInFunction::GLt,
+            ],
+        );
+        let Some((lhs, rhs, op)) = result else {
+            continue;
+        };
+        // The pattern side is `Identifier(_, pat_name)`; the
+        // other side must be a literal tuple.
+        let (lit_side, pat_first) = match (lhs, rhs) {
+            (Expr::Identifier(_, n), other) if n == pat_name => (other, true),
+            (other, Expr::Identifier(_, n)) if n == pat_name => (other, false),
+            _ => continue,
+        };
+        let Expr::Tuple(_, items) = lit_side else {
+            continue;
+        };
+        let Some(vals) = items
+            .iter()
+            .map(|e| match e {
+                Expr::Literal(_, v) => Some(v.clone()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        // Map the operator to a (lo|hi, strict) classification.
+        let (is_lo, strict) = match (op, pat_first) {
+            (BuiltInFunction::IntGe | BuiltInFunction::GGe, true) => {
+                // pat >= lit ⇒ lit is the lower bound.
+                (true, false)
+            }
+            (BuiltInFunction::IntGt | BuiltInFunction::GGt, true) => {
+                (true, true)
+            }
+            (BuiltInFunction::IntLe | BuiltInFunction::GLe, true) => {
+                (false, false)
+            }
+            (BuiltInFunction::IntLt | BuiltInFunction::GLt, true) => {
+                (false, true)
+            }
+            (BuiltInFunction::IntEq | BuiltInFunction::GEq, _) => {
+                // pat = lit ⇒ both bounds are lit.
+                lo = Some((vals.clone(), false));
+                hi = Some((vals.clone(), false));
+                bound_constraints.push(c.clone());
+                continue;
+            }
+            (BuiltInFunction::IntGe | BuiltInFunction::GGe, false) => {
+                (false, false)
+            }
+            (BuiltInFunction::IntGt | BuiltInFunction::GGt, false) => {
+                (false, true)
+            }
+            (BuiltInFunction::IntLe | BuiltInFunction::GLe, false) => {
+                (true, false)
+            }
+            (BuiltInFunction::IntLt | BuiltInFunction::GLt, false) => {
+                (true, true)
+            }
+            _ => continue,
+        };
+        if is_lo {
+            lo = Some((vals, strict));
+        } else {
+            hi = Some((vals, strict));
+        }
+        bound_constraints.push(c.clone());
+    }
+    let Some((lo_vals, lo_strict)) = lo else {
+        return false;
+    };
+    let Some((hi_vals, hi_strict)) = hi else {
+        return false;
+    };
+    if lo_vals.len() != component_types.len()
+        || hi_vals.len() != component_types.len()
+    {
+        return false;
+    }
+    // Bump strict bounds to inclusive by stepping the int-most
+    // component (we only know how to step ints). For now reject
+    // strict bounds on non-int trailing component.
+    let lo_inclusive = if lo_strict {
+        match step_tuple(&lo_vals, &component_types, true) {
+            Some(v) => v,
+            None => return false,
+        }
+    } else {
+        lo_vals
+    };
+    let hi_inclusive = if hi_strict {
+        match step_tuple(&hi_vals, &component_types, false) {
+            Some(v) => v,
+            None => return false,
+        }
+    } else {
+        hi_vals
+    };
+
+    let Some(values) =
+        enumerate_tuple_range(&lo_inclusive, &hi_inclusive, &component_types)
+    else {
+        return false;
+    };
+
+    // Build a list literal of the enumerated tuples.
+    let elem_t = Box::new(pat_type.clone());
+    let list_t = Box::new(Type::List(elem_t.clone()));
+    let items: Vec<Expr> = values
+        .into_iter()
+        .map(|tv| {
+            Expr::Tuple(
+                elem_t.clone(),
+                tv.into_iter()
+                    .zip(component_types.iter())
+                    .map(|(v, t)| Expr::Literal(Box::new(t.clone()), v))
+                    .collect(),
+            )
+        })
+        .collect();
+    let exp = Expr::List(list_t, items);
+    let _ = ordered;
+
+    let generator = Generator::new(
+        pat.clone(),
+        exp,
+        Cardinality::Finite,
+        BTreeSet::new(),
+        true,
+        true,
+        bound_constraints,
+    );
+    cache.add(pat_name.to_string(), generator);
+    true
+}
+
+/// Steps a tuple value by ±1 at its trailing int component
+/// (for converting strict bounds to inclusive). Returns `None`
+/// if the trailing component isn't int.
+fn step_tuple(
+    vals: &[Val],
+    types: &[Type],
+    increase: bool,
+) -> Option<Vec<Val>> {
+    if vals.is_empty() {
+        return None;
+    }
+    let last_t = types.last()?;
+    if !matches!(last_t, Type::Primitive(PrimitiveType::Int)) {
+        return None;
+    }
+    let Val::Int(n) = vals.last()? else {
+        return None;
+    };
+    let mut out = vals.to_vec();
+    *out.last_mut().unwrap() = Val::Int(if increase { n + 1 } else { n - 1 });
+    Some(out)
+}
+
+/// Lex-enumerates the tuples `[lo, …, hi]` (inclusive). Returns
+/// `None` if any "middle" component would require enumerating
+/// values of a non-finite type (e.g. `int` between two bools).
+fn enumerate_tuple_range(
+    lo: &[Val],
+    hi: &[Val],
+    types: &[Type],
+) -> Option<Vec<Vec<Val>>> {
+    if lo.is_empty() {
+        return Some(vec![vec![]]);
+    }
+    if compare_tuple(lo, hi) > 0 {
+        return Some(vec![]);
+    }
+    let lo_v = &lo[0];
+    let hi_v = &hi[0];
+    let t = &types[0];
+    let mut out: Vec<Vec<Val>> = Vec::new();
+    for v in iter_values_inclusive(lo_v, hi_v, t)? {
+        let lo_eq = compare_val(&v, lo_v) == 0;
+        let hi_eq = compare_val(&v, hi_v) == 0;
+        let sub_lo: Vec<Val> = if lo_eq {
+            lo[1..].to_vec()
+        } else {
+            type_mins(&types[1..])?
+        };
+        let sub_hi: Vec<Val> = if hi_eq {
+            hi[1..].to_vec()
+        } else {
+            type_maxes(&types[1..])?
+        };
+        let subs = enumerate_tuple_range(&sub_lo, &sub_hi, &types[1..])?;
+        for sub in subs {
+            let mut full = vec![v.clone()];
+            full.extend(sub);
+            out.push(full);
+        }
+    }
+    Some(out)
+}
+
+/// Iterates [lo, hi] inclusive, in lex order. Returns `None` if
+/// the type isn't enumerable (e.g. `string`).
+fn iter_values_inclusive(lo: &Val, hi: &Val, t: &Type) -> Option<Vec<Val>> {
+    match t {
+        Type::Primitive(PrimitiveType::Int) => {
+            let Val::Int(a) = lo else { return None };
+            let Val::Int(b) = hi else { return None };
+            Some((*a..=*b).map(Val::Int).collect())
+        }
+        Type::Primitive(PrimitiveType::Bool) => {
+            let Val::Bool(a) = lo else { return None };
+            let Val::Bool(b) = hi else { return None };
+            // Order: false < true.
+            let mut out = Vec::new();
+            for v in [false, true] {
+                if (!a || v) && (*b || !v) {
+                    out.push(Val::Bool(v));
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// Min values of a tuple of types (the lex-smallest tuple).
+/// Returns `None` if any type lacks a known minimum.
+fn type_mins(types: &[Type]) -> Option<Vec<Val>> {
+    types.iter().map(type_min).collect()
+}
+
+fn type_min(t: &Type) -> Option<Val> {
+    match t {
+        Type::Primitive(PrimitiveType::Bool) => Some(Val::Bool(false)),
+        // Ints have no smallest value we want to enumerate;
+        // disallow.
+        _ => None,
+    }
+}
+
+/// Max values of a tuple of types.
+fn type_maxes(types: &[Type]) -> Option<Vec<Val>> {
+    types.iter().map(type_max).collect()
+}
+
+fn type_max(t: &Type) -> Option<Val> {
+    match t {
+        Type::Primitive(PrimitiveType::Bool) => Some(Val::Bool(true)),
+        _ => None,
+    }
+}
+
+/// Lexicographic comparison of two tuples of values.
+fn compare_tuple(a: &[Val], b: &[Val]) -> i32 {
+    for (x, y) in a.iter().zip(b.iter()) {
+        let c = compare_val(x, y);
+        if c != 0 {
+            return c;
+        }
+    }
+    a.len() as i32 - b.len() as i32
+}
+
+fn compare_val(a: &Val, b: &Val) -> i32 {
+    match (a, b) {
+        (Val::Int(x), Val::Int(y)) => x.cmp(y) as i32,
+        (Val::Bool(x), Val::Bool(y)) => x.cmp(y) as i32,
+        _ => 0, // unsupported — caller has already filtered
+    }
 }
 
 /// Generator of last resort: yield every value of the pattern's
