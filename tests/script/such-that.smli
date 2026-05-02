@@ -610,10 +610,13 @@ from x, y where edge (x, y);
 >   : {x:int, y:int} bag
 
 (*) Return points that are 2 hops apart.
-(*
-from x, y, z where edge (x, y) andalso edge (y, z) andalso x <> z
-  group x, z;
-*)
+let
+  fun edge (x, y) = (x, y) elem edges
+in
+  from x, y, z where edge (x, y) andalso edge (y, z) andalso x <> z
+    group {x, z}
+end;
+> val it = [{x=1,z=3},{x=1,z=2},{x=4,z=3}] : {x:int, z:int} list
 
 (* Previous is equivalent to following. (Which implies a theorem
  * connecting 'exists' with 'group' and variable elimination.) *)
@@ -628,11 +631,6 @@ from x, z
   where (exists y where edge (x, y) andalso edge (y, z) andalso x <> z)
   distinct;
 > val it = [{x=1,z=3},{x=1,z=2},{x=4,z=3}] : {x:int, z:int} bag
-
-(*
-from x, z where exists (
-   from y where edge (x, y) andalso edge (y, z) andalso x <> z);
-*)
 
 (*) Also equivalent.
 (*
