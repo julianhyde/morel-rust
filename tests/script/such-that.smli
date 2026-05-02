@@ -46,8 +46,7 @@ from x, y in [0, 2, 9] where x > y andalso x < y + 5;
 >   [{x=1,y=0},{x=2,y=0},{x=3,y=0},{x=4,y=0},{x=3,y=2},{x=4,y=2},{x=5,y=2},
 >    {x=6,y=2},{x=10,y=9},{x=11,y=9},{x=12,y=9},{x=13,y=9}] : {x:int, y:int} bag
 
-(* Similar, but we know the values of x. y's range is derived
- * from the symbolic offset in `x < y + 5` ⇒ `y > x - 5`. *)
+(* Similar, but we know the values of x. *)
 from x in [3, 5, 7], y where x > y andalso x < y + 5 yield y;
 > val it = [~1,0,1,2,1,2,3,4,3,4,5,6] : int bag
 
@@ -56,11 +55,8 @@ from x in [3, 5, 7], y where x > y andalso x < y + 5 yield y;
  * but we don't have symbolic math.
  *
  * morel-rust note: morel-java reports `pattern x_1 is not grounded`
- * (with the resolver-rename suffix `_1`); morel-rust uses the
- * surface name `'x'` and omits the `raised at:` line because the
- * runtime span isn't propagated for compile-time-emitted errors.
- * The functionality (rejecting an un-invertible predicate at
- * evaluation) is the same. *)
+ * with the resolver-rename suffix; morel-rust uses the surface
+ * name `'x'`. *)
 from x where (x + 2) * (x - 3) = 0;
 > java.lang.IllegalArgumentException: pattern 'x' is not grounded
 
@@ -189,28 +185,21 @@ exists w, x where x = 3 andalso x < 10;
 exists w, x where x = 3 andalso x > 10;
 > val it = false : bool
 
-(*) Reversed pattern via case: a single-arm `case` over a tuple of
-(*) unbounded variables, with a tuple sub-pattern, beta-reduces
-(*) to a tuple-elem constraint that grounds both variables.
+(*) Reversed pattern via case
 from x, y where case (y, x) of (a, b) => (a, b) elem [(1,true),(2,false)];
 > val it = [{x=true,y=1},{x=false,y=2}] : {x:bool, y:int} bag
 
-(*) Nested exists: inner exists's scans + conjuncts are lifted to
-(*) the outer exists, so `(x, y) elem coll` grounds both x and y.
 exists x
   where (exists y
     where (x, y) elem [(1, 2), (1, 3), (4, 3)]);
 > val it = true : bool
 
-(*) `from` outer: lift introduces an explicit `yield x distinct`
-(*) to preserve the original "one row per outer-bound x" cardinality.
 from x
   where exists y
     where (x, y) elem [(1, 2), (1, 3), (4, 3)];
 > val it = [1,4] : int bag
 
-(*) Eliminate duplicates: (_, 2, 3) occurs twice, but only one
-(*) row per outer y survives the `yield y distinct`.
+(*) Be sure to eliminate duplicates. (_, 2, 3) occurs twice in the list.
 from y
   where exists x
     where (x, y, 3) elem [(1, 2, 3), (2, 3, 4), (5, 4, 3), (4, 2, 3)];
@@ -251,8 +240,6 @@ in
 end;
 > val it = [2,4] : int bag
 
-(*) Same as previous, but with top-level `val` and `fun` decls
-(*) (cross-decl inlining, hydromatic/morel#223).
 val nums = [1, 2, 3, 4, 5];
 > val nums = [1,2,3,4,5] : int list
 fun isNum n = n elem nums;
@@ -262,9 +249,6 @@ fun isEven n = n mod 2 = 0;
 from n where isNum n andalso isEven n;
 > val it = [2,4] : int bag
 
-(*) Disjunction over two top-level fun-defined predicates: each
-(*) branch contributes its own collection generator and the
-(*) results are unioned (hydromatic/morel#223 + #217).
 fun isSmall n = n elem [1, 2];
 > val isSmall = fn : int -> bool
 fun isLarge n = n elem [10, 20];
@@ -419,10 +403,7 @@ in
 end;
 > val it = ["SMITH","JONES","SCOTT","ADAMS","FORD"] : string bag
 
-(*) Previously MainTest.testFromSuchThat. A let-bound predicate
-(*) over a tuple-pattern parameter, applied to two unbounded
-(*) variables, gets inlined and decomposed into a tuple-elem
-(*) constraint, then merged with the unbounded scans.
+(*) Previously MainTest.testFromSuchThat
 let
   val emps = [
     {id = 100, name = "Fred", deptno = 10},
@@ -439,10 +420,7 @@ in
 end;
 > val it = [{d=30,n="Shaggy"},{d=30,n="Scooby"}] : {d:int, n:string} bag
 
-(*) As previous, but 'fun' followed by 'from' without using 'let'.
-(*) Cross-decl function inlining (hydromatic/morel#223) lets the
-(*) predicate inverter see `isEmp`'s body even though it was
-(*) declared in a separate top-level `fun`.
+(*) As previous, but 'fun' followed by 'from' without using 'let'
 fun isEmp e =
   e elem scott.emps;
 > val isEmp = fn
@@ -669,11 +647,13 @@ val barBeers = [
   {bar =  "squirrel", beer =  "pale", price =  2},
   {bar =  "squirrel", beer =  "amber", price =  3},
   {bar =  "cask", beer =  "stout", price =  4},
-  {bar =  "cask", beer =  "ipa", price =  5}];
+  {bar =  "cask", beer =  "ipa", price =  5},
+  {bar =  "big_al", beer =  "pale", price =  1}];
 > val barBeers =
 >   [{bar="squirrel",beer="ipa",price=2},{bar="squirrel",beer="pale",price=2},
 >    {bar="squirrel",beer="amber",price=3},{bar="cask",beer="stout",price=4},
->    {bar="cask",beer="ipa",price=5}] : {bar:string, beer:string, price:int} list
+>    {bar="cask",beer="ipa",price=5},{bar="big_al",beer="pale",price=1}]
+>   : {bar:string, beer:string, price:int} list
 
 val patronBeers = [
   {patron =  "shaggy", beer = "amber"},
@@ -708,9 +688,6 @@ fun happy patron =
       andalso sells (bar, beer, price));
 > val happy = fn : string -> bool
 *)
-(*) Enabled by hydromatic/morel#223 (cross-decl fn inlining)
-(*) plus #217's record-pattern decompose. Modern syntax —
-(*) `exists ... where ...` rather than `exists (from ...)`.
 fun happy patron =
   exists bar, beer, price
       where frequents (patron, bar)
@@ -746,7 +723,6 @@ fun cheap beer =
         andalso bar1 <> bar2);
 > val cheap = fn : string -> bool
 *)
-(*) Modern syntax, enabled by hydromatic/morel#223.
 fun cheap beer =
   exists bar1, price1, bar2, price2
     where sells (bar1, beer, price1)
@@ -761,10 +737,8 @@ fun cheap beer =
 from b where cheap b;
 > val it = ["pale"] : string list
 *)
-(*) With our barBeers (no big_al row yet), pale is sold by
-(*) only one bar, so `cheap` is empty until d0249a04.
 from b where cheap b;
-> val it = [] : string bag
+> val it = ["pale"] : string bag
 
 (* A rule is safe if:
  * 1. Each distinguished variable,
@@ -834,11 +808,6 @@ fun caskSells b =
   exists (from beer, price where sells ("cask", beer, price));
 > val caskSells = fn : 'a -> bool
 *)
-(*) Modern syntax, enabled by hydromatic/morel#223. Note that
-(*) morel-java's 84d08ec9 changed the formula from "exists beer,
-(*) price ..." (which was unsafe — `b` unused) to one that
-(*) actually uses `b`: "exists price where sells ('cask', b,
-(*) price)".
 fun caskSells b =
   exists price where sells ("cask", b, price);
 > val caskSells = fn : string -> bool
