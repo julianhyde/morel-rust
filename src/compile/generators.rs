@@ -175,6 +175,18 @@ pub fn maybe_generator(
     ) {
         return true;
     }
+    if maybe_case_constructor(
+        cache,
+        pat,
+        pat_name,
+        pat_type,
+        ordered,
+        constraints,
+        fn_env,
+        datatypes,
+    ) {
+        return true;
+    }
     // Fallback: enumerate all values of the pattern's type, when
     // that type is finite (bool, option of finite, tuple of
     // finite, user datatype with all-nullary constructors).
@@ -1108,6 +1120,377 @@ fn arm_id_pat(m: &Match) -> Option<String> {
 /// The combined generator is unsealed: it doesn't subsume any
 /// individual branch as a where-conjunct (the surrounding `where`
 /// will keep the original `orelse` for correctness).
+/// Recognises a `case` constraint whose subject is the pattern
+/// we're trying to ground, and whose arms include constructor
+/// patterns (e.g. `INL n => n >= 5 andalso n <= 8`). For each
+/// constructor arm we derive a generator for the sub-pattern
+/// from the arm's body, then wrap the generator's exp with
+/// the constructor (`Bag.map (fn x => INL x) <inner>`). All
+/// arms' results are union'd via `Bag.concat` (or
+/// `List.concat` for ordered scope).
+///
+/// Wildcard / nullary-constructor / `_ => false` arms
+/// contribute nothing; an arm with a non-bool body and a non-
+/// invertible sub-constraint causes us to skip the whole case.
+fn maybe_case_constructor(
+    cache: &mut Cache,
+    pat: &Pat,
+    pat_name: &str,
+    _pat_type: &Type,
+    ordered: bool,
+    constraints: &[Expr],
+    fn_env: &FnEnv,
+    datatypes: &DatatypeMap,
+) -> bool {
+    for c in constraints {
+        let Expr::Case(_, subject, arms, _) = c else {
+            continue;
+        };
+        let Expr::Identifier(_, sn) = subject.as_ref() else {
+            continue;
+        };
+        if sn != pat_name {
+            continue;
+        }
+        // At least one constructor arm with a non-`false` body.
+        let has_constructor_arm = arms.iter().any(|a| {
+            matches!(a.pat, Pat::Constructor(_, _, _))
+                && !matches!(a.expr, Expr::Literal(_, Val::Bool(false)))
+        });
+        if !has_constructor_arm {
+            continue;
+        }
+
+        let mut branch_exps: Vec<Expr> = Vec::new();
+        let all_free: BTreeSet<String> = BTreeSet::new();
+        let mut ok = true;
+        for arm in arms {
+            // Skip false-body arms.
+            if matches!(arm.expr, Expr::Literal(_, Val::Bool(false))) {
+                continue;
+            }
+            match &arm.pat {
+                Pat::Constructor(_ctor_t, ctor_name, Some(sub_pat)) => {
+                    let Some(ctor_fn) = constructor_to_builtin(ctor_name)
+                    else {
+                        ok = false;
+                        break;
+                    };
+                    let elem_t = pat.type_();
+                    let sub_t = sub_pat.type_();
+                    let Some((sub_pat_name, sub_exp)) =
+                        derive_payload_generator(
+                            sub_pat, &arm.expr, ordered, fn_env, datatypes,
+                        )
+                    else {
+                        ok = false;
+                        break;
+                    };
+                    let wrapped = build_map_constructor(
+                        ctor_fn,
+                        sub_t,
+                        elem_t,
+                        sub_pat_name,
+                        sub_exp,
+                        ordered,
+                    );
+                    branch_exps.push(wrapped);
+                }
+                // Constant constructor `Pat::Constructor(_, ctor, None)`
+                // with non-false body: support `body == true` only —
+                // the constructor's single value is a member.
+                Pat::Constructor(_, _, None) => {
+                    // Not yet supported.
+                    ok = false;
+                    break;
+                }
+                Pat::Wildcard(_) => {
+                    // Already filtered false bodies above; a non-false
+                    // wildcard body would always match — needs
+                    // enumeration of subject's type.
+                    ok = false;
+                    break;
+                }
+                _ => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if !ok || branch_exps.is_empty() {
+            continue;
+        }
+
+        // Build `Bag.concat [b1, b2, ...]` (or List.concat).
+        let elem_t = pat.type_();
+        let coll_t = if ordered {
+            Box::new(Type::List(elem_t.clone()))
+        } else {
+            Box::new(Type::Bag(elem_t.clone()))
+        };
+        let combined = if branch_exps.len() == 1 {
+            branch_exps.into_iter().next().unwrap()
+        } else {
+            let list_of_coll_t =
+                Box::new(Type::List(Box::new((*coll_t).clone())));
+            let arg_list = Expr::List(list_of_coll_t.clone(), branch_exps);
+            let concat_fn = if ordered {
+                BuiltInFunction::ListConcat
+            } else {
+                BuiltInFunction::BagConcat
+            };
+            let fn_t = Box::new(Type::Fn(list_of_coll_t, coll_t.clone()));
+            let fn_lit = Expr::Literal(fn_t, Val::Fn(concat_fn));
+            Expr::Apply(
+                coll_t,
+                Box::new(fn_lit),
+                Box::new(arg_list),
+                Span::new(""),
+            )
+        };
+
+        let generator = Generator::new(
+            pat.clone(),
+            combined,
+            Cardinality::Finite,
+            all_free,
+            false,
+            false,
+            vec![c.clone()],
+        );
+        cache.add(pat_name.to_string(), generator);
+        return true;
+    }
+    false
+}
+
+/// Builds a generator for the payload of a constructor arm:
+/// returns `(bind_name, exp)` where `exp` is a list/bag of
+/// payload values and `bind_name` is the name to use in the
+/// `Bag.map (fn bind_name => CTOR bind_name)` wrapping.
+///
+/// For a Pat::Identifier sub-pattern the bind_name is the
+/// identifier itself and `exp` comes from `maybe_generator`
+/// on the body.
+///
+/// For a Pat::Tuple sub-pattern (e.g. `INR (b, i)`) we build
+/// a synthetic `from b, i where <body> yield (b, i)` query,
+/// expand it with predicate inversion, and use a fresh
+/// bind_name for the wrapping fn (the map argument will be
+/// the whole tuple).
+fn derive_payload_generator(
+    sub_pat: &Pat,
+    body: &Expr,
+    ordered: bool,
+    fn_env: &FnEnv,
+    datatypes: &DatatypeMap,
+) -> Option<(String, Expr)> {
+    match sub_pat {
+        Pat::Identifier(t, n) => {
+            let inner_constraints = split_conjuncts(body);
+            let mut probe = Cache::new();
+            if !maybe_generator(
+                &mut probe,
+                sub_pat,
+                n,
+                t,
+                ordered,
+                &inner_constraints,
+                fn_env,
+                datatypes,
+            ) {
+                return None;
+            }
+            let g = probe.best(n)?;
+            Some((n.clone(), g.exp.clone()))
+        }
+        // Literal sub-pat (e.g. `INL 0`) — only contributes when
+        // the body is `true`; one element list.
+        Pat::Literal(lit_t, v) => {
+            if !matches!(body, Expr::Literal(_, Val::Bool(true))) {
+                return None;
+            }
+            let elem = Expr::Literal(lit_t.clone(), v.clone());
+            let coll_t = if ordered {
+                Box::new(Type::List(lit_t.clone()))
+            } else {
+                Box::new(Type::Bag(lit_t.clone()))
+            };
+            // `[lit]` as a List value; bags are formed at the
+            // outer concat layer if needed.
+            let list_t = Box::new(Type::List(lit_t.clone()));
+            let list_lit = Expr::List(list_t.clone(), vec![elem]);
+            // For bag scope, wrap with `Bag.fromList`-equivalent —
+            // but our concat happily mixes lists into bags via
+            // the type system. Keep as List for simplicity; the
+            // outer bag-concat will treat it as elements.
+            let _ = coll_t;
+            Some(("__lit".to_string(), list_lit))
+        }
+        Pat::Tuple(tuple_t, sub_pats) => {
+            // Build `from <each leaf> where body yield (leaves)`
+            // and let `expand_from_with` derive the generators.
+            use crate::compile::core::{Step, StepEnv, StepKind};
+            use crate::compile::expander::expand_from_with;
+            use crate::compile::type_env::Id;
+
+            let mut steps: Vec<Step> = Vec::new();
+            let mut leaves: Vec<(String, Box<Type>)> = Vec::new();
+            for sp in sub_pats {
+                let (n, t) = match sp {
+                    Pat::Identifier(t, n) => (n.clone(), t.clone()),
+                    _ => return None,
+                };
+                leaves.push((n.clone(), t.clone()));
+                let scan_env = StepEnv::new(
+                    leaves
+                        .iter()
+                        .map(|(n, t)| Binding::new(Id::new(n, 0), t.clone()))
+                        .collect(),
+                    leaves.len() == 1,
+                    ordered,
+                );
+                steps.push(Step::new(
+                    StepKind::Scan(
+                        Box::new(Pat::Identifier(t.clone(), n)),
+                        Box::new(Expr::Extent(t.clone())),
+                        None,
+                    ),
+                    scan_env,
+                ));
+            }
+            let last_env = steps.last().unwrap().env.clone();
+            steps.push(Step::new(
+                StepKind::Where(Box::new(body.clone())),
+                last_env.clone(),
+            ));
+            // Yield the tuple in original sub-pattern order.
+            let yield_items: Vec<Expr> = sub_pats
+                .iter()
+                .map(|sp| match sp {
+                    Pat::Identifier(t, n) => {
+                        Expr::Identifier(t.clone(), n.clone())
+                    }
+                    _ => unreachable!(),
+                })
+                .collect();
+            let yield_expr = Expr::Tuple(tuple_t.clone(), yield_items);
+            // After the yield the from result is `tuple_t bag`.
+            let yield_env = StepEnv::new(
+                vec![Binding::new(Id::new("__pl", 0), tuple_t.clone())],
+                true,
+                ordered,
+            );
+            steps.push(Step::new(
+                StepKind::Yield(Box::new(yield_expr)),
+                yield_env,
+            ));
+            let coll_t = if ordered {
+                Box::new(Type::List(tuple_t.clone()))
+            } else {
+                Box::new(Type::Bag(tuple_t.clone()))
+            };
+            let from = Expr::From(coll_t, steps);
+            let expanded = expand_from_with(from, fn_env, datatypes);
+            // If predicate-inversion left an Extent in the
+            // expanded steps, we couldn't ground a sub-pattern;
+            // bail.
+            if let Expr::From(_, ref est) = expanded
+                && est.iter().any(|s| {
+                    matches!(
+                        &s.kind,
+                        StepKind::Scan(_, src, _) if matches!(
+                            src.as_ref(), Expr::Extent(_)
+                        )
+                    )
+                })
+            {
+                return None;
+            }
+            Some(("__pl".to_string(), expanded))
+        }
+        _ => None,
+    }
+}
+
+/// Maps a constructor name to its `BuiltInFunction` value.
+/// Returns `None` for user-defined or unsupported constructors.
+fn constructor_to_builtin(name: &str) -> Option<BuiltInFunction> {
+    match name {
+        "INL" => Some(BuiltInFunction::EitherInl),
+        "INR" => Some(BuiltInFunction::EitherInr),
+        "SOME" => Some(BuiltInFunction::OptionSome),
+        _ => None,
+    }
+}
+
+/// Builds `Bag.map (fn x => CTOR x) inner` (or List.map for
+/// ordered scope), wrapping every payload in `inner` with the
+/// given constructor.
+#[allow(clippy::needless_pass_by_value)]
+fn build_map_constructor(
+    ctor_fn: BuiltInFunction,
+    payload_t: Box<Type>,
+    elem_t: Box<Type>,
+    sub_pat_name: String,
+    inner: Expr,
+    ordered: bool,
+) -> Expr {
+    let coll_t = if ordered {
+        Box::new(Type::List(elem_t.clone()))
+    } else {
+        Box::new(Type::Bag(elem_t.clone()))
+    };
+    let inner_coll_t = if ordered {
+        Box::new(Type::List(payload_t.clone()))
+    } else {
+        Box::new(Type::Bag(payload_t.clone()))
+    };
+    // `fn x => CTOR x`
+    let ctor_fn_t = Box::new(Type::Fn(payload_t.clone(), elem_t.clone()));
+    let ctor_lit = Expr::Literal(ctor_fn_t.clone(), Val::Fn(ctor_fn));
+    let body = Expr::Apply(
+        elem_t.clone(),
+        Box::new(ctor_lit),
+        Box::new(Expr::Identifier(payload_t.clone(), sub_pat_name.clone())),
+        Span::new(""),
+    );
+    let fn_pat = Pat::Identifier(payload_t.clone(), sub_pat_name);
+    let map_arg_fn_t = Box::new(Type::Fn(payload_t.clone(), elem_t.clone()));
+    let map_arg = Expr::Fn(
+        map_arg_fn_t.clone(),
+        vec![Match {
+            pat: fn_pat,
+            expr: body,
+        }],
+        Span::new(""),
+    );
+    // `Bag.map`-curried: Apply(Apply(map_fn, fn_arg), inner)
+    let map_builtin = if ordered {
+        BuiltInFunction::ListMap
+    } else {
+        BuiltInFunction::BagMap
+    };
+    let map_t = Box::new(Type::Fn(
+        map_arg_fn_t,
+        Box::new(Type::Fn(inner_coll_t.clone(), coll_t.clone())),
+    ));
+    let map_lit = Expr::Literal(map_t, Val::Fn(map_builtin));
+    let map_partial_t = Box::new(Type::Fn(inner_coll_t, coll_t.clone()));
+    let map_partial = Expr::Apply(
+        map_partial_t,
+        Box::new(map_lit),
+        Box::new(map_arg),
+        Span::new(""),
+    );
+    Expr::Apply(
+        coll_t,
+        Box::new(map_partial),
+        Box::new(inner),
+        Span::new(""),
+    )
+}
+
 fn maybe_union(
     cache: &mut Cache,
     pat: &Pat,
