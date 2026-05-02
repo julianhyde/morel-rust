@@ -54,6 +54,20 @@ from i where i = 0 orelse i = 12;
 from i where i > 0 andalso i < 10 orelse i > 12 andalso i <= 15;
 > val it = [1,2,3,4,5,6,7,8,9,13,14,15] : int bag
 
+(*) Ranges over int * bool: point constraints merged into a single discreteSetOf.
+from t where t = (1, true) orelse t = (3, false);
+> val it = [(1,true),(3,false)] : (int * bool) bag
+
+(*) Ranges over bool * int: a point and a range.
+from t where t = (true, 1) orelse t >= (false, 3) andalso t <= (false, 5);
+> val it = [(true,1),(false,3),(false,4),(false,5)] : (bool * int) bag
+
+(*) Ranges over int * bool * int * bool (4-tuple): a single closed range.
+from t where t >= (1, false, 2, true) andalso t <= (1, false, 4, false);
+> val it =
+>   [(1,false,2,true),(1,false,3,false),(1,false,3,true),(1,false,4,false)]
+>   : (int * bool * int * bool) bag
+
 (* In the following case, we solve for x given a value of y. This
    requires predicate-inversion because it cannot be solved using
    ranges alone. *)
