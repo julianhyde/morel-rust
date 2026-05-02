@@ -433,19 +433,18 @@ from e
 > val it = ["SMITH","JONES","SCOTT","ADAMS","FORD"] : string bag
 
 (*) Similar to 'isEmp' but with a conjunctive condition.
-let
-  fun isClerk e =
-    e elem scott.emps andalso e.job = "CLERK"
-in
-  from e
-    where isClerk e andalso e.deptno = 20
-    yield e.ename
-end;
+fun isClerk e =
+  e elem scott.emps andalso e.job = "CLERK";
+> val isClerk = fn
+>   :
+>     {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
+>      job:string, mgr:int, sal:real} -> bool
+from e
+  where isClerk e andalso e.deptno = 20
+  yield e.ename;
 > val it = ["SMITH","ADAMS"] : string bag
 
 (*) A disjunctive condition prevents the extent.
-(*) TODO: throw an error, rather than returning an empty list
-(*
 let
   fun isEmp50 e =
     e elem scott.emps orelse e.deptno = 50
@@ -454,7 +453,7 @@ in
     where isEmp50 e
     yield e.ename
 end;
-*)
+> java.lang.IllegalArgumentException: pattern 'e' is not grounded
 
 (*) A function with external extent.
 fun hasJob (e: typeof (Bag.hd scott.emps),
@@ -521,6 +520,20 @@ val enumerate = fn : ('a -> bool) -> 'a list
 (*
 enumerate isEmp;
 *)
+
+(* Join inversion ------------------------------------------------- *)
+let
+  fun empInDept (empno, deptno) =
+    exists e in scott.emps where e.empno = empno andalso e.deptno = deptno
+  fun deptName(deptno, dname) =
+    exists d in scott.depts where d.deptno = deptno andalso d.dname = dname
+  fun empInDeptName(empno, dname) =
+    exists deptno where empInDept(empno, deptno) andalso deptName(deptno, dname)
+in
+  from empno
+    where empInDeptName(empno, "SALES")
+end;
+> val it = [7499,7521,7654,7698,7844,7900] : int bag
 
 (* ------------------------------------------------------ *)
 (* The following example from Souffle,
@@ -591,6 +604,10 @@ val edges = [(1, 2), (2, 3), (1, 4), (4, 2), (4, 3)];
 
 fun edge (x, y) = (x, y) elem edges;
 > val edge = fn : int * int -> bool
+
+from x, y where edge (x, y);
+> val it = [{x=1,y=2},{x=2,y=3},{x=1,y=4},{x=4,y=2},{x=4,y=3}]
+>   : {x:int, y:int} bag
 
 (*) Return points that are 2 hops apart.
 (*
