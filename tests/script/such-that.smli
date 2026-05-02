@@ -22,7 +22,7 @@
  *)
 Sys.set ("printLength", 64);
 > val it = () : unit
-(* ------------------------------------------------------ *)
+(* ---------------------------------------------------------------- *)
 (* Convert predicates into ranges. *)
 from i where i > 0 andalso i < 10;
 > val it = [1,2,3,4,5,6,7,8,9] : int bag
@@ -91,7 +91,7 @@ where j > 4 andalso j < 7
 >    {i=2,j=6,k=9,m=13},{i=2,j=6,k=9,m=14},{i=2,j=6,k=10,m=13},
 >    {i=2,j=6,k=10,m=14}] : {i:int, j:int, k:int, m:int} bag
 
-(* ------------------------------------------------------ *)
+(* ---------------------------------------------------------------- *)
 (* Unbounded variables with `take` and other clauses. *)
 
 (* Odd and even numbers that are not a multiple of 6. *)
@@ -205,7 +205,7 @@ from y
     where (x, y, 3) elem [(1, 2, 3), (2, 3, 4), (5, 4, 3), (4, 2, 3)];
 > val it = [2,4] : int bag
 
-(* String.isPrefix p s --------------------------------- *)
+(* String.isPrefix p s -------------------------------------------- *)
 from p where String.isPrefix p "abcd";
 > val it = ["","a","ab","abc","abcd"] : string bag
 
@@ -218,12 +218,12 @@ from s in ["abcd", "ant"], p where String.isPrefix p s;
 from s in ["abcd", "ant"], p where String.isPrefix p s yield p distinct;
 > val it = ["","a","ab","abc","abcd","an","ant"] : string bag
 
-(* Exists as a `where` constraint --------------------- *)
+(* Exists as a `where` constraint --------------------------------- *)
 from p where (exists s in ["abcd", "ant"] where String.isPrefix p s)
 order p;
 > val it = ["","a","ab","abc","abcd","an","ant"] : string list
 
-(* Function-defined predicates ------------------------- *)
+(* Function-defined predicates ------------------------------------ *)
 let
   val nums = [1, 2, 3, 4, 5]
 in
@@ -256,25 +256,25 @@ fun isLarge n = n elem [10, 20];
 from n where isSmall n orelse isLarge n;
 > val it = [1,2,10,20] : int bag
 
-(* Single-arm case --------------------------------------- *)
+(* Single-arm case ------------------------------------------------ *)
 from x where case x of y => y elem [1,2];
 > val it = [1,2] : int bag
 
 from x where case x of y => y > 0 andalso y < 5;
 > val it = [1,2,3,4] : int bag
 
-(* Multi-arm case with literal arms ---------------------- *)
+(* Multi-arm case with literal arms ------------------------------- *)
 from x where (case x of 1 => true | 3 => true | _ => false);
 > val it = [1,3] : int bag
 
 from x where (case x of 1 => true | 2 => false | 3 => true | _ => false);
 > val it = [1,3] : int bag
 
-(* Multi-arm case mixing literal and variable arms ------- *)
+(* Multi-arm case mixing literal and variable arms ---------------- *)
 from x where (case x of 0 => true | n => n >= 5 andalso n <= 8);
 > val it = [0,5,6,7,8] : int bag
 
-(* Boolean inversion ------------------------------------- *)
+(* Boolean inversion ---------------------------------------------- *)
 from b where not b;
 > val it = [false] : bool bag
 
@@ -319,7 +319,7 @@ from e where (case e of
   | INL n => n >= 5 andalso n <= 8);
 > val it = [INL 0,INR false,INL 7,INL 100,INL 5,INL 8] : (int,bool) either bag
 
-(* Nested `from` with outer-scope reference -------------- *)
+(* Nested `from` with outer-scope reference ----------------------- *)
 from source in [1, 2, 3, 4, 5]
 yield {source, doubled = (from x where x = source * 2)};
 > val it =
@@ -544,7 +544,7 @@ from i where isBetween (i, 5, 8);
 > val it = [5, 6, 7, 8] : int list
 *)
 
-(* ------------------------------------------------------ *)
+(* ---------------------------------------------------------------- *)
 (* Convenience function that converts a predicate to a
  * relation. *)
 (*
@@ -573,7 +573,7 @@ in
 end;
 > val it = [7499,7521,7654,7698,7844,7900] : int bag
 
-(* ------------------------------------------------------ *)
+(* ---------------------------------------------------------------- *)
 (* The following example from Souffle,
  * https://souffle-lang.github.io/simple.
  *
@@ -679,7 +679,7 @@ from x, y
   group x, y;
 *)
 
-(* ------------------------------------------------------ *)
+(* ---------------------------------------------------------------- *)
 (* Joe's bar.
  * See http://infolab.stanford.edu/~ullman/fcdb/aut07/slides/dlog.pdf.
  *)
@@ -943,7 +943,7 @@ enumerate cousin2;
 *)
 
 
-(* ------------------------------------------------------ *)
+(* ---------------------------------------------------------------- *)
 (* Coloring Australia using three colors.
  * (From "Basic Modelling in MiniZinc".)
  *
@@ -990,7 +990,7 @@ where q = RED
 >    {nsw=RED,nt=GREEN,q=RED,sa=BLUE,t=GREEN,v=GREEN,wa=RED}]
 >   : {nsw:Color, nt:Color, q:Color, sa:Color, t:Color, v:Color, wa:Color} bag
 
-(* ------------------------------------------------------ *)
+(* ---------------------------------------------------------------- *)
 (* Arithmetic optimization.
  * (From "Basic Modelling in MiniZinc".)
  *
