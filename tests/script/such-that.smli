@@ -336,6 +336,31 @@ fun isLarge n = n elem [10, 20];
 from n where isSmall n orelse isLarge n;
 > val it = [1,2,10,20] : int bag
 
+(* testProvenanceThroughFunction - Provenance propagation through
+ * function inversion. When 'f x' appears in WHERE, maybeFunction
+ * inlines the body and creates a Collection generator for x. The
+ * provenance system adds 'f x' to the generator's provenance,
+ * so expandFrom2 can remove it from WHERE. At plan level 999,
+ * there is no WHERE clause. *)
+let
+  val xs = [1, 2, 3]
+  fun f x = x elem xs
+in
+  from x where f x
+end;
+> val it = [1,2,3] : int bag
+
+(* testProvenanceThroughFunctionWithFilter - Same as above but
+ * with an additional filter. Provenance removes 'f x'
+ * but keeps 'x > 1'. *)
+let
+  val xs = [1, 2, 3]
+  fun f x = x elem xs
+in
+  from x where f x andalso x > 1
+end;
+> val it = [2,3] : int bag
+
 (* Single-arm case ------------------------------------------------ *)
 from x where case x of y => y elem [1,2];
 > val it = [1,2] : int bag
