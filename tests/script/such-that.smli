@@ -281,6 +281,44 @@ from b where not b;
 from b where b;
 > val it = [true] : bool bag
 
+(*) Simple constructor pattern test - single arm with range constraint
+from e where (case e of INL n => n >= 5 andalso n <= 8 | _ => false);
+> val it = [INL 5,INL 6,INL 7,INL 8] : (int,'a) either bag
+
+(*) Constructor pattern with boolean payload
+from e where (case e of INR b => b | _ => false);
+> val it = [INR true] : ('a,bool) either bag
+
+(*) Constructor pattern with boolean payload - "not b" inverts to "b = false"
+from e where (case e of INR b => not b | _ => false);
+> val it = [INR false] : ('a,bool) either bag
+
+(*) Constructor pattern with (boolean * int) payload
+from e where (case e of INR (b, i) => b andalso i > 5 andalso i < 15 andalso i mod 3 = 1 | _ => false);
+> val it = [INR (true,7),INR (true,10),INR (true,13)]
+>   : ('a,bool * int) either bag
+
+from e where (case e of INR (b, i) => i > 0 andalso i < 5 andalso b = (i mod 2 = 0) | _ => false);
+> val it = [INR (false,1),INR (true,2),INR (false,3),INR (true,4)]
+>   : ('a,bool * int) either bag
+
+(*) Multiple constructor arms combined with orelse (via maybeUnion)
+from e where (case e of
+    INL n => n >= 5 andalso n <= 8
+  | INR b => not b);
+> val it = [INL 5,INL 6,INL 7,INL 8,INR false] : (int,bool) either bag
+
+(*) Case with constructor patterns - INL/INR (issue #341)
+(* Multiple arms with literal patterns, variable patterns, and exclusions *)
+from e where (case e of
+    INL 0 => true
+  | INL 6 => false
+  | INR b => not b
+  | INL 7 => true
+  | INL 100 => true
+  | INL n => n >= 5 andalso n <= 8);
+> val it = [INL 0,INR false,INL 7,INL 100,INL 5,INL 8] : (int,bool) either bag
+
 (* Nested `from` with outer-scope reference ----------------------- *)
 from source in [1, 2, 3, 4, 5]
 yield {source, doubled = (from x where x = source * 2)};
@@ -827,11 +865,9 @@ fun caskSells b =
   exists price where sells ("cask", b, price);
 > val caskSells = fn : string -> bool
 
-(* TODO
-from p where exists (
-  from b where likes (p, b) andalso not (caskSells b));
-> val it = ["foo"] : string list
-*)
+from p
+  where (exists b where likes (p, b) andalso not (caskSells b));
+> val it = ["shaggy","fred"] : string bag
 
 (* Cousin
  *
