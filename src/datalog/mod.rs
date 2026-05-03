@@ -24,11 +24,13 @@
 pub mod analyzer;
 pub mod ast;
 pub mod error;
+pub mod executor;
 pub mod parser;
 pub mod translator;
 
 pub use analyzer::analyze;
 pub use error::DatalogError;
+pub use executor::execute;
 pub use parser::parse;
 pub use translator::translate;
 

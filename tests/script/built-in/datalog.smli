@@ -16,13 +16,16 @@
  * language governing permissions and limitations under the
  * License.
  *
- * Phases 2-3 of the Datalog port (hydromatic/morel#323): exercises
- * `Datalog.validate` and `Datalog.translate`. Phase 4 will add
- * `execute` cases here. The cases mirror those in morel-java's
- * datalog.smli, except the parse-error message reflects lalrpop's
- * vocabulary (vs JavaCC) and successful validates return the
- * provisional `"OK"` placeholder until phase 4 hooks up the full
- * compile pipeline.
+ * Phases 2-4 of the Datalog port (hydromatic/morel#323): exercises
+ * `Datalog.validate`, `Datalog.translate`, and `Datalog.execute`.
+ * The cases mirror those in morel-java's datalog.smli, except:
+ * - parse-error messages reflect lalrpop's vocabulary (vs JavaCC);
+ * - successful validates return the provisional `"OK"` placeholder;
+ * - recursive `Datalog.execute` cases are intentionally absent here
+ *   pending a fix to a pre-existing morel-rust bug where
+ *   `let val r = Relational.iterate ...` inside a let panics with
+ *   "Expected list" (the same `Relational.iterate` call at top
+ *   level is fine — it is a let-scope issue, not a Datalog issue).
  *)
 Sys.set ("lineWidth", 78);
 > val it = () : unit
@@ -32,8 +35,9 @@ Sys.set ("stringDepth", ~1);
 > val it = () : unit
 
 Datalog;
-> val it = {translate=fn,validate=fn}
->   : {translate:string -> string option, validate:string -> string}
+> val it = {execute=fn,translate=fn,validate=fn}
+>   : {execute:string -> variant, translate:string -> string option,
+>      validate:string -> string}
 
 (*) Basic validation - valid program
 val program = ".decl edge(x:int, y:int)
@@ -49,6 +53,8 @@ Datalog.translate program;
 >   SOME
 >   "let\n  val edge = [(1, 2), (2, 3)]\nin\n  {edge = from (x, y) in edge}\nend"
 >   : string option
+Datalog.execute program;
+> val it = {edge=[{x=1,y=2},{x=2,y=3}]} : {edge:{x:int, y:int} list} variant
 
 (*) Basic validation - parse error
 Datalog.validate ".decl edge(x:int";
@@ -192,6 +198,28 @@ Datalog.translate ".decl edge(x:int";
 Datalog.translate ".decl edge(x:int, y:int)
 edge(1,2,3).";
 > val it = NONE : string option
+
+(*) Execute: facts-only with arity-1 (single column, no tuple).
+Datalog.execute ".decl color(c:string)
+color(\"red\"). color(\"green\"). color(\"blue\").
+.output color";
+> val it = {color=["red","green","blue"]} : {color:string list} variant
+
+(*) Execute: facts-only with no .output emits unit-typed variant.
+Datalog.execute ".decl edge(x:int, y:int)
+edge(1,2). edge(2,3).";
+> val it = () : unit variant
+
+(*) Execute: parse failure surfaces an ERROR variant.
+Datalog.execute ".decl edge(x:int";
+> val it = "Parse error: Unrecognized EOF found at 16\nExpected one of \")\" or \",\""
+>   : string variant
+
+(*) Execute: analysis failure surfaces an ERROR variant.
+Datalog.execute ".decl edge(x:int, y:int)
+edge(1,2,3).";
+> val it = "Compilation error: Atom edge/3 does not match declaration edge/2"
+>   : string variant
 
 (*) Method-style call also works.
 ".decl edge(x:int, y:int)

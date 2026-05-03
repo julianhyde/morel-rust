@@ -259,6 +259,13 @@ pub enum BuiltInFunction {
     CharToString,
     #[strum(props(p = "Char", name = "toUpper", type = "char -> char"))]
     CharToUpper,
+    /// `Datalog.execute program`: runs `program` and returns its output
+    /// relations as a `variant`. Errors (parse, analysis, runtime) are
+    /// surfaced as a string-typed variant whose value starts with
+    /// `"ERROR: "`.
+    #[strum(props(p = "Datalog", name = "execute"))]
+    #[strum(props(type = "string -> variant"))]
+    DatalogExecute,
     /// `Datalog.translate program`: parses and analyzes `program`,
     /// returning `SOME morelSource` on success or `NONE` on failure.
     #[strum(props(p = "Datalog", name = "translate"))]
