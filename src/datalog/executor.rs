@@ -203,11 +203,13 @@ fn csv_rows_to_facts(
     }
 
     // Detect a header row: column count matches arity and each entry
-    // is the name of a declaration parameter.
+    // is the name of a declaration parameter (optionally suffixed with
+    // `:type`, as morel-java's CSV files use, e.g. `deptno:int`).
     let header_present = rows[0].len() == arity
-        && rows[0]
-            .iter()
-            .all(|cell| decl.params.iter().any(|p| p.name == *cell));
+        && rows[0].iter().all(|cell| {
+            let bare = cell.split(':').next().unwrap_or(cell);
+            decl.params.iter().any(|p| p.name == bare)
+        });
     let data_rows = if header_present {
         &rows[1..]
     } else {
@@ -237,7 +239,9 @@ fn csv_rows_to_facts(
                     })?;
                     Term::IntConst(n)
                 }
-                DatalogType::String => Term::StringConst(cell.clone()),
+                DatalogType::String => {
+                    Term::StringConst(strip_csv_quotes(cell))
+                }
             });
         }
         facts.push(Fact {
@@ -248,6 +252,20 @@ fn csv_rows_to_facts(
         });
     }
     Ok(facts)
+}
+
+/// Strips matching surrounding `'…'` (morel-java CSV convention) or
+/// `"…"` quotes from a cell. Leaves unquoted cells unchanged.
+fn strip_csv_quotes(cell: &str) -> String {
+    let bytes = cell.as_bytes();
+    if bytes.len() >= 2
+        && ((bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'')
+            || (bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"'))
+    {
+        cell[1..cell.len() - 1].to_string()
+    } else {
+        cell.to_string()
+    }
 }
 
 /// Minimal CSV line splitter. Handles double-quoted fields with `""`

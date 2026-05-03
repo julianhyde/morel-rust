@@ -152,6 +152,11 @@ fn closure() {
 }
 
 #[test]
+fn datalog() {
+    run_script("tests/script/datalog.smli");
+}
+
+#[test]
 fn datatype() {
     run_script("tests/script/datatype.smli");
 }
