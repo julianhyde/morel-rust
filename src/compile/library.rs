@@ -259,6 +259,11 @@ pub enum BuiltInFunction {
     CharToString,
     #[strum(props(p = "Char", name = "toUpper", type = "char -> char"))]
     CharToUpper,
+    /// `Datalog.translate program`: parses and analyzes `program`,
+    /// returning `SOME morelSource` on success or `NONE` on failure.
+    #[strum(props(p = "Datalog", name = "translate"))]
+    #[strum(props(type = "string -> string option"))]
+    DatalogTranslate,
     /// `Datalog.validate program`: parses and analyzes `program`,
     /// returning `"OK"` (provisional, will become a type description in
     /// phase 4) or an error message starting with `"Parse error: "` or

@@ -22,6 +22,7 @@ use crate::compile::span::Span;
 use crate::compile::type_env::Binding;
 use crate::compile::type_parser;
 use crate::compile::types::{Label, PrimitiveType, Type};
+use crate::datalog::translate_string as datalog_translate;
 use crate::datalog::validate as datalog_validate;
 use crate::eval::bool::Bool;
 use crate::eval::bound::{
@@ -2690,6 +2691,7 @@ pub enum Eager1 {
     CharToLower,
     CharToString,
     CharToUpper,
+    DatalogTranslate,
     DatalogValidate,
     DateDay,
     DateFromString,
@@ -2864,6 +2866,10 @@ impl Eager1 {
             CharToLower => Val::Char(Char::to_lower(a0.expect_char())),
             CharToString => Val::String(Char::to_string(a0.expect_char())),
             CharToUpper => Val::Char(Char::to_upper(a0.expect_char())),
+            DatalogTranslate => match datalog_translate(&a0.expect_string()) {
+                Some(s) => Val::Some(Box::new(Val::String(s))),
+                None => Val::Unit,
+            },
             DatalogValidate => {
                 Val::String(datalog_validate(&a0.expect_string()))
             }
@@ -4353,6 +4359,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::CharToLower.implements(&mut b, CharToLower);
     Eager1::CharToString.implements(&mut b, CharToString);
     Eager1::CharToUpper.implements(&mut b, CharToUpper);
+    Eager1::DatalogTranslate.implements(&mut b, DatalogTranslate);
     Eager1::DatalogValidate.implements(&mut b, DatalogValidate);
     Eager2::DateCompare.implements(&mut b, DateCompare);
     EagerF1::DateDate.implements(&mut b, DateDate);

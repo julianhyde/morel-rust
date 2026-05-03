@@ -16,13 +16,13 @@
  * language governing permissions and limitations under the
  * License.
  *
- * Phase 2 of the Datalog port (hydromatic/morel#323): exercises
- * `Datalog.validate` only. Phases 3 and 4 will add `translate` and
- * `execute` cases here. The validate cases mirror those in
- * morel-java's datalog.smli, except the parse-error message reflects
- * lalrpop's vocabulary (vs JavaCC) and successful validates return
- * the provisional `"OK"` placeholder until phase 4 hooks up the
- * full compile pipeline.
+ * Phases 2-3 of the Datalog port (hydromatic/morel#323): exercises
+ * `Datalog.validate` and `Datalog.translate`. Phase 4 will add
+ * `execute` cases here. The cases mirror those in morel-java's
+ * datalog.smli, except the parse-error message reflects lalrpop's
+ * vocabulary (vs JavaCC) and successful validates return the
+ * provisional `"OK"` placeholder until phase 4 hooks up the full
+ * compile pipeline.
  *)
 Sys.set ("lineWidth", 78);
 > val it = () : unit
@@ -32,15 +32,23 @@ Sys.set ("stringDepth", ~1);
 > val it = () : unit
 
 Datalog;
-> val it = {validate=fn} : {validate:string -> string}
+> val it = {translate=fn,validate=fn}
+>   : {translate:string -> string option, validate:string -> string}
 
 (*) Basic validation - valid program
 val program = ".decl edge(x:int, y:int)
 edge(1,2).
-edge(2,3).";
-> val program = ".decl edge(x:int, y:int)\nedge(1,2).\nedge(2,3)." : string
+edge(2,3).
+.output edge";
+> val program = ".decl edge(x:int, y:int)\nedge(1,2).\nedge(2,3).\n.output edge"
+>   : string
 Datalog.validate program;
 > val it = "OK" : string
+Datalog.translate program;
+> val it =
+>   SOME
+>   "let\n  val edge = [(1, 2), (2, 3)]\nin\n  {edge = from (x, y) in edge}\nend"
+>   : string option
 
 (*) Basic validation - parse error
 Datalog.validate ".decl edge(x:int";
@@ -142,6 +150,48 @@ fib(idx, x + y) :- fib(idx - 1, x), fib(idx - 2, y), idx <= 10.
 > val it =
 >   "Compilation error: Rule is unsafe. Variable 'idx' in head does not appear in positive body atom"
 >   : string
+
+(*) Translate: transitive closure (recursive rule).
+Datalog.translate ".decl edge(x:int, y:int)
+.decl path(x:int, y:int)
+edge(1,2). edge(2,3).
+path(X,Y) :- edge(X,Y).
+path(X,Z) :- path(X,Y), edge(Y,Z).
+.output path";
+> val it =
+>   SOME
+>   "let\n  val edge = [(1, 2), (2, 3)]\n  val path =\n    Relational.iterate edge\n      (fn (allPath, newPath) =>\n        from (x, y) in newPath, (v0, z) in edge where y = v0 yield (x, z))\nin\n  {path = from (x, y) in path}\nend"
+>   : string option
+
+(*) Translate: arithmetic in head with grounded index (factorial-style).
+Datalog.translate ".decl fact(n:int, value:int)
+fact(0,1).
+fact(n + 1, value * (n + 1)) :- fact(n, value), n < 10.
+.output fact";
+> val it =
+>   SOME
+>   "let\n  val fact =\n    Relational.iterate [(0, 1)]\n      (fn (allFact, newFact) =>\n        from (n, value) in newFact where n < 10 yield (n + 1, value * (n + 1)))\nin\n  {fact = from (n, value) in fact}\nend"
+>   : string option
+
+(*) Translate: shifted-index Fibonacci (uses both newFib and allFib).
+Datalog.translate ".decl fib(idx:int, value:int)
+fib(1,1).
+fib(2,1).
+fib(idx + 1, x + y) :- fib(idx, x), fib(idx - 1, y), idx <= 9.
+.output fib";
+> val it =
+>   SOME
+>   "let\n  val fib =\n    Relational.iterate [(1, 1), (2, 1)]\n      (fn (allFib, newFib) =>\n        from (idx, x) in newFib, (v0, y) in allFib where v0 = idx - 1 andalso idx <= 9 yield (idx + 1, x + y))\nin\n  {fib = from (idx, value) in fib}\nend"
+>   : string option
+
+(*) Translate: parse failure returns NONE.
+Datalog.translate ".decl edge(x:int";
+> val it = NONE : string option
+
+(*) Translate: analysis failure returns NONE.
+Datalog.translate ".decl edge(x:int, y:int)
+edge(1,2,3).";
+> val it = NONE : string option
 
 (*) Method-style call also works.
 ".decl edge(x:int, y:int)

@@ -25,10 +25,21 @@ pub mod analyzer;
 pub mod ast;
 pub mod error;
 pub mod parser;
+pub mod translator;
 
 pub use analyzer::analyze;
 pub use error::DatalogError;
 pub use parser::parse;
+pub use translator::translate;
+
+/// Translates a Datalog program to Morel source. Returns `Some(source)`
+/// on success, `None` if either parsing or analysis fails. Mirrors the
+/// `Datalog.translate : string -> string option` built-in.
+pub fn translate_string(source: &str) -> Option<String> {
+    let prog = parse(source).ok()?;
+    analyze(&prog).ok()?;
+    Some(translate(&prog))
+}
 
 /// Validates a Datalog program. Returns `"OK"` on success, or an error
 /// message starting with `"Parse error: "` or `"Compilation error: "`
