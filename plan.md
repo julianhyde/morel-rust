@@ -1,343 +1,124 @@
-# Predicate Inversion in morel-rust
+# Datalog (hydromatic/morel#323) port plan
 
-Port plan for the morel-java "such-that" / unbounded-variable feature.
+Port plan for morel-java commit `62581437ac9c8dc415b159fdc9d6abc7eb588e9a`,
+which adds a Datalog frontend that compiles to Morel source.
 
-## Goal
+## Strategy
 
-After all phases land, `from`-expressions that contain unbounded
-variables must compile and evaluate. Concrete acceptance: every
-test case added to morel-java's `.smli` files in commits
+Port the morel-java algorithm and structure as faithfully as possible: the
+AST, the analyzer (safety + stratification), the translator (Datalog →
+Morel source), and the orchestrator (parse → analyze → translate →
+re-parse Morel → compile → eval → wrap as `Val::Variant`).
 
-  * `eff94a5d` — Implement queries with unbounded variables (#217)
-  * `d0249a04` — Invert `case` expressions with multiple arms (#341)
-  * `27f98a5c` — Refactor predicate inversion logic
-  * `3ec81171` — Predicate inversion should filter by outer-scope variables (#347)
+Each phase is a single commit (or small commit cluster) that leaves
+`fullMake --no-clean` passing. Phases 1–3 are additive and isolated from
+the evaluator, so they can be committed independently with low risk.
+Phase 4 is the integration step.
 
-passes in morel-rust **without modifying the queries or expected
-output** (subject to the carve-out in [Out of scope](#out-of-scope)).
+## Parser technology
 
-After every commit on this branch, `fullMake --no-clean` must pass.
+Use **lalrpop**, not pest, for the Datalog grammar. The Datalog grammar
+is small (~12 productions, simple precedence), so it is a good test bed
+for lalrpop in this codebase. If the experiment goes well we will later
+migrate the main Morel parser from pest to lalrpop.
 
-## Out of scope (deferred)
+The morel-java parser is JavaCC (LL(k) recursive descent). Each JavaCC
+production translates directly into a lalrpop rule.
 
-- `62581437` (Datalog) and `5aa84eef` (graph examples) — done later.
-- `Sys.planEx` — a handful of tests in `optimize.smli` and
-  `such-that.smli` print the optimized core plan. morel-rust has only a
-  partial `Sys.plan` and no `planEx`. We defer those plan-introspection
-  tests; the semantic tests of the same files must still pass.
-- `Sys.set("output", "tabular")` mode in eff94a5d (cosmetic; tests can
-  be guarded with the existing `output=classic` default until tabular
-  output lands).
+## Scope of the morel-java commit
 
-If a test depends on either of these, we either copy it without the
-`Sys.planEx ...;` lines, or we hold the test out and track it in a
-follow-up issue. Critically, **no test query is rewritten**.
+~2,200 LOC in `net.hydromatic.morel.datalog`:
 
-## Algorithm overview
+| File | LOC | Purpose |
+| --- | --: | --- |
+| `DatalogParser.jj` | 378 | JavaCC grammar |
+| `DatalogAst.java` | 402 | AST classes |
+| `DatalogAnalyzer.java` | 333 | safety + stratification |
+| `DatalogTranslator.java` | 619 | Datalog → Morel source |
+| `DatalogEvaluator.java` | 307 | orchestrator |
+| `DatalogException.java` |  35 | error type |
 
-The morel-java pipeline is a two-phase visitor over a `Core.From`:
-
-```
-                     ┌────────────────────┐
-   AST ──resolver──> │  Core.From         │
-                     │  (unbounded vars   │ ──phase 1──> generator cache
-                     │   appear as Scan   │              (multimap pat→Generator)
-                     │   over an Extent   │
-                     │   marker, or as a  │ ──phase 2──> Core.From with
-                     │   pattern with no  │              synthesised Scans,
-                     │   source)          │              simplified Wheres
-                     └────────────────────┘
-```
-
-**Phase 1 — derive generators** (`Expander.expandFrom` →
-`Generators.maybeGenerator`)
-
-1. Walk the steps left-to-right. For each `Where`, decompose the
-   condition into a conjunction of conjuncts.
-2. For every free pattern in the conjuncts, run a *classify-then-
-   synthesise* loop:
-   - Classify each conjunct as `elem`, `point`, `range`,
-     `stringPrefix`, `case`, `function`, `exists`, etc.
-   - Synthesise the strongest (lowest-cardinality) generator and add
-     it to a per-pattern multimap (the **cache**).
-3. The cache is monotonic: refinements append; `bestGenerator(pat)`
-   returns the last entry.
-4. Each generator carries:
-   - `pat` — pattern bound by the resulting scan,
-   - `exp` — Core expression to scan,
-   - `cardinality` ∈ {SINGLE, FINITE, INFINITE},
-   - `freePats` — patterns the generator depends on (drives ordering),
-   - `provenance` — minimal set of original `Where` conjuncts that this
-     generator fully encodes,
-   - `sealed` — whether the provenance is trustworthy (leaf
-     generators are sealed; composite ones like `ExistsJoinGenerator`
-     are not).
-
-**Phase 2 — rewrite the from** (`Expander.expandFrom2`)
-
-1. Topologically order patterns by `freePats` dependency (`PatternState`
-   tracks `IN_PROGRESS` for cycle detection, `DONE` once a scan is
-   emitted).
-2. For each unbounded pattern `p`, emit a `Scan(p, generator.exp)`
-   step. If `p` was already bound in an outer scope (i.e. *not in*
-   `allScanPats`), treat it as already-bound and emit a join condition
-   `p' = p` rather than re-binding.
-3. For each original `Where` step, decompose its conjunction, drop
-   conjuncts that appear in any sealed generator's provenance, then
-   apply each generator's `simplify()` to the remainder.
-4. Rebuild the `From` with the new step sequence.
-
-**Outer-scope filtering** (3ec81171): `addGeneratorScan` treats `p` as
-already-bound when `patternState[p] == DONE` *or* `p` is absent from
-`allScanPats`. The latter is the bug fix for nested `from` expressions
-that read a variable from an enclosing scope.
-
-**Case inversion** (d0249a04): `maybeCase` decomposes a multi-arm case:
-- arms returning `true` with literal pattern `lit` contribute `subject = lit`,
-- arms returning a condition `c` with id pattern `n` contribute `c[subject/n]`,
-- arms returning `false` with literal pattern contribute exclusion
-  constraints `subject <> lit` AND-ed onto subsequent arms.
-The OR of these becomes the synthesised constraint, fed back into
-`maybeGenerator`.
-
-## morel-rust starting point
-
-What's already in place (from
-[the inventory](#appendix-a-rust-inventory)):
-
-- `compile/core.rs` — Core IR with `Expr::From(_, Vec<Step>)` and
-  `StepKind::{Scan, Where, Yield, Order, …}`.
-- `compile/from_builder.rs` — accumulates steps and runs a small set
-  of simplifications (e.g. removing `where true`). Has a TODO for
-  nested-from inlining.
-- `compile/resolver.rs::resolve_query()` — orchestrates AST→Core for
-  queries; populates a `FromBuilder`; calls `build_simplify()` at end.
-- `compile/var_collector.rs` — collects defined/referenced vars; not
-  designed for predicate analysis.
-- `syntax/ast.rs` — has `StepKind::ScanExtent(Box<Pat>)` for `from p`
-  syntax (no `in`); the type resolver currently **panics** on it
-  (verified: `target/release/main` panics at `type_resolver.rs:2338`
-  on `from i where i > 0 andalso i < 10;`).
-
-What's missing (must build): `Expander`, `Generator`, `Generators`,
-`Simplifier`, `Replacer`, dedicated `FreeFinder`, plus the
-`ScanExtent`-handling path in the resolver/type resolver.
+Plus:
+- `BuiltIn.java`: +27 LOC (`DATALOG_EXECUTE/TRANSLATE/VALIDATE`)
+- `Codes.java`:  +34 LOC (`Applicable` instances)
+- `script/datalog.smli`: 749-line test script
+- `data/map/adjacent-states.csv`: input file for `.input` directive
 
 ## Phases
 
-Each phase is one PR-sized commit; `fullMake --no-clean` must pass at
-the end of each.
+### Phase 1 — Skeleton: AST + lalrpop parser
 
-### Phase 0 — Scaffolding
+- New module `src/datalog/{mod.rs, ast.rs, parser.rs, error.rs}` plus a
+  lalrpop grammar at `src/datalog/datalog.lalrpop`.
+- AST mirrors `DatalogAst.java` 1:1 (`Program`, `Statement`,
+  `Declaration`, `Param`, `Input`, `Output`, `Fact`, `Rule`, `BodyAtom`,
+  `Comparison`, `Atom`, `Term`, `Variable`, `ArithmeticExpr`, `Constant`,
+  `CompOp`, `ArithOp`).
+- Parser entry point: `parse(input: &str) -> Result<Program, DatalogError>`.
+- Add `lalrpop` to `[build-dependencies]` and `lalrpop-util` to
+  `[dependencies]` in `Cargo.toml`. Wire `build.rs` to invoke lalrpop on
+  any `.lalrpop` file under `src/`.
+- Make the lint task aware of `.lalrpop` files (license header, line
+  length, etc.) the same way it treats `.rs` and `.pest`.
+- Unit tests round-trip a handful of programs (port the morel-java
+  parser tests directly).
+- Nothing wired into the language yet → `fullMake --no-clean` passes.
 
-**Files:** `src/compile/free_finder.rs` (new),
-`src/compile/replacer.rs` (new), additions to `compile/core.rs`,
-`compile/type_resolver.rs::deduce_scan_step_type`.
+### Phase 2 — Analyzer + `Datalog.validate`
 
-1. Add `FreeFinder`: walks a Core expression in an environment and
-   returns the set of free `NamedPat`s. Mirrors morel-java's
-   `FreeFinder` + the bits of `EnvShuttle` we need.
-2. Add `Replacer`: substitutes `NamedPat → Core::Expr`. Used by
-   case inversion and by the function-inlining generator.
-3. Wire `StepKind::ScanExtent(p)` end-to-end: type resolver allows it
-   (records type of `p` from context), resolver lowers it to a Core
-   step that the Expander will recognise. Recommended Core
-   representation: a `Scan(p, Expr::Extent(t))` where `Extent(t)` is a
-   new placeholder Core expression that fails to evaluate but carries
-   the type. (Equivalent to morel-java's `Extents.singleton(t)` —
-   denotes "all values of type `t`".)
-4. **Acceptance**: existing tests still pass; `fullMake --no-clean`
-   green. No semantic change yet — `from i where i > 0` still errors,
-   just more cleanly (e.g. "unbounded variable `i`" instead of an
-   `Option::unwrap()` panic).
+- Port `DatalogAnalyzer.java`:
+  - Safety: every variable in the head appears positively in the body.
+  - Stratification: no negation cycle in the relation dependency graph.
+- Add `BuiltInFunction::DatalogValidate` of type `string -> string`.
+  Returns either error text or schema/type info. Slot it into the strum
+  metadata-driven library tables alongside the other built-ins.
+- Add `tests/script/built-in/datalog.smli` exercising only `validate`
+  (a couple of valid programs + a few error programs).
+- `fullMake --no-clean` passes — only one new built-in.
 
-### Phase 1 — Leaf generators (elem, point, range)
+### Phase 3 — Translator + `Datalog.translate`
 
-**Files:** `src/compile/expander.rs` (new),
-`src/compile/generator.rs` (new), `src/compile/generators.rs` (new),
-hook into `resolver::resolve_query()`.
+- Port `DatalogTranslator.java`. This is the meatiest file: fixed-point
+  fold over rules, seed/step decomposition, record-literal generation
+  for tuples, projection of head variables.
+- Add `BuiltInFunction::DatalogTranslate` of type
+  `string -> string option`. Returns `SOME source` on success, `NONE` on
+  failure (parse or analysis error).
+- Extend `tests/script/built-in/datalog.smli` with `translate` cases
+  whose expected output is the golden Morel source string.
+- The translator does not yet re-parse its output, so there is no risk
+  to the compiler or evaluator. `fullMake --no-clean` passes.
 
-1. Define `Generator` struct (`pat`, `exp`, `cardinality`,
-   `free_pats`, `provenance`, `sealed`, `unique`).
-2. Implement `Generators::maybe_generator` with three leaf strategies:
-   - **PointGenerator**: `x = c` ⇒ `[c]`.
-   - **CollectionGenerator**: `x elem coll` ⇒ `coll`.
-   - **RangeGenerator**: `x ≥ a` ∧ `x ≤ b` (and `<`/`>` mixed) on
-     `int` ⇒ `List.tabulate(b-a+1, fn k => a + k)` etc.
-3. Implement `Expander::expand_from`:
-   - Phase 1: walk steps; for each `Where`, split into conjuncts;
-     accumulate per-pattern generators in a `Cache` (multimap).
-   - Phase 2: rebuild `From`; emit a `Scan(p, gen.exp)` for each
-     unbounded `p` (use `bestGenerator`); rewrite `Where` by
-     dropping conjuncts in any sealed generator's `provenance`.
-4. Plug in `resolver::resolve_query()`: after `FromBuilder` finishes
-   collecting steps and before `build_simplify()`, run the Expander
-   on the resulting `From`. Skip if there are no unbounded patterns.
-5. **Acceptance**: leaf-generator subset of `eff94a5d`'s
-   `such-that.smli` passes (≈30 tests covering `=`, `<`, `>`, `<=`,
-   `>=`, `andalso`, `orelse`, `mod`, `elem` for tuples and records,
-   `from x, y where (x, y) elem [...]`).
+### Phase 4 — Evaluator + `Datalog.execute`
 
-### Phase 2 — String prefix generator
+- Port `DatalogEvaluator.java` orchestration. Feed translator output
+  into the existing `MorelParser` → `Compiles::prepare` → `eval`. Wrap
+  the last binding as `Val::Variant` (the existing variant
+  infrastructure already handles `LIST`, `BAG`, `RECORD`, etc.).
+- Add `BuiltInFunction::DatalogExecute` of type `string -> variant`.
+- Extend the test script with `execute` cases.
+- `fullMake --no-clean` passes.
 
-**Files:** add to `compile/generators.rs`.
+### Phase 5 — `.input` directive + full `datalog.smli` + docs
 
-1. Implement **StringPrefixGenerator** for `String.isPrefix p s`:
-   inverts to `List.tabulate(String.size s + 1, fn i =>
-   String.substring(s, 0, i))`.
-2. Verify built-ins exist (they do: `String.isPrefix`,
-   `String.substring`, `String.size`, `List.tabulate`).
-3. **Acceptance**: ~6 prefix-related tests in `eff94a5d`'s
-   `such-that.smli` pass.
+- Implement `loadInputFiles`: CSV reader that produces synthetic `Fact`s
+  and injects them into the AST before analysis.
+- Add `tests/data/map/adjacent-states.csv` (or wherever the existing
+  `file.smli` test data lives — match that convention).
+- Drop in the full 749-line `datalog.smli` script and register it in
+  `tests/smile.rs`.
+- Port `docs/datalog.md` and any `CLAUDE.md` additions.
+- `fullMake --no-clean` passes.
 
-### Phase 3 — Function inlining + `exists`
+## Notes
 
-**Files:** add `maybe_function`, `maybe_exists` to `generators.rs`;
-`Replacer` already exists from Phase 0.
-
-1. **maybe_function**: when a conjunct is `f arg1 … argN` and `f`'s body
-   is available as Core, inline the body with parameters substituted,
-   then recurse `maybe_generator` on the inlined Core. Cycle guard:
-   refuse to inline a function already on the inlining stack
-   (recursion stays unsupported until later, which is fine — the
-   commits we're porting introduce recursive `reachable` only in
-   3ec81171, which is gated on this).
-2. **maybe_exists**: `exists … where …` ⇒ a join generator over a
-   nested `from`. Mark unsealed.
-3. **Acceptance**: function-defined predicate tests
-   (`fun isNum n = n elem nums`, etc.) and `exists`/`forall` tests
-   from `eff94a5d` pass.
-
-### Phase 4 — Case (single arm)
-
-**Files:** `generators.rs::maybe_case`.
-
-1. Handle case expressions whose arms are: literal-pattern → `true`,
-   id-pattern → condition. Single-arm case is the common pattern after
-   `fn` desugaring (`fn x => body` becomes `case _arg of x => body`).
-2. **Acceptance**: case-inversion tests from `eff94a5d` pass (the ones
-   that don't need multi-arm). About 4–5 tests.
-
-### Phase 5 — Case (multi-arm + constructors)
-
-**Files:** extend `generators.rs::maybe_case`; uses `Replacer`.
-
-1. Multi-arm decomposition: build the OR of arm constraints,
-   apply exclusion constraints from prior false-arms.
-2. Constructor patterns (`INL n`, `INR (b, i)`, user datatypes): each
-   arm contributes a subset constraint; the result is an OR over arms.
-3. **Acceptance**: all of `d0249a04`'s `such-that.smli` additions pass,
-   including the bar-patron `happy` query that was previously gated.
-
-### Phase 6 — Provenance refactor (27f98a5c)
-
-**Status: already satisfied by Phases 1–5.** morel-rust's `Generator`
-shipped with `provenance: Vec<Expr>` and `sealed: bool` from Phase
-1, the `Cache` has been monotonic from the start (`best` returns
-the most-recently-inserted entry), and `expand_steps` already
-strips conjuncts that appear in any sealed generator's provenance
-(see `expander::expand_steps`). The composite strategies
-(`maybe_exists`, `maybe_function`, `maybe_case`) likewise all
-push their original constraint into `inner_gen.provenance`
-before promoting, matching morel-java's "function-call as
-provenance" addition in 27f98a5c.
-
-The 27f98a5c plan-only assertions in morel-java's `such-that.smli`
-need `Sys.planEx`, which morel-rust doesn't yet expose; they
-remain deferred until plan introspection lands.
-
-### Phase 7 — Outer-scope filtering (3ec81171)
-
-**Status: works for non-recursive cases due to morel-rust's
-existing scoping; recursion is deferred.** The bug fixed in
-3ec81171 is a morel-java pattern-state bookkeeping issue that
-doesn't have a direct counterpart in morel-rust. The
-post-resolution `expand_decl` walker descends into nested
-`From`/`Exists`/`Forall` expressions naturally, so a generator
-derived inside an inner `from` is free to reference outer-scope
-variables — the runtime resolves them via the surrounding
-scan's frame slot. Confirmed by the new test in
-`tests/script/such-that.smli`:
-
-  from source in [1, 2, 3, 4, 5]
-  yield {source, doubled = (from x where x = source * 2)};
-  > val it = [{doubled=[2],source=1}, …, {doubled=[10],source=5}]
-        : {doubled:int bag, source:int} list
-
-What's *not* yet covered is the `reachable` example from blog.smli
-(24-line addition in 3ec81171), which requires recursive function
-inlining. `maybe_function` currently removes the just-applied
-function from its env to break trivial recursion, so a
-recursive predicate evaluates to "no generator" and the query
-errors out. Lifting this needs morel-java's `Relational.iterate`
-semi-naïve evaluation path; tracked as future work.
-
-### Phase 8 — Cleanup and full sweep
-
-1. Run the entire `tests/script/*.smli` suite; address any fallout.
-2. Remove temporary scaffolding flags / dead code.
-3. Update `tests/smile.rs` to register any newly-added test files.
-4. Re-port any test cases initially deferred for `Sys.planEx`
-   reasons, with the `planEx` lines stripped (tracked separately).
-
-## Risks and open questions
-
-- **`Sys.planEx`**: morel-rust currently has no plan-string surface.
-  Several morel-java tests (especially in 27f98a5c and parts of
-  eff94a5d) verify the *plan* not the *result*. We can either add a
-  minimal `Sys.planEx` (it would help future debugging) or hold those
-  tests until after Phase 8. Decision to be made when we land Phase 6.
-- **Tabular output mode** (`Sys.set("output","tabular")` at the top of
-  `eff94a5d`'s `such-that.smli`): pretty-printer feature, orthogonal
-  to predicate inversion. We can either: (a) write the test file with
-  tabular off (re-encoding the expected output to classic style) or
-  (b) port tabular output as a separate side commit. Simpler is (a) —
-  but per the goal we shouldn't modify expected output. So this likely
-  needs a small commit before Phase 1 to add tabular output. Track as
-  Phase 0.5 if tests need it.
-- **Recursion**: `maybe_function` (Phase 3) does not yet handle
-  recursive functions; the only test that needs recursion is the
-  `reachable` example in `3ec81171`, which we tackle in Phase 7. We may
-  need a small extension to `maybe_function` (semi-naïve evaluation,
-  or just the morel-java `Relational.iterate` path) — assess in Phase
-  3 and split into 7a if non-trivial.
-- **Where to insert the Expander pass**: current plan is "after
-  `FromBuilder` finishes, before `build_simplify`". Alternative is a
-  post-resolver core pass over the whole tree. Inserting inside
-  `resolve_query` is more local but only handles top-level `From`s.
-  morel-java uses `SuchThatShuttle` which walks the *entire* program
-  to find Froms inside let-bindings. We probably want the same — an
-  outer post-resolver shuttle. Decide in Phase 1.
-- **`var_collector` interaction**: predicate inversion may rename
-  patterns; `var_collector` runs later for frame allocation. Confirm
-  no fixed-point assumptions are broken.
-
-## Appendix A: rust inventory (one-line summary)
-
-| morel-java | morel-rust | state |
-| --- | --- | --- |
-| `SuchThatShuttle` | (none) | build new |
-| `Expander` | (none) | build new |
-| `Generator` (interface) | (none) | build new |
-| `Generators` (factory) | (none) | build new |
-| `Simplifier` | (none) | build new |
-| `Replacer` | (none) | build new |
-| `FreeFinder` | (none — `var_collector` is for frames) | build new |
-| `CoreBuilder` | `compile/core.rs` constructors | reuse, may extend |
-| `Core.From / FromStep / Scan` | `Expr::From` + `StepKind::{Scan,…}` | exists |
-| `EnvShuttle` / `EnvVisitor` | `inliner::Transformer` (loose) | reuse pattern |
-| `FromBuilder` | `compile/from_builder.rs` | exists; small extensions |
-| `Extent` / `Extents` | (none) | build minimal `Expr::Extent(t)` |
-| `ScanExtent` parsing | `syntax/ast.rs::StepKind::ScanExtent` | parses, no resolver wiring |
-
-## Appendix B: acceptance test inventory
-
-| Commit | Files touched | New lines | Coverage |
-| --- | --- | --- | --- |
-| `eff94a5d` | such-that.smli, blog.smli, scott.smli, optimize.smli, built-in.smli | ~990 | ranges, equality, elem on tuples/records, isPrefix, case (single arm), exists/forall, function predicates, group/order/take on unbounded sources |
-| `d0249a04` | such-that.smli | +52 | multi-arm case; INL/INR constructor inversion; combined arms |
-| `27f98a5c` | such-that.smli | +30 | plan-quality assertions (provenance elimination, no-distinct) |
-| `3ec81171` | blog.smli | +24 | recursive `reachable`, outer-scope filtering, scalar-yield fix |
-
-The detailed test-by-test inventory lives in the agent reports
-captured during planning; we'll re-derive it as each phase comes up.
+- `DatalogException` becomes a plain Rust `enum DatalogError` since we
+  do not need exception-based control flow.
+- Each built-in (validate / translate / execute) catches errors and
+  surfaces them through the function's return type — execute returns a
+  variant, translate returns `string option`, validate returns a
+  diagnostic string.
+- Phases 1–4 add code in isolation. Reverting any single phase leaves
+  the prior phase intact.
+- After phase 5, if the lalrpop experiment is successful, plan a
+  follow-up to migrate the main Morel parser from pest to lalrpop.
