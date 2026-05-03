@@ -1405,7 +1405,21 @@ impl<'a> Compiler<'a> {
                 if let Some(slot) = cx.frame_def.try_var_index(name) {
                     Code::new_get_local(&cx.frame_def, slot)
                 } else if let Some(val) = cx.env.get(name) {
-                    Code::new_constant(type_, val.clone())
+                    // For let-bound names whose value is a `Val::Code(c)`
+                    // wrapper (set by `compile_val_decl` so that `fun`
+                    // bodies can be inlined into Apply positions), emit
+                    // the underlying code directly instead of wrapping
+                    // it in a `Code::Constant`. The constant form
+                    // evaluates to the wrapper itself, which the apply
+                    // path unwraps but list/tuple/elem consumers do
+                    // not — so identifier references to a let-bound
+                    // list literal would surface as `Val::Code(Tuple)`
+                    // and panic when consumed as a list.
+                    if let Val::Code(c) = val {
+                        (**c).clone()
+                    } else {
+                        Code::new_constant(type_, val.clone())
+                    }
                 } else if let Some(rec) = name_to_rec(name) {
                     let (_, val) = code::LIBRARY
                         .structure_map

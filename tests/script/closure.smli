@@ -215,4 +215,25 @@ in
 end;
 > val it = 60 : int
 
+(*) Closure body references a let-bound non-fn capture, called from a
+(*) higher-order built-in. The compiler stashes let-bound names in the
+(*) env as `Val::Code(expr_code)` so that `fun` declarations can be
+(*) inlined at use sites. A previous bug propagated that wrapper through
+(*) `Expr::Identifier` lowering, leaving the body to receive
+(*) `Val::Code(Code::Tuple(...))` (the unevaluated literal) instead of
+(*) the evaluated value. Any consumer that called `expect_list`/`expect_tuple`
+(*) /`expect_record` then panicked. Cover one case for each shape.
+
+(*) Tuple capture.
+let val t = (10, 20) in List.map (fn _ => #1 t + #2 t) [0] end;
+> val it = [30] : int list
+
+(*) Record capture.
+let val r = {a = 1, b = 2} in List.map (fn _ => #a r + #b r) [0] end;
+> val it = [3] : int list
+
+(*) List capture.
+let val xs = [1, 2, 3] in List.map (fn _ => xs @ xs) [0] end;
+> val it = [[1,2,3,1,2,3]] : int list list
+
 (*) End closure.smli
