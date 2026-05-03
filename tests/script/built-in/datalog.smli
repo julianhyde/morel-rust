@@ -226,4 +226,18 @@ edge(1,2,3).";
 edge(1,2).".validate ();
 > val it = "OK" : string
 
+(*) .input directive: load facts from a CSV (tests/data/datalog/edges.csv).
+Datalog.execute ".decl edge(x:int, y:int)
+.input edge \"tests/data/datalog/edges.csv\"
+.output edge";
+> val it = {edge=[{x=1,y=2},{x=2,y=3},{x=3,y=4}]} : {edge:{x:int, y:int} list}
+>    variant
+
+(*) .input directive: missing file surfaces a helpful error.
+Datalog.execute ".decl edge(x:int, y:int)
+.input edge \"tests/data/datalog/missing.csv\"
+.output edge";
+> val it = "Compilation error: Input file not found: tests/data/datalog/missing.csv (resolved to tests/data/datalog/missing.csv)"
+>   : string variant
+
 (*) End built-in/datalog.smli

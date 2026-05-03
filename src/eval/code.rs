@@ -2483,6 +2483,7 @@ pub enum EagerF1 {
     CharChr,
     CharPred,
     CharSucc,
+    DatalogExecute,
     DateDate,
     DateFromTimeLocal,
     IntAbs,
@@ -2552,6 +2553,15 @@ impl EagerF1 {
             CharChr => Char::chr(a0.expect_int(), span.unwrap()),
             CharPred => Char::pred(a0.expect_char(), span.unwrap()),
             CharSucc => Char::succ(a0.expect_char(), span.unwrap()),
+            DatalogExecute => {
+                let dir = r
+                    .session
+                    .config
+                    .directory
+                    .as_ref()
+                    .map(|d| d.as_path().to_path_buf());
+                Ok(datalog_execute(&a0.expect_string(), dir.as_deref()))
+            }
             DateDate => {
                 date::make_date(a0.expect_list(), span.unwrap(), r.session)
             }
@@ -2692,7 +2702,6 @@ pub enum Eager1 {
     CharToLower,
     CharToString,
     CharToUpper,
-    DatalogExecute,
     DatalogTranslate,
     DatalogValidate,
     DateDay,
@@ -2868,7 +2877,6 @@ impl Eager1 {
             CharToLower => Val::Char(Char::to_lower(a0.expect_char())),
             CharToString => Val::String(Char::to_string(a0.expect_char())),
             CharToUpper => Val::Char(Char::to_upper(a0.expect_char())),
-            DatalogExecute => datalog_execute(&a0.expect_string()),
             DatalogTranslate => match datalog_translate(&a0.expect_string()) {
                 Some(s) => Val::Some(Box::new(Val::String(s))),
                 None => Val::Unit,
@@ -4362,7 +4370,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::CharToLower.implements(&mut b, CharToLower);
     Eager1::CharToString.implements(&mut b, CharToString);
     Eager1::CharToUpper.implements(&mut b, CharToUpper);
-    Eager1::DatalogExecute.implements(&mut b, DatalogExecute);
+    EagerF1::DatalogExecute.implements(&mut b, DatalogExecute);
     Eager1::DatalogTranslate.implements(&mut b, DatalogTranslate);
     Eager1::DatalogValidate.implements(&mut b, DatalogValidate);
     Eager2::DateCompare.implements(&mut b, DateCompare);
