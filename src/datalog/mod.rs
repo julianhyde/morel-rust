@@ -21,9 +21,34 @@
 //! (safety + stratification), translator (Datalog → Morel source),
 //! and evaluator (parse → analyze → translate → compile → eval).
 
+pub mod analyzer;
 pub mod ast;
 pub mod error;
 pub mod parser;
 
+pub use analyzer::analyze;
 pub use error::DatalogError;
 pub use parser::parse;
+
+/// Validates a Datalog program. Returns `"OK"` on success, or an error
+/// message starting with `"Parse error: "` or `"Compilation error: "`
+/// on failure.
+///
+/// Phase 4 will replace the success path with a rendering of the
+/// compiled program's result type. Until then, callers can rely on the
+/// failure messages but the success placeholder is provisional.
+pub fn validate(source: &str) -> String {
+    match parse(source) {
+        Err(DatalogError::Parse(msg)) => format!("Parse error: {}", msg),
+        Err(other) => format!("Compilation error: {}", other),
+        Ok(prog) => match analyze(&prog) {
+            Ok(()) => "OK".to_string(),
+            Err(e) => match e {
+                DatalogError::Analysis(msg) => {
+                    format!("Compilation error: {}", msg)
+                }
+                _ => format!("Compilation error: {}", e),
+            },
+        },
+    }
+}

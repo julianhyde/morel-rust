@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
 
 /// A complete Datalog program.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Program {
     pub statements: Vec<Statement>,
 }
@@ -68,7 +68,7 @@ impl Program {
 }
 
 /// Top-level statement: declaration, input, output, fact, or rule.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub enum Statement {
     Declaration(Declaration),
     Input(Input),
@@ -78,7 +78,7 @@ pub enum Statement {
 }
 
 /// A relation declaration: `.decl relation(var:type, ...)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Declaration {
     pub name: String,
     pub params: Vec<Param>,
@@ -104,7 +104,7 @@ impl Display for Declaration {
 }
 
 /// A parameter in a relation declaration: `name:type`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Param {
     pub name: String,
     pub ty: DatalogType,
@@ -118,7 +118,7 @@ impl Display for Param {
 
 /// Datalog primitive types. Souffle's `symbol` and `number` are renamed
 /// to `string` and `int` to match Morel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum DatalogType {
     Int,
     String,
@@ -134,7 +134,7 @@ impl Display for DatalogType {
 }
 
 /// `.input relation [file_name]`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Input {
     pub relation: String,
     pub file_name: Option<String>,
@@ -150,19 +150,19 @@ impl Input {
 }
 
 /// `.output relation`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Output {
     pub relation: String,
 }
 
 /// A fact: `relation(value, ...).`
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Fact {
     pub atom: Atom,
 }
 
 /// A rule: `head :- body.`
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Rule {
     pub head: Atom,
     pub body: Vec<BodyAtom>,
@@ -170,14 +170,14 @@ pub struct Rule {
 
 /// An element of a rule body: either a positive/negated atom, or a
 /// comparison.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub enum BodyAtom {
     Atom { atom: Atom, negated: bool },
     Comparison { left: Term, op: CompOp, right: Term },
 }
 
 /// Comparison operators usable in a rule body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum CompOp {
     Eq,
     Ne,
@@ -207,7 +207,7 @@ impl Display for CompOp {
 }
 
 /// An atom: `relation(term, ...)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct Atom {
     pub name: String,
     pub terms: Vec<Term>,
@@ -220,7 +220,7 @@ impl Atom {
 }
 
 /// A term: a variable, an arithmetic expression, or a constant.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub enum Term {
     Variable(String),
     Arith {
@@ -233,7 +233,7 @@ pub enum Term {
 }
 
 /// Arithmetic operators usable in terms.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum ArithOp {
     Plus,
     Minus,

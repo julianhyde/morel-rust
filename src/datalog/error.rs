@@ -18,11 +18,12 @@
 //! Error type for the Datalog frontend. Counterpart to morel-java's
 //! `DatalogException`.
 
+use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 /// Anything that can go wrong when parsing, analyzing, translating, or
 /// evaluating a Datalog program.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub enum DatalogError {
     Parse(String),
     Analysis(String),
@@ -51,4 +52,4 @@ impl Display for DatalogError {
     }
 }
 
-impl std::error::Error for DatalogError {}
+impl Error for DatalogError {}

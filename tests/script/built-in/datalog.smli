@@ -1,0 +1,74 @@
+(*
+ * Licensed to Julian Hyde under one or more contributor license
+ * agreements.  See the NOTICE file distributed with this work
+ * for additional information regarding copyright ownership.
+ * Julian Hyde licenses this file to you under the Apache
+ * License, Version 2.0 (the "License"); you may not use this
+ * file except in compliance with the License.  You may obtain a
+ * copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+ * either express or implied.  See the License for the specific
+ * language governing permissions and limitations under the
+ * License.
+ *
+ * Phase 2 of the Datalog port (hydromatic/morel#323): exercises
+ * `Datalog.validate` only. Phases 3 and 4 will add `translate` and
+ * `execute` cases here.
+ *)
+Sys.set ("lineWidth", 78);
+> val it = () : unit
+Sys.set ("printLength", 999);
+> val it = () : unit
+Sys.set ("stringDepth", ~1);
+> val it = () : unit
+
+Datalog;
+> val it = {validate=fn} : {validate:string -> string}
+
+(*) Valid program: returns "OK" (provisional; phase 4 will return a
+(*) type description).
+Datalog.validate ".decl edge(x:int, y:int)\nedge(1,2).";
+> val it = "OK" : string
+
+(*) Schema validation - arity mismatch in fact.
+Datalog.validate ".decl edge(x:int, y:int)\nedge(1,2,3).";
+> val it = "Compilation error: Atom edge/3 does not match declaration edge/2"
+>   : string
+
+(*) Schema validation - undeclared relation in fact.
+Datalog.validate ".decl edge(x:int, y:int)\npath(1,2).";
+> val it = "Compilation error: Relation 'path' used in fact but not declared"
+>   : string
+
+(*) Schema validation - type mismatch in fact.
+Datalog.validate ".decl edge(x:int, y:int)\nedge(\"a\", 2).";
+> val it =
+>   "Compilation error: Type mismatch in fact edge(...): expected int, got string for parameter x"
+>   : string
+
+(*) Safety - unsafe rule (variable in head not in body).
+Datalog.validate ".decl edge(x:int, y:int)\n.decl path(x:int, y:int)\npath(X,Y) :- edge(X,Z).";
+> val it =
+>   "Compilation error: Rule is unsafe. Variable 'Y' in head does not appear in positive body atom"
+>   : string
+
+(*) Stratification - negation cycle.
+Datalog.validate ".decl p(x:int)\n.decl q(x:int)\np(X) :- q(X).\nq(X) :- !p(X), p(X).";
+> val it =
+>   "Compilation error: Program is not stratified. Negation cycle detected involving relation: p"
+>   : string
+
+(*) Positive self-recursion is OK (transitive closure).
+Datalog.validate ".decl edge(x:int, y:int)\n.decl path(x:int, y:int)\npath(X,Y) :- edge(X,Y).\npath(X,Z) :- path(X,Y), edge(Y,Z).";
+> val it = "OK" : string
+
+(*) Method-style call also works.
+".decl edge(x:int, y:int)\nedge(1,2).".validate ();
+> val it = "OK" : string
+
+(*) End built-in/datalog.smli
