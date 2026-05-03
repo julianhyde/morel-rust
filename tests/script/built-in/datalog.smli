@@ -18,7 +18,11 @@
  *
  * Phase 2 of the Datalog port (hydromatic/morel#323): exercises
  * `Datalog.validate` only. Phases 3 and 4 will add `translate` and
- * `execute` cases here.
+ * `execute` cases here. The validate cases mirror those in
+ * morel-java's datalog.smli, except the parse-error message reflects
+ * lalrpop's vocabulary (vs JavaCC) and successful validates return
+ * the provisional `"OK"` placeholder until phase 4 hooks up the
+ * full compile pipeline.
  *)
 Sys.set ("lineWidth", 78);
 > val it = () : unit
@@ -30,45 +34,118 @@ Sys.set ("stringDepth", ~1);
 Datalog;
 > val it = {validate=fn} : {validate:string -> string}
 
-(*) Valid program: returns "OK" (provisional; phase 4 will return a
-(*) type description).
-Datalog.validate ".decl edge(x:int, y:int)\nedge(1,2).";
+(*) Basic validation - valid program
+val program = ".decl edge(x:int, y:int)
+edge(1,2).
+edge(2,3).";
+> val program = ".decl edge(x:int, y:int)\nedge(1,2).\nedge(2,3)." : string
+Datalog.validate program;
 > val it = "OK" : string
 
-(*) Schema validation - arity mismatch in fact.
-Datalog.validate ".decl edge(x:int, y:int)\nedge(1,2,3).";
+(*) Basic validation - parse error
+Datalog.validate ".decl edge(x:int";
+> val it =
+>   "Parse error: Unrecognized EOF found at 16\nExpected one of \")\" or \",\""
+>   : string
+
+(*) Schema validation - arity mismatch in fact
+Datalog.validate ".decl edge(x:int, y:int)
+edge(1,2,3).";
 > val it = "Compilation error: Atom edge/3 does not match declaration edge/2"
 >   : string
 
-(*) Schema validation - undeclared relation in fact.
-Datalog.validate ".decl edge(x:int, y:int)\npath(1,2).";
+(*) Schema validation - arity mismatch in rule head
+Datalog.validate ".decl edge(x:int, y:int)
+.decl path(x:int, y:int)
+path(X,Y,Z) :- edge(X,Y).";
+> val it = "Compilation error: Atom path/3 does not match declaration path/2"
+>   : string
+
+(*) Schema validation - arity mismatch in rule body
+Datalog.validate ".decl edge(x:int, y:int)
+.decl path(x:int, y:int)
+path(X,Y) :- edge(X).";
+> val it = "Compilation error: Atom edge/1 does not match declaration edge/2"
+>   : string
+
+(*) Schema validation - undeclared relation
+Datalog.validate ".decl edge(x:int, y:int)
+path(1,2).";
 > val it = "Compilation error: Relation 'path' used in fact but not declared"
 >   : string
 
-(*) Schema validation - type mismatch in fact.
-Datalog.validate ".decl edge(x:int, y:int)\nedge(\"a\", 2).";
-> val it =
->   "Compilation error: Type mismatch in fact edge(...): expected int, got string for parameter x"
->   : string
-
-(*) Safety - unsafe rule (variable in head not in body).
-Datalog.validate ".decl edge(x:int, y:int)\n.decl path(x:int, y:int)\npath(X,Y) :- edge(X,Z).";
+(*) Safety - unsafe rule (variable in head not in body)
+Datalog.validate ".decl edge(x:int, y:int)
+.decl path(x:int, y:int)
+path(X,Y) :- edge(X,Z).";
 > val it =
 >   "Compilation error: Rule is unsafe. Variable 'Y' in head does not appear in positive body atom"
 >   : string
 
-(*) Stratification - negation cycle.
-Datalog.validate ".decl p(x:int)\n.decl q(x:int)\np(X) :- q(X).\nq(X) :- !p(X), p(X).";
+(*) Safety - unsafe negation (variable only in negated atom)
+Datalog.validate ".decl edge(x:int, y:int)
+.decl path(x:int, y:int)
+path(X,Y) :- edge(X,Z), !edge(Y,W).";
+> val it =
+>   "Compilation error: Rule is unsafe. Variable 'Y' in head does not appear in positive body atom"
+>   : string
+
+(*) Stratification - negation cycle
+Datalog.validate ".decl edge(x:int, y:int)
+.decl p(x:int)
+.decl q(x:int)
+edge(1,2).
+p(X) :- edge(X,Y), !q(X).
+q(X) :- edge(X,Y), !p(X).";
 > val it =
 >   "Compilation error: Program is not stratified. Negation cycle detected involving relation: p"
 >   : string
 
-(*) Positive self-recursion is OK (transitive closure).
-Datalog.validate ".decl edge(x:int, y:int)\n.decl path(x:int, y:int)\npath(X,Y) :- edge(X,Y).\npath(X,Z) :- path(X,Y), edge(Y,Z).";
+(*) Type mismatch - number for string
+Datalog.validate ".decl person(name:string)
+person(42).";
+> val it =
+>   "Compilation error: Type mismatch in fact person(...): expected string, got int for parameter name"
+>   : string
+
+(*) Type mismatch - string for number
+Datalog.validate ".decl num(n:int)
+num(\"hello\").";
+> val it =
+>   "Compilation error: Type mismatch in fact num(...): expected int, got string for parameter n"
+>   : string
+
+(*) Variables in facts are not allowed
+Datalog.validate ".decl num(n:int)
+num(Foo).";
+> val it = "Compilation error: Argument in fact is not constant: Foo" : string
+
+(*) Empty relation. (Phase 4 will return "{empty:'a list}".)
+Datalog.validate ".decl empty(x:int)
+.output empty";
 > val it = "OK" : string
 
+(*) Positive self-recursion is OK (transitive closure).
+Datalog.validate ".decl edge(x:int, y:int)
+.decl path(x:int, y:int)
+path(X,Y) :- edge(X,Y).
+path(X,Z) :- path(X,Y), edge(Y,Z).";
+> val it = "OK" : string
+
+(*) Arithmetic in head: variables inside arithmetic do not ground.
+(*) Same as morel-java's fib test.
+Datalog.validate ".decl fib(idx:int, value:int)
+fib(1,1).
+fib(2,1).
+fib(idx, x + y) :- fib(idx - 1, x), fib(idx - 2, y), idx <= 10.
+.output fib";
+> val it =
+>   "Compilation error: Rule is unsafe. Variable 'idx' in head does not appear in positive body atom"
+>   : string
+
 (*) Method-style call also works.
-".decl edge(x:int, y:int)\nedge(1,2).".validate ();
+".decl edge(x:int, y:int)
+edge(1,2).".validate ();
 > val it = "OK" : string
 
 (*) End built-in/datalog.smli
