@@ -15,15 +15,15 @@
 // language governing permissions and limitations under the
 // License.
 
-pub mod compile;
-pub mod datalog;
-pub mod eval;
-pub mod shell;
-pub mod syntax;
-pub mod unify;
+//! Datalog frontend (hydromatic/morel#323).
+//!
+//! Phase 1: AST + parser only. Later phases add the analyzer
+//! (safety + stratification), translator (Datalog → Morel source),
+//! and evaluator (parse → analyze → translate → compile → eval).
 
-#[cfg(target_arch = "wasm32")]
-pub mod wasm;
+pub mod ast;
+pub mod error;
+pub mod parser;
 
-#[cfg(target_arch = "wasm32")]
-pub use wasm::MorelShell;
+pub use error::DatalogError;
+pub use parser::parse;
