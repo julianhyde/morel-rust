@@ -49,32 +49,57 @@ use crate::shell::main::Shell;
 /// `base_dir` is the directory used to resolve `.input` file paths
 /// (typically the outer session's working directory).
 pub fn execute(source: &str, base_dir: Option<&Path>) -> Val {
+    match compile_and_run(source, base_dir) {
+        Ok((ty, val)) => variant_of(ty, val),
+        Err(msg) => error_variant(&msg),
+    }
+}
+
+/// Validates a Datalog program. Returns a Morel-style rendering of
+/// the result type on success (e.g. `"{edge:{x:int, y:int} list}"`),
+/// or an error message starting with `"Parse error: "` /
+/// `"Compilation error: "` on failure. Mirrors morel-java's
+/// `Datalog.validate : string -> string`.
+pub fn validate(source: &str, base_dir: Option<&Path>) -> String {
+    match compile_and_run(source, base_dir) {
+        Ok((ty, _)) => format!("{}", ty),
+        Err(msg) => msg,
+    }
+}
+
+/// Shared pipeline for `execute` and `validate`: parse → load input
+/// files → analyze → translate → run translated Morel in a fresh
+/// shell → return the last binding's `(type, value)`.
+fn compile_and_run(
+    source: &str,
+    base_dir: Option<&Path>,
+) -> Result<(Type, Val), String> {
     let mut ast = match parse(source) {
         Ok(a) => a,
         Err(DatalogError::Parse(msg)) => {
-            return error_variant(&format!("Parse error: {}", msg));
+            return Err(format!("Parse error: {}", msg));
         }
-        Err(e) => return error_variant(&format!("Compilation error: {}", e)),
+        Err(e) => return Err(format!("Compilation error: {}", e)),
     };
     if let Err(e) = load_input_files(&mut ast, base_dir) {
         let msg = match e {
             DatalogError::Analysis(m) => m,
             other => format!("{}", other),
         };
-        return error_variant(&format!("Compilation error: {}", msg));
+        return Err(format!("Compilation error: {}", msg));
     }
     if let Err(e) = analyze(&ast) {
         let msg = match e {
             DatalogError::Analysis(m) => m,
             other => format!("{}", other),
         };
-        return error_variant(&format!("Compilation error: {}", msg));
+        return Err(format!("Compilation error: {}", msg));
     }
     let morel_source = translate(&ast);
 
     let mut shell = Shell::new(&[]);
     if let Err(e) = shell.process_statement(&morel_source, None) {
-        return error_variant(&format!(
+        return Err(format!(
             "Error executing Morel translation: {:?}\n\
              Generated Morel code:\n{}",
             e, morel_source
@@ -91,8 +116,7 @@ pub fn execute(source: &str, base_dir: Option<&Path>) -> Val {
         .type_bindings
         .get("it")
         .map_or(Type::Primitive(PrimitiveType::Unit), |(t, _)| t.clone());
-
-    variant_of(result_type, value)
+    Ok((result_type, value))
 }
 
 fn error_variant(msg: &str) -> Val {

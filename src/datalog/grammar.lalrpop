@@ -91,7 +91,8 @@ Output: Output = {
     ".output" <relation:Ident> => Output { relation },
 };
 
-// Fact: head atom followed by `.`. Rule: head atom, `:-`, body, `.`.
+// Fact: head atom followed by `.`.
+// Rule: head atom, `:-`, body, `.`.
 FactOrRule: Statement = {
     <head:Atom> "." => Statement::Fact(Fact { atom: head }),
     <head:Atom> ":-" <body:RuleBody> "." => {

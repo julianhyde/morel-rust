@@ -2484,6 +2484,7 @@ pub enum EagerF1 {
     CharPred,
     CharSucc,
     DatalogExecute,
+    DatalogValidate,
     DateDate,
     DateFromTimeLocal,
     IntAbs,
@@ -2561,6 +2562,18 @@ impl EagerF1 {
                     .as_ref()
                     .map(|d| d.as_path().to_path_buf());
                 Ok(datalog_execute(&a0.expect_string(), dir.as_deref()))
+            }
+            DatalogValidate => {
+                let dir = r
+                    .session
+                    .config
+                    .directory
+                    .as_ref()
+                    .map(|d| d.as_path().to_path_buf());
+                Ok(Val::String(datalog_validate(
+                    &a0.expect_string(),
+                    dir.as_deref(),
+                )))
             }
             DateDate => {
                 date::make_date(a0.expect_list(), span.unwrap(), r.session)
@@ -2703,7 +2716,6 @@ pub enum Eager1 {
     CharToString,
     CharToUpper,
     DatalogTranslate,
-    DatalogValidate,
     DateDay,
     DateFromString,
     DateFromTimeUniv,
@@ -2881,9 +2893,6 @@ impl Eager1 {
                 Some(s) => Val::Some(Box::new(Val::String(s))),
                 None => Val::Unit,
             },
-            DatalogValidate => {
-                Val::String(datalog_validate(&a0.expect_string()))
-            }
             DateDay => {
                 let (n, o) = a0.expect_date();
                 date::day(n, o)
@@ -4372,7 +4381,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::CharToUpper.implements(&mut b, CharToUpper);
     EagerF1::DatalogExecute.implements(&mut b, DatalogExecute);
     Eager1::DatalogTranslate.implements(&mut b, DatalogTranslate);
-    Eager1::DatalogValidate.implements(&mut b, DatalogValidate);
+    EagerF1::DatalogValidate.implements(&mut b, DatalogValidate);
     Eager2::DateCompare.implements(&mut b, DateCompare);
     EagerF1::DateDate.implements(&mut b, DateDate);
     Eager1::DateDay.implements(&mut b, DateDay);

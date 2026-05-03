@@ -29,8 +29,7 @@ pub mod parser;
 pub mod translator;
 
 pub use analyzer::analyze;
-pub use error::DatalogError;
-pub use executor::execute;
+pub use executor::{execute, validate};
 pub use parser::parse;
 pub use translator::translate;
 
@@ -41,27 +40,4 @@ pub fn translate_string(source: &str) -> Option<String> {
     let prog = parse(source).ok()?;
     analyze(&prog).ok()?;
     Some(translate(&prog))
-}
-
-/// Validates a Datalog program. Returns `"OK"` on success, or an error
-/// message starting with `"Parse error: "` or `"Compilation error: "`
-/// on failure.
-///
-/// Phase 4 will replace the success path with a rendering of the
-/// compiled program's result type. Until then, callers can rely on the
-/// failure messages but the success placeholder is provisional.
-pub fn validate(source: &str) -> String {
-    match parse(source) {
-        Err(DatalogError::Parse(msg)) => format!("Parse error: {}", msg),
-        Err(other) => format!("Compilation error: {}", other),
-        Ok(prog) => match analyze(&prog) {
-            Ok(()) => "OK".to_string(),
-            Err(e) => match e {
-                DatalogError::Analysis(msg) => {
-                    format!("Compilation error: {}", msg)
-                }
-                _ => format!("Compilation error: {}", e),
-            },
-        },
-    }
 }

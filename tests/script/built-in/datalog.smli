@@ -18,9 +18,8 @@
  *
  * Phases 2-4 of the Datalog port (hydromatic/morel#323): exercises
  * `Datalog.validate`, `Datalog.translate`, and `Datalog.execute`.
- * The cases mirror those in morel-java's datalog.smli, except:
- * - parse-error messages reflect lalrpop's vocabulary (vs JavaCC);
- * - successful validates return the provisional `"OK"` placeholder.
+ * The cases mirror those in morel-java's datalog.smli, except parse
+ * error messages reflect lalrpop's vocabulary (vs JavaCC).
  *)
 Sys.set ("lineWidth", 78);
 > val it = () : unit
@@ -42,7 +41,7 @@ edge(2,3).
 > val program = ".decl edge(x:int, y:int)\nedge(1,2).\nedge(2,3).\n.output edge"
 >   : string
 Datalog.validate program;
-> val it = "OK" : string
+> val it = "{edge:{x:int, y:int} list}" : string
 Datalog.translate program;
 > val it =
 >   SOME
@@ -129,17 +128,19 @@ Datalog.validate ".decl num(n:int)
 num(Foo).";
 > val it = "Compilation error: Argument in fact is not constant: Foo" : string
 
-(*) Empty relation. (Phase 4 will return "{empty:'a list}".)
+(*) Empty relation: result type uses a polymorphic list element.
 Datalog.validate ".decl empty(x:int)
 .output empty";
-> val it = "OK" : string
+> val it = "{empty:'a list}" : string
 
 (*) Positive self-recursion is OK (transitive closure).
 Datalog.validate ".decl edge(x:int, y:int)
 .decl path(x:int, y:int)
+edge(1,2). edge(2,3).
 path(X,Y) :- edge(X,Y).
-path(X,Z) :- path(X,Y), edge(Y,Z).";
-> val it = "OK" : string
+path(X,Z) :- path(X,Y), edge(Y,Z).
+.output path";
+> val it = "{path:{x:int, y:int} list}" : string
 
 (*) Arithmetic in head: variables inside arithmetic do not ground.
 (*) Same as morel-java's fib test.
@@ -218,8 +219,9 @@ edge(1,2,3).";
 
 (*) Method-style call also works.
 ".decl edge(x:int, y:int)
-edge(1,2).".validate ();
-> val it = "OK" : string
+edge(1,2).
+.output edge".validate ();
+> val it = "{edge:{x:int, y:int} list}" : string
 
 (*) Execute: transitive closure (recursive rule).
 Datalog.execute ".decl edge(x:int, y:int)
