@@ -691,11 +691,8 @@ end;
 fun isPrefix (s1, s2) =
   String.isPrefix s1 s2;
 > val isPrefix = fn : string * string -> bool
-(*) This is invalid, but it could be valid
-(*
 from s where isPrefix (s, "abcd");
-> val it = ["", "a", "ab", "abc", "abcd"] : string list
-*)
+> val it = ["","a","ab","abc","abcd"] : string bag
 
 (*) An integer function with external extent.
 (*) Given j, k we could generate finite i.
@@ -1096,19 +1093,17 @@ fun par (x, p) =
     ("g", "k"),
     ("h", "i")];
 > val par = fn : string * string -> bool
-(* TODO
-fun sib (x, y) = exists (
-  from p where par (x, p) andalso par (y, p) andalso x <> y);
+fun sib (x, y) =
+  exists p where par (x, p) andalso par (y, p) andalso x <> y;
 > val sib = fn : string * string -> bool
-*)
 
-(* TODO
+(* TODO: recursive predicate. morel-java result:
 fun cousin (x, y) = sib (x, y)
-  orelse exists (
-    from xp, yp
+  orelse
+    exists xp, yp
       where par (x, xp)
       andalso par (y, yp)
-      andalso cousin (xp, yp));
+      andalso cousin (xp, yp);
 > val cousin = fn : string * string -> bool
 *)
 
@@ -1118,14 +1113,16 @@ fun cousin (x, y) = sib (x, y)
  Round 3: add (f, g), (f, h), (g, i), (i, k)
  Round 4: add (i, j), (k, k)
  *)
-(* TODO
-enumerate sib;
-> val it = [("b","c")] : (string * string) list
-*)
+from p where sib p;
+> val it = [("b","c"),("c","b"),("c","e"),("e","c"),("j","k"),("k","j")]
+>   : (string * string) bag
 
-(*
-enumerate cousin;
-> val it = [("b","c"), ("c","e"),("g","h"),("j","k"),("f","g"),("f","h"),("g","i"),("i","k"),("i","j"),("k","k")] : (string * string) list
+(* TODO: depends on recursive `cousin`. morel-java result:
+from p where cousin p;
+> val it =
+>   [("b","c"),("j","k"),("c","e"),("e","c"),("c","b"),("k","j"),("c","c"),
+>    ("k","k"),("b","e"),("e","e"),("b","b"),("e","b"),("j","j")]
+>   : (string * string) bag
 *)
 
 (* Nonmonotone relation.
@@ -1434,6 +1431,50 @@ fun isLarge n = n elem [10, 20];
 (*) different (input-list) order. The bag contents are the same.
 from n where isSmall n orelse isLarge n;
 > val it = [1,2,10,20] : int bag
+
+(*) Find symmetric elements of a relation
+let
+  val edges = [(1, 1), (2, 3), (4, 4)]
+  fun edge (x, y) = (x, y) elem edges
+  fun self_loop x =
+    (exists y where edge (x, y) andalso x = y)
+in
+  from x where self_loop x
+end;
+> val it = [1,4] : int bag
+
+(* TODO: recursive aggregate. morel-java result:
+(*) Odd cycle
+let
+  val edge_facts = [("a", "b"), ("b", "c"), ("c", "a")]
+  fun edge (x, y) = (x, y) elem edge_facts
+  fun odd_path (x, y) = edge (x, y) orelse
+    (exists v0, v1 where odd_path (x, v0) andalso edge (v0, v1) andalso edge (v1, y))
+  fun exists_odd_cycle () = (exists v0 where odd_path (v0, v0))
+in
+  {exists_odd_cycle = from  where exists_odd_cycle ()}
+end;
+> val it = {exists_odd_cycle=[()]} : {exists_odd_cycle:unit list}
+*)
+
+(* TODO: recursive aggregate. morel-java result:
+(*) Bounded transitive closure
+let
+  val edge_facts = [("a", "b"), ("b", "c"), ("c", "d"), ("d", "e"), ("e", "f"), ("a", "c")]
+  fun edge (x, y) = (x, y) elem edge_facts
+  fun path (x, y, n) =
+    (edge (x, y) andalso n = 1) orelse
+    (exists v0 where path (x, v0, n - 1) andalso edge (v0, y) andalso n + 1 < 3)
+in
+  {path = from x, y, n where path (x, y, n)}
+end;
+> val it =
+>   {
+>    path=
+>    [{n=1,x="a",y="b"},{n=1,x="b",y="c"},{n=1,x="c",y="d"},{n=1,x="d",y="e"},
+>     {n=1,x="e",y="f"},{n=1,x="a",y="c"}]}
+>   : {path:{n:int, x:string, y:string} bag}
+*)
 
 (*) Siblings
 let

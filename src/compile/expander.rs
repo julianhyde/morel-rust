@@ -489,6 +489,243 @@ fn inline_tuple_fn_calls_in_where(
         .collect()
 }
 
+/// Destructures `Scan(Identifier(Tuple(...), name), Extent(_),
+/// None)` into a tuple-pattern scan when `name` is referenced via
+/// a function call whose parameter is a tuple. Lets
+/// `inline_tuple_fn_calls_in_where` handle `f p` (where `p` has
+/// tuple type) by exposing the tuple components as bindings.
+///
+/// Adds an explicit `Yield` of the tuple to preserve the
+/// original tuple-typed result; without this, the implicit
+/// from-yield (a record over all bindings) would change the
+/// result type.
+fn destructure_tuple_extents_for_fn_calls(
+    steps: Vec<Step>,
+    fn_env: &FnEnv,
+) -> Vec<Step> {
+    use crate::compile::generators::split_conjuncts;
+    use crate::compile::replacer::substitute;
+    if fn_env.is_empty() {
+        return steps;
+    }
+    // Find tuple-typed scan-extent bindings.
+    let mut targets: Vec<(usize, String, Vec<Type>)> = Vec::new();
+    for (i, s) in steps.iter().enumerate() {
+        let StepKind::Scan(p, source, cond) = &s.kind else {
+            continue;
+        };
+        if cond.is_some() {
+            continue;
+        }
+        if !matches!(source.as_ref(), Expr::Extent(_)) {
+            continue;
+        }
+        let Pat::Identifier(t, name) = p.as_ref() else {
+            continue;
+        };
+        let Type::Tuple(elems) = t.as_ref() else {
+            continue;
+        };
+        targets.push((i, name.clone(), elems.clone()));
+    }
+    if targets.is_empty() {
+        return steps;
+    }
+    // Keep only targets that are referenced as `f var` for a
+    // tuple-param `f` somewhere in subsequent Where conjuncts.
+    let needs_destructure = |name: &str| -> bool {
+        for s in &steps {
+            let StepKind::Where(cond) = &s.kind else {
+                continue;
+            };
+            for c in split_conjuncts(cond) {
+                if where_has_tuple_fn_call_on(&c, name, fn_env) {
+                    return true;
+                }
+            }
+        }
+        false
+    };
+    let targets: Vec<_> = targets
+        .into_iter()
+        .filter(|(_, name, _)| needs_destructure(name))
+        .collect();
+    if targets.is_empty() {
+        return steps;
+    }
+    // For each target, build the substitution and per-component
+    // ScanExtent steps. Per-component extents (rather than a
+    // tuple-pat over the original Extent) let
+    // `decompose_tuple_elems` invert each elem-conjunct
+    // independently against the corresponding component extent.
+    let mut subst_map: HashMap<String, Expr> = HashMap::new();
+    let mut replacement_steps: HashMap<usize, Vec<Step>> = HashMap::new();
+    let mut tuple_yields: Vec<Expr> = Vec::new();
+    for (idx, name, elems) in &targets {
+        let mut new_steps: Vec<Step> = Vec::with_capacity(elems.len());
+        for (i, t) in elems.iter().enumerate() {
+            let fresh_name = format!("{}__{}", name, i + 1);
+            let pat = Pat::Identifier(Box::new(t.clone()), fresh_name.clone());
+            let source = Expr::Extent(Box::new(t.clone()));
+            new_steps.push(Step::new(
+                StepKind::Scan(Box::new(pat), Box::new(source), None),
+                steps[*idx].env.clone(),
+            ));
+        }
+        let tuple_t = Box::new(Type::Tuple(elems.clone()));
+        let tuple_expr_items: Vec<Expr> = elems
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                Expr::Identifier(
+                    Box::new(t.clone()),
+                    format!("{}__{}", name, i + 1),
+                )
+            })
+            .collect();
+        let tuple_expr = Expr::Tuple(tuple_t, tuple_expr_items);
+        subst_map.insert(name.clone(), tuple_expr.clone());
+        replacement_steps.insert(*idx, new_steps);
+        tuple_yields.push(tuple_expr);
+    }
+    // Walk steps applying replacements + substitutions.
+    let mut out: Vec<Step> = Vec::with_capacity(steps.len());
+    let had_yield = steps.iter().any(|s| matches!(s.kind, StepKind::Yield(_)));
+    let last_env = steps.last().unwrap().env.clone();
+    let outer_is_exists =
+        matches!(steps.last().map(|s| &s.kind), Some(StepKind::Exists));
+    for (i, step) in steps.into_iter().enumerate() {
+        if let Some(repl_steps) = replacement_steps.remove(&i) {
+            out.extend(repl_steps);
+            continue;
+        }
+        let new_kind = match step.kind {
+            StepKind::Where(cond) => {
+                StepKind::Where(Box::new(substitute(&cond, &subst_map)))
+            }
+            StepKind::Yield(e) => {
+                StepKind::Yield(Box::new(substitute(&e, &subst_map)))
+            }
+            StepKind::Order(e) => {
+                StepKind::Order(Box::new(substitute(&e, &subst_map)))
+            }
+            StepKind::Group(k, agg) => StepKind::Group(
+                Box::new(substitute(&k, &subst_map)),
+                agg.map(|a| Box::new(substitute(&a, &subst_map))),
+            ),
+            StepKind::Compute(e) => {
+                StepKind::Compute(Box::new(substitute(&e, &subst_map)))
+            }
+            other => other,
+        };
+        out.push(Step::new(new_kind, step.env));
+    }
+    // Add an explicit Yield + Distinct of the destructured tuple
+    // if the original had no yield and isn't an exists/forall —
+    // preserves the original tuple result type and dedups
+    // duplicates introduced by inner-exists lifting.
+    if !had_yield && !outer_is_exists && tuple_yields.len() == 1 {
+        let yield_expr = tuple_yields.into_iter().next().unwrap();
+        out.push(Step::new(
+            StepKind::Yield(Box::new(yield_expr)),
+            last_env.clone(),
+        ));
+        out.push(Step::new(StepKind::Distinct, last_env));
+    }
+    out
+}
+
+/// True if `expr` contains an application of a function in
+/// `fn_env` (with a tuple parameter pattern) directly to the
+/// identifier `name`.
+fn where_has_tuple_fn_call_on(expr: &Expr, name: &str, fn_env: &FnEnv) -> bool {
+    if let Expr::Apply(_, f, arg, _) = expr
+        && let Expr::Identifier(_, fn_name) = f.as_ref()
+        && let Some((Pat::Tuple(_, _), _)) = fn_env.get(fn_name)
+        && let Expr::Identifier(_, n) = arg.as_ref()
+        && n == name
+    {
+        return true;
+    }
+    // Walk children. Only care about Apply / nested boolean
+    // ops; doing a generic walk is fine but wasteful, so just
+    // check the cases that show up in Where conjuncts.
+    match expr {
+        Expr::Apply(_, f, a, _) => {
+            where_has_tuple_fn_call_on(f, name, fn_env)
+                || where_has_tuple_fn_call_on(a, name, fn_env)
+        }
+        Expr::Tuple(_, items) => items
+            .iter()
+            .any(|e| where_has_tuple_fn_call_on(e, name, fn_env)),
+        _ => false,
+    }
+}
+
+/// Detects an inner Scan that was specialized into a "point"
+/// generator referencing only outer-scope names (e.g.
+/// `Scan(y, [x])` where `x` is bound outside this exists). Such
+/// scans can't be promoted as-is — when lifted into the parent,
+/// they execute before the outer name is grounded.
+///
+/// Returns `Some((scan_extent, equality_where))` to convert the
+/// scan back to a `ScanExtent` + equality `Where`. The post-lift
+/// generator pipeline can then re-merge these with the outer
+/// scope's grounding scans. Returns `None` if the scan doesn't
+/// match this shape (it'll be promoted unchanged).
+fn unground_outer_point_scan(
+    pat: &Pat,
+    source: &Expr,
+    cond: Option<&Expr>,
+    inner_bound: &HashSet<String>,
+) -> Option<(StepKind, Expr)> {
+    if cond.is_some() {
+        return None;
+    }
+    let Pat::Identifier(pat_t, pat_name) = pat else {
+        return None;
+    };
+    let Expr::List(_, items) = source else {
+        return None;
+    };
+    if items.len() != 1 {
+        return None;
+    }
+    let item = &items[0];
+    use crate::compile::free_finder::free_names_in;
+    let item_free = free_names_in(item);
+    if item_free.is_empty() || item_free.iter().any(|n| inner_bound.contains(n))
+    {
+        return None;
+    }
+    let extent = Expr::Extent(pat_t.clone());
+    let extent_step =
+        StepKind::Scan(Box::new(pat.clone()), Box::new(extent), None);
+    let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
+    let pair_t =
+        Box::new(Type::Tuple(vec![(**pat_t).clone(), (**pat_t).clone()]));
+    let eq_op = match pat_t.as_ref() {
+        Type::Primitive(PrimitiveType::Int) => BuiltInFunction::IntEq,
+        Type::Primitive(PrimitiveType::Real) => BuiltInFunction::RealEq,
+        Type::Primitive(PrimitiveType::String) => BuiltInFunction::StringEq,
+        Type::Primitive(PrimitiveType::Char) => BuiltInFunction::CharEq,
+        Type::Primitive(PrimitiveType::Bool) => BuiltInFunction::BoolEq,
+        _ => BuiltInFunction::GEq,
+    };
+    let fn_t = Box::new(Type::Fn(pair_t.clone(), bool_t.clone()));
+    let fn_lit = Expr::Literal(fn_t, Val::Fn(eq_op));
+    let arg = Expr::Tuple(
+        pair_t,
+        vec![
+            Expr::Identifier(pat_t.clone(), pat_name.clone()),
+            item.clone(),
+        ],
+    );
+    let eq =
+        Expr::Apply(bool_t, Box::new(fn_lit), Box::new(arg), Span::new(""));
+    Some((extent_step, eq))
+}
+
 /// Lifts the inner Scans and Where conjuncts of any Where
 /// conjunct that is itself a nested `exists`-like expression
 /// into the outer steps. Equivalence:
@@ -546,6 +783,26 @@ fn lift_nested_exists_in_where(steps: Vec<Step>) -> Vec<Step> {
             ) {
                 continue;
             }
+            // Names bound by inner scans (everything we promote
+            // is from this scope). A Scan whose source references
+            // names *outside* this set was effectively a "point"
+            // generator that depends on outer state — when lifted
+            // out, it would be evaluated before its outer
+            // dependency is grounded. Such scans are converted
+            // back to `ScanExtent` + equality `Where`, letting the
+            // post-lift generator pipeline re-merge them in the
+            // correct order.
+            let mut inner_bound: HashSet<String> = HashSet::new();
+            for s in &inner_steps[..inner_steps.len() - 1] {
+                if let StepKind::Scan(p, _, _) = &s.kind {
+                    let mut bs: Vec<Binding> = Vec::new();
+                    Binding::collect_bindings(p, &mut bs);
+                    for b in bs {
+                        inner_bound.insert(b.id.name);
+                    }
+                }
+            }
+
             // Promote inner Scans (including ScanExtents) and
             // Where conjuncts. Skip yields/groups/orders — those
             // wouldn't show up in a plain exists query but we
@@ -555,8 +812,18 @@ fn lift_nested_exists_in_where(steps: Vec<Step>) -> Vec<Step> {
             let mut promoted_conjuncts: Vec<Expr> = Vec::new();
             for s in &inner_steps[..inner_steps.len() - 1] {
                 match &s.kind {
-                    StepKind::Scan(_, _, _) => {
-                        promoted_scans.push(s.clone());
+                    StepKind::Scan(p, source, cond) => {
+                        if let Some((scan, eq)) = unground_outer_point_scan(
+                            p,
+                            source,
+                            cond.as_deref(),
+                            &inner_bound,
+                        ) {
+                            promoted_scans.push(Step::new(scan, s.env.clone()));
+                            promoted_conjuncts.push(eq);
+                        } else {
+                            promoted_scans.push(s.clone());
+                        }
                     }
                     StepKind::Where(ic) => {
                         promoted_conjuncts.extend(split_conjuncts(ic));
@@ -610,6 +877,12 @@ fn lift_nested_exists_in_where(steps: Vec<Step>) -> Vec<Step> {
     // {outer-bindings-only} record stream.
     let last_lift_where_pos: Option<usize> = where_drops.keys().copied().max();
 
+    // Skip the synthetic yield+distinct if the outer steps
+    // already supply a Yield (e.g. `destructure_tuple_extents`
+    // added one to preserve the original tuple result type).
+    let already_has_yield =
+        steps.iter().any(|s| matches!(s.kind, StepKind::Yield(_)));
+
     // Build the synthetic yield + distinct (for from-outer only).
     let build_yield_distinct = |new_inner_scans: &mut Vec<Step>,
                                 new_inner_conjuncts: &mut Vec<Expr>|
@@ -623,7 +896,7 @@ fn lift_nested_exists_in_where(steps: Vec<Step>) -> Vec<Step> {
                 trailing_env.clone(),
             ));
         }
-        if !outer_bindings.is_empty() {
+        if !outer_bindings.is_empty() && !already_has_yield {
             let yield_expr = if outer_bindings.len() == 1 {
                 Expr::Identifier(
                     Box::new((*outer_bindings[0].type_).clone()),
@@ -1328,6 +1601,11 @@ fn expand_steps_with_scope(
     // Inline first — turning `isHappy p` into the inlined exists
     // body — so that `lift_nested_exists_in_where` can see the
     // newly-revealed inner exists conjunct.
+    // Phase 0a': destructure tuple-typed scan extents that are
+    // referenced via a function call whose parameter is a tuple.
+    // Lets `inline_tuple_fn_calls_in_where` handle `f p` for
+    // `fun f (x, y) = ...`.
+    let steps = destructure_tuple_extents_for_fn_calls(steps, env);
     let steps = inline_tuple_fn_calls_in_where(steps, env);
     let steps = lift_nested_exists_in_where(steps);
     // Inline again, now that lift has surfaced the inner exists's
