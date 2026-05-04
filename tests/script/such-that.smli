@@ -1020,36 +1020,29 @@ from b where cheap b;
  *)
 fun isR y = true;
 > val isR = fn : 'a -> bool
-(* TODO
-fun isS1 x = exists (from y where isR y);
+fun isS1 x = exists y where isR y;
 > val isS1 = fn : 'a -> bool
-*)
 
-(*) isS1 is unsafe
-(* TODO should throw unsafe
+(*) isS1 is unsafe — `x` doesn't appear in any non-negated
+(*) relational subgoal, so it can take infinitely many values.
+(*) morel-java rejects this with `Unsafe`; morel-rust reports
+(*) the equivalent `pattern 'x' is not grounded`.
 from x where isS1 x;
-> Unsafe
-*)
+> java.lang.IllegalArgumentException: pattern 'x' is not grounded
 
-(*
-fun isS2 x = exists (from y where isR y andalso not (isR x));
-*)
+fun isS2 x = exists y where isR y andalso not (isR x);
+> val isS2 = fn : 'a -> bool
 
-(*) isS2 is unsafe
-(* TODO should throw unsafe
+(*) isS2 is unsafe — `x` only appears under negation.
 from x where isS2 x;
-> Unsafe
-*)
+> java.lang.IllegalArgumentException: pattern 'x' is not grounded
 
-(*
-fun isS3 x = exists (from y where isR y andalso x < y);
-*)
+fun isS3 x = exists y where isR y andalso x < y;
+> val isS3 = fn : 'a -> bool
 
-(*) isS3 is unsafe
-(* TODO should throw unsafe
+(*) isS3 is unsafe — `x` only appears in an arithmetic subgoal.
 from x where isS3 x;
-> Unsafe
-*)
+> java.lang.IllegalArgumentException: pattern 'x' is not grounded
 
 (* Example Datalog Program. Using EDB Sells (bar, beer, price) and
  * Likes (patron, beer), find the patrons who like beers Joe doesn't sell.
