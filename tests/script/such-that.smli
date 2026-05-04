@@ -1235,4 +1235,239 @@ order DESC profit;
 >
 > val it : {b:int, c:int, profit:int} list
 
+(* -------------------------------------------------------------------
+ * Extracted testFromSuchThat* tests from MainTest.java. The
+ * `Sys.planEx` checks present in morel-java are intentionally
+ * omitted: morel-rust's optimizer plan format differs from
+ * morel-java's, and the queries themselves are what the tests
+ * exercise.
+ *)
+
+(* testFromSuchThat - Basic function with elem predicate *)
+let
+  val emps = [
+    {id = 100, name = "Fred", deptno = 10},
+    {id = 101, name = "Velma", deptno = 20},
+    {id = 102, name = "Shaggy", deptno = 30},
+    {id = 103, name = "Scooby", deptno = 30}]
+  fun hasEmpNameInDept (n, d) =
+    (n, d) elem (from e in emps yield (e.name, e.deptno))
+in
+  from n, d
+    where hasEmpNameInDept (n, d)
+    where d = 30
+    yield {d, n}
+end;
+> d  n
+> -- ------
+> 30 Shaggy
+> 30 Scooby
+>
+> val it : {d:int, n:string} bag
+
+(* testFromSuchThat2 - Complex function with division and elem.
+ * TODO - currently not fully working in morel-java either.
+ *)
+
+(* testFromSuchThat2b - Simple "d elem list" pattern *)
+from d where d elem scott.depts;
+> deptno dname      loc
+> ------ ---------- --------
+> 10     ACCOUNTING NEW YORK
+> 20     RESEARCH   DALLAS
+> 30     SALES      CHICAGO
+> 40     OPERATIONS BOSTON
+>
+> val it : {deptno:int, dname:string, loc:string} bag
+
+(* testFromSuchThat2c - Record pattern with field renaming *)
+from loc, deptno, name
+where {deptno, loc, dname = name} elem scott.depts;
+> deptno loc      name
+> ------ -------- ----------
+> 10     NEW YORK ACCOUNTING
+> 20     DALLAS   RESEARCH
+> 30     CHICAGO  SALES
+> 40     BOSTON   OPERATIONS
+>
+> val it : {deptno:int, loc:string, name:string} bag
+
+(* testFromSuchThat2d - Record pattern with literal and additional
+   constraint. Same as testFromSuchThat2c but with a literal. *)
+from dno, name
+  where {deptno = dno, dname = name, loc = "CHICAGO"}
+      elem scott.depts
+    andalso dno > 20;
+> dno name
+> --- -----
+> 30  SALES
+>
+> val it : {dno:int, name:string} bag
+
+(* testFromSuchThat2d3 - Forward references with equality constraint *)
+from dno, name, v
+where v elem scott.depts
+where v.deptno = dno
+where name = v.dname
+where v.loc = "CHICAGO"
+where dno = 30
+yield {dno = #deptno v, name = #dname v};
+> dno name
+> --- -----
+> 30  SALES
+>
+> val it : {dno:int, name:string} bag
+
+(* testFromSuchThat2d4 - Forward references with inequality constraint *)
+from dno, name, v
+where v elem scott.depts
+where v.deptno = dno
+where name = v.dname
+where v.loc = "CHICAGO"
+where dno > 25
+yield {dno = #deptno v, name = #dname v};
+> dno name
+> --- -----
+> 30  SALES
+>
+> val it : {dno:int, name:string} bag
+
+(* testFromSuchThat2e - Function inlining with elem predicate.
+ * As testFromSuchThat2d but using a function. (Simple enough
+ * that the function can be handled by inlining. *)
+fun isDept d =
+  d elem scott.depts;
+> val isDept = fn : {deptno:int, dname:string, loc:string} -> bool
+from d
+  where isDept d andalso d.deptno = 20
+  yield d.dname;
+> val it = ["RESEARCH"] : string bag
+
+(* testFromSuchThat2f - Join via suchthat with two functions *)
+let
+  fun isDept d =
+    d elem scott.depts
+  fun isEmp e =
+    e elem scott.emps
+in
+  from d, e
+    where isDept d
+    andalso isEmp e
+    andalso d.deptno = e.deptno
+    andalso d.deptno = 20
+    yield d.dname
+end;
+> val it = ["RESEARCH","RESEARCH","RESEARCH","RESEARCH","RESEARCH"] : string bag
+
+(* testProvenanceThroughFunction - Provenance propagation through
+ * function inversion. When 'f x' appears in WHERE, maybeFunction
+ * inlines the body and creates a Collection generator for x. The
+ * provenance system adds 'f x' to the generator's provenance,
+ * so expandFrom2 can remove it from WHERE. At plan level 999,
+ * there is no WHERE clause. *)
+let
+  val xs = [1, 2, 3]
+  fun f x = x elem xs
+in
+  from x where f x
+end;
+> val it = [1,2,3] : int bag
+
+(* testProvenanceThroughFunctionWithFilter - Same as above but
+ * with an additional filter. Provenance removes 'f x'
+ * but keeps 'x > 1'. *)
+let
+  val xs = [1, 2, 3]
+  fun f x = x elem xs
+in
+  from x where f x andalso x > 1
+end;
+> val it = [2,3] : int bag
+
+(* -- elem patterns ----------------------------------------------- *)
+
+(*) Pattern
+from x, y where (x, y) elem [(1,true),(2,false)];
+> x y
+> - -----
+> 1 true
+> 2 false
+>
+> val it : {x:int, y:bool} bag
+
+(*) Reversed pattern
+from x, y where (y, x) elem [(1,true),(2,false)];
+> x     y
+> ----- -
+> true  1
+> false 2
+>
+> val it : {x:bool, y:int} bag
+
+(*) Record pattern
+from x, y where {y, x} elem [{y=1,x=true},{y=2,x=false}];
+> x     y
+> ----- -
+> true  1
+> false 2
+>
+> val it : {x:bool, y:int} bag
+
+from x where (x, "b") elem [(1,"a"),(2,"b")];
+> val it = [2] : int bag
+
+from x where (1, x) elem [(1,"a"),(2,"b")];
+> val it = ["a"] : string bag
+
+from x where (1, x, true) elem [(1,"a",false),(2,"b",true),(1,"c",true)];
+> val it = ["c"] : string bag
+
+(* -- orelse becomes union ---------------------------------------- *)
+fun isSmall n = n elem [1, 2];
+> val isSmall = fn : int -> bool
+
+fun isLarge n = n elem [10, 20];
+> val isLarge = fn : int -> bool
+
+(*) Order of bag elements may differ from morel-java's
+(*) `[1,2,20,10]` because morel-rust constructs the union in a
+(*) different (input-list) order. The bag contents are the same.
+from n where isSmall n orelse isLarge n;
+> val it = [1,2,10,20] : int bag
+
+(*) Siblings
+let
+  val parents = [("Alice", "Bob"), ("Alice", "Carol")]
+  fun parent (p, c) = (p, c) elem parents
+  fun sibling (x, y) =
+    (exists v0 where parent (v0, x) andalso parent (v0, y))
+in
+  {sibling = from x, y where sibling (x, y)}
+end;
+> val it =
+>   {
+>    sibling=
+>    [{x="Bob",y="Bob"},{x="Bob",y="Carol"},{x="Carol",y="Bob"},
+>     {x="Carol",y="Carol"}]} : {sibling:{x:string, y:string} bag}
+
+(* testFromSuchThat3 - Smaller version of testFromSuchThat *)
+let
+  val emps = [
+    {id = 102, name = "Shaggy", deptno = 30},
+    {id = 103, name = "Scooby", deptno = 30}]
+  fun hasEmpNameInDept (n, d) =
+    (n, d) elem (from e in emps yield (e.name, e.deptno))
+in
+  from n, d
+    where hasEmpNameInDept (n, d)
+    where d = 30
+    yield {d, n}
+end;
+> d  n
+> -- ------
+> 30 Shaggy
+> 30 Scooby
+>
+> val it : {d:int, n:string} bag
+
 (*) End suchThat.smli
