@@ -729,6 +729,23 @@ fn try_invert_recursive_predicates(
             let Some(scan_idx) = scan_idx else {
                 continue;
             };
+            // Phase 3: skip non-stratified predicates (those with
+            // a self-call inside `not(...)`). Inverting them would
+            // either compute the wrong fixed point or diverge.
+            // Falling through lets the existing pipeline produce
+            // its "pattern not grounded" error instead of an
+            // infinite loop. The pre-expander body is the right
+            // one to inspect: post-expander shapes may have
+            // already absorbed conjuncts into sub-froms.
+            let body_for_strat = rec_fn_env
+                .get(fn_name)
+                .map(|(_, b)| b)
+                .or_else(|| fn_env.get(fn_name).map(|(_, b)| b));
+            if let Some(body) = body_for_strat
+                && contains_self_call_under_negation(body, fn_name)
+            {
+                continue;
+            }
             // Try Phase 2 first (the more general algorithm). It
             // handles ≥2 intermediate vars and arbitrary tuple-of-
             // identifiers recursive-call args; rec_fn_env supplies
@@ -1276,6 +1293,76 @@ fn match_call_to<'a>(e: &'a Expr, name: &str) -> Option<&'a Expr> {
         return None;
     }
     Some(arg)
+}
+
+/// Phase 3: returns true if `body` contains a call to `name`
+/// inside any subexpression headed by `Bool.not` (or whose
+/// surrounding `from` ends in an `Exists` step that is itself
+/// negated upstream). Such a binding is non-stratified — naively
+/// inverting it would compute the wrong fixed point or diverge.
+/// The check is a conservative: it walks the AST tracking a
+/// "negation depth" parity and reports any self-call seen at
+/// odd parity.
+fn contains_self_call_under_negation(body: &Expr, name: &str) -> bool {
+    fn walk(e: &Expr, name: &str, neg: bool) -> bool {
+        match e {
+            Expr::Apply(_, f, arg, _) => {
+                // `Bool.not`-headed call flips the negation parity for
+                // the argument.
+                let arg_neg = if matches!(
+                    f.as_ref(),
+                    Expr::Literal(_, Val::Fn(BuiltInFunction::BoolNot))
+                ) {
+                    !neg
+                } else {
+                    neg
+                };
+                if neg
+                    && let Expr::Identifier(_, n) = f.as_ref()
+                    && n == name
+                {
+                    return true;
+                }
+                walk(f, name, neg) || walk(arg, name, arg_neg)
+            }
+            Expr::Tuple(_, items) | Expr::List(_, items) => {
+                items.iter().any(|i| walk(i, name, neg))
+            }
+            Expr::Case(_, subj, arms, _) => {
+                walk(subj, name, neg)
+                    || arms.iter().any(|m| walk(&m.expr, name, neg))
+            }
+            Expr::Fn(_, arms, _) => {
+                arms.iter().any(|m| walk(&m.expr, name, neg))
+            }
+            Expr::Let(_, _, body) => walk(body, name, neg),
+            Expr::From(_, steps)
+            | Expr::Exists(_, steps)
+            | Expr::Forall(_, steps) => steps.iter().any(|s| match &s.kind {
+                StepKind::Scan(_, src, cond) => {
+                    walk(src, name, neg)
+                        || cond.as_ref().is_some_and(|c| walk(c, name, neg))
+                }
+                StepKind::Where(c)
+                | StepKind::Yield(c)
+                | StepKind::Order(c)
+                | StepKind::Compute(c)
+                | StepKind::Skip(c)
+                | StepKind::Take(c)
+                | StepKind::Require(c) => walk(c, name, neg),
+                StepKind::Group(k, agg) => {
+                    walk(k, name, neg)
+                        || agg.as_ref().is_some_and(|a| walk(a, name, neg))
+                }
+                _ => false,
+            }),
+            Expr::Aggregate(_, l, r) => {
+                walk(l, name, neg) || walk(r, name, neg)
+            }
+            _ => false,
+        }
+    }
+    walk(body, name, false)
 }
 
 /// Recognises a body of the form `pat_or_tuple elem coll` and

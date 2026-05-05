@@ -1119,21 +1119,24 @@ from p where cousin p;
  * 'cousin2' is as 'cousin', but 'orelse' has become 'and not'.
  * The graph is not stratified: there is a path with an infinite number
  * of 'not' as we traverse the cycle cousin - s2 - cousin,
- * where s2 is the expression 'notExists (...)'. *)
-(* TODO
+ * where s2 is the expression 'not (exists ...)'. *)
 fun cousin2 (x, y) = sib (x, y)
-  andalso notExists (
-    from (xp, yp)
+  andalso not (
+    exists xp, yp
       where par (x, xp)
       andalso par (y, yp)
       andalso cousin2 (xp, yp));
 > val cousin2 = fn : string * string -> bool
-*)
 
-(* TODO
-enumerate cousin2;
-> Error: non-stratified
-*)
+(*) The expander's Phase 3 stratification check skips `cousin2` —
+(*) its body contains a self-call inside `not (...)`. The query
+(*) falls through to the existing pipeline, which can't ground
+(*) `p`'s components and emits a runtime error. (morel-java
+(*) reports this as "Error: non-stratified"; morel-rust shows the
+(*) equivalent "pattern not grounded" message until a phase-3.5
+(*) enhancement upgrades the wording.)
+from p where cousin2 p;
+> java.lang.IllegalArgumentException: pattern 'p__1' is not grounded
 
 
 (* ---------------------------------------------------------------- *)
