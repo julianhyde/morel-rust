@@ -742,11 +742,7 @@ fn try_invert_recursive_predicates(
                 &outer_scope,
             )
             .or_else(|| {
-                build_iterate_for_recursive(
-                    fn_name,
-                    arg_t.as_ref(),
-                    fn_env,
-                )
+                build_iterate_for_recursive(fn_name, arg_t.as_ref(), fn_env)
             });
             let Some(iterate_expr) = iterate_expr else {
                 continue;
@@ -902,9 +898,8 @@ fn build_iterate_for_recursive_v2(
         rec_arg_names.push((n.clone(), t.clone()));
     }
     // Result tuple type is (param_t1, ..., param_tN).
-    let elem_t = Type::Tuple(
-        params.iter().map(|(_, t)| (**t).clone()).collect(),
-    );
+    let elem_t =
+        Type::Tuple(params.iter().map(|(_, t)| (**t).clone()).collect());
     let coll_t = Type::Bag(Box::new(elem_t.clone()));
     let elem_t_box = Box::new(elem_t.clone());
     // Helper: build a step env containing the given bindings.
@@ -978,10 +973,8 @@ fn build_iterate_for_recursive_v2(
     // names and intermediate-var names. To avoid clashes with the
     // param scans we destructure into fresh names and equate.
     let new_name = "__tc_new";
-    let new_id = Expr::Identifier(
-        Box::new(coll_t.clone()),
-        new_name.to_string(),
-    );
+    let new_id =
+        Expr::Identifier(Box::new(coll_t.clone()), new_name.to_string());
     // Build fresh-name destructuring pattern for the newF scan.
     // For each rc_arg, use a fresh name `__tc_v{i}`.
     let mut fresh_pats: Vec<Pat> = Vec::new();
@@ -994,17 +987,13 @@ fn build_iterate_for_recursive_v2(
         // bind via Extent scans (and step_preds invert them).
         let eq_op = match orig_t.as_ref() {
             Type::Primitive(PrimitiveType::Int) => BuiltInFunction::IntEq,
-            Type::Primitive(PrimitiveType::String) => {
-                BuiltInFunction::StringEq
-            }
+            Type::Primitive(PrimitiveType::String) => BuiltInFunction::StringEq,
             Type::Primitive(PrimitiveType::Char) => BuiltInFunction::CharEq,
             Type::Primitive(PrimitiveType::Bool) => BuiltInFunction::BoolEq,
             _ => BuiltInFunction::GEq,
         };
-        let pair_t = Box::new(Type::Tuple(vec![
-            (**orig_t).clone(),
-            (**orig_t).clone(),
-        ]));
+        let pair_t =
+            Box::new(Type::Tuple(vec![(**orig_t).clone(), (**orig_t).clone()]));
         let fn_t = Box::new(Type::Fn(
             pair_t.clone(),
             Box::new(Type::Primitive(PrimitiveType::Bool)),
@@ -1020,9 +1009,8 @@ fn build_iterate_for_recursive_v2(
             Span::new(""),
         ));
     }
-    let rec_args_t = Type::Tuple(
-        rec_arg_names.iter().map(|(_, t)| (**t).clone()).collect(),
-    );
+    let rec_args_t =
+        Type::Tuple(rec_arg_names.iter().map(|(_, t)| (**t).clone()).collect());
     let rec_args_pat = Pat::Tuple(Box::new(rec_args_t.clone()), fresh_pats);
     // Build update-body steps.
     let mut update_steps: Vec<Step> = Vec::new();
@@ -1050,16 +1038,12 @@ fn build_iterate_for_recursive_v2(
         ));
     }
     // Add the newF scan with fresh names.
-    for i in 0..rec_arg_names.len() {
+    for (i, (_, t)) in rec_arg_names.iter().enumerate() {
         let fresh = format!("__tc_v{}", i);
-        bound2.push((fresh, rec_arg_names[i].1.clone()));
+        bound2.push((fresh, t.clone()));
     }
     update_steps.push(Step::new(
-        StepKind::Scan(
-            Box::new(rec_args_pat),
-            Box::new(new_id.clone()),
-            None,
-        ),
+        StepKind::Scan(Box::new(rec_args_pat), Box::new(new_id.clone()), None),
         mk_env(bs_for(&bound2)),
     ));
     // Where: step_preds andalso fresh equalities.
@@ -2710,13 +2694,7 @@ fn expand_steps(
     datatypes: &DatatypeMap,
 ) -> Vec<Step> {
     let empty_rec = FnEnv::new();
-    expand_steps_with_scope(
-        steps,
-        env,
-        &empty_rec,
-        datatypes,
-        &BTreeSet::new(),
-    )
+    expand_steps_with_scope(steps, env, &empty_rec, datatypes, &BTreeSet::new())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2756,8 +2734,7 @@ fn expand_steps_with_scope(
     // before `destructure_tuple_extents_for_fn_calls` so the
     // ScanExtent still holds the original tuple-typed pattern and
     // the `f p` conjunct is still un-inlined.
-    let steps =
-        try_invert_recursive_predicates(steps, env, rec_env, datatypes);
+    let steps = try_invert_recursive_predicates(steps, env, rec_env, datatypes);
     let steps = destructure_tuple_extents_for_fn_calls(steps, env);
     let steps = inline_tuple_fn_calls_in_where(steps, env);
     let steps = lift_nested_exists_in_where(steps);

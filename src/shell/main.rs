@@ -708,8 +708,7 @@ impl Shell {
     /// Evaluates a parsed AST node.
     fn evaluate_node(&mut self, resolved: &Resolved) -> ShellResult<String> {
         let session_fns = self.session.borrow().fn_bindings.clone();
-        let rec_session_fns =
-            self.session.borrow().rec_fn_bindings.clone();
+        let rec_session_fns = self.session.borrow().rec_fn_bindings.clone();
         // Capture pre-expander fn bindings from this statement's
         // resolved decl. We need them BEFORE the expander runs
         // (which inverts step predicates) so Phase 2 of recursive
