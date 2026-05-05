@@ -708,8 +708,18 @@ impl Shell {
     /// Evaluates a parsed AST node.
     fn evaluate_node(&mut self, resolved: &Resolved) -> ShellResult<String> {
         let session_fns = self.session.borrow().fn_bindings.clone();
-        let (decl, resolve_errors) =
-            resolver::resolve_with_session_fns(resolved, &session_fns);
+        let rec_session_fns =
+            self.session.borrow().rec_fn_bindings.clone();
+        // Capture pre-expander fn bindings from this statement's
+        // resolved decl. We need them BEFORE the expander runs
+        // (which inverts step predicates) so Phase 2 of recursive
+        // predicate inversion sees the original conjuncts.
+        let pre_decl = resolver::resolve_pre_expander(resolved);
+        let (decl, resolve_errors) = resolver::resolve_with_session_fns_rec(
+            resolved,
+            &session_fns,
+            &rec_session_fns,
+        );
         if let Some((msg, span)) = resolve_errors.first() {
             return Ok(format!(
                 "{} Error: {}\n  raised at: {}\n",
@@ -765,6 +775,7 @@ impl Shell {
                     let mut session = self.session.borrow_mut();
                     session.type_bindings.clear();
                     session.fn_bindings.clear();
+                    session.rec_fn_bindings.clear();
 
                     // Reset type_env to initial state (FunTypeEnv).
                     let empty_type_env = EmptyTypeEnv {};
@@ -825,10 +836,18 @@ impl Shell {
         self.session.borrow_mut().commit_bindings(resolved);
 
         // Record any single-arm `fn p => body` value-bindings for
-        // future statements' predicate inversion (#223).
+        // future statements' predicate inversion (#223). Save the
+        // post-expander bodies into `fn_bindings` (used by
+        // `inline_tuple_fn_calls_in_where`) and the pre-expander
+        // bodies into `rec_fn_bindings` (used by Phase 2 of
+        // recursive predicate inversion, #217).
         collect_session_fn_bindings(
             &decl,
             &mut self.session.borrow_mut().fn_bindings,
+        );
+        collect_session_fn_bindings(
+            &pre_decl,
+            &mut self.session.borrow_mut().rec_fn_bindings,
         );
 
         Ok(result)

@@ -71,6 +71,12 @@ pub struct Session {
     /// inline a function declared in a previous shell statement
     /// (hydromatic/morel#223).
     pub fn_bindings: HashMap<String, (CorePat, CoreExpr)>,
+    /// Pre-expander variant of [`fn_bindings`]. Phase 2 of
+    /// recursive predicate inversion (hydromatic/morel#217)
+    /// reads bodies from this map so the original step
+    /// predicates are still visible as conjuncts of the inner
+    /// `where`.
+    pub rec_fn_bindings: HashMap<String, (CorePat, CoreExpr)>,
 }
 
 // static SESSION_COUNTER: std::sync::atomic::AtomicUsize =
@@ -111,6 +117,7 @@ impl Session {
             constructor_arg_types: HashMap::new(),
             overloads,
             fn_bindings: HashMap::new(),
+            rec_fn_bindings: HashMap::new(),
         }
     }
 

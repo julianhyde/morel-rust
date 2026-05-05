@@ -82,6 +82,25 @@ pub fn expand_from_with_scope(
     datatypes: &DatatypeMap,
     outer_scope: &BTreeSet<String>,
 ) -> Expr {
+    let empty_rec = FnEnv::new();
+    expand_from_with_scope_rec(expr, env, &empty_rec, datatypes, outer_scope)
+}
+
+/// Same as [`expand_from_with_scope`] but additionally accepts
+/// a "recursive-fn" environment of pre-expander bodies that
+/// Phase 2's `try_invert_recursive_predicates` consults when
+/// recognising self-recursive predicates whose original step
+/// constraints have been consumed by an earlier expansion. This
+/// is kept separate from `env` (which holds post-expander bodies
+/// used by `inline_tuple_fn_calls_in_where`) so inlining doesn't
+/// accidentally expand a pre-expander recursive body in place.
+pub fn expand_from_with_scope_rec(
+    expr: Expr,
+    env: &FnEnv,
+    rec_env: &FnEnv,
+    datatypes: &DatatypeMap,
+    outer_scope: &BTreeSet<String>,
+) -> Expr {
     match expr {
         Expr::From(t, steps) => {
             if !has_extent_scan(&steps) {
@@ -89,7 +108,13 @@ pub fn expand_from_with_scope(
             }
             Expr::From(
                 t,
-                expand_steps_with_scope(steps, env, datatypes, outer_scope),
+                expand_steps_with_scope(
+                    steps,
+                    env,
+                    rec_env,
+                    datatypes,
+                    outer_scope,
+                ),
             )
         }
         Expr::Exists(t, steps) => {
@@ -98,7 +123,13 @@ pub fn expand_from_with_scope(
             }
             Expr::Exists(
                 t,
-                expand_steps_with_scope(steps, env, datatypes, outer_scope),
+                expand_steps_with_scope(
+                    steps,
+                    env,
+                    rec_env,
+                    datatypes,
+                    outer_scope,
+                ),
             )
         }
         Expr::Forall(t, steps) => {
@@ -107,7 +138,13 @@ pub fn expand_from_with_scope(
             }
             Expr::Forall(
                 t,
-                expand_steps_with_scope(steps, env, datatypes, outer_scope),
+                expand_steps_with_scope(
+                    steps,
+                    env,
+                    rec_env,
+                    datatypes,
+                    outer_scope,
+                ),
             )
         }
         _ => expr,
@@ -135,7 +172,22 @@ pub fn expand_decl_with_session(
     datatypes: &DatatypeMap,
     session_fns: &FnEnv,
 ) -> Decl {
-    walk_decl(decl, session_fns, datatypes)
+    let empty_rec = FnEnv::new();
+    walk_decl_rec(decl, session_fns, &empty_rec, datatypes)
+}
+
+/// Same as [`expand_decl_with_session`], but additionally accepts
+/// a "recursive-fn" environment carrying pre-expander function
+/// bodies for Phase 2 of recursive-predicate inversion. The
+/// regular `session_fns` map keeps post-expander bodies for use
+/// by `inline_tuple_fn_calls_in_where`.
+pub fn expand_decl_with_session_rec(
+    decl: Decl,
+    datatypes: &DatatypeMap,
+    session_fns: &FnEnv,
+    rec_session_fns: &FnEnv,
+) -> Decl {
+    walk_decl_rec(decl, session_fns, rec_session_fns, datatypes)
 }
 
 /// Walks a Core decl and records any single-arm `fn p => body`
@@ -173,27 +225,48 @@ fn collect_decl_pat_names(decl: &Decl, out: &mut BTreeSet<String>) {
 }
 
 fn walk_decl(decl: Decl, env: &FnEnv, datatypes: &DatatypeMap) -> Decl {
-    walk_decl_with_scope(decl, env, datatypes, &BTreeSet::new())
+    let empty_rec = FnEnv::new();
+    walk_decl_with_scope(decl, env, &empty_rec, datatypes, &BTreeSet::new())
+}
+
+fn walk_decl_rec(
+    decl: Decl,
+    env: &FnEnv,
+    rec_env: &FnEnv,
+    datatypes: &DatatypeMap,
+) -> Decl {
+    walk_decl_with_scope(decl, env, rec_env, datatypes, &BTreeSet::new())
 }
 
 fn walk_decl_with_scope(
     decl: Decl,
     env: &FnEnv,
+    rec_env: &FnEnv,
     datatypes: &DatatypeMap,
     outer_scope: &BTreeSet<String>,
 ) -> Decl {
     match decl {
         Decl::NonRecVal(b) => {
             let mut b2 = (*b).clone();
-            b2.expr =
-                walk_expr_with_scope(b2.expr, env, datatypes, outer_scope);
+            b2.expr = walk_expr_with_scope(
+                b2.expr,
+                env,
+                rec_env,
+                datatypes,
+                outer_scope,
+            );
             Decl::NonRecVal(Box::new(b2))
         }
         Decl::RecVal(binds) => {
             let mut new_binds = Vec::with_capacity(binds.len());
             for mut b in binds {
-                b.expr =
-                    walk_expr_with_scope(b.expr, env, datatypes, outer_scope);
+                b.expr = walk_expr_with_scope(
+                    b.expr,
+                    env,
+                    rec_env,
+                    datatypes,
+                    outer_scope,
+                );
                 new_binds.push(b);
             }
             Decl::RecVal(new_binds)
@@ -203,12 +276,14 @@ fn walk_decl_with_scope(
 }
 
 fn walk_expr(expr: Expr, env: &FnEnv, datatypes: &DatatypeMap) -> Expr {
-    walk_expr_with_scope(expr, env, datatypes, &BTreeSet::new())
+    let empty_rec = FnEnv::new();
+    walk_expr_with_scope(expr, env, &empty_rec, datatypes, &BTreeSet::new())
 }
 
 fn walk_expr_with_scope(
     expr: Expr,
     env: &FnEnv,
+    rec_env: &FnEnv,
     datatypes: &DatatypeMap,
     outer_scope: &BTreeSet<String>,
 ) -> Expr {
@@ -219,28 +294,58 @@ fn walk_expr_with_scope(
             // outer_scope with the let-binding's pat names so
             // record-elem strategies treat them as runtime-stable.
             let mut env2 = env.clone();
+            let mut rec_env2 = rec_env.clone();
             let mut scope2 = outer_scope.clone();
             for d in &decls {
+                // Pre-expander bodies into both maps. `env2` is the
+                // post-expander map for `inline_tuple_fn_calls_in_where`;
+                // because Let-bound bodies haven't been walked yet at
+                // this point, both maps temporarily hold the same
+                // pre-expander bodies. (Phase 2 only fires for
+                // self-recursive shapes that don't get inlined.)
                 collect_fn_bindings(d, &mut env2);
+                collect_fn_bindings(d, &mut rec_env2);
                 collect_decl_pat_names(d, &mut scope2);
             }
             let new_decls: Vec<Decl> = decls
                 .into_iter()
-                .map(|d| walk_decl_with_scope(d, &env2, datatypes, &scope2))
+                .map(|d| {
+                    walk_decl_with_scope(
+                        d, &env2, &rec_env2, datatypes, &scope2,
+                    )
+                })
                 .collect();
             let new_body = Box::new(walk_expr_with_scope(
-                *body, &env2, datatypes, &scope2,
+                *body, &env2, &rec_env2, datatypes, &scope2,
             ));
             Expr::Let(t, new_decls, new_body)
         }
         Expr::From(_, _) | Expr::Exists(_, _) | Expr::Forall(_, _) => {
-            let inner = walk_query_steps(expr, env, datatypes);
-            expand_from_with_scope(inner, env, datatypes, outer_scope)
+            let inner = walk_query_steps(expr, env, rec_env, datatypes);
+            expand_from_with_scope_rec(
+                inner,
+                env,
+                rec_env,
+                datatypes,
+                outer_scope,
+            )
         }
         Expr::Apply(t, f, a, span) => Expr::Apply(
             t,
-            Box::new(walk_expr_with_scope(*f, env, datatypes, outer_scope)),
-            Box::new(walk_expr_with_scope(*a, env, datatypes, outer_scope)),
+            Box::new(walk_expr_with_scope(
+                *f,
+                env,
+                rec_env,
+                datatypes,
+                outer_scope,
+            )),
+            Box::new(walk_expr_with_scope(
+                *a,
+                env,
+                rec_env,
+                datatypes,
+                outer_scope,
+            )),
             span,
         ),
         Expr::Case(t, subject, arms, span) => Expr::Case(
@@ -248,6 +353,7 @@ fn walk_expr_with_scope(
             Box::new(walk_expr_with_scope(
                 *subject,
                 env,
+                rec_env,
                 datatypes,
                 outer_scope,
             )),
@@ -258,7 +364,7 @@ fn walk_expr_with_scope(
                     Match {
                         pat: m.pat,
                         expr: walk_expr_with_scope(
-                            m.expr, env, datatypes, &scope2,
+                            m.expr, env, rec_env, datatypes, &scope2,
                         ),
                     }
                 })
@@ -274,7 +380,7 @@ fn walk_expr_with_scope(
                     Match {
                         pat: m.pat,
                         expr: walk_expr_with_scope(
-                            m.expr, env, datatypes, &scope2,
+                            m.expr, env, rec_env, datatypes, &scope2,
                         ),
                     }
                 })
@@ -285,20 +391,48 @@ fn walk_expr_with_scope(
             t,
             items
                 .into_iter()
-                .map(|e| walk_expr_with_scope(e, env, datatypes, outer_scope))
+                .map(|e| {
+                    walk_expr_with_scope(
+                        e,
+                        env,
+                        rec_env,
+                        datatypes,
+                        outer_scope,
+                    )
+                })
                 .collect(),
         ),
         Expr::List(t, items) => Expr::List(
             t,
             items
                 .into_iter()
-                .map(|e| walk_expr_with_scope(e, env, datatypes, outer_scope))
+                .map(|e| {
+                    walk_expr_with_scope(
+                        e,
+                        env,
+                        rec_env,
+                        datatypes,
+                        outer_scope,
+                    )
+                })
                 .collect(),
         ),
         Expr::Aggregate(t, e1, e2) => Expr::Aggregate(
             t,
-            Box::new(walk_expr_with_scope(*e1, env, datatypes, outer_scope)),
-            Box::new(walk_expr_with_scope(*e2, env, datatypes, outer_scope)),
+            Box::new(walk_expr_with_scope(
+                *e1,
+                env,
+                rec_env,
+                datatypes,
+                outer_scope,
+            )),
+            Box::new(walk_expr_with_scope(
+                *e2,
+                env,
+                rec_env,
+                datatypes,
+                outer_scope,
+            )),
         ),
         other => other,
     }
@@ -307,7 +441,12 @@ fn walk_expr_with_scope(
 /// Walk inside a `From`/`Exists`/`Forall`'s steps so that
 /// expressions embedded in `Where`, `Yield`, and other step kinds
 /// get the same treatment. The query's outer wrapper is recreated.
-fn walk_query_steps(expr: Expr, env: &FnEnv, datatypes: &DatatypeMap) -> Expr {
+fn walk_query_steps(
+    expr: Expr,
+    env: &FnEnv,
+    rec_env: &FnEnv,
+    datatypes: &DatatypeMap,
+) -> Expr {
     let (kind, t, steps) = match expr {
         Expr::From(t, s) => ('f', t, s),
         Expr::Exists(t, s) => ('e', t, s),
@@ -324,6 +463,7 @@ fn walk_query_steps(expr: Expr, env: &FnEnv, datatypes: &DatatypeMap) -> Expr {
                     Box::new(walk_expr_with_scope(
                         *source,
                         env,
+                        rec_env,
                         datatypes,
                         &outer_scope,
                     )),
@@ -331,27 +471,53 @@ fn walk_query_steps(expr: Expr, env: &FnEnv, datatypes: &DatatypeMap) -> Expr {
                         Box::new(walk_expr_with_scope(
                             *c,
                             env,
+                            rec_env,
                             datatypes,
                             &outer_scope,
                         ))
                     }),
                 ),
-                StepKind::Where(c) => StepKind::Where(Box::new(
-                    walk_expr_with_scope(*c, env, datatypes, &outer_scope),
-                )),
-                StepKind::Yield(e) => StepKind::Yield(Box::new(
-                    walk_expr_with_scope(*e, env, datatypes, &outer_scope),
-                )),
-                StepKind::Order(e) => StepKind::Order(Box::new(
-                    walk_expr_with_scope(*e, env, datatypes, &outer_scope),
-                )),
-                StepKind::Compute(e) => StepKind::Compute(Box::new(
-                    walk_expr_with_scope(*e, env, datatypes, &outer_scope),
-                )),
+                StepKind::Where(c) => {
+                    StepKind::Where(Box::new(walk_expr_with_scope(
+                        *c,
+                        env,
+                        rec_env,
+                        datatypes,
+                        &outer_scope,
+                    )))
+                }
+                StepKind::Yield(e) => {
+                    StepKind::Yield(Box::new(walk_expr_with_scope(
+                        *e,
+                        env,
+                        rec_env,
+                        datatypes,
+                        &outer_scope,
+                    )))
+                }
+                StepKind::Order(e) => {
+                    StepKind::Order(Box::new(walk_expr_with_scope(
+                        *e,
+                        env,
+                        rec_env,
+                        datatypes,
+                        &outer_scope,
+                    )))
+                }
+                StepKind::Compute(e) => {
+                    StepKind::Compute(Box::new(walk_expr_with_scope(
+                        *e,
+                        env,
+                        rec_env,
+                        datatypes,
+                        &outer_scope,
+                    )))
+                }
                 StepKind::Group(k, a) => StepKind::Group(
                     Box::new(walk_expr_with_scope(
                         *k,
                         env,
+                        rec_env,
                         datatypes,
                         &outer_scope,
                     )),
@@ -359,6 +525,7 @@ fn walk_query_steps(expr: Expr, env: &FnEnv, datatypes: &DatatypeMap) -> Expr {
                         Box::new(walk_expr_with_scope(
                             *e,
                             env,
+                            rec_env,
                             datatypes,
                             &outer_scope,
                         ))
@@ -512,11 +679,29 @@ fn inline_tuple_fn_calls_in_where(
 fn try_invert_recursive_predicates(
     steps: Vec<Step>,
     fn_env: &FnEnv,
+    rec_fn_env: &FnEnv,
+    datatypes: &DatatypeMap,
 ) -> Vec<Step> {
-    if fn_env.is_empty() {
+    if fn_env.is_empty() && rec_fn_env.is_empty() {
         return steps;
     }
     use crate::compile::generators::split_conjuncts;
+    // Outer scope: anything introduced by an earlier scan in this
+    // from. Used by Phase 2's recursive `expand_from_with_scope`
+    // call so its sub-pipeline treats those names as runtime-stable.
+    let outer_scope: BTreeSet<String> = {
+        let mut s = BTreeSet::new();
+        for st in &steps {
+            if let StepKind::Scan(p, _, _) = &st.kind {
+                let mut bs: Vec<Binding> = Vec::new();
+                Binding::collect_bindings(p, &mut bs);
+                for b in bs {
+                    s.insert(b.id.name);
+                }
+            }
+        }
+        s
+    };
     // Find the first Where conjunct that matches.
     for (where_idx, s) in steps.iter().enumerate() {
         let StepKind::Where(cond) = &s.kind else {
@@ -544,10 +729,26 @@ fn try_invert_recursive_predicates(
             let Some(scan_idx) = scan_idx else {
                 continue;
             };
-            // Check fn is self-recursive and matches our shape.
-            let Some(iterate_expr) =
-                build_iterate_for_recursive(fn_name, arg_t.as_ref(), fn_env)
-            else {
+            // Try Phase 2 first (the more general algorithm). It
+            // handles ≥2 intermediate vars and arbitrary tuple-of-
+            // identifiers recursive-call args; rec_fn_env supplies
+            // pre-expander bodies so the original step predicates
+            // are still visible. Falls back to Phase 1.
+            let iterate_expr = build_iterate_for_recursive_v2(
+                fn_name,
+                rec_fn_env,
+                fn_env,
+                datatypes,
+                &outer_scope,
+            )
+            .or_else(|| {
+                build_iterate_for_recursive(
+                    fn_name,
+                    arg_t.as_ref(),
+                    fn_env,
+                )
+            });
+            let Some(iterate_expr) = iterate_expr else {
                 continue;
             };
             // Rewrite: replace the scan source, drop the conjunct.
@@ -561,6 +762,395 @@ fn try_invert_recursive_predicates(
         }
     }
     steps
+}
+
+/// Phase 2 of recursive predicate inversion. Generalises
+/// [`build_iterate_for_recursive`] to handle bodies whose
+/// inductive case introduces ≥2 intermediate variables and whose
+/// recursive call's arguments are an arbitrary tuple of
+/// identifiers (param names or intermediate-var names). For
+/// example,
+///
+/// ```sml
+/// fun cousin (x, y) = sib (x, y)
+///   orelse (exists xp, yp where par (x, xp)
+///                       andalso par (y, yp)
+///                       andalso cousin (xp, yp));
+/// ```
+///
+/// Returns `Some(iterate_expr)` if the body matches; `None`
+/// otherwise — in which case the caller falls back to Phase 1.
+///
+/// The body is read from `rec_fn_env` (pre-expander, with the
+/// original step predicates still as conjuncts of the inner
+/// `where`). The seed and update-fn body are synthesised as
+/// un-expanded `from` expressions and then handed to
+/// [`expand_from_with_scope`] so the existing inversion
+/// pipeline produces real Scans for them.
+fn build_iterate_for_recursive_v2(
+    fn_name: &str,
+    rec_fn_env: &FnEnv,
+    fn_env: &FnEnv,
+    datatypes: &DatatypeMap,
+    outer_scope: &BTreeSet<String>,
+) -> Option<Expr> {
+    use crate::compile::generators::split_conjuncts;
+    use crate::compile::type_env::Id;
+    let (param_pat, body) = rec_fn_env.get(fn_name)?;
+    // Param must be a tuple of identifier sub-patterns. Phase 2's
+    // synthesised seed/update bodies place each param in its own
+    // Scan, so we need the names and types up-front.
+    let Pat::Tuple(_, sub_pats) = param_pat else {
+        return None;
+    };
+    if sub_pats.len() < 2 {
+        // 0/1-param Phase 5; binary closure handled by Phase 1.
+        return None;
+    }
+    let mut params: Vec<(String, Box<Type>)> = Vec::new();
+    for sp in sub_pats {
+        match sp {
+            Pat::Identifier(t, n) => params.push((n.clone(), t.clone())),
+            _ => return None,
+        }
+    }
+    // Body must be `base orelse recursive`. The recursive case is
+    // `from <intermediate vars> where <step preds> andalso
+    // f(<args>)` ending in an Exists step.
+    let (base_case, recursive_case) = match_top_orelse(body)?;
+    let inner_steps = match recursive_case {
+        Expr::From(_, st) | Expr::Exists(_, st) => st,
+        _ => return None,
+    };
+    if !matches!(inner_steps.last().map(|s| &s.kind), Some(StepKind::Exists)) {
+        return None;
+    }
+    // Collect intermediate vars from leading Scan(_, Extent(_), None)
+    // steps. They must be plain identifier patterns.
+    let mut intermediates: Vec<(String, Box<Type>)> = Vec::new();
+    let mut where_cond: Option<&Expr> = None;
+    for step in inner_steps {
+        match &step.kind {
+            StepKind::Scan(p, src, None)
+                if matches!(src.as_ref(), Expr::Extent(_)) =>
+            {
+                match p.as_ref() {
+                    Pat::Identifier(t, n) => {
+                        intermediates.push((n.clone(), t.clone()))
+                    }
+                    _ => return None,
+                }
+            }
+            StepKind::Where(c) => {
+                if where_cond.is_some() {
+                    return None;
+                }
+                where_cond = Some(c);
+            }
+            StepKind::Exists => {}
+            // Anything else (yield, scan-over-non-Extent, etc.)
+            // breaks Phase 2's recognition window.
+            _ => return None,
+        }
+    }
+    if intermediates.is_empty() {
+        return None;
+    }
+    let where_cond = where_cond?;
+    // Decompose the inner where into the recursive call and the
+    // step predicates.
+    let conjuncts = split_conjuncts(where_cond);
+    let mut rec_args: Option<&Expr> = None;
+    let mut step_preds: Vec<Expr> = Vec::new();
+    for c in &conjuncts {
+        if let Some(arg) = match_call_to(c, fn_name) {
+            if rec_args.is_some() {
+                return None;
+            }
+            rec_args = Some(arg);
+        } else {
+            step_preds.push(c.clone());
+        }
+    }
+    let rec_args = rec_args?;
+    if step_preds.is_empty() {
+        return None;
+    }
+    // Recursive call's args must be a tuple of identifiers, each
+    // resolving to either a param name or an intermediate-var
+    // name. (Phase 2 doesn't synthesise bindings for fresh names
+    // introduced by the recursive call.)
+    let Expr::Tuple(_, rc_items) = rec_args else {
+        return None;
+    };
+    if rc_items.len() != params.len() {
+        return None;
+    }
+    let mut rec_arg_names: Vec<(String, Box<Type>)> = Vec::new();
+    let known: BTreeSet<&str> = params
+        .iter()
+        .chain(intermediates.iter())
+        .map(|(n, _)| n.as_str())
+        .collect();
+    for it in rc_items {
+        let Expr::Identifier(t, n) = it else {
+            return None;
+        };
+        if !known.contains(n.as_str()) {
+            return None;
+        }
+        rec_arg_names.push((n.clone(), t.clone()));
+    }
+    // Result tuple type is (param_t1, ..., param_tN).
+    let elem_t = Type::Tuple(
+        params.iter().map(|(_, t)| (**t).clone()).collect(),
+    );
+    let coll_t = Type::Bag(Box::new(elem_t.clone()));
+    let elem_t_box = Box::new(elem_t.clone());
+    // Helper: build a step env containing the given bindings.
+    let mk_env = |bs: Vec<Binding>| StepEnv::new(bs, false, false);
+    let bs_for = |names: &[(String, Box<Type>)]| -> Vec<Binding> {
+        names
+            .iter()
+            .map(|(n, t)| Binding::new(Id::new(n, 0), t.clone()))
+            .collect()
+    };
+    // ----- Seed: `from p1, p2, ... where base yield (p1,p2,...)` -----
+    let mut seed_steps: Vec<Step> = Vec::new();
+    let mut bound: Vec<(String, Box<Type>)> = Vec::new();
+    for (n, t) in &params {
+        bound.push((n.clone(), t.clone()));
+        seed_steps.push(Step::new(
+            StepKind::Scan(
+                Box::new(Pat::Identifier(t.clone(), n.clone())),
+                Box::new(Expr::Extent(t.clone())),
+                None,
+            ),
+            mk_env(bs_for(&bound)),
+        ));
+    }
+    seed_steps.push(Step::new(
+        StepKind::Where(Box::new(base_case.clone())),
+        mk_env(bs_for(&bound)),
+    ));
+    let yield_tuple = Expr::Tuple(
+        elem_t_box.clone(),
+        params
+            .iter()
+            .map(|(n, t)| Expr::Identifier(t.clone(), n.clone()))
+            .collect(),
+    );
+    let yield_env = StepEnv::new(
+        vec![Binding::new(Id::new("current", 0), elem_t_box.clone())],
+        true,
+        false,
+    );
+    seed_steps.push(Step::new(
+        StepKind::Yield(Box::new(yield_tuple.clone())),
+        yield_env.clone(),
+    ));
+    let seed_from = Expr::From(Box::new(coll_t.clone()), seed_steps);
+    let seed_expanded = expand_from_with_scope_rec(
+        seed_from,
+        fn_env,
+        rec_fn_env,
+        datatypes,
+        outer_scope,
+    );
+    // If the seed still contains an Extent scan, we couldn't
+    // ground something; bail out and let Phase 1 try.
+    if from_has_extent(&seed_expanded) {
+        return None;
+    }
+    // ----- Update fn body -----
+    // Build:
+    //   from p1, p2, ..., (rc_arg1, rc_arg2, ...) in newF
+    //     where step_preds yield (p1, ..., pN)
+    // The first N scans are over Extents (will be inverted by
+    // expand_from_with_scope using the step predicates). The
+    // rec-args scan is concrete (newF). When rc_args mention any
+    // params or intermediates, we still emit param scans first;
+    // because rec_args names duplicate names already bound in the
+    // param scans, we use FRESH names for the rec-args scan and
+    // add an equality where-clause to bind them — actually no:
+    // the rec_args identifiers are the **canonical** names from
+    // the inner exists, so `rec_arg_names` may include both param
+    // names and intermediate-var names. To avoid clashes with the
+    // param scans we destructure into fresh names and equate.
+    let new_name = "__tc_new";
+    let new_id = Expr::Identifier(
+        Box::new(coll_t.clone()),
+        new_name.to_string(),
+    );
+    // Build fresh-name destructuring pattern for the newF scan.
+    // For each rc_arg, use a fresh name `__tc_v{i}`.
+    let mut fresh_pats: Vec<Pat> = Vec::new();
+    let mut fresh_eqs: Vec<Expr> = Vec::new();
+    for (i, (orig_name, orig_t)) in rec_arg_names.iter().enumerate() {
+        let fresh = format!("__tc_v{}", i);
+        fresh_pats.push(Pat::Identifier(orig_t.clone(), fresh.clone()));
+        // Equality: orig_name = fresh_name. The orig_name comes
+        // from `params` or `intermediates`, both of which we'll
+        // bind via Extent scans (and step_preds invert them).
+        let eq_op = match orig_t.as_ref() {
+            Type::Primitive(PrimitiveType::Int) => BuiltInFunction::IntEq,
+            Type::Primitive(PrimitiveType::String) => {
+                BuiltInFunction::StringEq
+            }
+            Type::Primitive(PrimitiveType::Char) => BuiltInFunction::CharEq,
+            Type::Primitive(PrimitiveType::Bool) => BuiltInFunction::BoolEq,
+            _ => BuiltInFunction::GEq,
+        };
+        let pair_t = Box::new(Type::Tuple(vec![
+            (**orig_t).clone(),
+            (**orig_t).clone(),
+        ]));
+        let fn_t = Box::new(Type::Fn(
+            pair_t.clone(),
+            Box::new(Type::Primitive(PrimitiveType::Bool)),
+        ));
+        let eq_lit = Expr::Literal(fn_t, Val::Fn(eq_op));
+        let lhs = Expr::Identifier(orig_t.clone(), orig_name.clone());
+        let rhs = Expr::Identifier(orig_t.clone(), fresh);
+        let arg = Expr::Tuple(pair_t, vec![lhs, rhs]);
+        fresh_eqs.push(Expr::Apply(
+            Box::new(Type::Primitive(PrimitiveType::Bool)),
+            Box::new(eq_lit),
+            Box::new(arg),
+            Span::new(""),
+        ));
+    }
+    let rec_args_t = Type::Tuple(
+        rec_arg_names.iter().map(|(_, t)| (**t).clone()).collect(),
+    );
+    let rec_args_pat = Pat::Tuple(Box::new(rec_args_t.clone()), fresh_pats);
+    // Build update-body steps.
+    let mut update_steps: Vec<Step> = Vec::new();
+    let mut bound2: Vec<(String, Box<Type>)> = Vec::new();
+    for (n, t) in &params {
+        bound2.push((n.clone(), t.clone()));
+        update_steps.push(Step::new(
+            StepKind::Scan(
+                Box::new(Pat::Identifier(t.clone(), n.clone())),
+                Box::new(Expr::Extent(t.clone())),
+                None,
+            ),
+            mk_env(bs_for(&bound2)),
+        ));
+    }
+    for (n, t) in &intermediates {
+        bound2.push((n.clone(), t.clone()));
+        update_steps.push(Step::new(
+            StepKind::Scan(
+                Box::new(Pat::Identifier(t.clone(), n.clone())),
+                Box::new(Expr::Extent(t.clone())),
+                None,
+            ),
+            mk_env(bs_for(&bound2)),
+        ));
+    }
+    // Add the newF scan with fresh names.
+    for i in 0..rec_arg_names.len() {
+        let fresh = format!("__tc_v{}", i);
+        bound2.push((fresh, rec_arg_names[i].1.clone()));
+    }
+    update_steps.push(Step::new(
+        StepKind::Scan(
+            Box::new(rec_args_pat),
+            Box::new(new_id.clone()),
+            None,
+        ),
+        mk_env(bs_for(&bound2)),
+    ));
+    // Where: step_preds andalso fresh equalities.
+    let mut all_conjuncts = step_preds.clone();
+    all_conjuncts.extend(fresh_eqs);
+    let combined_where = and_all(all_conjuncts);
+    update_steps.push(Step::new(
+        StepKind::Where(Box::new(combined_where)),
+        mk_env(bs_for(&bound2)),
+    ));
+    update_steps.push(Step::new(
+        StepKind::Yield(Box::new(yield_tuple.clone())),
+        yield_env,
+    ));
+    let update_body = Expr::From(Box::new(coll_t.clone()), update_steps);
+    // Recursively expand the update body so step_preds invert
+    // the param/intermediate Extent scans.
+    let mut update_outer_scope: BTreeSet<String> = outer_scope.clone();
+    update_outer_scope.insert(new_name.to_string());
+    let update_body_expanded = expand_from_with_scope_rec(
+        update_body,
+        fn_env,
+        rec_fn_env,
+        datatypes,
+        &update_outer_scope,
+    );
+    if from_has_extent(&update_body_expanded) {
+        return None;
+    }
+    // Wrap update body in `fn (allF, newF) => ...`.
+    let all_name = "__tc_all";
+    let coll_t_box = Box::new(coll_t.clone());
+    let pair_pat = Pat::Tuple(
+        Box::new(Type::Tuple(vec![coll_t.clone(), coll_t.clone()])),
+        vec![
+            Pat::Identifier(coll_t_box.clone(), all_name.to_string()),
+            Pat::Identifier(coll_t_box.clone(), new_name.to_string()),
+        ],
+    );
+    let fn_t = Box::new(Type::Fn(
+        Box::new(Type::Tuple(vec![coll_t.clone(), coll_t.clone()])),
+        Box::new(coll_t.clone()),
+    ));
+    let update_fn = Expr::Fn(
+        fn_t.clone(),
+        vec![Match {
+            pat: pair_pat,
+            expr: update_body_expanded,
+        }],
+        Span::new(""),
+    );
+    // Build `Relational.iterate seed updateFn`.
+    let iter_t = Box::new(Type::Fn(
+        Box::new(coll_t.clone()),
+        Box::new(Type::Fn(
+            Box::new(fn_t.as_ref().clone()),
+            Box::new(coll_t.clone()),
+        )),
+    ));
+    let iter_lit =
+        Expr::Literal(iter_t, Val::Fn(BuiltInFunction::RelationalIterate));
+    let after_seed_t = Box::new(Type::Fn(
+        Box::new(fn_t.as_ref().clone()),
+        Box::new(coll_t.clone()),
+    ));
+    let with_seed = Expr::Apply(
+        after_seed_t,
+        Box::new(iter_lit),
+        Box::new(seed_expanded),
+        Span::new(""),
+    );
+    Some(Expr::Apply(
+        Box::new(coll_t.clone()),
+        Box::new(with_seed),
+        Box::new(update_fn),
+        Span::new(""),
+    ))
+}
+
+/// Returns true if `expr` is a `From` whose steps still contain a
+/// `Scan(_, Extent(_), _)` — i.e. predicate inversion didn't
+/// successfully ground every unbounded pattern.
+fn from_has_extent(expr: &Expr) -> bool {
+    let Expr::From(_, steps) = expr else {
+        return false;
+    };
+    steps.iter().any(|s| {
+        matches!(&s.kind,
+            StepKind::Scan(_, src, _)
+                if matches!(src.as_ref(), Expr::Extent(_)))
+    })
 }
 
 /// Returns `Some(iterate_expr)` if `fn_env[fn_name]` matches the
@@ -2119,13 +2709,21 @@ fn expand_steps(
     env: &FnEnv,
     datatypes: &DatatypeMap,
 ) -> Vec<Step> {
-    expand_steps_with_scope(steps, env, datatypes, &BTreeSet::new())
+    let empty_rec = FnEnv::new();
+    expand_steps_with_scope(
+        steps,
+        env,
+        &empty_rec,
+        datatypes,
+        &BTreeSet::new(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn expand_steps_with_scope(
     steps: Vec<Step>,
     env: &FnEnv,
+    rec_env: &FnEnv,
     datatypes: &DatatypeMap,
     outer_scope: &BTreeSet<String>,
 ) -> Vec<Step> {
@@ -2158,7 +2756,8 @@ fn expand_steps_with_scope(
     // before `destructure_tuple_extents_for_fn_calls` so the
     // ScanExtent still holds the original tuple-typed pattern and
     // the `f p` conjunct is still un-inlined.
-    let steps = try_invert_recursive_predicates(steps, env);
+    let steps =
+        try_invert_recursive_predicates(steps, env, rec_env, datatypes);
     let steps = destructure_tuple_extents_for_fn_calls(steps, env);
     let steps = inline_tuple_fn_calls_in_where(steps, env);
     let steps = lift_nested_exists_in_where(steps);

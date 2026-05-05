@@ -57,17 +57,39 @@ pub fn resolve_with_session_fns(
     resolved: &Resolved,
     session_fns: &expander::FnEnv,
 ) -> (CoreDecl, Vec<(String, Span)>) {
+    let empty_rec = expander::FnEnv::new();
+    resolve_with_session_fns_rec(resolved, session_fns, &empty_rec)
+}
+
+/// Same as [`resolve_with_session_fns`], but additionally accepts
+/// a parallel `rec_session_fns` map of pre-expander fn bodies for
+/// Phase 2 of recursive predicate inversion.
+pub fn resolve_with_session_fns_rec(
+    resolved: &Resolved,
+    session_fns: &expander::FnEnv,
+    rec_session_fns: &expander::FnEnv,
+) -> (CoreDecl, Vec<(String, Span)>) {
     let resolver = Resolver::new(&resolved.type_map, resolved.base_line);
     let decl = resolver.resolve_decl(&resolved.decl);
     // Run the predicate-inversion pass over the whole resolved decl,
     // accumulating let-bound function definitions as we walk so that
     // `maybe_function` can inline them.
-    let decl = expander::expand_decl_with_session(
+    let decl = expander::expand_decl_with_session_rec(
         decl,
         &resolved.type_map.datatype_constructors,
         session_fns,
+        rec_session_fns,
     );
     (decl, resolver.errors.into_inner())
+}
+
+/// Resolves an AST to a Core decl WITHOUT running the expander.
+/// Used by the shell to capture pre-expander fn bodies for Phase 2
+/// of recursive predicate inversion, so the original step
+/// predicates aren't lost when the body is later expanded.
+pub fn resolve_pre_expander(resolved: &Resolved) -> CoreDecl {
+    let resolver = Resolver::new(&resolved.type_map, resolved.base_line);
+    resolver.resolve_decl(&resolved.decl)
 }
 
 /// Converts an AST to a Core tree.
