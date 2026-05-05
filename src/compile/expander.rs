@@ -489,6 +489,553 @@ fn inline_tuple_fn_calls_in_where(
         .collect()
 }
 
+/// Phase 0z: detects a self-recursive transitive-closure
+/// predicate `f p` in this query's `where` and rewrites the
+/// corresponding `Scan(p, Extent(_), None)` source into a
+/// `Relational.iterate` call computing the fixed point. Drops
+/// the consumed conjunct from the surrounding `Where`.
+///
+/// Phase 1 only handles the binary case
+///
+/// ```sml
+/// fun f (x, y) =
+///   base (x, y) orelse
+///   (exists z where f (x, z) andalso step (z, y))
+/// ```
+///
+/// where `base` and `step` are let-bound predicates on
+/// `int * int`-like tuple parameters whose body has the
+/// `pat elem coll` shape — currently only a record-`elem`
+/// (`{x, y} elem coll`) is recognised; other base shapes return
+/// `None` and let the existing pipeline produce its
+/// "pattern not grounded" error.
+fn try_invert_recursive_predicates(
+    steps: Vec<Step>,
+    fn_env: &FnEnv,
+) -> Vec<Step> {
+    if fn_env.is_empty() {
+        return steps;
+    }
+    use crate::compile::generators::split_conjuncts;
+    // Find the first Where conjunct that matches.
+    for (where_idx, s) in steps.iter().enumerate() {
+        let StepKind::Where(cond) = &s.kind else {
+            continue;
+        };
+        let conjuncts = split_conjuncts(cond);
+        for (cj_idx, cj) in conjuncts.iter().enumerate() {
+            let Expr::Apply(_, f, arg, _) = cj else {
+                continue;
+            };
+            let Expr::Identifier(_, fn_name) = f.as_ref() else {
+                continue;
+            };
+            let Expr::Identifier(arg_t, arg_name) = arg.as_ref() else {
+                continue;
+            };
+            // Find matching Scan(arg_name, Extent(_), None).
+            let scan_idx = steps.iter().position(|st| {
+                matches!(&st.kind,
+                    StepKind::Scan(p, src, None)
+                        if matches!(src.as_ref(), Expr::Extent(_))
+                        && matches!(p.as_ref(),
+                            Pat::Identifier(_, n) if n == arg_name))
+            });
+            let Some(scan_idx) = scan_idx else {
+                continue;
+            };
+            // Check fn is self-recursive and matches our shape.
+            let Some(iterate_expr) =
+                build_iterate_for_recursive(fn_name, arg_t.as_ref(), fn_env)
+            else {
+                continue;
+            };
+            // Rewrite: replace the scan source, drop the conjunct.
+            return rewrite_steps_for_iterate(
+                steps,
+                where_idx,
+                cj_idx,
+                scan_idx,
+                iterate_expr,
+            );
+        }
+    }
+    steps
+}
+
+/// Returns `Some(iterate_expr)` if `fn_env[fn_name]` matches the
+/// Phase 1 transitive-closure shape, or `None` otherwise.
+fn build_iterate_for_recursive(
+    fn_name: &str,
+    arg_type: &Type,
+    fn_env: &FnEnv,
+) -> Option<Expr> {
+    let (param_pat, body) = fn_env.get(fn_name)?;
+    // Param must be `(x, y)` — a binary tuple of identifier subpats.
+    let Pat::Tuple(_, sub_pats) = param_pat else {
+        return None;
+    };
+    if sub_pats.len() != 2 {
+        return None;
+    }
+    let (x_name, x_t) = match &sub_pats[0] {
+        Pat::Identifier(t, n) => (n.clone(), t.clone()),
+        _ => return None,
+    };
+    let (_y_name, y_t) = match &sub_pats[1] {
+        Pat::Identifier(t, n) => (n.clone(), t.clone()),
+        _ => return None,
+    };
+    // Body must be `Apply(BoolOrElse, Tuple([base, step]))`.
+    let (base_case, recursive_case) = match_top_orelse(body)?;
+    // Recursive case: `From(_, [Scan(z, _, None), ..., Where(c),
+    // ..., Exists])`. Phase 1 accepts both the un-expanded shape
+    // (`Scan(z, Extent(_), None)` with a 2-conjunct where) and the
+    // post-expander shape (`Scan(z, sub_from, None)` produced by
+    // inverting the step predicate, leaving only the self-call).
+    let inner_steps = match recursive_case {
+        Expr::From(_, st) | Expr::Exists(_, st) => st,
+        _ => return None,
+    };
+    if !matches!(inner_steps.last().map(|s| &s.kind), Some(StepKind::Exists)) {
+        return None;
+    }
+    let StepKind::Scan(z_pat, _z_src, None) = &inner_steps[0].kind else {
+        return None;
+    };
+    let (z_name, z_t) = match z_pat.as_ref() {
+        Pat::Identifier(t, n) => (n.clone(), t.clone()),
+        _ => return None,
+    };
+    let where_step = inner_steps
+        .iter()
+        .find(|s| matches!(s.kind, StepKind::Where(_)))?;
+    let StepKind::Where(inner_cond) = &where_step.kind else {
+        return None;
+    };
+    use crate::compile::generators::split_conjuncts;
+    let inner_conjuncts = split_conjuncts(inner_cond);
+    let mut rec_call_args: Option<&Expr> = None;
+    let mut other_count = 0;
+    for c in &inner_conjuncts {
+        if let Some(arg) = match_call_to(c, fn_name) {
+            if rec_call_args.is_some() {
+                return None; // multiple self-calls
+            }
+            rec_call_args = Some(arg);
+        } else {
+            other_count += 1;
+        }
+    }
+    let rec_call = rec_call_args?;
+    // Phase 1: zero other conjuncts (post-expansion; step
+    // predicate already inverted) or exactly one (un-expanded).
+    if other_count > 1 {
+        return None;
+    }
+    // rec_call args must be `(Var(x_name), Var(z_name))`.
+    let Expr::Tuple(_, rc_args) = rec_call else {
+        return None;
+    };
+    if rc_args.len() != 2 {
+        return None;
+    }
+    if !matches!(&rc_args[0], Expr::Identifier(_, n) if n == &x_name) {
+        return None;
+    }
+    if !matches!(&rc_args[1], Expr::Identifier(_, n) if n == &z_name) {
+        return None;
+    }
+    // Extract the seed expression from the base case. Phase 1
+    // recognises `Apply(Var("edge"), Tuple([Var(x), Var(y)]))`
+    // where edge's body is `Apply(BoolElem, Tuple([rec_or_tuple,
+    // coll]))`. Returns `coll`. The rec_or_tuple may contain
+    // computed fields.
+    let Expr::Apply(_, base_f, _base_arg, _) = base_case else {
+        return None;
+    };
+    let Expr::Identifier(_, base_name) = base_f.as_ref() else {
+        return None;
+    };
+    let (base_param_pat, base_body) = fn_env.get(base_name)?;
+    let (seed_expr, base_lhs_record_field_order) =
+        extract_seed_from_elem_body(base_body, base_param_pat)?;
+    // Build the iterate expression. Element type T is (x_t, y_t).
+    let _ = arg_type; // kept for future Phase 2 use
+    Some(build_iterate_ast(
+        x_t.as_ref(),
+        y_t.as_ref(),
+        z_t.as_ref(),
+        seed_expr,
+        base_lhs_record_field_order,
+    ))
+}
+
+/// If `body` is `Apply(BoolOrElse, Tuple([a, b]))`, returns
+/// `Some((a, b))`.
+fn match_top_orelse(body: &Expr) -> Option<(&Expr, &Expr)> {
+    let Expr::Apply(_, f, arg, _) = body else {
+        return None;
+    };
+    let Expr::Literal(_, Val::Fn(BuiltInFunction::BoolOrElse)) = f.as_ref()
+    else {
+        return None;
+    };
+    let Expr::Tuple(_, items) = arg.as_ref() else {
+        return None;
+    };
+    if items.len() != 2 {
+        return None;
+    }
+    Some((&items[0], &items[1]))
+}
+
+/// If `e` is `Apply(Var(name), arg)`, returns `Some(arg)`.
+fn match_call_to<'a>(e: &'a Expr, name: &str) -> Option<&'a Expr> {
+    let Expr::Apply(_, f, arg, _) = e else {
+        return None;
+    };
+    let Expr::Identifier(_, n) = f.as_ref() else {
+        return None;
+    };
+    if n != name {
+        return None;
+    }
+    Some(arg)
+}
+
+/// Recognises a body of the form `pat_or_tuple elem coll` and
+/// returns the collection plus, when the LHS is a record, the
+/// label order so we can map record fields back to tuple slots.
+fn extract_seed_from_elem_body(
+    body: &Expr,
+    _param_pat: &Pat,
+) -> Option<(Expr, Option<Vec<String>>)> {
+    let Expr::Apply(_, f, arg, _) = body else {
+        return None;
+    };
+    let Expr::Literal(_, Val::Fn(BuiltInFunction::ListElem)) = f.as_ref()
+    else {
+        return None;
+    };
+    let Expr::Tuple(_, items) = arg.as_ref() else {
+        return None;
+    };
+    if items.len() != 2 {
+        return None;
+    }
+    let lhs = &items[0];
+    let coll = &items[1];
+    // LHS is either a tuple `(x, y)` or a record `{x, y}`. Either
+    // way, the arg-type tells us the field order.
+    let elem_t = lhs.type_();
+    let label_order = match elem_t.as_ref() {
+        Type::Record(_, fields) => {
+            let mut ord = Vec::new();
+            for lbl in fields.keys() {
+                if let Label::String(s) = lbl {
+                    ord.push(s.clone());
+                } else {
+                    return None;
+                }
+            }
+            Some(ord)
+        }
+        Type::Tuple(_) => None,
+        _ => return None,
+    };
+    Some((coll.clone(), label_order))
+}
+
+/// Builds the `Relational.iterate seed updateFn` AST. The element
+/// type of the result is `(x_t, y_t)` (a 2-tuple). If
+/// `seed_label_order` is `Some(labels)`, the seed collection's
+/// elements are records and we wrap with a projection
+/// `from r in seed yield (r.<labels[0]>, r.<labels[1]>)` to
+/// convert them to tuples.
+fn build_iterate_ast(
+    x_t: &Type,
+    y_t: &Type,
+    _z_t: &Type,
+    seed_expr: Expr,
+    seed_label_order: Option<Vec<String>>,
+) -> Expr {
+    use crate::compile::type_env::Id;
+    // Result element type: (x_t, y_t).
+    let elem_t = Type::Tuple(vec![x_t.clone(), y_t.clone()]);
+    let bool_t = Type::Primitive(PrimitiveType::Bool);
+    // Result collection type: Bag(elem_t). (We don't preserve list
+    // ordering in Phase 1; iterate's runtime uses Val::List as its
+    // representation regardless.)
+    let coll_t = Type::Bag(Box::new(elem_t.clone()));
+    // Convert seed from records to tuples if needed.
+    let typed_seed: Expr = match seed_label_order {
+        None => {
+            // Seed is already collection of tuples — just unify the
+            // type to Bag(elem_t) if it was List(elem_t).
+            seed_expr
+        }
+        Some(labels) => {
+            // Wrap as `from r in seed yield (r.label0, r.label1)`.
+            let r_name = "__tc_r";
+            // Determine seed's element type.
+            let seed_t = seed_expr.type_();
+            let seed_elem_t = match seed_t.as_ref() {
+                Type::List(t) | Type::Bag(t) => (**t).clone(),
+                _ => return Expr::List(Box::new(coll_t), Vec::new()),
+            };
+            let r_pat =
+                Pat::Identifier(Box::new(seed_elem_t.clone()), r_name.into());
+            let r_id =
+                Expr::Identifier(Box::new(seed_elem_t.clone()), r_name.into());
+            let mut tuple_items: Vec<Expr> = Vec::new();
+            for (i, lbl) in labels.iter().enumerate() {
+                let field_t = match &seed_elem_t {
+                    Type::Record(_, fs) => {
+                        let key = Label::String(lbl.clone());
+                        match fs.get(&key) {
+                            Some(t) => t.clone(),
+                            None => {
+                                return Expr::List(
+                                    Box::new(coll_t),
+                                    Vec::new(),
+                                );
+                            }
+                        }
+                    }
+                    _ => return Expr::List(Box::new(coll_t), Vec::new()),
+                };
+                let sel_t = Box::new(Type::Fn(
+                    Box::new(seed_elem_t.clone()),
+                    Box::new(field_t.clone()),
+                ));
+                let sel = Expr::RecordSelector(sel_t, i);
+                tuple_items.push(Expr::Apply(
+                    Box::new(field_t),
+                    Box::new(sel),
+                    Box::new(r_id.clone()),
+                    Span::new(""),
+                ));
+            }
+            let tuple_expr = Expr::Tuple(Box::new(elem_t.clone()), tuple_items);
+            let r_binding =
+                Binding::new(Id::new(r_name, 0), Box::new(seed_elem_t.clone()));
+            let scan_env =
+                StepEnv::new(vec![r_binding.clone()], true, seed_t.is_list());
+            let yield_env = StepEnv::new(
+                vec![Binding::new(
+                    Id::new("current", 0),
+                    Box::new(elem_t.clone()),
+                )],
+                true,
+                seed_t.is_list(),
+            );
+            let inner_steps = vec![
+                Step::new(
+                    StepKind::Scan(
+                        Box::new(r_pat),
+                        Box::new(seed_expr.clone()),
+                        None,
+                    ),
+                    scan_env,
+                ),
+                Step::new(StepKind::Yield(Box::new(tuple_expr)), yield_env),
+            ];
+            let inner_t = if seed_t.is_list() {
+                Type::List(Box::new(elem_t.clone()))
+            } else {
+                Type::Bag(Box::new(elem_t.clone()))
+            };
+            Expr::From(Box::new(inner_t), inner_steps)
+        }
+    };
+    // Build the update fn: `fn (allP, newP) =>
+    //   from (px, pz) in newP, (sz, sy) in seed_tuples
+    //   where pz = sz yield (px, sy)`.
+    let all_name = "__tc_all";
+    let new_name = "__tc_new";
+    let px_name = "__tc_px";
+    let pz_name = "__tc_pz";
+    let sz_name = "__tc_sz";
+    let sy_name = "__tc_sy";
+    let coll_t_box = Box::new(coll_t.clone());
+    let all_pat = Pat::Identifier(coll_t_box.clone(), all_name.to_string());
+    let new_pat = Pat::Identifier(coll_t_box.clone(), new_name.to_string());
+    let pair_pat = Pat::Tuple(
+        Box::new(Type::Tuple(vec![coll_t.clone(), coll_t.clone()])),
+        vec![all_pat, new_pat.clone()],
+    );
+    let new_id = Expr::Identifier(coll_t_box.clone(), new_name.into());
+    // (px, pz) in newP
+    let prev_pat = Pat::Tuple(
+        Box::new(elem_t.clone()),
+        vec![
+            Pat::Identifier(Box::new(x_t.clone()), px_name.into()),
+            Pat::Identifier(Box::new(y_t.clone()), pz_name.into()),
+        ],
+    );
+    // (sz, sy) in typed_seed
+    let step_pat = Pat::Tuple(
+        Box::new(elem_t.clone()),
+        vec![
+            Pat::Identifier(Box::new(x_t.clone()), sz_name.into()),
+            Pat::Identifier(Box::new(y_t.clone()), sy_name.into()),
+        ],
+    );
+    // Where pz = sz
+    let pair_int_t = Box::new(Type::Tuple(vec![y_t.clone(), x_t.clone()]));
+    let eq_op = match y_t {
+        Type::Primitive(PrimitiveType::Int) => BuiltInFunction::IntEq,
+        Type::Primitive(PrimitiveType::String) => BuiltInFunction::StringEq,
+        Type::Primitive(PrimitiveType::Char) => BuiltInFunction::CharEq,
+        Type::Primitive(PrimitiveType::Bool) => BuiltInFunction::BoolEq,
+        _ => BuiltInFunction::GEq,
+    };
+    let eq_fn_t =
+        Box::new(Type::Fn(pair_int_t.clone(), Box::new(bool_t.clone())));
+    let eq_lit = Expr::Literal(eq_fn_t, Val::Fn(eq_op));
+    let pz_id = Expr::Identifier(Box::new(y_t.clone()), pz_name.into());
+    let sz_id = Expr::Identifier(Box::new(x_t.clone()), sz_name.into());
+    let eq_arg = Expr::Tuple(pair_int_t, vec![pz_id, sz_id]);
+    let where_cond = Expr::Apply(
+        Box::new(bool_t.clone()),
+        Box::new(eq_lit),
+        Box::new(eq_arg),
+        Span::new(""),
+    );
+    // Yield (px, sy)
+    let px_id = Expr::Identifier(Box::new(x_t.clone()), px_name.into());
+    let sy_id = Expr::Identifier(Box::new(y_t.clone()), sy_name.into());
+    let yield_tuple = Expr::Tuple(Box::new(elem_t.clone()), vec![px_id, sy_id]);
+    // Build inner from steps with their environments.
+    let scan1_bindings = vec![
+        Binding::new(Id::new(px_name, 0), Box::new(x_t.clone())),
+        Binding::new(Id::new(pz_name, 0), Box::new(y_t.clone())),
+    ];
+    let scan1_env = StepEnv::new(scan1_bindings.clone(), false, false);
+    let scan2_bindings = {
+        let mut b = scan1_bindings.clone();
+        b.push(Binding::new(Id::new(sz_name, 0), Box::new(x_t.clone())));
+        b.push(Binding::new(Id::new(sy_name, 0), Box::new(y_t.clone())));
+        b
+    };
+    let scan2_env = StepEnv::new(scan2_bindings.clone(), false, false);
+    let where_env = scan2_env.clone();
+    let yield_env = StepEnv::new(
+        vec![Binding::new(
+            Id::new("current", 0),
+            Box::new(elem_t.clone()),
+        )],
+        true,
+        false,
+    );
+    let inner_steps = vec![
+        Step::new(
+            StepKind::Scan(Box::new(prev_pat), Box::new(new_id), None),
+            scan1_env,
+        ),
+        Step::new(
+            StepKind::Scan(
+                Box::new(step_pat),
+                Box::new(typed_seed.clone()),
+                None,
+            ),
+            scan2_env,
+        ),
+        Step::new(StepKind::Where(Box::new(where_cond)), where_env),
+        Step::new(StepKind::Yield(Box::new(yield_tuple)), yield_env),
+    ];
+    let inner_from = Expr::From(Box::new(coll_t.clone()), inner_steps);
+    let update_fn_t = Box::new(Type::Fn(
+        Box::new(Type::Tuple(vec![coll_t.clone(), coll_t.clone()])),
+        Box::new(coll_t.clone()),
+    ));
+    let update_fn = Expr::Fn(
+        update_fn_t.clone(),
+        vec![Match {
+            pat: pair_pat,
+            expr: inner_from,
+        }],
+        Span::new(""),
+    );
+    // Build `Relational.iterate seed updateFn`.
+    let iter_t = Box::new(Type::Fn(
+        Box::new(coll_t.clone()),
+        Box::new(Type::Fn(
+            Box::new(update_fn_t.as_ref().clone()),
+            Box::new(coll_t.clone()),
+        )),
+    ));
+    let iter_lit =
+        Expr::Literal(iter_t, Val::Fn(BuiltInFunction::RelationalIterate));
+    let after_seed_t = Box::new(Type::Fn(
+        Box::new(update_fn_t.as_ref().clone()),
+        Box::new(coll_t.clone()),
+    ));
+    let with_seed = Expr::Apply(
+        after_seed_t,
+        Box::new(iter_lit),
+        Box::new(typed_seed),
+        Span::new(""),
+    );
+    Expr::Apply(
+        Box::new(coll_t.clone()),
+        Box::new(with_seed),
+        Box::new(update_fn),
+        Span::new(""),
+    )
+}
+
+/// Replaces the source of `steps[scan_idx]` with `iterate_expr`
+/// and drops the conjunct at `cj_idx` from the Where at
+/// `where_idx`. If the Where becomes empty, the step is removed.
+fn rewrite_steps_for_iterate(
+    steps: Vec<Step>,
+    where_idx: usize,
+    cj_idx: usize,
+    scan_idx: usize,
+    iterate_expr: Expr,
+) -> Vec<Step> {
+    use crate::compile::generators::split_conjuncts;
+    let mut out: Vec<Step> = Vec::with_capacity(steps.len());
+    let mut iterate_opt = Some(iterate_expr);
+    for (i, st) in steps.into_iter().enumerate() {
+        if i == scan_idx {
+            let StepKind::Scan(pat, _src, cond) = st.kind else {
+                out.push(st);
+                continue;
+            };
+            let iter = iterate_opt.take().expect("scan_idx visited once");
+            out.push(Step::new(
+                StepKind::Scan(pat, Box::new(iter), cond),
+                st.env,
+            ));
+        } else if i == where_idx {
+            let StepKind::Where(cond) = st.kind else {
+                out.push(st);
+                continue;
+            };
+            let conjuncts = split_conjuncts(&cond);
+            let kept: Vec<Expr> = conjuncts
+                .into_iter()
+                .enumerate()
+                .filter(|(j, _)| *j != cj_idx)
+                .map(|(_, c)| c)
+                .collect();
+            if kept.is_empty() {
+                continue; // drop the Where step
+            }
+            let mut iter = kept.into_iter();
+            let first = iter.next().unwrap();
+            let new_cond = iter.fold(first, |a, b| and_all(vec![a, b]));
+            out.push(Step::new(StepKind::Where(Box::new(new_cond)), st.env));
+        } else {
+            out.push(st);
+        }
+    }
+    out
+}
+
 /// Destructures `Scan(Identifier(Tuple(...), name), Extent(_),
 /// None)` into a tuple-pattern scan when `name` is referenced via
 /// a function call whose parameter is a tuple. Lets
@@ -1605,6 +2152,13 @@ fn expand_steps_with_scope(
     // referenced via a function call whose parameter is a tuple.
     // Lets `inline_tuple_fn_calls_in_where` handle `f p` for
     // `fun f (x, y) = ...`.
+    // Phase 0z: detect a self-recursive `f p` constraint of the
+    // transitive-closure shape and rewrite the corresponding
+    // ScanExtent's source into a `Relational.iterate` call. Runs
+    // before `destructure_tuple_extents_for_fn_calls` so the
+    // ScanExtent still holds the original tuple-typed pattern and
+    // the `f p` conjunct is still un-inlined.
+    let steps = try_invert_recursive_predicates(steps, env);
     let steps = destructure_tuple_extents_for_fn_calls(steps, env);
     let steps = inline_tuple_fn_calls_in_where(steps, env);
     let steps = lift_nested_exists_in_where(steps);
