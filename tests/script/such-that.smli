@@ -1040,6 +1040,19 @@ fun isS3 x = exists y where isR y andalso x < y;
 from x where isS3 x;
 > java.lang.IllegalArgumentException: pattern 'x' is not grounded
 
+(*) Ungrounded tuple-pattern call. The body of `tuPair` places no
+(*) constraint on its arguments, so neither component of `p` can
+(*) be grounded. morel-java reports `pattern 'p' is not grounded`;
+(*) `destructure_tuple_extents_for_fn_calls` splits `p` into
+(*) `p__1, p__2` before this point, so morel-rust reports the
+(*) same shape using the destructured component name.
+fun tuPair (a, b) = true;
+> val tuPair = fn : 'a * 'b -> bool
+from p where tuPair p;
+> java.lang.IllegalArgumentException: pattern 'p__1' is not grounded
+from x, y where tuPair (x, y);
+> java.lang.IllegalArgumentException: pattern 'x' is not grounded
+
 (* Example Datalog Program. Using EDB Sells (bar, beer, price) and
  * Likes (patron, beer), find the patrons who like beers Joe doesn't sell.
  *

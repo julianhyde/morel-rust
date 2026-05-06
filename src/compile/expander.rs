@@ -2001,18 +2001,28 @@ fn destructure_tuple_extents_for_fn_calls(
     // tuple-pat over the original Extent) let
     // `decompose_tuple_elems` invert each elem-conjunct
     // independently against the corresponding component extent.
+    use crate::compile::type_env::Id;
     let mut subst_map: HashMap<String, Expr> = HashMap::new();
-    let mut replacement_steps: HashMap<usize, Vec<Step>> = HashMap::new();
+    // For each destructured target name, the new bindings that
+    // replace the original `p` binding in subsequent step envs.
+    let mut binding_subst: HashMap<String, Vec<Binding>> = HashMap::new();
+    let mut replacement_kinds: HashMap<usize, Vec<StepKind>> = HashMap::new();
     let mut tuple_yields: Vec<Expr> = Vec::new();
     for (idx, name, elems) in &targets {
-        let mut new_steps: Vec<Step> = Vec::with_capacity(elems.len());
+        let mut new_kinds: Vec<StepKind> = Vec::with_capacity(elems.len());
+        let mut new_bindings: Vec<Binding> = Vec::with_capacity(elems.len());
         for (i, t) in elems.iter().enumerate() {
             let fresh_name = format!("{}__{}", name, i + 1);
             let pat = Pat::Identifier(Box::new(t.clone()), fresh_name.clone());
             let source = Expr::Extent(Box::new(t.clone()));
-            new_steps.push(Step::new(
-                StepKind::Scan(Box::new(pat), Box::new(source), None),
-                steps[*idx].env.clone(),
+            new_kinds.push(StepKind::Scan(
+                Box::new(pat),
+                Box::new(source),
+                None,
+            ));
+            new_bindings.push(Binding::new(
+                Id::new(&fresh_name, 0),
+                Box::new(t.clone()),
             ));
         }
         let tuple_t = Box::new(Type::Tuple(elems.clone()));
@@ -2028,18 +2038,52 @@ fn destructure_tuple_extents_for_fn_calls(
             .collect();
         let tuple_expr = Expr::Tuple(tuple_t, tuple_expr_items);
         subst_map.insert(name.clone(), tuple_expr.clone());
-        replacement_steps.insert(*idx, new_steps);
+        binding_subst.insert(name.clone(), new_bindings);
+        replacement_kinds.insert(*idx, new_kinds);
         tuple_yields.push(tuple_expr);
+        let _ = idx;
     }
-    // Walk steps applying replacements + substitutions.
+    // Replace `p` binding with `p__1, p__2, ...` in a StepEnv.
+    let rewrite_env = |env: &StepEnv| -> StepEnv {
+        let mut new_bs: Vec<Binding> = Vec::new();
+        for b in &env.bindings {
+            if let Some(repl) = binding_subst.get(&b.id.name) {
+                new_bs.extend(repl.iter().cloned());
+            } else {
+                new_bs.push(b.clone());
+            }
+        }
+        // `atom` is true only when there's exactly one binding;
+        // destructuring breaks that invariant, so clear it.
+        let atom = env.atom && new_bs.len() == 1;
+        StepEnv::new(new_bs, atom, env.ordered)
+    };
+    // Walk steps applying replacements + substitutions. As we go,
+    // accumulate bindings introduced by the (replacement) scans so
+    // subsequent steps see a consistent, post-destructure StepEnv.
     let mut out: Vec<Step> = Vec::with_capacity(steps.len());
     let had_yield = steps.iter().any(|s| matches!(s.kind, StepKind::Yield(_)));
-    let last_env = steps.last().unwrap().env.clone();
     let outer_is_exists =
         matches!(steps.last().map(|s| &s.kind), Some(StepKind::Exists));
+    let mut acc_bindings: Vec<Binding> = Vec::new();
+    let last_orig_ordered = steps.last().is_none_or(|s| s.env.ordered);
     for (i, step) in steps.into_iter().enumerate() {
-        if let Some(repl_steps) = replacement_steps.remove(&i) {
-            out.extend(repl_steps);
+        if let Some(repl_kinds) = replacement_kinds.remove(&i) {
+            // Find the destructured name's replacement bindings.
+            let target = targets.iter().find(|(j, _, _)| *j == i).unwrap();
+            let new_bs = binding_subst.get(&target.1).unwrap();
+            // Drop the original `p` binding from acc_bindings (in
+            // case it was already introduced by an earlier scan;
+            // here it's the binding this step introduces).
+            acc_bindings.retain(|b| b.id.name != target.1);
+            // Each replacement Scan adds one component binding.
+            for (kind, b) in repl_kinds.into_iter().zip(new_bs.iter()) {
+                acc_bindings.push(b.clone());
+                out.push(Step::new(
+                    kind,
+                    StepEnv::new(acc_bindings.clone(), false, step.env.ordered),
+                ));
+            }
             continue;
         }
         let new_kind = match step.kind {
@@ -2061,7 +2105,7 @@ fn destructure_tuple_extents_for_fn_calls(
             }
             other => other,
         };
-        out.push(Step::new(new_kind, step.env));
+        out.push(Step::new(new_kind, rewrite_env(&step.env)));
     }
     // Add an explicit Yield + Distinct of the destructured tuple
     // if the original had no yield and isn't an exists/forall —
@@ -2069,11 +2113,19 @@ fn destructure_tuple_extents_for_fn_calls(
     // duplicates introduced by inner-exists lifting.
     if !had_yield && !outer_is_exists && tuple_yields.len() == 1 {
         let yield_expr = tuple_yields.into_iter().next().unwrap();
+        // After Yield, the from carries a single `current` binding
+        // of the yielded tuple type (atom = true).
+        let yield_t = yield_expr.type_();
+        let yield_env = StepEnv::new(
+            vec![Binding::new(Id::new("current", 0), yield_t.clone())],
+            true,
+            last_orig_ordered,
+        );
         out.push(Step::new(
             StepKind::Yield(Box::new(yield_expr)),
-            last_env.clone(),
+            yield_env.clone(),
         ));
-        out.push(Step::new(StepKind::Distinct, last_env));
+        out.push(Step::new(StepKind::Distinct, yield_env));
     }
     out
 }
