@@ -2189,7 +2189,7 @@ fn maybe_union(
 
 /// Flattens `a orelse b orelse c …` into `[a, b, c, …]`.
 /// Returns a single-element list if `expr` isn't an orelse.
-fn split_orelse(expr: &Expr) -> Vec<Expr> {
+pub(crate) fn split_orelse(expr: &Expr) -> Vec<Expr> {
     let mut out = Vec::new();
     push_orelse(expr, &mut out);
     out

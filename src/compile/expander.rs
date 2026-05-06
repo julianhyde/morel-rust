@@ -632,7 +632,26 @@ fn inline_tuple_fn_calls_in_where(
             }
             _ => return c.clone(),
         }
-        substitute(body, &subst_map)
+        // Phase 4: if `body` is self-recursive (e.g. bounded path,
+        // arity-3 with arithmetic constraint that Phase 0z's iterate
+        // builder couldn't recognise), strip the recursive disjuncts
+        // of any top-level `orelse`. The remaining non-recursive
+        // base lets the surrounding pipeline ground the goal pattern
+        // when the recursive case adds nothing under the program's
+        // depth bound. Mirrors morel-java's `removeRecursiveBranches`
+        // fallback in `Generators.maybeFunction`. When there's no
+        // top-level `orelse` to peel (e.g. the cousin2 shape:
+        // `base andalso not (...)`), fall back to inlining the
+        // body unchanged — the pipeline's later passes will surface
+        // the appropriate "pattern not grounded" error.
+        let body_to_inline = if contains_self_call(body, fn_name)
+            && let Some(stripped) = remove_recursive_branches(body, fn_name)
+        {
+            stripped
+        } else {
+            body.clone()
+        };
+        substitute(&body_to_inline, &subst_map)
     };
     steps
         .into_iter()
@@ -1293,6 +1312,89 @@ fn match_call_to<'a>(e: &'a Expr, name: &str) -> Option<&'a Expr> {
         return None;
     }
     Some(arg)
+}
+
+/// Returns true if `body` contains an `Apply(Var(name), _)`
+/// anywhere — i.e. a call to the named function.
+fn contains_self_call(body: &Expr, name: &str) -> bool {
+    fn walk(e: &Expr, name: &str) -> bool {
+        if let Expr::Apply(_, f, _, _) = e
+            && let Expr::Identifier(_, n) = f.as_ref()
+            && n == name
+        {
+            return true;
+        }
+        match e {
+            Expr::Apply(_, f, a, _) => walk(f, name) || walk(a, name),
+            Expr::Tuple(_, items) | Expr::List(_, items) => {
+                items.iter().any(|i| walk(i, name))
+            }
+            Expr::Case(_, subj, arms, _) => {
+                walk(subj, name) || arms.iter().any(|m| walk(&m.expr, name))
+            }
+            Expr::Fn(_, arms, _) => arms.iter().any(|m| walk(&m.expr, name)),
+            Expr::Let(_, _, body) => walk(body, name),
+            Expr::From(_, steps)
+            | Expr::Exists(_, steps)
+            | Expr::Forall(_, steps) => steps.iter().any(|s| match &s.kind {
+                StepKind::Scan(_, src, cond) => {
+                    walk(src, name)
+                        || cond.as_ref().is_some_and(|c| walk(c, name))
+                }
+                StepKind::Where(c)
+                | StepKind::Yield(c)
+                | StepKind::Order(c)
+                | StepKind::Compute(c)
+                | StepKind::Skip(c)
+                | StepKind::Take(c)
+                | StepKind::Require(c) => walk(c, name),
+                StepKind::Group(k, agg) => {
+                    walk(k, name) || agg.as_ref().is_some_and(|a| walk(a, name))
+                }
+                _ => false,
+            }),
+            Expr::Aggregate(_, l, r) => walk(l, name) || walk(r, name),
+            _ => false,
+        }
+    }
+    walk(body, name)
+}
+
+/// Phase 4: if `body` has top-level `Bool.orelse` decomposed into
+/// disjuncts, returns the orelse over the disjuncts that DON'T
+/// contain a self-call to `name`. Returns `None` when every
+/// disjunct is recursive or the body has no top-level `orelse`.
+/// Used to fall back to base-case-only inversion when neither
+/// Phase 1's nor Phase 2's iterate builder matches the body
+/// shape (e.g. bounded recursion with arithmetic constraints).
+fn remove_recursive_branches(body: &Expr, name: &str) -> Option<Expr> {
+    use crate::compile::generators::split_orelse;
+    let disjuncts = split_orelse(body);
+    if disjuncts.len() < 2 {
+        return None; // No top-level orelse to peel.
+    }
+    let kept: Vec<Expr> = disjuncts
+        .into_iter()
+        .filter(|d| !contains_self_call(d, name))
+        .collect();
+    if kept.is_empty() {
+        return None;
+    }
+    let mut iter = kept.into_iter();
+    let first = iter.next().unwrap();
+    Some(iter.fold(first, |a, b| {
+        let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
+        let pair_t =
+            Box::new(Type::Tuple(vec![(*bool_t).clone(), (*bool_t).clone()]));
+        let fn_t = Box::new(Type::Fn(pair_t.clone(), bool_t.clone()));
+        let fn_lit = Expr::Literal(fn_t, Val::Fn(BuiltInFunction::BoolOrElse));
+        Expr::Apply(
+            bool_t,
+            Box::new(fn_lit),
+            Box::new(Expr::Tuple(pair_t, vec![a, b])),
+            Span::new(""),
+        )
+    }))
 }
 
 /// Phase 3: returns true if `body` contains a call to `name`
