@@ -548,6 +548,7 @@ impl Shell {
         code: &str,
         expected_output: Option<&str>,
     ) -> ShellResult<String> {
+        eprintln!("[STMT] {}", code.lines().next().unwrap_or("").trim());
         // Check if the statement contains ':t' on any line (type-only mode)
         // :t can appear on any line of a multi-line expression
         let (type_only, actual_code) = {

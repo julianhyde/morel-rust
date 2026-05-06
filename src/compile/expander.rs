@@ -734,9 +734,47 @@ fn try_invert_recursive_predicates(
             let Expr::Identifier(_, fn_name) = f.as_ref() else {
                 continue;
             };
-            let Expr::Identifier(arg_t, arg_name) = arg.as_ref() else {
-                continue;
-            };
+            // Recognise two call shapes:
+            //   (a) `f p` — single identifier arg matching one
+            //       extent-scan pattern;
+            //   (b) `f (v, v, ..., v)` — Phase 5: a tuple of
+            //       identifiers with EVERY position equal to the
+            //       same name `v`, matching a single extent-scan
+            //       on `v`. After Phase 0z fires, the scan source
+            //       is replaced with a wrapper that filters the
+            //       iterate's bag for diagonal tuples and yields
+            //       the single column. Used by `odd_path (v0, v0)`
+            //       when querying for `v0` such that an odd cycle
+            //       passes through `v0`.
+            let (arg_t, arg_name, diagonal_arity): (&Type, &str, usize) =
+                match arg.as_ref() {
+                    Expr::Identifier(t, n) => (t.as_ref(), n.as_str(), 1),
+                    Expr::Tuple(_, items) => {
+                        let names: Vec<&str> = items
+                            .iter()
+                            .filter_map(|e| match e {
+                                Expr::Identifier(_, n) => Some(n.as_str()),
+                                _ => None,
+                            })
+                            .collect();
+                        if names.len() == items.len()
+                            && !names.is_empty()
+                            && names.iter().all(|n| n == &names[0])
+                            && let Some(t) = items.first().and_then(|e| {
+                                if let Expr::Identifier(t, _) = e {
+                                    Some(t.as_ref())
+                                } else {
+                                    None
+                                }
+                            })
+                        {
+                            (t, names[0], items.len())
+                        } else {
+                            continue;
+                        }
+                    }
+                    _ => continue,
+                };
             // Find matching Scan(arg_name, Extent(_), None).
             let scan_idx = steps.iter().position(|st| {
                 matches!(&st.kind,
@@ -777,11 +815,25 @@ fn try_invert_recursive_predicates(
                 datatypes,
                 &outer_scope,
             )
-            .or_else(|| {
-                build_iterate_for_recursive(fn_name, arg_t.as_ref(), fn_env)
-            });
+            .or_else(|| build_iterate_for_recursive(fn_name, arg_t, fn_env));
             let Some(iterate_expr) = iterate_expr else {
                 continue;
+            };
+            // Phase 5: wrap the iterate with a diagonal-projection
+            // `from` when the call site is `f (v, v, ..., v)` with
+            // arity > 1, so the scan source's element type matches
+            // the single-column pattern `v`.
+            let final_source = if diagonal_arity > 1 {
+                match wrap_diagonal_projection(
+                    iterate_expr,
+                    arg_t,
+                    diagonal_arity,
+                ) {
+                    Some(w) => w,
+                    None => continue,
+                }
+            } else {
+                iterate_expr
             };
             // Rewrite: replace the scan source, drop the conjunct.
             return rewrite_steps_for_iterate(
@@ -789,7 +841,7 @@ fn try_invert_recursive_predicates(
                 where_idx,
                 cj_idx,
                 scan_idx,
-                iterate_expr,
+                final_source,
             );
         }
     }
@@ -1747,6 +1799,87 @@ fn build_iterate_ast(
         Box::new(update_fn),
         Span::new(""),
     )
+}
+
+/// Phase 5: wraps an iterate expression that produces a bag of
+/// `arity`-tuples in a `from (a, b, ...) in iterate where a = b
+/// andalso a = c andalso ... yield a` projection so the resulting
+/// scan source has element type `t` (matching a single-column
+/// pattern `v` in the outer query). Returns `None` if `arity < 2`
+/// or `iterate_expr` does not have a `Bag(Tuple(...))` type.
+fn wrap_diagonal_projection(
+    iterate_expr: Expr,
+    elem_t: &Type,
+    arity: usize,
+) -> Option<Expr> {
+    use crate::compile::type_env::Id;
+    if arity < 2 {
+        return None;
+    }
+    // The iterate's type is Bag(Tuple([elem_t; arity])).
+    let tuple_t = Type::Tuple(vec![elem_t.clone(); arity]);
+    let bag_t = Box::new(Type::Bag(Box::new(elem_t.clone())));
+    // Fresh names for the tuple components.
+    let names: Vec<String> =
+        (0..arity).map(|i| format!("__dg_{}", i)).collect();
+    let scan_pat = Pat::Tuple(
+        Box::new(tuple_t.clone()),
+        names
+            .iter()
+            .map(|n| Pat::Identifier(Box::new(elem_t.clone()), n.clone()))
+            .collect(),
+    );
+    let bool_t = Type::Primitive(PrimitiveType::Bool);
+    let pair_t = Type::Tuple(vec![elem_t.clone(), elem_t.clone()]);
+    let eq_op = match elem_t {
+        Type::Primitive(PrimitiveType::Int) => BuiltInFunction::IntEq,
+        Type::Primitive(PrimitiveType::String) => BuiltInFunction::StringEq,
+        Type::Primitive(PrimitiveType::Char) => BuiltInFunction::CharEq,
+        Type::Primitive(PrimitiveType::Bool) => BuiltInFunction::BoolEq,
+        _ => BuiltInFunction::GEq,
+    };
+    let eq_fn_t =
+        Box::new(Type::Fn(Box::new(pair_t.clone()), Box::new(bool_t.clone())));
+    // Build conjuncts: __dg_0 = __dg_1 andalso __dg_0 = __dg_2 ...
+    let mk_eq = |a: &str, b: &str| -> Expr {
+        let lhs = Expr::Identifier(Box::new(elem_t.clone()), a.to_string());
+        let rhs = Expr::Identifier(Box::new(elem_t.clone()), b.to_string());
+        let arg = Expr::Tuple(Box::new(pair_t.clone()), vec![lhs, rhs]);
+        Expr::Apply(
+            Box::new(bool_t.clone()),
+            Box::new(Expr::Literal(eq_fn_t.clone(), Val::Fn(eq_op))),
+            Box::new(arg),
+            Span::new(""),
+        )
+    };
+    let mut eqs: Vec<Expr> = Vec::new();
+    for i in 1..arity {
+        eqs.push(mk_eq(&names[0], &names[i]));
+    }
+    let where_cond = and_all(eqs);
+    let yield_id = Expr::Identifier(Box::new(elem_t.clone()), names[0].clone());
+    let scan_bindings: Vec<Binding> = names
+        .iter()
+        .map(|n| Binding::new(Id::new(n, 0), Box::new(elem_t.clone())))
+        .collect();
+    let scan_env = StepEnv::new(scan_bindings.clone(), false, false);
+    let yield_env = StepEnv::new(
+        vec![Binding::new(
+            Id::new("current", 0),
+            Box::new(elem_t.clone()),
+        )],
+        true,
+        false,
+    );
+    let inner_steps = vec![
+        Step::new(
+            StepKind::Scan(Box::new(scan_pat), Box::new(iterate_expr), None),
+            scan_env.clone(),
+        ),
+        Step::new(StepKind::Where(Box::new(where_cond)), scan_env),
+        Step::new(StepKind::Yield(Box::new(yield_id)), yield_env),
+    ];
+    Some(Expr::From(bag_t, inner_steps))
 }
 
 /// Replaces the source of `steps[scan_idx]` with `iterate_expr`
