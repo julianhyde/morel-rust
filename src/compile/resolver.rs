@@ -18,7 +18,7 @@
 use crate::compile::core::{
     ConBind as CoreConBind, DatatypeBind as CoreDatatypeBind, Decl as CoreDecl,
     Expr as CoreExpr, Match as CoreMatch, Pat as CorePat,
-    PatField as CorePatField, StepKind as CoreStepKind,
+    PatField as CorePatField, Step as CoreStep, StepKind as CoreStepKind,
     TypeBind as CoreTypeBind, ValBind as CoreValBind,
 };
 use crate::compile::expander;
@@ -80,7 +80,126 @@ pub fn resolve_with_session_fns_rec(
         session_fns,
         rec_session_fns,
     );
+    // Any `Expr::Extent` that survived the expander represents an
+    // unbounded variable predicate inversion couldn't ground. Surface
+    // it as a compile-time error pointing at the original `from p`
+    // step's span. Catching it here (rather than emitting a runtime
+    // `Code::RaiseIllegalArgument` from the compiler) avoids the
+    // dead-code path through code-generation and matches the
+    // user-visible shape of other compile errors.
+    {
+        let mut errors = resolver.errors.borrow_mut();
+        check_unbounded_extents(&decl, &mut errors);
+    }
     (decl, resolver.errors.into_inner())
+}
+
+/// Walks `decl` after the expander pass and reports any
+/// `Scan(_, Expr::Extent(_, span), _)` reachable from a concrete
+/// query as an unbounded-variable compile error.
+///
+/// Function bodies are NOT recursed into — Extents there may
+/// be grounded later by the inliner at a concrete call site
+/// (the surrounding parameters become bindings only when the
+/// function is applied with real arguments). A user-visible
+/// error fires only at the call site, where the post-inline
+/// pass flagged the Extent on a real `from`.
+fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
+    fn check_expr(e: &CoreExpr, errors: &mut Vec<(String, Span)>) {
+        match e {
+            CoreExpr::Apply(_, f, a, _) => {
+                check_expr(f, errors);
+                check_expr(a, errors);
+            }
+            CoreExpr::Case(_, subj, arms, _) => {
+                check_expr(subj, errors);
+                for m in arms {
+                    check_expr(&m.expr, errors);
+                }
+            }
+            CoreExpr::Fn(_, _, _) => {
+                // Skip function bodies: their Extents may be
+                // grounded by inlining at the call site.
+            }
+            CoreExpr::Let(_, decls, body) => {
+                for d in decls {
+                    check_decl(d, errors);
+                }
+                check_expr(body, errors);
+            }
+            CoreExpr::Tuple(_, items) | CoreExpr::List(_, items) => {
+                for i in items {
+                    check_expr(i, errors);
+                }
+            }
+            CoreExpr::Aggregate(_, l, r) => {
+                check_expr(l, errors);
+                check_expr(r, errors);
+            }
+            CoreExpr::From(_, steps)
+            | CoreExpr::Exists(_, steps)
+            | CoreExpr::Forall(_, steps) => {
+                for s in steps {
+                    check_step(s, errors);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn check_step(s: &CoreStep, errors: &mut Vec<(String, Span)>) {
+        match &s.kind {
+            CoreStepKind::Scan(pat, src, cond) => {
+                if let CoreExpr::Extent(_, span) = src.as_ref() {
+                    let name = match pat.as_ref() {
+                        CorePat::Identifier(_, n) => n.clone(),
+                        _ => "_".to_string(),
+                    };
+                    errors.push((
+                        format!("pattern '{}' is not grounded", name),
+                        span.clone(),
+                    ));
+                } else {
+                    check_expr(src, errors);
+                }
+                if let Some(c) = cond {
+                    check_expr(c, errors);
+                }
+            }
+            CoreStepKind::Where(c)
+            | CoreStepKind::Yield(c)
+            | CoreStepKind::Order(c)
+            | CoreStepKind::Compute(c)
+            | CoreStepKind::Skip(c)
+            | CoreStepKind::Take(c)
+            | CoreStepKind::Require(c) => check_expr(c, errors),
+            CoreStepKind::Group(k, agg) => {
+                check_expr(k, errors);
+                if let Some(a) = agg {
+                    check_expr(a, errors);
+                }
+            }
+            CoreStepKind::Except(_, exprs)
+            | CoreStepKind::Intersect(_, exprs)
+            | CoreStepKind::Union(_, exprs) => {
+                for e in exprs {
+                    check_expr(e, errors);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn check_decl(d: &CoreDecl, errors: &mut Vec<(String, Span)>) {
+        match d {
+            CoreDecl::NonRecVal(b) => check_expr(&b.expr, errors),
+            CoreDecl::RecVal(binds) => {
+                for b in binds {
+                    check_expr(&b.expr, errors);
+                }
+            }
+            _ => {}
+        }
+    }
+    check_decl(decl, errors);
 }
 
 /// Resolves an AST to a Core decl WITHOUT running the expander.

@@ -101,7 +101,7 @@ from x in [3, 5, 7], y where x > y andalso x < y + 5 yield y;
  * with the resolver-rename suffix; morel-rust uses the surface
  * name `'x'`. *)
 from x where (x + 2) * (x - 3) = 0;
-> java.lang.IllegalArgumentException: pattern 'x' is not grounded
+> stdIn:1.6-1.8 Error: pattern 'x' is not grounded
 >   raised at: stdIn:1.6-1.8
 
 from i
@@ -655,7 +655,7 @@ in
     where isEmp50 e
     yield e.ename
 end;
-> java.lang.IllegalArgumentException: pattern 'e' is not grounded
+> stdIn:5.8-6.5 Error: pattern 'e' is not grounded
 >   raised at: stdIn:5.8-6.5
 
 (*) A function with external extent.
@@ -1026,7 +1026,7 @@ fun isS1 x = exists y where isR y;
 (*) morel-java rejects this with `Unsafe`; morel-rust reports
 (*) the equivalent `pattern 'x' is not grounded`.
 from x where isS1 x;
-> java.lang.IllegalArgumentException: pattern 'x' is not grounded
+> stdIn:1.6-1.8 Error: pattern 'x' is not grounded
 >   raised at: stdIn:1.6-1.8
 
 fun isS2 x = exists y where isR y andalso not (isR x);
@@ -1034,7 +1034,7 @@ fun isS2 x = exists y where isR y andalso not (isR x);
 
 (*) isS2 is unsafe — `x` only appears under negation.
 from x where isS2 x;
-> java.lang.IllegalArgumentException: pattern 'x' is not grounded
+> stdIn:1.6-1.8 Error: pattern 'x' is not grounded
 >   raised at: stdIn:1.6-1.8
 
 fun isS3 x = exists y where isR y andalso x < y;
@@ -1042,7 +1042,7 @@ fun isS3 x = exists y where isR y andalso x < y;
 
 (*) isS3 is unsafe — `x` only appears in an arithmetic subgoal.
 from x where isS3 x;
-> java.lang.IllegalArgumentException: pattern 'x' is not grounded
+> stdIn:1.6-1.8 Error: pattern 'x' is not grounded
 >   raised at: stdIn:1.6-1.8
 
 (*) Ungrounded tuple-pattern call. The body of `tuPair` places no
@@ -1054,10 +1054,10 @@ from x where isS3 x;
 fun tuPair (a, b) = true;
 > val tuPair = fn : 'a * 'b -> bool
 from p where tuPair p;
-> java.lang.IllegalArgumentException: pattern 'p__1' is not grounded
+> stdIn:1.6-1.8 Error: pattern 'p__1' is not grounded
 >   raised at: stdIn:1.6-1.8
 from x, y where tuPair (x, y);
-> java.lang.IllegalArgumentException: pattern 'x' is not grounded
+> stdIn:1.6 Error: pattern 'x' is not grounded
 >   raised at: stdIn:1.6
 
 (* Example Datalog Program. Using EDB Sells (bar, beer, price) and
@@ -1156,7 +1156,7 @@ fun cousin2 (x, y) = sib (x, y)
 (*) equivalent "pattern not grounded" message until a phase-3.5
 (*) enhancement upgrades the wording.)
 from p where cousin2 p;
-> java.lang.IllegalArgumentException: pattern 'p__1' is not grounded
+> stdIn:1.6-1.8 Error: pattern 'p__1' is not grounded
 >   raised at: stdIn:1.6-1.8
 
 

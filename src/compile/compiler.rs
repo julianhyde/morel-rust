@@ -1669,10 +1669,15 @@ impl<'a> Compiler<'a> {
                     element_type,
                 );
                 let pat_code = self.compile_pat(cx, pat);
-                // If the source is still an `Expr::Extent`, predicate
-                // inversion failed to ground this pattern; emit a
-                // runtime error matching morel-java's "pattern X is
-                // not grounded" rather than panicking.
+                // The resolver's post-expander
+                // `check_unbounded_extents` catches residual
+                // `Scan(_, Expr::Extent, _)` in concrete queries
+                // and surfaces them as compile-time errors. It
+                // skips function bodies, where Extents may be
+                // grounded later by call-site inlining; the
+                // runtime fallback below catches the rare case
+                // where a function with an ungrounded body Extent
+                // is actually invoked.
                 let expr_code = if let Expr::Extent(_, span) = expr.as_ref() {
                     let name = match pat.as_ref() {
                         Pat::Identifier(_, n) => n.clone(),
