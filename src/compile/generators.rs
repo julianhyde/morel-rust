@@ -1955,7 +1955,7 @@ fn derive_payload_generator(
                 steps.push(Step::new(
                     StepKind::Scan(
                         Box::new(Pat::Identifier(t.clone(), n)),
-                        Box::new(Expr::Extent(t.clone())),
+                        Box::new(Expr::Extent(t.clone(), Span::new(""))),
                         None,
                     ),
                     scan_env,
@@ -2002,7 +2002,7 @@ fn derive_payload_generator(
                     matches!(
                         &s.kind,
                         StepKind::Scan(_, src, _) if matches!(
-                            src.as_ref(), Expr::Extent(_)
+                            src.as_ref(), Expr::Extent(_, _)
                         )
                     )
                 })

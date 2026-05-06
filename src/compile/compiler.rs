@@ -1130,7 +1130,7 @@ impl<'a> Compiler<'a> {
                     Code::new_get_local(&cx.frame_def, slot)
                 }
             }
-            Expr::Extent(t) => {
+            Expr::Extent(t, _) => {
                 // Reached only when a `from p` (no `in`) survives all
                 // earlier passes — i.e. predicate inversion failed
                 // to resolve the unbounded variable. Phase 1+ will
@@ -1673,14 +1673,14 @@ impl<'a> Compiler<'a> {
                 // inversion failed to ground this pattern; emit a
                 // runtime error matching morel-java's "pattern X is
                 // not grounded" rather than panicking.
-                let expr_code = if let Expr::Extent(_) = expr.as_ref() {
+                let expr_code = if let Expr::Extent(_, span) = expr.as_ref() {
                     let name = match pat.as_ref() {
                         Pat::Identifier(_, n) => n.clone(),
                         _ => "_".to_string(),
                     };
                     Code::RaiseIllegalArgument(
                         format!("pattern '{}' is not grounded", name),
-                        Span::new(""),
+                        span.clone(),
                     )
                 } else {
                     self.compile_expr(cx, None, expr)

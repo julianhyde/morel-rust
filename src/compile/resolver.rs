@@ -1584,16 +1584,21 @@ impl<'a> Resolver<'a> {
             AstStepKind::ScanExtent(pat) => {
                 // `from p` (or `join p`) with no explicit source: the
                 // variable `p` is unbounded. Lower to a scan over an
-                // `Extent(t)` placeholder; predicate inversion (Phase
-                // 1+) replaces the placeholder with a real generator
-                // derived from surrounding `where` predicates. Until
-                // then, programs that reach code generation containing
-                // an Extent are rejected with a clean error.
+                // `Extent(t, span)` placeholder; predicate inversion
+                // (Phase 1+) replaces the placeholder with a real
+                // generator derived from surrounding `where`
+                // predicates. Programs that reach code generation
+                // containing an Extent are rejected with a "pattern
+                // not grounded" error pointing at the captured span.
                 let resolved_pat = self.resolve_pat(pat);
                 let elem_type = resolved_pat.type_();
                 let extent_type =
                     Box::new(Type::Bag(Box::new(elem_type.as_ref().clone())));
-                let extent = CoreExpr::Extent(extent_type);
+                let span = Span::from_pest_span(
+                    &step.span.to_pest_span(),
+                    self.base_line,
+                );
+                let extent = CoreExpr::Extent(extent_type, span);
                 builder.scan_with_condition(resolved_pat, extent, None);
             }
             AstStepKind::Skip(expr) => {

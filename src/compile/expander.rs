@@ -569,7 +569,7 @@ fn has_extent_scan(steps: &[Step]) -> bool {
     steps.iter().any(|s| {
         matches!(&s.kind,
             StepKind::Scan(_, source, _)
-                if matches!(source.as_ref(), Expr::Extent(_)))
+                if matches!(source.as_ref(), Expr::Extent(_, _)))
     })
 }
 
@@ -779,7 +779,7 @@ fn try_invert_recursive_predicates(
             let scan_idx = steps.iter().position(|st| {
                 matches!(&st.kind,
                     StepKind::Scan(p, src, None)
-                        if matches!(src.as_ref(), Expr::Extent(_))
+                        if matches!(src.as_ref(), Expr::Extent(_, _))
                         && matches!(p.as_ref(),
                             Pat::Identifier(_, n) if n == arg_name))
             });
@@ -916,7 +916,7 @@ fn build_iterate_for_recursive_v2(
     for step in inner_steps {
         match &step.kind {
             StepKind::Scan(p, src, None)
-                if matches!(src.as_ref(), Expr::Extent(_)) =>
+                if matches!(src.as_ref(), Expr::Extent(_, _)) =>
             {
                 match p.as_ref() {
                     Pat::Identifier(t, n) => {
@@ -1006,7 +1006,7 @@ fn build_iterate_for_recursive_v2(
         seed_steps.push(Step::new(
             StepKind::Scan(
                 Box::new(Pat::Identifier(t.clone(), n.clone())),
-                Box::new(Expr::Extent(t.clone())),
+                Box::new(Expr::Extent(t.clone(), Span::new(""))),
                 None,
             ),
             mk_env(bs_for(&bound)),
@@ -1108,7 +1108,7 @@ fn build_iterate_for_recursive_v2(
         update_steps.push(Step::new(
             StepKind::Scan(
                 Box::new(Pat::Identifier(t.clone(), n.clone())),
-                Box::new(Expr::Extent(t.clone())),
+                Box::new(Expr::Extent(t.clone(), Span::new(""))),
                 None,
             ),
             mk_env(bs_for(&bound2)),
@@ -1119,7 +1119,7 @@ fn build_iterate_for_recursive_v2(
         update_steps.push(Step::new(
             StepKind::Scan(
                 Box::new(Pat::Identifier(t.clone(), n.clone())),
-                Box::new(Expr::Extent(t.clone())),
+                Box::new(Expr::Extent(t.clone(), Span::new(""))),
                 None,
             ),
             mk_env(bs_for(&bound2)),
@@ -1221,7 +1221,7 @@ fn from_has_extent(expr: &Expr) -> bool {
     steps.iter().any(|s| {
         matches!(&s.kind,
             StepKind::Scan(_, src, _)
-                if matches!(src.as_ref(), Expr::Extent(_)))
+                if matches!(src.as_ref(), Expr::Extent(_, _)))
     })
 }
 
@@ -1952,7 +1952,7 @@ fn destructure_tuple_extents_for_fn_calls(
         return steps;
     }
     // Find tuple-typed scan-extent bindings.
-    let mut targets: Vec<(usize, String, Vec<Type>)> = Vec::new();
+    let mut targets: Vec<(usize, String, Vec<Type>, Span)> = Vec::new();
     for (i, s) in steps.iter().enumerate() {
         let StepKind::Scan(p, source, cond) = &s.kind else {
             continue;
@@ -1960,16 +1960,16 @@ fn destructure_tuple_extents_for_fn_calls(
         if cond.is_some() {
             continue;
         }
-        if !matches!(source.as_ref(), Expr::Extent(_)) {
+        let Expr::Extent(_, span) = source.as_ref() else {
             continue;
-        }
+        };
         let Pat::Identifier(t, name) = p.as_ref() else {
             continue;
         };
         let Type::Tuple(elems) = t.as_ref() else {
             continue;
         };
-        targets.push((i, name.clone(), elems.clone()));
+        targets.push((i, name.clone(), elems.clone(), span.clone()));
     }
     if targets.is_empty() {
         return steps;
@@ -1991,7 +1991,7 @@ fn destructure_tuple_extents_for_fn_calls(
     };
     let targets: Vec<_> = targets
         .into_iter()
-        .filter(|(_, name, _)| needs_destructure(name))
+        .filter(|(_, name, _, _)| needs_destructure(name))
         .collect();
     if targets.is_empty() {
         return steps;
@@ -2008,13 +2008,17 @@ fn destructure_tuple_extents_for_fn_calls(
     let mut binding_subst: HashMap<String, Vec<Binding>> = HashMap::new();
     let mut replacement_kinds: HashMap<usize, Vec<StepKind>> = HashMap::new();
     let mut tuple_yields: Vec<Expr> = Vec::new();
-    for (idx, name, elems) in &targets {
+    for (idx, name, elems, span) in &targets {
         let mut new_kinds: Vec<StepKind> = Vec::with_capacity(elems.len());
         let mut new_bindings: Vec<Binding> = Vec::with_capacity(elems.len());
         for (i, t) in elems.iter().enumerate() {
             let fresh_name = format!("{}__{}", name, i + 1);
             let pat = Pat::Identifier(Box::new(t.clone()), fresh_name.clone());
-            let source = Expr::Extent(Box::new(t.clone()));
+            // Carry the original `from p` span onto each
+            // destructured component's Extent so a downstream
+            // "pattern not grounded" error points at the user's
+            // source location, not an empty span.
+            let source = Expr::Extent(Box::new(t.clone()), span.clone());
             new_kinds.push(StepKind::Scan(
                 Box::new(pat),
                 Box::new(source),
@@ -2070,7 +2074,7 @@ fn destructure_tuple_extents_for_fn_calls(
     for (i, step) in steps.into_iter().enumerate() {
         if let Some(repl_kinds) = replacement_kinds.remove(&i) {
             // Find the destructured name's replacement bindings.
-            let target = targets.iter().find(|(j, _, _)| *j == i).unwrap();
+            let target = targets.iter().find(|(j, _, _, _)| *j == i).unwrap();
             let new_bs = binding_subst.get(&target.1).unwrap();
             // Drop the original `p` binding from acc_bindings (in
             // case it was already introduced by an earlier scan;
@@ -2193,7 +2197,7 @@ fn unground_outer_point_scan(
     {
         return None;
     }
-    let extent = Expr::Extent(pat_t.clone());
+    let extent = Expr::Extent(pat_t.clone(), Span::new(""));
     let extent_step =
         StepKind::Scan(Box::new(pat.clone()), Box::new(extent), None);
     let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
@@ -2623,7 +2627,7 @@ fn prune_unused_scan_extents(steps: Vec<Step>) -> Vec<Step> {
         .into_iter()
         .filter(|s| match &s.kind {
             StepKind::Scan(p, source, _)
-                if matches!(source.as_ref(), Expr::Extent(_)) =>
+                if matches!(source.as_ref(), Expr::Extent(_, _)) =>
             {
                 if let Pat::Identifier(_, n) = p.as_ref() {
                     referenced.contains(n)
@@ -2778,7 +2782,7 @@ fn decompose_tuple_elems_once(steps: Vec<Step>) -> Vec<Step> {
     let mut already_bound: HashMap<String, usize> = HashMap::new();
     for (i, step) in steps.iter().enumerate() {
         if let StepKind::Scan(p, source, _) = &step.kind {
-            if matches!(source.as_ref(), Expr::Extent(_))
+            if matches!(source.as_ref(), Expr::Extent(_, _))
                 && let Pat::Identifier(_, n) = p.as_ref()
             {
                 extent_index.insert(n.clone(), i);
@@ -3148,7 +3152,7 @@ fn expand_steps_with_scope(
         .iter()
         .filter_map(|s| match &s.kind {
             StepKind::Scan(p, source, _)
-                if matches!(source.as_ref(), Expr::Extent(_)) =>
+                if matches!(source.as_ref(), Expr::Extent(_, _)) =>
             {
                 Some(((**p).clone(), s.env.clone()))
             }
@@ -3192,101 +3196,114 @@ fn expand_steps_with_scope(
     // step env when we reorder ScanExtents past regular Scans.
     let mut bound_bindings: Vec<Binding> = Vec::new();
     // ScanExtents waiting on their free-pat dependencies. Each
-    // entry is (next_pat, next_env, original_cond).
-    let mut deferred: Vec<(Pat, StepEnv, Option<Box<Expr>>)> = Vec::new();
+    // entry is (next_pat, next_env, original_cond, original_span).
+    // The span comes from the source `Expr::Extent(_, span)` so that
+    // a still-deferred-after-flush emission produces a "pattern not
+    // grounded" error pointing at the user's `from p`.
+    let mut deferred: Vec<(Pat, StepEnv, Option<Box<Expr>>, Span)> = Vec::new();
 
-    let try_flush = |bound_names: &mut HashSet<String>,
-                     bound_bindings: &mut Vec<Binding>,
-                     deferred: &mut Vec<(Pat, StepEnv, Option<Box<Expr>>)>,
-                     out: &mut Vec<Step>| {
-        let mut progress = true;
-        while progress {
-            progress = false;
-            let mut still: Vec<(Pat, StepEnv, Option<Box<Expr>>)> = Vec::new();
-            for (next_pat, orig_env, cond) in deferred.drain(..) {
-                let Pat::Identifier(_, n) = &next_pat else {
-                    still.push((next_pat, orig_env, cond));
-                    continue;
-                };
-                let name = n.clone();
-                let ready = match cache.best(&name) {
-                    Some(g) => g.free_pats.iter().all(|fp| {
-                        // Outer-scope names are always in scope;
-                        // only require from-step names to be
-                        // bound by an earlier emitted scan.
-                        !from_names.contains(fp.as_str())
-                            || bound_names.contains(fp.as_str())
-                    }),
-                    None => true,
-                };
-                if !ready {
-                    still.push((next_pat, orig_env, cond));
-                    continue;
-                }
-                // Add the new pattern's bindings.
-                let mut bs: Vec<Binding> = Vec::new();
-                Binding::collect_bindings(&next_pat, &mut bs);
-                for b in bs {
-                    if !bound_names.contains(&b.id.name) {
-                        bound_names.insert(b.id.name.clone());
-                        bound_bindings.push(b);
-                    }
-                }
-                let new_atom = bound_bindings.len() == 1;
-                let new_env = StepEnv::new(
-                    bound_bindings.clone(),
-                    new_atom,
-                    orig_env.ordered,
-                );
-                if let Some(generator) = cache.best(&name) {
-                    let merged_cond = match (
-                        cond.map(|c| *c),
-                        generator.extra_filter.clone(),
-                    ) {
-                        (None, None) => None,
-                        (Some(c), None) | (None, Some(c)) => Some(Box::new(c)),
-                        (Some(c), Some(f)) => {
-                            Some(Box::new(and_all(vec![c, f])))
-                        }
+    let try_flush =
+        |bound_names: &mut HashSet<String>,
+         bound_bindings: &mut Vec<Binding>,
+         deferred: &mut Vec<(Pat, StepEnv, Option<Box<Expr>>, Span)>,
+         out: &mut Vec<Step>| {
+            let mut progress = true;
+            while progress {
+                progress = false;
+                let mut still: Vec<(Pat, StepEnv, Option<Box<Expr>>, Span)> =
+                    Vec::new();
+                for (next_pat, orig_env, cond, orig_span) in deferred.drain(..)
+                {
+                    let Pat::Identifier(_, n) = &next_pat else {
+                        still.push((next_pat, orig_env, cond, orig_span));
+                        continue;
                     };
-                    let unique = generator.unique;
-                    out.push(Step::new(
-                        StepKind::Scan(
-                            Box::new(next_pat),
-                            Box::new(generator.exp.clone()),
-                            merged_cond,
-                        ),
-                        new_env.clone(),
-                    ));
-                    // A non-unique generator (e.g. point-orelse-
-                    // range) may produce the same value via more
-                    // than one branch. Strip duplicates so the
-                    // result has set semantics.
-                    if !unique {
-                        out.push(Step::new(StepKind::Distinct, new_env));
+                    let name = n.clone();
+                    let ready = match cache.best(&name) {
+                        Some(g) => g.free_pats.iter().all(|fp| {
+                            // Outer-scope names are always in scope;
+                            // only require from-step names to be
+                            // bound by an earlier emitted scan.
+                            !from_names.contains(fp.as_str())
+                                || bound_names.contains(fp.as_str())
+                        }),
+                        None => true,
+                    };
+                    if !ready {
+                        still.push((next_pat, orig_env, cond, orig_span));
+                        continue;
                     }
-                } else {
-                    let extent = Expr::Extent(next_pat.type_());
-                    out.push(Step::new(
-                        StepKind::Scan(
-                            Box::new(next_pat),
-                            Box::new(extent),
-                            cond,
-                        ),
-                        new_env,
-                    ));
+                    // Add the new pattern's bindings.
+                    let mut bs: Vec<Binding> = Vec::new();
+                    Binding::collect_bindings(&next_pat, &mut bs);
+                    for b in bs {
+                        if !bound_names.contains(&b.id.name) {
+                            bound_names.insert(b.id.name.clone());
+                            bound_bindings.push(b);
+                        }
+                    }
+                    let new_atom = bound_bindings.len() == 1;
+                    let new_env = StepEnv::new(
+                        bound_bindings.clone(),
+                        new_atom,
+                        orig_env.ordered,
+                    );
+                    if let Some(generator) = cache.best(&name) {
+                        let merged_cond = match (
+                            cond.map(|c| *c),
+                            generator.extra_filter.clone(),
+                        ) {
+                            (None, None) => None,
+                            (Some(c), None) | (None, Some(c)) => {
+                                Some(Box::new(c))
+                            }
+                            (Some(c), Some(f)) => {
+                                Some(Box::new(and_all(vec![c, f])))
+                            }
+                        };
+                        let unique = generator.unique;
+                        out.push(Step::new(
+                            StepKind::Scan(
+                                Box::new(next_pat),
+                                Box::new(generator.exp.clone()),
+                                merged_cond,
+                            ),
+                            new_env.clone(),
+                        ));
+                        // A non-unique generator (e.g. point-orelse-
+                        // range) may produce the same value via more
+                        // than one branch. Strip duplicates so the
+                        // result has set semantics.
+                        if !unique {
+                            out.push(Step::new(StepKind::Distinct, new_env));
+                        }
+                    } else {
+                        let extent =
+                            Expr::Extent(next_pat.type_(), orig_span.clone());
+                        out.push(Step::new(
+                            StepKind::Scan(
+                                Box::new(next_pat),
+                                Box::new(extent),
+                                cond,
+                            ),
+                            new_env,
+                        ));
+                    }
+                    progress = true;
                 }
-                progress = true;
+                *deferred = still;
             }
-            *deferred = still;
-        }
-    };
+        };
 
     for step in steps {
         match step.kind {
             StepKind::Scan(pat, source, cond)
-                if matches!(source.as_ref(), Expr::Extent(_)) =>
+                if matches!(source.as_ref(), Expr::Extent(_, _)) =>
             {
+                let extent_span = match source.as_ref() {
+                    Expr::Extent(_, s) => s.clone(),
+                    _ => Span::new(""),
+                };
                 if !matches!(pat.as_ref(), Pat::Identifier(_, _))
                     || scan_idx >= ordered_scans.len()
                 {
@@ -3298,7 +3315,7 @@ fn expand_steps_with_scope(
                 }
                 let (next_pat, next_env) = ordered_scans[scan_idx].clone();
                 scan_idx += 1;
-                deferred.push((next_pat, next_env, cond));
+                deferred.push((next_pat, next_env, cond, extent_span));
                 try_flush(
                     &mut bound_names,
                     &mut bound_bindings,
@@ -3373,9 +3390,10 @@ fn expand_steps_with_scope(
         }
     }
     // Emit any still-deferred scans best-effort; they'll surface
-    // as "pattern X is not grounded" at compile time.
-    for (next_pat, next_env, cond) in deferred {
-        let extent = Expr::Extent(next_pat.type_());
+    // as "pattern X is not grounded" at compile time, pointing at
+    // the original `from p` step's span.
+    for (next_pat, next_env, cond, orig_span) in deferred {
+        let extent = Expr::Extent(next_pat.type_(), orig_span);
         out.push(Step::new(
             StepKind::Scan(Box::new(next_pat), Box::new(extent), cond),
             next_env,
@@ -3464,14 +3482,14 @@ fn derive_generators(
     // Use a copy of the constraints so each pattern sees the full set.
     for step in steps {
         if let StepKind::Scan(pat, source, _) = &step.kind
-            && matches!(source.as_ref(), Expr::Extent(_))
+            && matches!(source.as_ref(), Expr::Extent(_, _))
             && let Pat::Identifier(t, name) = pat.as_ref()
         {
             // The current `from` is a bag if any Scan source is a
             // bag, otherwise a list. For Phase 1 we're conservative:
             // unbounded extents default to bag, matching the type
             // resolver's `deduce_scan_extent_step_type`.
-            let ordered = matches!(source.as_ref(), Expr::Extent(t)
+            let ordered = matches!(source.as_ref(), Expr::Extent(t, _)
                 if matches!(t.as_ref(), Type::List(_)));
             maybe_generator_with_scope(
                 cache,
@@ -3513,7 +3531,7 @@ pub(crate) fn expr_eq(a: &Expr, b: &Expr) -> bool {
             xs.len() == ys.len()
                 && xs.iter().zip(ys.iter()).all(|(x, y)| expr_eq(x, y))
         }
-        (Expr::Extent(t1), Expr::Extent(t2)) => t1 == t2,
+        (Expr::Extent(t1, _), Expr::Extent(t2, _)) => t1 == t2,
         _ => false,
     }
 }

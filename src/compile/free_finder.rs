@@ -72,7 +72,7 @@ fn visit_expr(
         | Expr::From(_, steps) => {
             visit_steps(steps, bound, out);
         }
-        Expr::Extent(_) => {}
+        Expr::Extent(_, _) => {}
         Expr::Fn(_, arms, _) => {
             for arm in arms {
                 visit_match(arm, bound, out);

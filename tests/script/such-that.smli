@@ -102,6 +102,7 @@ from x in [3, 5, 7], y where x > y andalso x < y + 5 yield y;
  * name `'x'`. *)
 from x where (x + 2) * (x - 3) = 0;
 > java.lang.IllegalArgumentException: pattern 'x' is not grounded
+>   raised at: stdIn:1.6-1.8
 
 from i
 where i > 0 andalso i < 10
@@ -655,6 +656,7 @@ in
     yield e.ename
 end;
 > java.lang.IllegalArgumentException: pattern 'e' is not grounded
+>   raised at: stdIn:5.8-6.5
 
 (*) A function with external extent.
 fun hasJob (e: typeof (Bag.hd scott.emps),
@@ -1025,6 +1027,7 @@ fun isS1 x = exists y where isR y;
 (*) the equivalent `pattern 'x' is not grounded`.
 from x where isS1 x;
 > java.lang.IllegalArgumentException: pattern 'x' is not grounded
+>   raised at: stdIn:1.6-1.8
 
 fun isS2 x = exists y where isR y andalso not (isR x);
 > val isS2 = fn : 'a -> bool
@@ -1032,6 +1035,7 @@ fun isS2 x = exists y where isR y andalso not (isR x);
 (*) isS2 is unsafe — `x` only appears under negation.
 from x where isS2 x;
 > java.lang.IllegalArgumentException: pattern 'x' is not grounded
+>   raised at: stdIn:1.6-1.8
 
 fun isS3 x = exists y where isR y andalso x < y;
 > val isS3 = fn : 'a -> bool
@@ -1039,6 +1043,7 @@ fun isS3 x = exists y where isR y andalso x < y;
 (*) isS3 is unsafe — `x` only appears in an arithmetic subgoal.
 from x where isS3 x;
 > java.lang.IllegalArgumentException: pattern 'x' is not grounded
+>   raised at: stdIn:1.6-1.8
 
 (*) Ungrounded tuple-pattern call. The body of `tuPair` places no
 (*) constraint on its arguments, so neither component of `p` can
@@ -1050,8 +1055,10 @@ fun tuPair (a, b) = true;
 > val tuPair = fn : 'a * 'b -> bool
 from p where tuPair p;
 > java.lang.IllegalArgumentException: pattern 'p__1' is not grounded
+>   raised at: stdIn:1.6-1.8
 from x, y where tuPair (x, y);
 > java.lang.IllegalArgumentException: pattern 'x' is not grounded
+>   raised at: stdIn:1.6
 
 (* Example Datalog Program. Using EDB Sells (bar, beer, price) and
  * Likes (patron, beer), find the patrons who like beers Joe doesn't sell.
@@ -1150,6 +1157,7 @@ fun cousin2 (x, y) = sib (x, y)
 (*) enhancement upgrades the wording.)
 from p where cousin2 p;
 > java.lang.IllegalArgumentException: pattern 'p__1' is not grounded
+>   raised at: stdIn:1.6-1.8
 
 
 (* ---------------------------------------------------------------- *)

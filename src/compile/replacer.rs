@@ -67,7 +67,7 @@ fn visit_expr(
         Expr::Exists(t, steps) => {
             Expr::Exists(t.clone(), visit_steps(steps, map, shadow))
         }
-        Expr::Extent(t) => Expr::Extent(t.clone()),
+        Expr::Extent(t, span) => Expr::Extent(t.clone(), span.clone()),
         Expr::Fn(t, arms, span) => Expr::Fn(
             t.clone(),
             arms.iter().map(|a| visit_match(a, map, shadow)).collect(),
