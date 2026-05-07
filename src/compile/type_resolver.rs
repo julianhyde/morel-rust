@@ -2903,8 +2903,17 @@ impl TypeResolver {
         };
         let c_result = self.variable();
 
-        // Output is ordered iff input is ordered (list or bag).
-        self.list_term(Term::Variable(v_result), &c_result);
+        // Output collection kind matches the input — group on a list
+        // produces a list, group on a bag produces a bag. Without
+        // this propagation, an enclosing `let ... in from ... group
+        // ... end` reads the result type as `list` even when the
+        // from is a bag.
+        self.is_list_or_bag_matching_input(
+            &p.c.unwrap(),
+            &p.v,
+            &c_result,
+            &v_result,
+        );
 
         let step2 = StepKind::Group(Box::new(key_expr2), compute_expr2);
         steps2.push(step2.spanned(span));
