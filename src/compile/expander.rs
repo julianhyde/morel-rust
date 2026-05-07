@@ -880,7 +880,11 @@ fn build_iterate_for_recursive_v2(
 ) -> Option<Expr> {
     use crate::compile::generators::split_conjuncts;
     use crate::compile::type_env::Id;
-    let (param_pat, body) = rec_fn_env.get(fn_name)?;
+    let (param_pat_orig, body_orig) = rec_fn_env.get(fn_name)?;
+    let (param_pat_owned, body_owned) =
+        normalize_tuple_id_param(param_pat_orig, body_orig);
+    let param_pat = &param_pat_owned;
+    let body = &body_owned;
     // Param must be a tuple of identifier sub-patterns. Phase 2's
     // synthesised seed/update bodies place each param in its own
     // Scan, so we need the names and types up-front.
@@ -1232,7 +1236,11 @@ fn build_iterate_for_recursive(
     arg_type: &Type,
     fn_env: &FnEnv,
 ) -> Option<Expr> {
-    let (param_pat, body) = fn_env.get(fn_name)?;
+    let (param_pat_orig, body_orig) = fn_env.get(fn_name)?;
+    let (param_pat_owned, body_owned) =
+        normalize_tuple_id_param(param_pat_orig, body_orig);
+    let param_pat = &param_pat_owned;
+    let body = &body_owned;
     // Param must be `(x, y)` — a binary tuple of identifier subpats.
     let Pat::Tuple(_, sub_pats) = param_pat else {
         return None;
@@ -1335,6 +1343,182 @@ fn build_iterate_for_recursive(
 
 /// If `body` is `Apply(BoolOrElse, Tuple([a, b]))`, returns
 /// `Some((a, b))`.
+/// If `pat` is a single-identifier param with tuple type (e.g.
+/// `fun path p = …` where `p : 'a * 'b`), rewrite the pair into the
+/// equivalent tuple-pattern form (`fun path (p__1, p__2) = …`),
+/// substituting `#i p` projections in the body with the matching
+/// component identifier and replacing whole-`p` references with the
+/// reconstructed tuple. Returns `(pat, body)` unchanged when no
+/// rewrite applies. Lets the recursive-iterate phases that require
+/// tuple-shaped params (Phase 1 and Phase 2) accept programs
+/// written in the projection style.
+fn normalize_tuple_id_param(pat: &Pat, body: &Expr) -> (Pat, Expr) {
+    let Pat::Identifier(t, name) = pat else {
+        return (pat.clone(), body.clone());
+    };
+    let Type::Tuple(elem_types) = t.as_ref() else {
+        return (pat.clone(), body.clone());
+    };
+    if elem_types.is_empty() {
+        return (pat.clone(), body.clone());
+    }
+    let comp_names: Vec<String> = (0..elem_types.len())
+        .map(|i| format!("{}__{}", name, i + 1))
+        .collect();
+    let comp_pats: Vec<Pat> = elem_types
+        .iter()
+        .zip(comp_names.iter())
+        .map(|(et, cn)| Pat::Identifier(Box::new(et.clone()), cn.clone()))
+        .collect();
+    let comp_idents: Vec<Expr> = elem_types
+        .iter()
+        .zip(comp_names.iter())
+        .map(|(et, cn)| Expr::Identifier(Box::new(et.clone()), cn.clone()))
+        .collect();
+    let new_pat = Pat::Tuple(t.clone(), comp_pats);
+    let tuple_replacement = Expr::Tuple(t.clone(), comp_idents);
+
+    use crate::compile::replacer::substitute;
+    let mut map = HashMap::new();
+    map.insert(name.clone(), tuple_replacement);
+    let body_subst = substitute(body, &map);
+    let body_simplified = simplify_tuple_projections(&body_subst);
+    (new_pat, body_simplified)
+}
+
+/// Recursively folds `Apply(RecordSelector(_, slot), Tuple(args))`
+/// into `args[slot]`. Used after substituting a tuple expression for
+/// a single-id tuple-typed param so projections like `#1 p` collapse
+/// to the component variable.
+fn simplify_tuple_projections(expr: &Expr) -> Expr {
+    match expr {
+        Expr::Aggregate(t, e1, e2) => Expr::Aggregate(
+            t.clone(),
+            Box::new(simplify_tuple_projections(e1)),
+            Box::new(simplify_tuple_projections(e2)),
+        ),
+        Expr::Apply(t, f, a, span) => {
+            let f2 = simplify_tuple_projections(f);
+            let a2 = simplify_tuple_projections(a);
+            if let Expr::RecordSelector(_, slot) = &f2
+                && let Expr::Tuple(_, items) = &a2
+                && *slot < items.len()
+            {
+                items[*slot].clone()
+            } else {
+                Expr::Apply(t.clone(), Box::new(f2), Box::new(a2), span.clone())
+            }
+        }
+        Expr::Case(t, subj, arms, span) => Expr::Case(
+            t.clone(),
+            Box::new(simplify_tuple_projections(subj)),
+            arms.iter()
+                .map(|m| Match {
+                    pat: m.pat.clone(),
+                    expr: simplify_tuple_projections(&m.expr),
+                })
+                .collect(),
+            span.clone(),
+        ),
+        Expr::Exists(t, steps) => {
+            Expr::Exists(t.clone(), simplify_tuple_projections_in_steps(steps))
+        }
+        Expr::Fn(t, arms, span) => Expr::Fn(
+            t.clone(),
+            arms.iter()
+                .map(|m| Match {
+                    pat: m.pat.clone(),
+                    expr: simplify_tuple_projections(&m.expr),
+                })
+                .collect(),
+            span.clone(),
+        ),
+        Expr::Forall(t, steps) => {
+            Expr::Forall(t.clone(), simplify_tuple_projections_in_steps(steps))
+        }
+        Expr::From(t, steps) => {
+            Expr::From(t.clone(), simplify_tuple_projections_in_steps(steps))
+        }
+        Expr::Let(t, decls, body) => Expr::Let(
+            t.clone(),
+            decls.clone(),
+            Box::new(simplify_tuple_projections(body)),
+        ),
+        Expr::List(t, items) => Expr::List(
+            t.clone(),
+            items.iter().map(simplify_tuple_projections).collect(),
+        ),
+        Expr::Tuple(t, items) => Expr::Tuple(
+            t.clone(),
+            items.iter().map(simplify_tuple_projections).collect(),
+        ),
+        Expr::Current(_)
+        | Expr::Extent(_, _)
+        | Expr::Identifier(_, _)
+        | Expr::Literal(_, _)
+        | Expr::Ordinal(_)
+        | Expr::RecordSelector(_, _) => expr.clone(),
+    }
+}
+
+fn simplify_tuple_projections_in_steps(steps: &[Step]) -> Vec<Step> {
+    steps
+        .iter()
+        .map(|s| {
+            let kind = match &s.kind {
+                StepKind::Compute(e) => {
+                    StepKind::Compute(Box::new(simplify_tuple_projections(e)))
+                }
+                StepKind::Distinct => StepKind::Distinct,
+                StepKind::Except(d, exprs) => StepKind::Except(
+                    *d,
+                    exprs.iter().map(simplify_tuple_projections).collect(),
+                ),
+                StepKind::Exists => StepKind::Exists,
+                StepKind::Group(k, agg) => StepKind::Group(
+                    Box::new(simplify_tuple_projections(k)),
+                    agg.as_deref()
+                        .map(|e| Box::new(simplify_tuple_projections(e))),
+                ),
+                StepKind::Intersect(d, exprs) => StepKind::Intersect(
+                    *d,
+                    exprs.iter().map(simplify_tuple_projections).collect(),
+                ),
+                StepKind::Order(e) => {
+                    StepKind::Order(Box::new(simplify_tuple_projections(e)))
+                }
+                StepKind::Require(e) => {
+                    StepKind::Require(Box::new(simplify_tuple_projections(e)))
+                }
+                StepKind::Scan(p, src, cond) => StepKind::Scan(
+                    p.clone(),
+                    Box::new(simplify_tuple_projections(src)),
+                    cond.as_deref()
+                        .map(|c| Box::new(simplify_tuple_projections(c))),
+                ),
+                StepKind::Skip(e) => {
+                    StepKind::Skip(Box::new(simplify_tuple_projections(e)))
+                }
+                StepKind::Take(e) => {
+                    StepKind::Take(Box::new(simplify_tuple_projections(e)))
+                }
+                StepKind::Union(d, exprs) => StepKind::Union(
+                    *d,
+                    exprs.iter().map(simplify_tuple_projections).collect(),
+                ),
+                StepKind::Unorder => StepKind::Unorder,
+                StepKind::Where(e) => {
+                    StepKind::Where(Box::new(simplify_tuple_projections(e)))
+                }
+                StepKind::Yield(e) => {
+                    StepKind::Yield(Box::new(simplify_tuple_projections(e)))
+                }
+            };
+            Step::new(kind, s.env.clone())
+        })
+        .collect()
+}
+
 fn match_top_orelse(body: &Expr) -> Option<(&Expr, &Expr)> {
     let Expr::Apply(_, f, arg, _) = body else {
         return None;
