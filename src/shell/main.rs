@@ -1028,7 +1028,13 @@ fn comment_depth(code: &str) -> i32 {
             } else {
                 // We saw "*)", which closes a block comment, except if we're
                 // in a line comment.
-                if !in_line_comment {
+                //
+                // Only decrement when actually inside a block comment.
+                // Otherwise `*)` appears as code (e.g. the parenthesised
+                // operator `(op *)` ends with `*)`) and is not a
+                // comment closer; keeping depth at 0 here lets a
+                // following `(*` open a fresh comment correctly.
+                if !in_line_comment && depth > 0 {
                     depth -= 1;
                 }
             }
@@ -1197,7 +1203,13 @@ mod tests {
     fn test_comment_depth() {
         assert_eq!(comment_depth("(* comment *)"), 0);
         assert_eq!(comment_depth("(* comment (* nested *)"), 1);
-        assert_eq!(comment_depth("code; *)"), -1);
+        // A bare `*)` not preceded by an open `(*` is treated as
+        // ordinary code (not a stray comment-closer); depth stays
+        // at 0. This is what the parenthesised operator `(op *)`
+        // looks like to `comment_depth` after stripping the `(`
+        // and identifier — the closing `*)` must not turn a
+        // statement-buffer's depth negative.
+        assert_eq!(comment_depth("code; *)"), 0);
         assert_eq!(comment_depth("(* (* nested (* deeper *) *) *)"), 0);
         assert_eq!(comment_depth("(*) line comment"), 1);
         assert_eq!(comment_depth("(*) line comment\n"), 0);
