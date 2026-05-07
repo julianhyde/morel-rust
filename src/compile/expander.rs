@@ -734,7 +734,7 @@ fn try_invert_recursive_predicates(
             let Expr::Identifier(_, fn_name) = f.as_ref() else {
                 continue;
             };
-            // Recognise two call shapes:
+            // Recognise three call shapes:
             //   (a) `f p` — single identifier arg matching one
             //       extent-scan pattern;
             //   (b) `f (v, v, ..., v)` — Phase 5: a tuple of
@@ -746,46 +746,122 @@ fn try_invert_recursive_predicates(
             //       the single column. Used by `odd_path (v0, v0)`
             //       when querying for `v0` such that an odd cycle
             //       passes through `v0`.
-            let (arg_t, arg_name, diagonal_arity): (&Type, &str, usize) =
-                match arg.as_ref() {
-                    Expr::Identifier(t, n) => (t.as_ref(), n.as_str(), 1),
-                    Expr::Tuple(_, items) => {
-                        let names: Vec<&str> = items
-                            .iter()
-                            .filter_map(|e| match e {
-                                Expr::Identifier(_, n) => Some(n.as_str()),
-                                _ => None,
-                            })
-                            .collect();
-                        if names.len() == items.len()
-                            && !names.is_empty()
-                            && names.iter().all(|n| n == &names[0])
-                            && let Some(t) = items.first().and_then(|e| {
-                                if let Expr::Identifier(t, _) = e {
-                                    Some(t.as_ref())
-                                } else {
-                                    None
-                                }
-                            })
-                        {
-                            (t, names[0], items.len())
-                        } else {
+            //   (c) `f (x, y, …)` — distinct identifiers, each
+            //       matching its own extent-scan. The iterate's bag
+            //       of tuples is consumed by a single Scan with a
+            //       Tuple-pat (x, y, …) that destructures each
+            //       element back into the original variables; the
+            //       per-variable scans are dropped.
+            enum ArgShape<'a> {
+                Single(&'a Type, &'a str),
+                Diagonal(&'a Type, &'a str, usize),
+                DistinctTuple(&'a Type, Vec<(&'a str, &'a Type)>),
+            }
+            let arg_shape: ArgShape = match arg.as_ref() {
+                Expr::Identifier(t, n) => {
+                    ArgShape::Single(t.as_ref(), n.as_str())
+                }
+                Expr::Tuple(tt, items) => {
+                    let id_components: Option<Vec<(&str, &Type)>> = items
+                        .iter()
+                        .map(|e| match e {
+                            Expr::Identifier(t, n) => {
+                                Some((n.as_str(), t.as_ref()))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    let Some(components) = id_components else {
+                        continue;
+                    };
+                    if components.is_empty() {
+                        continue;
+                    }
+                    let first_name = components[0].0;
+                    let all_same =
+                        components.iter().all(|(n, _)| *n == first_name);
+                    if all_same {
+                        ArgShape::Diagonal(
+                            components[0].1,
+                            first_name,
+                            components.len(),
+                        )
+                    } else {
+                        let mut sorted = components.clone();
+                        sorted.sort_by_key(|(n, _)| *n);
+                        sorted.dedup_by_key(|(n, _)| *n);
+                        if sorted.len() != components.len() {
+                            // Mix of repeats and distinct names — not
+                            // currently supported.
                             continue;
                         }
+                        ArgShape::DistinctTuple(tt.as_ref(), components)
                     }
-                    _ => continue,
-                };
-            // Find matching Scan(arg_name, Extent(_), None).
-            let scan_idx = steps.iter().position(|st| {
-                matches!(&st.kind,
-                    StepKind::Scan(p, src, None)
-                        if matches!(src.as_ref(), Expr::Extent(_, _))
-                        && matches!(p.as_ref(),
-                            Pat::Identifier(_, n) if n == arg_name))
-            });
-            let Some(scan_idx) = scan_idx else {
-                continue;
+                }
+                _ => continue,
             };
+            // Find matching extent-scan(s).
+            let (arg_t, arg_name, diagonal_arity, scan_indices): (
+                &Type,
+                &str,
+                usize,
+                Vec<usize>,
+            ) = match &arg_shape {
+                ArgShape::Single(t, n) | ArgShape::Diagonal(t, n, _) => {
+                    let arity = match arg_shape {
+                        ArgShape::Diagonal(_, _, a) => a,
+                        _ => 1,
+                    };
+                    let scan_idx = steps.iter().position(|st| {
+                        matches!(&st.kind,
+                            StepKind::Scan(p, src, None)
+                                if matches!(src.as_ref(), Expr::Extent(_, _))
+                                && matches!(p.as_ref(),
+                                    Pat::Identifier(_, nn) if nn == n))
+                    });
+                    let Some(scan_idx) = scan_idx else {
+                        continue;
+                    };
+                    (*t, *n, arity, vec![scan_idx])
+                }
+                ArgShape::DistinctTuple(tt, components) => {
+                    let mut scans: Vec<usize> =
+                        Vec::with_capacity(components.len());
+                    let mut all_found = true;
+                    for (n, _) in components {
+                        let Some(idx) = steps.iter().position(|st| {
+                            matches!(&st.kind,
+                                StepKind::Scan(p, src, None)
+                                    if matches!(src.as_ref(), Expr::Extent(_, _))
+                                    && matches!(p.as_ref(),
+                                        Pat::Identifier(_, nn) if nn == n))
+                        }) else {
+                            all_found = false;
+                            break;
+                        };
+                        scans.push(idx);
+                    }
+                    if !all_found {
+                        continue;
+                    }
+                    (*tt, components[0].0, 0, scans)
+                }
+            };
+            let _ = arg_name;
+            let scan_idx = scan_indices[0];
+            // Capture owned tuple-args info before the borrow on
+            // `arg_shape` ends (needed by the DistinctTuple rewrite).
+            let distinct_tuple: Option<(Type, Vec<(String, Type)>)> =
+                match &arg_shape {
+                    ArgShape::DistinctTuple(tt, components) => Some((
+                        (*tt).clone(),
+                        components
+                            .iter()
+                            .map(|(n, t)| ((*n).to_string(), (*t).clone()))
+                            .collect(),
+                    )),
+                    _ => None,
+                };
             // Phase 3: skip non-stratified predicates (those with
             // a self-call inside `not(...)`). Inverting them would
             // either compute the wrong fixed point or diverge.
@@ -819,6 +895,20 @@ fn try_invert_recursive_predicates(
             let Some(iterate_expr) = iterate_expr else {
                 continue;
             };
+            // DistinctTuple: each iterate element is a tuple
+            // (x, y, …) destructured by a single Scan whose pat
+            // binds all the original sibling names.
+            if let Some((tuple_type, components)) = distinct_tuple {
+                return rewrite_steps_for_iterate_tuple(
+                    steps,
+                    where_idx,
+                    cj_idx,
+                    &scan_indices,
+                    &components,
+                    tuple_type,
+                    iterate_expr,
+                );
+            }
             // Phase 5: wrap the iterate with a diagonal-projection
             // `from` when the call site is `f (v, v, ..., v)` with
             // arity > 1, so the scan source's element type matches
@@ -2104,6 +2194,87 @@ fn rewrite_steps_for_iterate(
                 .collect();
             if kept.is_empty() {
                 continue; // drop the Where step
+            }
+            let mut iter = kept.into_iter();
+            let first = iter.next().unwrap();
+            let new_cond = iter.fold(first, |a, b| and_all(vec![a, b]));
+            out.push(Step::new(StepKind::Where(Box::new(new_cond)), st.env));
+        } else {
+            out.push(st);
+        }
+    }
+    out
+}
+
+/// Like [`rewrite_steps_for_iterate`], but for the case where the
+/// recursive call's argument is a tuple of *distinct* unbounded
+/// variables (`f (x, y, …)`). Replaces the first matched scan with
+/// a tuple-pattern scan that destructures each iterate element back
+/// into the original variables, drops the remaining matched scans,
+/// and removes the consumed conjunct from the surrounding `where`.
+/// An implicit `distinct` is appended after the tuple-pat scan to
+/// dedup the join-projected results — the recursive case typically
+/// has intermediate variables (e.g. `z` in `path (x, z) andalso edge
+/// (z, y)`) that are projected away.
+fn rewrite_steps_for_iterate_tuple(
+    steps: Vec<Step>,
+    where_idx: usize,
+    cj_idx: usize,
+    scan_indices: &[usize],
+    components: &[(String, Type)],
+    tuple_type: Type,
+    iterate_expr: Expr,
+) -> Vec<Step> {
+    use crate::compile::generators::split_conjuncts;
+    let primary = scan_indices[0];
+    let drop_set: HashSet<usize> = scan_indices[1..].iter().copied().collect();
+    // Use the env of the LAST sibling scan as the tuple-pat scan's
+    // env — that's the one that has bindings for *all* the
+    // components. Reusing the primary's env would only carry the
+    // first component (x), losing y, …, in subsequent steps.
+    let last_scan_idx = *scan_indices.iter().max().unwrap();
+    let merged_env = steps[last_scan_idx].env.clone();
+    let mut out: Vec<Step> = Vec::with_capacity(steps.len());
+    let mut iterate_opt = Some(iterate_expr);
+    for (i, st) in steps.into_iter().enumerate() {
+        if i == primary {
+            let StepKind::Scan(_, _, cond) = st.kind else {
+                out.push(st);
+                continue;
+            };
+            // Tuple-pat (x, y, …) destructures each iterate element
+            // into its sibling bindings.
+            let sub_pats: Vec<Pat> = components
+                .iter()
+                .map(|(n, t)| Pat::Identifier(Box::new(t.clone()), n.clone()))
+                .collect();
+            let new_pat = Pat::Tuple(Box::new(tuple_type.clone()), sub_pats);
+            let iter = iterate_opt.take().expect("primary visited once");
+            out.push(Step::new(
+                StepKind::Scan(Box::new(new_pat), Box::new(iter), cond),
+                merged_env.clone(),
+            ));
+            // Implicit distinct — same step env, since the binding
+            // shape is unchanged.
+            out.push(Step::new(StepKind::Distinct, merged_env.clone()));
+        } else if drop_set.contains(&i) {
+            // Drop sibling scans; their bindings were unioned into
+            // the primary scan's tuple-pat above.
+            continue;
+        } else if i == where_idx {
+            let StepKind::Where(cond) = st.kind else {
+                out.push(st);
+                continue;
+            };
+            let conjuncts = split_conjuncts(&cond);
+            let kept: Vec<Expr> = conjuncts
+                .into_iter()
+                .enumerate()
+                .filter(|(j, _)| *j != cj_idx)
+                .map(|(_, c)| c)
+                .collect();
+            if kept.is_empty() {
+                continue;
             }
             let mut iter = kept.into_iter();
             let first = iter.next().unwrap();
