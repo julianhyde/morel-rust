@@ -16,20 +16,30 @@
  * language governing permissions and limitations under the
  * License.
  *
- * Tests for queries with unbounded variables.
- * (Originally, such queries used a 'suchthat' keyword, but that keyword
- * has since been removed.)
+ * Tests for queries with unbounded variables (also called 'domain
+ * variables' because they range over a domain such as integers
+ * or positive integers). Queries with unbounded variables are made
+ * runnable using a technique called 'predicate inversion'.
+ *
+ * Originally, such queries used a 'suchthat' keyword, but that
+ * keyword has since been removed.
  *)
 Sys.set ("output", "tabular");
 > val it = () : unit
 Sys.set ("stringDepth", ~1);
 > val it = () : unit
-Sys.set ("printLength", 64);
-> val it = () : unit
-(* ---------------------------------------------------------------- *)
-(* Convert predicates into ranges. *)
+
+(* Convert predicates into ranges --------------------------------- *)
+
 from i where i > 0 andalso i < 10;
 > val it = [1,2,3,4,5,6,7,8,9] : int bag
+
+from i where i >= 0 andalso i <= 10;
+> val it = [0,1,2,3,4,5,6,7,8,9,10] : int bag
+
+from i where i >= 0 andalso i <= 5 orelse i = 8 orelse i > 20 andalso i < 22;
+> val it = [1,2,3,4,5,21,8,0] : int bag
+
 from i where i > 0 andalso i < 4 yield {j = i + 1};
 > j
 > -
@@ -38,6 +48,7 @@ from i where i > 0 andalso i < 4 yield {j = i + 1};
 > 4
 >
 > val it : {j:int} bag
+
 from i where i > 0 andalso i < 4 yield {j = i + 1} order DESC j;
 > j
 > -
@@ -46,11 +57,19 @@ from i where i > 0 andalso i < 4 yield {j = i + 1} order DESC j;
 > 2
 >
 > val it : {j:int} list
+
 from i where i > 0 andalso i < 10 andalso i mod 3 = 2;
 > val it = [2,5,8] : int bag
 
+from i where i = 0;
+> val it = [0] : int bag
+
+from s where s = "abc";
+> val it = ["abc"] : string bag
+
 from i where i = 0 orelse i = 12;
-> val it = [0,12] : int bag
+> val it = [12,0] : int bag
+
 from i where i > 0 andalso i < 10 orelse i > 12 andalso i <= 15;
 > val it = [1,2,3,4,5,6,7,8,9,13,14,15] : int bag
 
@@ -60,13 +79,207 @@ from t where t = (1, true) orelse t = (3, false);
 
 (*) Ranges over bool * int: a point and a range.
 from t where t = (true, 1) orelse t >= (false, 3) andalso t <= (false, 5);
-> val it = [(true,1),(false,3),(false,4),(false,5)] : (bool * int) bag
+> val it = [(false,3),(false,4),(false,5),(true,1)] : (bool * int) bag
 
 (*) Ranges over int * bool * int * bool (4-tuple): a single closed range.
 from t where t >= (1, false, 2, true) andalso t <= (1, false, 4, false);
 > val it =
 >   [(1,false,2,true),(1,false,3,false),(1,false,3,true),(1,false,4,false)]
 >   : (int * bool * int * bool) bag
+
+from i
+where i > 0 andalso i < 10
+join b
+where b = true;
+> b    i
+> ---- -
+> true 1
+> true 2
+> true 3
+> true 4
+> true 5
+> true 6
+> true 7
+> true 8
+> true 9
+>
+> val it : {b:bool, i:int} bag
+
+from i
+where i > 0 andalso i < 10
+join b
+where b = (i mod 2 = 0);
+> b     i
+> ----- -
+> false 1
+> true  2
+> false 3
+> true  4
+> false 5
+> true  6
+> false 7
+> true  8
+> false 9
+>
+> val it : {b:bool, i:int} bag
+
+(* -- elem -------------------------------------------------------- *)
+let
+  val nums = [1, 2, 3, 4, 5]
+in
+  from n where n elem nums
+end;
+> val it = [1,2,3,4,5] : int bag
+
+(* -- andalso becomes join ---------------------------------------- *)
+val nums = [1, 2, 3, 4, 5];
+> val nums = [1,2,3,4,5] : int list
+
+fun isNum n = n elem nums;
+> val isNum = fn : int -> bool
+
+fun isEven n = n mod 2 = 0;
+> val isEven = fn : int -> bool
+
+from n where isNum n andalso isEven n;
+> val it = [2,4] : int bag
+
+(*) Case
+from x where case x of y => y elem [1,2];
+> val it = [1,2] : int bag
+
+(*) Case with multiple arms (issue #341)
+from x where (case x of 1 => true | 3 => true | _ => false);
+> val it = [1,3] : int bag
+
+(*) Case with explicit false arm excludes that value
+from x where (case x of 1 => true | 2 => false | 3 => true | _ => false);
+> val it = [1,3] : int bag
+
+(*) Simple boolean inversion: 'not b' generates false
+from b where not b;
+> val it = [false] : bool bag
+
+(*) Case with variable pattern and range predicate
+from x where (case x of 0 => true | n => n >= 5 andalso n <= 8);
+> val it = [0,5,6,7,8] : int bag
+
+(* TODO: Exclusion constraints need to become post-generation filters
+(*) Case where explicit false shadows later variable match
+from x where (case x of 6 => false | n => n >= 5 andalso n <= 8);
+> val it = [5,7,8] : int bag
+*)
+
+(*) Simple constructor pattern test - single arm with range constraint
+from e where (case e of INL n => n >= 5 andalso n <= 8 | _ => false);
+> val it = [INL 5,INL 6,INL 7,INL 8] : (int,'a) either bag
+
+(*) Constructor pattern with boolean payload
+from e where (case e of INR b => b | _ => false);
+> val it = [INR true] : ('a,bool) either bag
+
+(*) Constructor pattern with boolean payload - "not b" inverts to "b = false"
+from e where (case e of INR b => not b | _ => false);
+> val it = [INR false] : ('a,bool) either bag
+
+(*) Constructor pattern with (boolean * int) payload
+from e where (case e of INR (b, i) => b andalso i > 5 andalso i < 15 andalso i mod 3 = 1 | _ => false);
+> val it = [INR (true,7),INR (true,10),INR (true,13)]
+>   : ('a,bool * int) either bag
+
+from e where (case e of INR (b, i) => i > 0 andalso i < 5 andalso b = (i mod 2 = 0) | _ => false);
+> val it = [INR (false,1),INR (false,3),INR (true,2),INR (true,4)]
+>   : ('a,bool * int) either bag
+
+(*) Multiple constructor arms combined with orelse (via maybeUnion)
+from e where (case e of
+    INL n => n >= 5 andalso n <= 8
+  | INR b => not b);
+> val it = [INL 5,INL 6,INL 7,INL 8,INR false] : (int,bool) either bag
+
+(*) Case with constructor patterns - INL/INR (issue #341)
+(* Multiple arms with literal patterns, variable patterns, and exclusions *)
+from e where (case e of
+    INL 0 => true
+  | INL 6 => false
+  | INR b => not b
+  | INL 7 => true
+  | INL 100 => true
+  | INL n => n >= 5 andalso n <= 8);
+> val it = [INL 0,INR false,INL 7,INL 100,INL 5,INL 8] : (int,bool) either bag
+
+(* Predicate cannot be inverted.
+ *
+ * With symbolic math we could deduce that the solution is [~2,3],
+ * but we don't have symbolic math. *)
+from x where (x + 2) * (x - 3) = 0;
+> stdIn:1.6-1.8 Error: pattern 'x' is not grounded
+>   raised at: stdIn:1.6-1.8
+
+(* -- elem patterns ----------------------------------------------- *)
+
+(*) Pattern
+from x, y where (x, y) elem [(1,true),(2,false)];
+> x y
+> - -----
+> 1 true
+> 2 false
+>
+> val it : {x:int, y:bool} bag
+
+(*) Reversed pattern
+from x, y where (y, x) elem [(1,true),(2,false)];
+> x     y
+> ----- -
+> true  1
+> false 2
+>
+> val it : {x:bool, y:int} bag
+
+(*) Reversed pattern via case
+from x, y where case (y, x) of (a, b) => (a, b) elem [(1,true),(2,false)];
+> x     y
+> ----- -
+> true  1
+> false 2
+>
+> val it : {x:bool, y:int} bag
+
+(*) Record pattern
+from x, y where {y, x} elem [{y=1,x=true},{y=2,x=false}];
+> x     y
+> ----- -
+> true  1
+> false 2
+>
+> val it : {x:bool, y:int} bag
+
+from x where (x, "b") elem [(1,"a"),(2,"b")];
+> val it = [2] : int bag
+
+from x where (1, x) elem [(1,"a"),(2,"b")];
+> val it = ["a"] : string bag
+
+from x where (1, x, true) elem [(1,"a",false),(2,"b",true),(1,"c",true)];
+> val it = ["c"] : string bag
+
+(* -- orelse becomes union ---------------------------------------- *)
+fun isSmall n = n elem [1, 2];
+> val isSmall = fn : int -> bool
+
+fun isLarge n = n elem [10, 20];
+> val isLarge = fn : int -> bool
+
+from n where isSmall n orelse isLarge n;
+> val it = [1,2,20,10] : int bag
+
+(* -- Predicate inversion ----------------------------------------- *)
+
+(* 1. Simple elem
+ *
+ * Invert 'from x where x elem list' to 'from x in list'. *)
+from x where x elem [1, 2, 4];
+> val it = [1,2,4] : int bag
 
 (* In the following case, we solve for x given a value of y. This
    requires predicate-inversion because it cannot be solved using
@@ -93,51 +306,61 @@ from x, y in [0, 2, 9] where x > y andalso x < y + 5;
 from x in [3, 5, 7], y where x > y andalso x < y + 5 yield y;
 > val it = [~1,0,1,2,1,2,3,4,3,4,5,6] : int bag
 
-(* Predicate cannot be inverted.
- * With symbolic math we could deduce that the solution is [~2,3],
- * but we don't have symbolic math.
- *
- * morel-rust note: morel-java reports `pattern x_1 is not grounded`
- * with the resolver-rename suffix; morel-rust uses the surface
- * name `'x'`. *)
-from x where (x + 2) * (x - 3) = 0;
-> stdIn:1.6-1.8 Error: pattern 'x' is not grounded
->   raised at: stdIn:1.6-1.8
+from x in [3, 5, 7], y
+  where x > y andalso x < y + 5
+  group y compute count over ();
+> count y
+> ----- --
+> 2     1
+> 2     2
+> 2     3
+> 2     4
+> 1     5
+> 1     6
+> 1     -1
+> 1     0
+>
+> val it : {count:int, y:int} bag
 
-from i
-where i > 0 andalso i < 10
-join b
-where b = true;
-> b    i
-> ---- -
-> true 1
-> true 2
-> true 3
-> true 4
-> true 5
-> true 6
-> true 7
-> true 8
-> true 9
+from x where x = 3 andalso x < 10;
+> val it = [3] : int bag
+
+from x where x = 3 andalso x > 10;
+> val it = [] : int bag
+
+from x where x = 3 orelse x > 0 andalso x < 5;
+> val it = [1,2,3,4] : int bag
+
+from x where x = 3 orelse x > 10 andalso x < 15;
+> val it = [3,11,12,13,14] : int bag
+
+from b where b > false;
+> val it = [true] : bool bag
+
+from b where b > false andalso true;
+> val it = [true] : bool bag
+
+from b where b > false andalso false;
+> val it = [] : bool bag
+
+(*) With spurious 'andalso true'
+from x, y in [2,3] where x > y andalso true andalso x < 5;
+> x y
+> - -
+> 3 2
+> 4 2
+> 4 3
 >
-> val it : {b:bool, i:int} bag
-from i
-where i > 0 andalso i < 10
-join b
-where b = (i mod 2 = 0);
-> b     i
-> ----- -
-> false 1
-> true  2
-> false 3
-> true  4
-> false 5
-> true  6
-> false 7
-> true  8
-> false 9
+> val it : {x:int, y:int} bag
+
+from x, y in [2,3] where x > y andalso true where x < 5;
+> x y
+> - -
+> 3 2
+> 4 2
+> 4 3
 >
-> val it : {b:bool, i:int} bag
+> val it : {x:int, y:int} bag
 
 (*) Unbound variables in declared 'join';
 (*) condition on 'j' occurs after 'join'
@@ -168,8 +391,31 @@ where j > 4 andalso j < 7
 >
 > val it : {i:int, j:int, k:int, m:int} bag
 
-(* ---------------------------------------------------------------- *)
-(* Unbounded variables with `take` and other clauses. *)
+(* -- Emp and dept examples --------------------------------------- *)
+
+(*) Previously MainTest.testFromSuchThat
+let
+  val emps = [
+    {id = 100, name = "Fred", deptno = 10},
+    {id = 101, name = "Velma", deptno = 20},
+    {id = 102, name = "Shaggy", deptno = 30},
+    {id = 103, name = "Scooby", deptno = 30}]
+  fun hasEmpNameInDept (n, d) =
+    (n, d) elem (from e in emps yield (e.name, e.deptno))
+in
+  from n, d
+    where hasEmpNameInDept (n, d)
+    where d = 30
+    yield {d, n}
+end;
+> d  n
+> -- ------
+> 30 Shaggy
+> 30 Scooby
+>
+> val it : {d:int, n:string} bag
+
+(* Unbounded variables with `take` and other clauses -------------- *)
 
 (* Odd and even numbers that are not a multiple of 6. *)
 from i
@@ -266,15 +512,12 @@ exists w, x where x = 3 andalso x < 10;
 exists w, x where x = 3 andalso x > 10;
 > val it = false : bool
 
-(*) Reversed pattern via case
-from x, y where case (y, x) of (a, b) => (a, b) elem [(1,true),(2,false)];
-> x     y
-> ----- -
-> true  1
-> false 2
->
-> val it : {x:bool, y:int} bag
+exists x
+  where (exists y
+    where (x, y) elem [(1, 2), (1, 3), (4, 3)]);
+> val it = true : bool
 
+(*) The same query with parentheses.
 exists x
   where (exists y
     where (x, y) elem [(1, 2), (1, 3), (4, 3)]);
@@ -469,6 +712,10 @@ join c in [6, 7] on b + c = 10,
 >
 > val it : {a:int, b:int, c:int, d:int} list
 
+useSilently "scott.smli";
+> [opening scott.smli]
+> val it = () : unit
+
 from dno, name, loc
 where {deptno = dno, dname = name, loc} elem scott.depts
   andalso dno > 20;
@@ -480,16 +727,6 @@ where {deptno = dno, dname = name, loc} elem scott.depts
 > val it : {dno:int, loc:string, name:string} bag
 
 (*) As previous but with a literal in the record.
-from dno, name
-where {deptno = dno, dname = name, loc = "CHICAGO"} elem scott.depts
-  andalso dno > 20;
-> dno name
-> --- -----
-> 30  SALES
->
-> val it : {dno:int, name:string} bag
-
-(*) Equivalent to previous, rephrasing 'suchthat' as 'where'
 from dno, name
 where {deptno = dno, dname = name, loc = "CHICAGO"} elem scott.depts
   andalso dno > 20;
@@ -599,28 +836,6 @@ in
     yield e.ename
 end;
 > val it = ["SMITH","JONES","SCOTT","ADAMS","FORD"] : string bag
-
-(*) Previously MainTest.testFromSuchThat
-let
-  val emps = [
-    {id = 100, name = "Fred", deptno = 10},
-    {id = 101, name = "Velma", deptno = 20},
-    {id = 102, name = "Shaggy", deptno = 30},
-    {id = 103, name = "Scooby", deptno = 30}]
-  fun hasEmpNameInDept (n, d) =
-    (n, d) elem (from e in emps yield (e.name, e.deptno))
-in
-  from n, d
-    where hasEmpNameInDept (n, d)
-    where d = 30
-    yield {d, n}
-end;
-> d  n
-> -- ------
-> 30 Shaggy
-> 30 Scooby
->
-> val it : {d:int, n:string} bag
 
 (*) As previous, but 'fun' followed by 'from' without using 'let'
 fun isEmp e =
@@ -1038,7 +1253,7 @@ from x where isS2 x;
 >   raised at: stdIn:1.6-1.8
 
 fun isS3 x = exists y where isR y andalso x < y;
-> val isS3 = fn : 'a -> bool
+> val isS3 = fn : int -> bool
 
 (*) isS3 is unsafe — `x` only appears in an arithmetic subgoal.
 from x where isS3 x;
@@ -1394,57 +1609,6 @@ in
   from x where f x andalso x > 1
 end;
 > val it = [2,3] : int bag
-
-(* -- elem patterns ----------------------------------------------- *)
-
-(*) Pattern
-from x, y where (x, y) elem [(1,true),(2,false)];
-> x y
-> - -----
-> 1 true
-> 2 false
->
-> val it : {x:int, y:bool} bag
-
-(*) Reversed pattern
-from x, y where (y, x) elem [(1,true),(2,false)];
-> x     y
-> ----- -
-> true  1
-> false 2
->
-> val it : {x:bool, y:int} bag
-
-(*) Record pattern
-from x, y where {y, x} elem [{y=1,x=true},{y=2,x=false}];
-> x     y
-> ----- -
-> true  1
-> false 2
->
-> val it : {x:bool, y:int} bag
-
-from x where (x, "b") elem [(1,"a"),(2,"b")];
-> val it = [2] : int bag
-
-from x where (1, x) elem [(1,"a"),(2,"b")];
-> val it = ["a"] : string bag
-
-from x where (1, x, true) elem [(1,"a",false),(2,"b",true),(1,"c",true)];
-> val it = ["c"] : string bag
-
-(* -- orelse becomes union ---------------------------------------- *)
-fun isSmall n = n elem [1, 2];
-> val isSmall = fn : int -> bool
-
-fun isLarge n = n elem [10, 20];
-> val isLarge = fn : int -> bool
-
-(*) Order of bag elements may differ from morel-java's
-(*) `[1,2,20,10]` because morel-rust constructs the union in a
-(*) different (input-list) order. The bag contents are the same.
-from n where isSmall n orelse isLarge n;
-> val it = [1,2,10,20] : int bag
 
 (*) Find symmetric elements of a relation
 let

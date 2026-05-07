@@ -1720,6 +1720,7 @@ impl TypeResolver {
             ExprKind::GreaterThan(left, right) => {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op >", left, right, v)?;
+                self.prefer_left_int(&left2);
                 let x =
                     ExprKind::GreaterThan(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
@@ -1727,6 +1728,7 @@ impl TypeResolver {
             ExprKind::GreaterThanOrEqual(left, right) => {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op >=", left, right, v)?;
+                self.prefer_left_int(&left2);
                 let x = ExprKind::GreaterThanOrEqual(
                     Box::new(left2),
                     Box::new(right2),
@@ -1798,12 +1800,14 @@ impl TypeResolver {
             ExprKind::LessThan(left, right) => {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op <", left, right, v)?;
+                self.prefer_left_int(&left2);
                 let x = ExprKind::LessThan(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::LessThanOrEqual(left, right) => {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op <=", left, right, v)?;
+                self.prefer_left_int(&left2);
                 let x = ExprKind::LessThanOrEqual(
                     Box::new(left2),
                     Box::new(right2),
@@ -3371,6 +3375,51 @@ impl TypeResolver {
         };
         let Some((builtin, kind)) = postfix_dispatch(method_name, &recv_type)
         else {
+            // Not a built-in. Check whether `method_name` is a
+            // user-defined function in scope (e.g. a let-bound
+            // `fun name self = …`). If so, rewrite the apply tree
+            // to a direct call so normal Apply type inference
+            // picks up the function's result type — without this,
+            // the outer Apply slot stays as a fresh variable and
+            // the runtime resolver later reuses it as the result
+            // type, leaving the value typed `'a`.
+            if matches!(env.get(method_name, self), Some(BindType::Val(_))) {
+                let span = recv.span.union(&arg.span);
+                let name_id = Expr {
+                    kind: ExprKind::Identifier(method_name.to_string()),
+                    span: recv.span.clone(),
+                    id: None,
+                };
+                // Calling convention mirrors
+                // `resolver::build_user_postfix_call`:
+                //   arg = `()`              → name recv
+                //   arg = `(a, b, …)` tuple → name (recv, a, b, …)
+                //   otherwise                → name (recv, arg)
+                let new_arg = match &arg.kind {
+                    ExprKind::Literal(l)
+                        if matches!(l.kind, LiteralKind::Unit) =>
+                    {
+                        recv.clone()
+                    }
+                    ExprKind::Tuple(elts) => {
+                        let mut parts = vec![recv.clone()];
+                        parts.extend(elts.iter().cloned());
+                        Expr {
+                            kind: ExprKind::Tuple(parts),
+                            span: span.clone(),
+                            id: None,
+                        }
+                    }
+                    _ => Expr {
+                        kind: ExprKind::Tuple(vec![recv.clone(), arg.clone()]),
+                        span: span.clone(),
+                        id: None,
+                    },
+                };
+                let (fun2, arg2) =
+                    self.deduce_apply_type(env, &name_id, &new_arg, v_result)?;
+                return Ok(Some((fun2, arg2)));
+            }
             return Ok(None);
         };
 

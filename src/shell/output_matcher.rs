@@ -45,14 +45,27 @@ use std::str::from_utf8;
 /// only declares the strings equivalent when they normalize to the
 /// same byte sequence.
 pub fn equivalent(actual: &str, expected: &str) -> bool {
-    match extract_type(expected) {
-        Some(t) => match type_parser::try_string_to_type_permissive(&t) {
-            Ok(parsed_type) => {
-                equivalent_with_type(&parsed_type, actual, expected)
+    let actual_type = extract_type(actual);
+    let expected_type = extract_type(expected);
+    match (actual_type, expected_type) {
+        (Some(at), Some(et)) => {
+            // Type-string mismatch (after whitespace normalization)
+            // is a real difference: `fn : 'a -> 'a` vs
+            // `fn : 'a -> 'b` are not equivalent even though both
+            // values pretty-print as `fn`. Catching the mismatch
+            // here means `equivalent_with_type` doesn't have to
+            // re-extract or compare types itself.
+            if normalize_whitespace(&at) != normalize_whitespace(&et) {
+                return false;
             }
-            Err(_) => fallback_equal(actual, expected),
-        },
-        None => fallback_equal(actual, expected),
+            match type_parser::try_string_to_type_permissive(&et) {
+                Ok(parsed_type) => {
+                    equivalent_with_type(&parsed_type, actual, expected)
+                }
+                Err(_) => fallback_equal(actual, expected),
+            }
+        }
+        _ => fallback_equal(actual, expected),
     }
 }
 
@@ -133,6 +146,16 @@ fn extract_type(s: &str) -> Option<String> {
 /// Compares two value strings (no `val x =` prefix, no `: type`
 /// suffix) under the given type.
 pub fn code_equal(type_: &Type, code0: &str, code1: &str) -> bool {
+    // Tabular output is a multi-line block (`count y\n----- --\n
+    // <rows>\n\nval it`) that the whitespace-normalizing scanner
+    // can't parse as a value. Detect and parse it row-by-row before
+    // falling through to the linear path.
+    if let (Some(v0), Some(v1)) = (
+        try_parse_tabular(code0, type_),
+        try_parse_tabular(code1, type_),
+    ) {
+        return values_equal(type_, &v0, &v1);
+    }
     let norm0 = normalize_whitespace(code0);
     let norm1 = normalize_whitespace(code1);
     let mut s0 = Scanner::new(&norm0);
@@ -146,6 +169,136 @@ pub fn code_equal(type_: &Type, code0: &str, code1: &str) -> bool {
         None => return false,
     };
     values_equal(type_, &v0, &v1)
+}
+
+/// Parses tabular pretty-printer output into a `Parsed::Seq` of
+/// records. Returns `None` if `value` is not in tabular form, or the
+/// type is not a collection of records.
+///
+/// Tabular form (produced by `Pretty::pretty_tabular`):
+/// ```text
+/// col1 col2
+/// ---- ----
+/// v11  v12
+/// v21  v22
+///
+/// val it
+/// ```
+/// The trailing `val it` (the `val NAME` half of `val NAME : TYPE`,
+/// since `extract_prefix_and_value` only strips the type) and any
+/// blank lines are tolerated.
+fn try_parse_tabular(value: &str, type_: &Type) -> Option<Parsed> {
+    let elem_type = match peel_alias(type_) {
+        Type::List(elem) | Type::Bag(elem) => elem.as_ref(),
+        Type::Named(args, name)
+            if (name == "bag" || name == "list") && args.len() == 1 =>
+        {
+            &args[0]
+        }
+        _ => return None,
+    };
+    let fields = match peel_alias(elem_type) {
+        Type::Record(_, fields) => fields,
+        _ => return None,
+    };
+    let mut lines: Vec<&str> = value.lines().map(str::trim_end).collect();
+    while let Some(last) = lines.last() {
+        let l = last.trim_start();
+        if l.is_empty() || l.starts_with("val ") || l == "val" {
+            lines.pop();
+        } else {
+            break;
+        }
+    }
+    if lines.len() < 2 {
+        return None;
+    }
+    let header = lines[0];
+    let separator = lines[1];
+    if separator.is_empty()
+        || !separator.bytes().all(|b| b == b'-' || b == b' ')
+        || !separator.contains('-')
+    {
+        return None;
+    }
+    // Column extents are runs of `-` in the separator.
+    let sep_bytes = separator.as_bytes();
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0;
+    while i < sep_bytes.len() {
+        if sep_bytes[i] == b'-' {
+            let s = i;
+            while i < sep_bytes.len() && sep_bytes[i] == b'-' {
+                i += 1;
+            }
+            spans.push((s, i));
+        } else {
+            i += 1;
+        }
+    }
+    if spans.len() != fields.len() {
+        return None;
+    }
+    // Read column names at the same byte spans in the header.
+    let header_bytes = header.as_bytes();
+    let mut column_names = Vec::with_capacity(spans.len());
+    for &(s, e) in &spans {
+        if s >= header_bytes.len() {
+            return None;
+        }
+        let end = e.min(header_bytes.len());
+        let name = from_utf8(&header_bytes[s..end]).ok()?.trim();
+        column_names.push(name.to_string());
+    }
+    // Map each column position to the corresponding field index in
+    // the BTreeMap. The pretty printer iterates fields in BTreeMap
+    // (alphabetical) order, but we validate by name to be safe.
+    let field_names: Vec<String> =
+        fields.keys().map(ToString::to_string).collect();
+    let mut col_to_field_idx = Vec::with_capacity(spans.len());
+    for col in &column_names {
+        let idx = field_names.iter().position(|f| f == col)?;
+        col_to_field_idx.push(idx);
+    }
+    let field_types: Vec<&Type> = fields.values().collect();
+    // Parse data rows.
+    let mut records: Vec<Parsed> = Vec::new();
+    for line in &lines[2..] {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let cells: Vec<&str> = line.split_whitespace().collect();
+        if cells.len() != column_names.len() {
+            return None;
+        }
+        let mut row: Vec<Option<Parsed>> =
+            (0..fields.len()).map(|_| None).collect();
+        for (col_idx, cell) in cells.iter().enumerate() {
+            let field_idx = col_to_field_idx[col_idx];
+            // Tabular ints use `~` for negatives; the smli script may
+            // have been hand-written with `-`. Normalize before
+            // parsing so the resulting atoms compare equal.
+            let normalized = normalize_tabular_cell(cell);
+            let mut sc = Scanner::new(&normalized);
+            let v = parse_value(&mut sc, field_types[field_idx])?;
+            row[field_idx] = Some(v);
+        }
+        let row_vec: Option<Vec<Parsed>> = row.into_iter().collect();
+        records.push(Parsed::Seq(row_vec?));
+    }
+    Some(Parsed::Seq(records))
+}
+
+/// Tabular numeric cells use `~` for negative; rewrite a leading `-`
+/// to `~` so a hand-written smli `-1` and the printer's `~1` produce
+/// the same atom.
+fn normalize_tabular_cell(cell: &str) -> String {
+    if let Some(rest) = cell.strip_prefix('-')
+        && rest.chars().next().is_some_and(|c| c.is_ascii_digit())
+    {
+        return format!("~{}", rest);
+    }
+    cell.to_string()
 }
 
 /// Parsed value tree: an atomic string, or a list of sub-values.
@@ -842,6 +995,40 @@ mod tests {
     }
 
     #[test]
+    fn tabular_bag_reorder_equivalent() {
+        // Tabular pretty-printer output: header line, dashes, then
+        // rows. Bag semantics let rows match in any order; the
+        // matcher also treats hand-written `-N` as equivalent to the
+        // printer's `~N`.
+        let mut fields = BTreeMap::new();
+        fields.insert(Label::from("count"), int());
+        fields.insert(Label::from("y"), int());
+        let row = Type::Record(false, fields);
+        let t = Type::Bag(Box::new(row));
+        let actual = "count y\n----- --\n\
+                      1     ~1\n1     0\n2     1\n2     2\n\n\
+                      val it : {count:int, y:int} bag";
+        let expected = "count y\n----- --\n\
+                        2     1\n2     2\n1     -1\n1     0\n\n\
+                        val it : {count:int, y:int} bag";
+        assert!(equivalent_with_type(&t, actual, expected));
+    }
+
+    #[test]
+    fn tabular_bag_wrong_row_not_equivalent() {
+        let mut fields = BTreeMap::new();
+        fields.insert(Label::from("count"), int());
+        fields.insert(Label::from("y"), int());
+        let row = Type::Record(false, fields);
+        let t = Type::Bag(Box::new(row));
+        let actual = "count y\n----- --\n1     ~1\n2     1\n\n\
+                      val it : {count:int, y:int} bag";
+        let expected = "count y\n----- --\n1     ~2\n2     1\n\n\
+                        val it : {count:int, y:int} bag";
+        assert!(!equivalent_with_type(&t, actual, expected));
+    }
+
+    #[test]
     fn bag_of_bags() {
         let t = Type::Bag(Box::new(int_bag()));
         let a = "val it = [[3],[1, 2]] : int bag bag";
@@ -923,17 +1110,15 @@ mod tests {
     }
 
     #[test]
-    fn type_var_renaming_treated_as_equivalent() {
-        // After the permissive parser, `'a -> 'a` and `'a -> 'b`
-        // both parse successfully; the matcher uses the expected
-        // type to compare values, and both values pretty-print as
-        // `fn`. The matcher reports them as equivalent. This is
-        // alpha-renaming-tolerant and matches morel-java's older
-        // behaviour where the type annotation is informational
-        // rather than load-bearing for value comparison.
+    fn type_strings_must_match_for_equivalence() {
+        // `equivalent` compares the type strings (after whitespace
+        // normalisation) before falling through to value
+        // comparison. `'a -> 'a` and `'a -> 'b` are reported as
+        // NOT equivalent even though both values pretty-print as
+        // `fn`, because the displayed types are different.
         let a = "val outer = fn : 'a -> 'a";
         let b = "val outer = fn : 'a -> 'b";
-        assert!(equivalent(a, b));
+        assert!(!equivalent(a, b));
     }
 
     #[test]
