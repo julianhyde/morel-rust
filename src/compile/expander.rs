@@ -3478,6 +3478,24 @@ fn derive_generators(
         }
     }
 
+    // Collect names of every unbounded sibling so we can break
+    // equality-constraint cycles (`y2 = y` with both unbounded).
+    let unbounded_siblings: BTreeSet<String> = steps
+        .iter()
+        .filter_map(|s| match &s.kind {
+            StepKind::Scan(p, source, _)
+                if matches!(source.as_ref(), Expr::Extent(_, _)) =>
+            {
+                if let Pat::Identifier(_, n) = p.as_ref() {
+                    Some(n.clone())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect();
+
     // For every Scan-over-Extent, attempt to synthesise a generator.
     // Use a copy of the constraints so each pattern sees the full set.
     for step in steps {
@@ -3501,6 +3519,7 @@ fn derive_generators(
                 env,
                 datatypes,
                 outer_scope,
+                &unbounded_siblings,
             );
         }
     }

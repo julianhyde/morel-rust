@@ -63,6 +63,7 @@ pub fn maybe_generator(
         fn_env,
         datatypes,
         &empty,
+        &empty,
     )
 }
 
@@ -77,6 +78,7 @@ pub fn maybe_generator_with_scope(
     fn_env: &FnEnv,
     datatypes: &DatatypeMap,
     outer_scope: &BTreeSet<String>,
+    unbounded_siblings: &BTreeSet<String>,
 ) -> bool {
     // Phase A: classify each conjunct.
     let mut elem_match: Option<&Expr> = None;
@@ -116,8 +118,20 @@ pub fn maybe_generator_with_scope(
                 point_match = Some(c);
                 point_value = Some(rhs);
             } else if references(rhs, pat_name) {
-                point_match = Some(c);
-                point_value = Some(lhs);
+                // Reverse direction: `value = pat`. Reject if the
+                // value references another unbounded sibling — the
+                // sibling will pick up this constraint via the
+                // forward direction (`sibling = value`), and using
+                // both directions would create a cycle that
+                // topo_order can't resolve.
+                let lhs_free = free_names_in(lhs);
+                let cycles = lhs_free
+                    .iter()
+                    .any(|n| n != pat_name && unbounded_siblings.contains(n));
+                if !cycles {
+                    point_match = Some(c);
+                    point_value = Some(lhs);
+                }
             }
         }
         if !has_bounds && is_bound_constraint(c, pat_name) {
