@@ -1709,12 +1709,17 @@ impl<'a> Resolver<'a> {
                 // predicates. Programs that reach code generation
                 // containing an Extent are rejected with a "pattern
                 // not grounded" error pointing at the captured span.
+                //
+                // Use the pattern's span, not the step's: Pest's
+                // `scan1` rule span can extend past the pattern into
+                // the next token (it consumes whitespace while
+                // looking ahead for an `=` or `in` it never finds).
                 let resolved_pat = self.resolve_pat(pat);
                 let elem_type = resolved_pat.type_();
                 let extent_type =
                     Box::new(Type::Bag(Box::new(elem_type.as_ref().clone())));
                 let span = Span::from_pest_span(
-                    &step.span.to_pest_span(),
+                    &pat.span.to_pest_span(),
                     self.base_line,
                 );
                 let extent = CoreExpr::Extent(extent_type, span);

@@ -213,8 +213,8 @@ from e where (case e of
  * With symbolic math we could deduce that the solution is [~2,3],
  * but we don't have symbolic math. *)
 from x where (x + 2) * (x - 3) = 0;
-> stdIn:1.6-1.8 Error: pattern 'x' is not grounded
->   raised at: stdIn:1.6-1.8
+> stdIn:1.6 Error: pattern 'x' is not grounded
+>   raised at: stdIn:1.6
 
 (* -- elem patterns ----------------------------------------------- *)
 
@@ -870,8 +870,8 @@ in
     where isEmp50 e
     yield e.ename
 end;
-> stdIn:5.8-6.5 Error: pattern 'e' is not grounded
->   raised at: stdIn:5.8-6.5
+> stdIn:5.8 Error: pattern 'e' is not grounded
+>   raised at: stdIn:5.8
 
 (*) A function with external extent.
 fun hasJob (e: typeof (Bag.hd scott.emps),
@@ -1241,24 +1241,24 @@ fun isS1 x = exists y where isR y;
 (*) morel-java rejects this with `Unsafe`; morel-rust reports
 (*) the equivalent `pattern 'x' is not grounded`.
 from x where isS1 x;
-> stdIn:1.6-1.8 Error: pattern 'x' is not grounded
->   raised at: stdIn:1.6-1.8
+> stdIn:1.6 Error: pattern 'x' is not grounded
+>   raised at: stdIn:1.6
 
 fun isS2 x = exists y where isR y andalso not (isR x);
 > val isS2 = fn : 'a -> bool
 
 (*) isS2 is unsafe — `x` only appears under negation.
 from x where isS2 x;
-> stdIn:1.6-1.8 Error: pattern 'x' is not grounded
->   raised at: stdIn:1.6-1.8
+> stdIn:1.6 Error: pattern 'x' is not grounded
+>   raised at: stdIn:1.6
 
 fun isS3 x = exists y where isR y andalso x < y;
 > val isS3 = fn : int -> bool
 
 (*) isS3 is unsafe — `x` only appears in an arithmetic subgoal.
 from x where isS3 x;
-> stdIn:1.6-1.8 Error: pattern 'x' is not grounded
->   raised at: stdIn:1.6-1.8
+> stdIn:1.6 Error: pattern 'x' is not grounded
+>   raised at: stdIn:1.6
 
 (*) Ungrounded tuple-pattern call. The body of `tuPair` places no
 (*) constraint on its arguments, so neither component of `p` can
@@ -1269,8 +1269,8 @@ from x where isS3 x;
 fun tuPair (a, b) = true;
 > val tuPair = fn : 'a * 'b -> bool
 from p where tuPair p;
-> stdIn:1.6-1.8 Error: pattern 'p__1' is not grounded
->   raised at: stdIn:1.6-1.8
+> stdIn:1.6 Error: pattern 'p__1' is not grounded
+>   raised at: stdIn:1.6
 from x, y where tuPair (x, y);
 > stdIn:1.6 Error: pattern 'x' is not grounded
 >   raised at: stdIn:1.6
@@ -1371,8 +1371,8 @@ fun cousin2 (x, y) = sib (x, y)
 (*) equivalent "pattern not grounded" message until a phase-3.5
 (*) enhancement upgrades the wording.)
 from p where cousin2 p;
-> stdIn:1.6-1.8 Error: pattern 'p__1' is not grounded
->   raised at: stdIn:1.6-1.8
+> stdIn:1.6 Error: pattern 'p__1' is not grounded
+>   raised at: stdIn:1.6
 
 
 (* ---------------------------------------------------------------- *)
