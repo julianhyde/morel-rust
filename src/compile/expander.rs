@@ -330,24 +330,55 @@ fn walk_expr_with_scope(
                 outer_scope,
             )
         }
-        Expr::Apply(t, f, a, span) => Expr::Apply(
-            t,
-            Box::new(walk_expr_with_scope(
-                *f,
-                env,
-                rec_env,
-                datatypes,
-                outer_scope,
-            )),
-            Box::new(walk_expr_with_scope(
-                *a,
-                env,
-                rec_env,
-                datatypes,
-                outer_scope,
-            )),
-            span,
-        ),
+        Expr::Apply(t, f, a, span) => {
+            // Higher-order predicate inversion: inline a call to a
+            // non-recursive let-bound function whose body contains
+            // an unresolved `Extent`. After substitution, the body's
+            // from is walked normally and its inversion has access
+            // to the concrete arg (e.g. `enumerate isClerk` becomes
+            // `from r where isClerk r`, whose `isClerk r` grounds
+            // `r` via the body's `elem` clause).
+            //
+            // Self-recursive functions are skipped — inlining them
+            // would loop forever, and the dedicated iterate-inversion
+            // path handles their self-call shapes.
+            if let Expr::Identifier(_, fn_name) = f.as_ref()
+                && let Some((param_pat, body)) = env.get(fn_name)
+                && let Pat::Identifier(_, param_name) = param_pat
+                && body_has_extent(body)
+                && !contains_self_call(body, fn_name)
+            {
+                use crate::compile::replacer::substitute;
+                let mut subst: HashMap<String, Expr> = HashMap::new();
+                subst.insert(param_name.clone(), (*a).clone());
+                let inlined = substitute(body, &subst);
+                return walk_expr_with_scope(
+                    inlined,
+                    env,
+                    rec_env,
+                    datatypes,
+                    outer_scope,
+                );
+            }
+            Expr::Apply(
+                t,
+                Box::new(walk_expr_with_scope(
+                    *f,
+                    env,
+                    rec_env,
+                    datatypes,
+                    outer_scope,
+                )),
+                Box::new(walk_expr_with_scope(
+                    *a,
+                    env,
+                    rec_env,
+                    datatypes,
+                    outer_scope,
+                )),
+                span,
+            )
+        }
         Expr::Case(t, subject, arms, span) => Expr::Case(
             t,
             Box::new(walk_expr_with_scope(
@@ -1317,6 +1348,60 @@ fn from_has_extent(expr: &Expr) -> bool {
             StepKind::Scan(_, src, _)
                 if matches!(src.as_ref(), Expr::Extent(_, _)))
     })
+}
+
+/// Returns true if `expr` contains an `Extent` placeholder anywhere
+/// in its tree. Used to identify let-bound function bodies that
+/// can't compile on their own (because they reference unbounded
+/// domain variables) and need to be inlined at call sites for
+/// predicate inversion to ground the variables.
+fn body_has_extent(expr: &Expr) -> bool {
+    match expr {
+        Expr::Extent(_, _) => true,
+        Expr::Aggregate(_, e1, e2) => body_has_extent(e1) || body_has_extent(e2),
+        Expr::Apply(_, f, a, _) => body_has_extent(f) || body_has_extent(a),
+        Expr::Case(_, subj, arms, _) => {
+            body_has_extent(subj)
+                || arms.iter().any(|m| body_has_extent(&m.expr))
+        }
+        Expr::Exists(_, steps) | Expr::Forall(_, steps) | Expr::From(_, steps) => {
+            steps.iter().any(|s| step_has_extent(s))
+        }
+        Expr::Fn(_, arms, _) => arms.iter().any(|m| body_has_extent(&m.expr)),
+        Expr::Let(_, _, body) => body_has_extent(body),
+        Expr::List(_, items) | Expr::Tuple(_, items) => {
+            items.iter().any(body_has_extent)
+        }
+        Expr::Current(_)
+        | Expr::Identifier(_, _)
+        | Expr::Literal(_, _)
+        | Expr::Ordinal(_)
+        | Expr::RecordSelector(_, _) => false,
+    }
+}
+
+fn step_has_extent(s: &Step) -> bool {
+    match &s.kind {
+        StepKind::Compute(e)
+        | StepKind::Order(e)
+        | StepKind::Require(e)
+        | StepKind::Skip(e)
+        | StepKind::Take(e)
+        | StepKind::Where(e)
+        | StepKind::Yield(e) => body_has_extent(e),
+        StepKind::Group(k, agg) => {
+            body_has_extent(k) || agg.as_deref().is_some_and(body_has_extent)
+        }
+        StepKind::Scan(_, src, cond) => {
+            matches!(src.as_ref(), Expr::Extent(_, _))
+                || body_has_extent(src)
+                || cond.as_deref().is_some_and(body_has_extent)
+        }
+        StepKind::Except(_, exprs)
+        | StepKind::Intersect(_, exprs)
+        | StepKind::Union(_, exprs) => exprs.iter().any(body_has_extent),
+        StepKind::Distinct | StepKind::Exists | StepKind::Unorder => false,
+    }
 }
 
 /// Returns `Some(iterate_expr)` if `fn_env[fn_name]` matches the
