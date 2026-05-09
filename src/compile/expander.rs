@@ -936,7 +936,7 @@ fn try_invert_recursive_predicates(
                     cj_idx,
                     &scan_indices,
                     &components,
-                    tuple_type,
+                    &tuple_type,
                     iterate_expr,
                 );
             }
@@ -1358,15 +1358,17 @@ fn from_has_extent(expr: &Expr) -> bool {
 fn body_has_extent(expr: &Expr) -> bool {
     match expr {
         Expr::Extent(_, _) => true,
-        Expr::Aggregate(_, e1, e2) => body_has_extent(e1) || body_has_extent(e2),
+        Expr::Aggregate(_, e1, e2) => {
+            body_has_extent(e1) || body_has_extent(e2)
+        }
         Expr::Apply(_, f, a, _) => body_has_extent(f) || body_has_extent(a),
         Expr::Case(_, subj, arms, _) => {
             body_has_extent(subj)
                 || arms.iter().any(|m| body_has_extent(&m.expr))
         }
-        Expr::Exists(_, steps) | Expr::Forall(_, steps) | Expr::From(_, steps) => {
-            steps.iter().any(|s| step_has_extent(s))
-        }
+        Expr::Exists(_, steps)
+        | Expr::Forall(_, steps)
+        | Expr::From(_, steps) => steps.iter().any(step_has_extent),
         Expr::Fn(_, arms, _) => arms.iter().any(|m| body_has_extent(&m.expr)),
         Expr::Let(_, _, body) => body_has_extent(body),
         Expr::List(_, items) | Expr::Tuple(_, items) => {
@@ -2307,7 +2309,7 @@ fn rewrite_steps_for_iterate_tuple(
     cj_idx: usize,
     scan_indices: &[usize],
     components: &[(String, Type)],
-    tuple_type: Type,
+    tuple_type: &Type,
     iterate_expr: Expr,
 ) -> Vec<Step> {
     use crate::compile::generators::split_conjuncts;
