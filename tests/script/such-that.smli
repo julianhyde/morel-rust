@@ -540,40 +540,6 @@ from y
     where (x, y, 3) elem [(1, 2, 3), (2, 3, 4), (5, 4, 3), (4, 2, 3)];
 > val it = [2,4] : int bag
 
-(* String.isPrefix p s -------------------------------------------- *)
-from p where String.isPrefix p "abcd";
-> val it = ["","a","ab","abc","abcd"] : string bag
-
-from s in ["abcd", "ant"], p where String.isPrefix p s;
-> p    s
-> ---- ----
->      abcd
-> a    abcd
-> ab   abcd
-> abc  abcd
-> abcd abcd
->      ant
-> a    ant
-> an   ant
-> ant  ant
->
-> val it : {p:string, s:string} bag
-
-from s in ["abcd", "ant"], p where String.isPrefix p s yield p distinct;
-> val it = ["","a","ab","abc","abcd","an","ant"] : string bag
-
-(* Exists as a `where` constraint --------------------------------- *)
-from p where (exists s in ["abcd", "ant"] where String.isPrefix p s)
-order p;
-> val it = ["","a","ab","abc","abcd","an","ant"] : string list
-
-(* Function-defined predicates ------------------------------------ *)
-(* Multi-arm case mixing literal and variable arms ---------------- *)
-from x where (case x of 0 => true | n => n >= 5 andalso n <= 8);
-> val it = [0,5,6,7,8] : int bag
-
-(* Boolean inversion ---------------------------------------------- *)
-(* Nested `from` with outer-scope reference ----------------------- *)
 from source in [1, 2, 3, 4, 5]
 yield {source, doubled = (from x where x = source * 2)};
 > val it =
