@@ -101,23 +101,47 @@ Mechanical port of morel.pest rule-by-rule into `src/syntax/morel.lalrpop`, buil
 
 Pass `input: Rc<str>` via `grammar(input: Rc<str>);`. Action blocks construct `*Kind` with `Span { input: input.clone(), start: l, end: r }` from `<l:@L> ... <r:@R>`. Keep the three entry-point signatures unchanged: `parse_statement`, `parse_unadorned_statement`, `parse_type_scheme` (parser.rs:45–79).
 
-### Phase 3 — Error type and Span cleanup
+### Phase 3 — Grammar expansion (bulk of remaining work)
 
-- Replace `pub type ParseError = pest::error::Error<Rule>;` (parser.rs:33) with a wrapper around `lalrpop_util::ParseError<usize, Tok, &'static str>` exposing a `line_col` accessor that `Span::from_line_col` consumes (shell/main.rs:898).
+Extend `src/syntax/morel.lalrpop` until every `.smli` statement parses to an AST equivalent to pest. Driven by walking the `tests/script/*.smli` corpus and the existing pest tests, adding rules one feature at a time so we keep finding lalrpop conflicts early.
+
+Order (each row = one small commit, fullMake passes between):
+
+1. **Records and `case`/`fn`.** Add `RecordExpr`, `case ... of`, `fn ... =>`, `MatchList`. The `if`/`let` placement learning applies: keep `case`/`fn` at the top-level `Expr`, not inside `Atom`.
+2. **Type annotations.** `<e>:<t>` plus the `Type` cascade (`FnType` → `TupleType` → `ApplyType` → `AtomicType`).
+3. **Full pattern grammar.** `ConsPat`, `AsPat`, `ConstructorPat`, `RecordPat`, `ListPat`, `TuplePat`, `LiteralPat`, `AnnotatedPat`. Then upgrade `ValBind` to use `Pat` and add `and` chains.
+4. **`fun`/`type`/`datatype`/`signature` decls.** Includes `Spec`, `ValDesc`, `TypeDesc`, `DatatypeDesc`, `ExnDesc`. Watch for `and` re-use as both decl chain separator and the keyword in `andalso`.
+5. **`over` operator and decl.** `over` as infix at 7.5 (right-assoc tight RHS per spike), plus `over <id>` as a top-level declaration. Same-token disambiguation by leading position.
+6. **`#foo` record selectors, `'a` type vars, `` `quoted` `` identifiers.** Wire the lexer's existing tokens into the grammar.
+7. **Op section `op +`, `op ::`, ...** `OpSection` with the operator-name table.
+8. **`current`/`elements`/`ordinal` keyword atoms.**
+9. **Relational queries: `from`/`exists`/`forall` + steps.** The biggest remaining piece. Steps: scan, where, yield, skip, take, order, through, group, group-compute, union/except/intersect (with optional `distinct`), join, distinct, unorder, into, compute, require. Watch for lalrpop state count — may need to break this into multiple commits if it triggers the same blowup that scuttled the first Phase 2 attempt.
+10. **`TypeSchemeTop` entry point.** `forall N type` for built-in signatures.
+
+The full draft from the first Phase 2 attempt is at `/tmp/morel.full.lalrpop.draft` outside the repo — useful as a reference but should not be pasted in wholesale.
+
+Gate for moving to Phase 4: every `.smli` file parses through the new parser and produces an AST whose `Display` matches what pest produces.
+
+### Phase 4 — Cutover and Span cleanup
+
+- Swap callers in `src/shell/main.rs:896`, `src/compile/type_parser.rs:34,47`, `tests/unparse.rs:24` from `crate::syntax::parser` to `crate::syntax::lalr_parser`.
+- Replace `pub type ParseError = pest::error::Error<Rule>;` (parser.rs:33) with the lalrpop wrapper already in `lalr_parser.rs`. Expose a `line_col` accessor that `Span::from_line_col` consumes (shell/main.rs:898).
 - Delete `Span::make` (ast.rs:56) and `Span::to_pest_span` (ast.rs:102).
 - Refactor `compile/span.rs::from_pest_span` to take `(input: &str, start: usize, end: usize, base_line)` directly. Update the 25+ call sites in `src/compile/resolver.rs`, `src/compile/type_resolver.rs`, `src/shell/main.rs` to drop the no-op `to_pest_span()`→`from_pest_span()` round trips.
 - Delete `pest_ascii_tree` usage in parser.rs:2206–2213 (`assert_parse_tree`); replace dependent tests with assertions on the AST `Display` form.
-- Update tests that depend on `Rule::X` (parser.rs:2169–2204) to call public lalrpop entry points or new `pub(crate)` per-rule helpers.
+- Update tests that depend on `Rule::X` (parser.rs:2169–2204).
+- Delete `src/syntax/spike.{lalrpop,rs}` (throwaway, served its purpose).
 
-### Phase 4 — Benchmark & validate
+### Phase 5 — Benchmark & validate
 
-- Full `tests/script/*.smli` suite passes unchanged.
-- Add a `cargo bench` over the 39 `.smli` files; compare to baseline.
+- Full `tests/script/*.smli` suite passes unchanged via the new parser only.
+- Add a `cargo bench` over the 39 `.smli` files; compare to baseline (pest is still in tree at this point for A/B comparison).
 - `cargo bloat --release`; compare to the 629.9 KiB baseline.
-- 5 hand-crafted malformed inputs; pest vs lalrpop error messages side-by-side. Decide whether a custom error-formatting layer is needed.
+- 5 hand-crafted malformed inputs; pest vs lalrpop error messages side-by-side. Decide whether a custom error-formatting layer is needed before Phase 6.
 
-### Phase 5 — Remove pest
+### Phase 6 — Remove pest
 
+- Delete `src/syntax/parser.rs` (the pest version).
 - Drop `pest`, `pest_consume`, `pest_ascii_tree` from `Cargo.toml`.
 - Delete `src/syntax/morel.pest`.
 - Record measured binary/parse-time delta here.
@@ -133,9 +157,10 @@ Pass `input: Rc<str>` via `grammar(input: Rc<str>);`. Action blocks construct `*
 - [x] Phase 0 — Spike (see findings below)
 - [x] Phase 1 — Production lexer (`src/syntax/lexer.rs`, 29 tests)
 - [x] Phase 2 — Grammar port (subset; see Phase 2 notes below)
-- [ ] Phase 3 — Error type and Span cleanup
-- [ ] Phase 4 — Benchmark & validate
-- [ ] Phase 5 — Remove pest
+- [ ] Phase 3 — Grammar expansion (10 incremental steps; gate: full `.smli` corpus parses)
+- [ ] Phase 4 — Cutover and Span cleanup
+- [ ] Phase 5 — Benchmark & validate
+- [ ] Phase 6 — Remove pest
 
 ## Phase 0 findings
 
