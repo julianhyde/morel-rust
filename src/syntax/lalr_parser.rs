@@ -271,6 +271,45 @@ mod test {
         assert_eq!(s, "~x");
     }
 
+    // --- Phase 3 step 1: records, case, fn -----------------------
+
+    #[test] fn empty_record() {
+        assert_eq!(ast_str("{}"), "{}");
+    }
+
+    #[test] fn record_with_labels() {
+        let s = ast_str("{x = 1, y = 2}");
+        assert!(s.starts_with("{") && s.ends_with("}"));
+        assert!(s.contains("x = 1"));
+        assert!(s.contains("y = 2"));
+    }
+
+    #[test] fn case_simple() {
+        let s = ast_str("case x of 0 => 1 | _ => 2");
+        assert!(s.starts_with("case x of "), "got: {}", s);
+        assert!(s.contains("0 => 1"));
+        assert!(s.contains("_ => 2"));
+    }
+
+    #[test] fn fn_simple() {
+        let s = ast_str("fn x => x + 1");
+        assert!(s.starts_with("fn "), "got: {}", s);
+        assert!(s.contains("x + 1"));
+    }
+
+    #[test] fn fn_multi_match() {
+        let s = ast_str("fn 0 => 1 | _ => 2");
+        assert!(s.contains("0 => 1"));
+        assert!(s.contains("_ => 2"));
+    }
+
+    #[test] fn case_inside_if() {
+        // case must be parenthesized inside an if-else clause
+        let s = ast_str("if true then 1 else (case x of _ => 2)");
+        assert!(s.contains("if true"));
+        assert!(s.contains("case x"));
+    }
+
     // Parity check: parse `simple` example through both parsers and
     // compare the kind string. Quick sanity that the two grammars
     // construct the same AST shape.

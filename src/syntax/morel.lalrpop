@@ -32,8 +32,8 @@
 
 use std::rc::Rc;
 use crate::syntax::ast::{
-    Decl, DeclKind, Expr, ExprKind, LiteralKind, Pat, PatKind,
-    Statement, StatementKind, ValBind,
+    Decl, DeclKind, Expr, ExprKind, Label, LabeledExpr, Literal,
+    LiteralKind, Match, Pat, PatKind, Statement, StatementKind, ValBind,
 };
 use crate::syntax::lalr_parser::{
     mk_add, mk_comp, mk_cons, mk_mult, mk_span,
@@ -49,24 +49,29 @@ extern {
     enum Tok {
         // Keywords (subset)
         "andalso"   => Tok::AndAlso,
+        "case"      => Tok::Case,
         "div"       => Tok::Div,
         "elem"      => Tok::Elem,
         "else"      => Tok::Else,
         "end"       => Tok::End,
+        "fn"        => Tok::Fn,
         "if"        => Tok::If,
         "in"        => Tok::In,
         "let"       => Tok::Let,
         "mod"       => Tok::Mod,
         "notelem"   => Tok::NotElem,
         "o"         => Tok::O,
+        "of"        => Tok::Of,
         "orelse"    => Tok::OrElse,
         "rec"       => Tok::Rec,
         "then"      => Tok::Then,
         "val"       => Tok::Val,
+        "with"      => Tok::With,
         "true"      => Tok::True,
         "false"     => Tok::False,
 
         // Punctuation
+        "=>"   => Tok::FatArrow,
         "::"   => Tok::DoubleColon,
         "<="   => Tok::Le,
         ">="   => Tok::Ge,
@@ -75,8 +80,11 @@ extern {
         ")"    => Tok::RParen,
         "["    => Tok::LBracket,
         "]"    => Tok::RBracket,
+        "{"    => Tok::LBrace,
+        "}"    => Tok::RBrace,
         ","    => Tok::Comma,
         ";"    => Tok::Semicolon,
+        "|"    => Tok::Pipe,
         "~"    => Tok::Tilde,
         "_"    => Tok::Underscore,
         "="    => Tok::Eq,
@@ -134,6 +142,8 @@ Expr: Expr = {
     OrElseExpr,
     IfExpr,
     LetExpr,
+    CaseExpr,
+    FnExpr,
 };
 
 OrElseExpr: Expr = {
@@ -247,6 +257,7 @@ Atom: Expr = {
     },
     TupleOrParen,
     ListExpr,
+    RecordExpr,
 };
 
 LiteralExpr: Expr = {
@@ -305,17 +316,85 @@ ListExpr: Expr = {
     },
 };
 
+// `if`/`let` bodies use MatchBody (no top-level case/fn) for the
+// same reason MatchP does — so that a nested `case`/`fn` inside an
+// `else` or `in` clause must be parenthesized, preventing a
+// dangling-`|` ambiguity with an enclosing match.
 IfExpr: Expr = {
-    <l:@L> "if" <c:Expr> "then" <t:Expr> "else" <e:Expr> <r:@R> => {
+    <l:@L> "if" <c:Expr> "then" <t:Expr> "else" <e:MatchBody> <r:@R> => {
         ExprKind::If(Box::new(c), Box::new(t), Box::new(e))
             .spanned(&mk_span(&input, l, r))
     },
 };
 
 LetExpr: Expr = {
-    <l:@L> "let" <h:Decl> <t:(";"? <Decl>)*> ";"? "in" <e:Expr> "end" <r:@R> => {
+    <l:@L> "let" <h:Decl> <t:(";"? <Decl>)*> ";"? "in" <e:MatchBody> "end" <r:@R> => {
         let mut decls = vec![h]; decls.extend(t);
         ExprKind::Let(decls, Box::new(e)).spanned(&mk_span(&input, l, r))
+    },
+};
+
+CaseExpr: Expr = {
+    <l:@L> "case" <e:Expr> "of" <ms:MatchList> <r:@R> => {
+        ExprKind::Case(Box::new(e), ms).spanned(&mk_span(&input, l, r))
+    },
+};
+
+FnExpr: Expr = {
+    <l:@L> "fn" <ms:MatchList> <r:@R> => {
+        ExprKind::Fn(ms).spanned(&mk_span(&input, l, r))
+    },
+};
+
+MatchList: Vec<Match> = {
+    <h:MatchP> <t:("|" <MatchP>)*> => {
+        let mut v = vec![h]; v.extend(t); v
+    },
+};
+
+// The match body uses a RESTRICTED expression form that doesn't end
+// with an unparenthesized `case`/`fn`. Otherwise `fn p => fn q => 1 |
+// p2 => 2` is genuinely ambiguous: does `| p2 => 2` belong to the
+// inner or outer fn's MatchList? PEG goes greedy (inner); LR(1)
+// can't decide. Standard ML resolves the same way as us — nested
+// case/fn need parens. The body still allows `if`/`let` (no `|`
+// terminator) and the full precedence cascade.
+MatchP: Match = {
+    <p:SimplePat> "=>" <e:MatchBody> => Match { pat: p, expr: e },
+};
+
+MatchBody: Expr = {
+    OrElseExpr,
+    IfExpr,
+    LetExpr,
+};
+
+// `{}` or `{ label = expr, label = expr, ... }`.
+//
+// Step 1 limitation: dropping the morel.pest record-body shorthands
+// {`anonymous field` for `name = name`, and `{e with ...}` for
+// copy-and-update). Both reintroduce an IDENT-vs-label LR(1)
+// ambiguity at `{ IDENT`: lookahead `=` would say "label" but a
+// regular expression like `IDENT = ...` is also valid (where `=` is
+// a comparison). pest resolves with PEG ordered choice; lalrpop
+// would need restructuring or external lookahead. Phase 3 step 6
+// brings these back.
+RecordExpr: Expr = {
+    <l:@L> "{" "}" <r:@R> => {
+        ExprKind::Record(None, vec![]).spanned(&mk_span(&input, l, r))
+    },
+    <l:@L> "{" <h:LabeledExprP> <t:("," <LabeledExprP>)*> "}" <r:@R> => {
+        let mut v = vec![h]; v.extend(t);
+        ExprKind::Record(None, v).spanned(&mk_span(&input, l, r))
+    },
+};
+
+LabeledExprP: LabeledExpr = {
+    <l:@L> <name:IDENT> <r:@R> "=" <e:Expr> => {
+        LabeledExpr::new(
+            Some(Label::new(&name, &mk_span(&input, l, r))),
+            &e,
+        )
     },
 };
 
@@ -333,10 +412,28 @@ ValDecl: Decl = {
     },
 };
 
-// Subset patterns: identifier and wildcard only.
+// Subset patterns: identifier, wildcard, and literal. Full pattern
+// grammar (cons, record, list, ctor, `as`, annotated) is Phase 3
+// step 3.
 SimplePat: Pat = {
     <l:@L> "_" <r:@R> => PatKind::Wildcard.spanned(&mk_span(&input, l, r)),
     <l:@L> <i:IDENT> <r:@R> => {
         PatKind::Identifier(i).spanned(&mk_span(&input, l, r))
     },
+    <l:@L> <lit:PatLiteral> <r:@R> => {
+        let sp = mk_span(&input, l, r);
+        PatKind::Literal(lit.kind.spanned(&sp)).spanned(&sp)
+    },
+};
+
+// Pattern-only literal (avoids a circular dep with the expression
+// LiteralExpr rule).
+PatLiteral: Literal = {
+    <l:@L> <s:INT_LIT> <r:@R> => LiteralKind::Int(s).spanned(&mk_span(&input, l, r)),
+    <l:@L> <s:REAL_LIT> <r:@R> => LiteralKind::Real(s).spanned(&mk_span(&input, l, r)),
+    <l:@L> <s:SCI_LIT> <r:@R> => LiteralKind::Real(s).spanned(&mk_span(&input, l, r)),
+    <l:@L> <s:STRING_LIT> <r:@R> => LiteralKind::String(s).spanned(&mk_span(&input, l, r)),
+    <l:@L> <s:CHAR_LIT> <r:@R> => LiteralKind::Char(s).spanned(&mk_span(&input, l, r)),
+    <l:@L> "true" <r:@R> => LiteralKind::Bool(true).spanned(&mk_span(&input, l, r)),
+    <l:@L> "false" <r:@R> => LiteralKind::Bool(false).spanned(&mk_span(&input, l, r)),
 };
