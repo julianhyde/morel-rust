@@ -302,3 +302,78 @@ type-scheme entry point. These will go in piece-by-piece in Phase 4.
 the same `Rc` can be cloned into many `Span`s without being moved.
 The first attempt (`grammar(input: Rc<str>);`) produced 98 "use of
 moved value" errors in the generated code.
+
+## Phase 3 progress and wall
+
+Three sub-steps landed; step 4 attempt was rolled back.
+
+### What works (committed)
+
+* **Step 1** (records, case, fn): labeled-only records (no anonymous
+  fields, no `{e with ...}`); `case`/`fn` at top-level Expr only.
+* **Step 2** (type annotations + Type cascade): `e : t` annotations
+  on parenthesized atomic types; full Type cascade FnType →
+  TupleType → ApplyType → AtomicType worked at this commit.
+* **Step 3** (pattern subset): wildcard, identifier, literal,
+  `IDENT as <atomic>` (non-recursive RHS), tuple, cons. Constructor
+  patterns, list patterns, record patterns, and `pat : type`
+  annotations all deferred.
+
+### What broke step 4
+
+Adding `fun`/`type`/`datatype`/`sig`/`exception` keywords and
+`FunDecl` with multi-arg pattern lists pushed lalrpop's lane-table
+past what it can resolve. The same `ApplyType (*) IDENT` and
+`TupleType (*) "*"` shift-reduces that the earlier commits dodged
+came back, plus new ones in `ValDecl`/`FunDecl` `and`-chains and
+`FnType` `->` recursion. Every "fix" exposed another conflict
+elsewhere. Reverted step 4 entirely.
+
+The grammar appears to have crossed a size threshold where lalrpop's
+default conflict-resolution algorithm can no longer separate states
+cleanly. Beyond this point, each new feature requires either:
+
+* A language-level user-visible restriction (parens here, no
+  chaining there).
+* A grammar-level inlining or precedence trick that lalrpop may or
+  may not support.
+
+### Cumulative user-visible restrictions
+
+By step 3 the lalrpop parser already requires:
+
+* `f (x.y)` instead of `f x.y` — Phase 0 finding.
+* `f (let val x = 1 in x end)` and `f (case x of ...)` — `if`/`let`/
+  `case`/`fn` cannot appear as Atom; parens required to apply.
+* `(e : t)` for annotations, not bare `e : t`.
+* `(e : (int -> int))` for compound-type annotations (extra parens).
+* `{x = x}` instead of `{x}` for anonymous record fields.
+* No `{e with field = val}` syntax.
+* No list patterns `[a, b]`.
+* No record patterns `{x = pat}`.
+* No constructor patterns `Leaf x` (would-be ctors parse as bare
+  identifier).
+* `case` body's `IDENT as p` requires `p` to be atomic (so nested
+  cons in an `as`-pat needs another wrapper).
+
+Step 4 would add: single-bind `val`/`fun` only (no `and`); fun
+without result-type annotation; no `type`/`datatype`/`sig` decls.
+
+### Decision point
+
+This is the gate the original issue.md flagged:
+
+> If any are nasty, savings don't justify a fragile parser.
+
+Three options going forward:
+
+1. **Keep pushing.** Accept all of these restrictions, document the
+   user-visible diffs, port the rest of the grammar with the same
+   incremental approach. Each new feature adds more restrictions.
+2. **Hybrid.** Hand-write a small recursive-descent parser for the
+   parts lalrpop can't handle cleanly (types, declarations) and
+   keep lalrpop for the expression cascade. Adds complexity but
+   preserves the original Morel surface syntax.
+3. **Stop the migration.** Update issue 43 with the findings, drop
+   the `46-lalrpop` branch, keep pest. The .smli tests already
+   pass; this is the do-nothing option.
