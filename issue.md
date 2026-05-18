@@ -172,7 +172,7 @@ Pre-stop progress (record only — does not get merged):
 ## Phase 0 findings
 
 Spike in `src/syntax/spike.{lalrpop,rs}` — 18/18 tests pass after the
-restructure described below. Branch: `46-lalrpop`, commit
+restructure described below. Branch: `43-lalrpop`, commit
 [Phase 0 spike].
 
 ### What works cleanly
@@ -369,7 +369,7 @@ without result-type annotation; no `type`/`datatype`/`sig` decls.
 ### Decision: stop the migration
 
 **Decided 2026-05-18.** Keeping pest. The lalrpop migration is
-abandoned on branch `46-lalrpop`. The grammar work and its findings
+abandoned on branch `43-lalrpop`. The grammar work and its findings
 remain in tree (and in this document) as a record; nothing merges
 to main.
 
