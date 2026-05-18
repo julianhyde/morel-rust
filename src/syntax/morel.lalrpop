@@ -33,7 +33,8 @@
 use std::rc::Rc;
 use crate::syntax::ast::{
     Decl, DeclKind, Expr, ExprKind, Label, LabeledExpr, Literal,
-    LiteralKind, Match, Pat, PatKind, Statement, StatementKind, ValBind,
+    LiteralKind, Match, Pat, PatKind, Statement, StatementKind, Type,
+    TypeKind, ValBind,
 };
 use crate::syntax::lalr_parser::{
     mk_add, mk_comp, mk_cons, mk_mult, mk_span,
@@ -72,7 +73,9 @@ extern {
 
         // Punctuation
         "=>"   => Tok::FatArrow,
+        "->"   => Tok::Arrow,
         "::"   => Tok::DoubleColon,
+        ":"    => Tok::Colon,
         "<="   => Tok::Le,
         ">="   => Tok::Ge,
         "<>"   => Tok::Ne,
@@ -99,6 +102,7 @@ extern {
 
         // Content
         IDENT       => Tok::Ident(<String>),
+        TY_VAR      => Tok::TyVar(<String>),
         INT_LIT     => Tok::IntLit(<String>),
         REAL_LIT    => Tok::RealLit(<String>),
         SCI_LIT     => Tok::SciLit(<String>),
@@ -139,11 +143,22 @@ pub Statement: Statement = {
 // argument, parenthesize it: `f (let val x = 1 in x end)`. Morel-pest
 // allowed both via PEG greedy matching.
 Expr: Expr = {
-    OrElseExpr,
+    AnnotExpr,
     IfExpr,
     LetExpr,
     CaseExpr,
     FnExpr,
+};
+
+// `<expr> : <type>` at the very top of the precedence cascade
+// (morel.pest:169 `expr_annotated`). Annotation is optional; bare
+// expression skips it.
+AnnotExpr: Expr = {
+    OrElseExpr,
+    <e:OrElseExpr> ":" <t:Type> => {
+        let span = e.span.union(&t.span);
+        ExprKind::Annotated(Box::new(e), Box::new(t)).spanned(&span)
+    },
 };
 
 OrElseExpr: Expr = {
@@ -364,7 +379,7 @@ MatchP: Match = {
 };
 
 MatchBody: Expr = {
-    OrElseExpr,
+    AnnotExpr,
     IfExpr,
     LetExpr,
 };
@@ -424,6 +439,62 @@ SimplePat: Pat = {
         let sp = mk_span(&input, l, r);
         PatKind::Literal(lit.kind.spanned(&sp)).spanned(&sp)
     },
+};
+
+// =================================================================
+// Types (Phase 3 step 2 subset: id, type-var, parens, app, tuple, fn)
+// =================================================================
+//
+// Deferred to step 6: record types, `typeof` expression types, and
+// composite parameter lists `(int, string) bar`.
+
+Type: Type = FnType;
+
+FnType: Type = {
+    TupleType,
+    <l:TupleType> "->" <r:FnType> => {
+        let span = l.span.union(&r.span);
+        TypeKind::Fn(Box::new(l), Box::new(r)).spanned(&span)
+    },
+};
+
+TupleType: Type = {
+    <h:ApplyType> <r:("*" <ApplyType>)*> => {
+        if r.is_empty() {
+            h
+        } else {
+            let mut span = h.span.clone();
+            let mut all = vec![h];
+            for t in r { span = span.union(&t.span); all.push(t); }
+            TypeKind::Tuple(all).spanned(&span)
+        }
+    },
+};
+
+// `int list`, `'a list`, `'a stack` — left-associative application.
+ApplyType: Type = {
+    <h:AtomicType> <r:NamedTypeApp*> => {
+        r.into_iter().fold(h, |arg, name| {
+            let span = arg.span.union(&name.span);
+            TypeKind::App(vec![arg], Box::new(name)).spanned(&span)
+        })
+    },
+};
+
+NamedTypeApp: Type = {
+    <l:@L> <i:IDENT> <r:@R> => {
+        TypeKind::Id(i).spanned(&mk_span(&input, l, r))
+    },
+};
+
+AtomicType: Type = {
+    <l:@L> <i:IDENT> <r:@R> => {
+        TypeKind::Id(i).spanned(&mk_span(&input, l, r))
+    },
+    <l:@L> <v:TY_VAR> <r:@R> => {
+        TypeKind::Var(v).spanned(&mk_span(&input, l, r))
+    },
+    "(" <t:Type> ")" => t,
 };
 
 // Pattern-only literal (avoids a circular dep with the expression

@@ -310,6 +310,49 @@ mod test {
         assert!(s.contains("case x"));
     }
 
+    // --- Phase 3 step 2: type annotations + Type cascade ---------
+
+    #[test] fn annotated_simple() {
+        let s = ast_str("x : int");
+        assert!(s.contains("x"));
+        assert!(s.contains("int"));
+    }
+
+    #[test] fn annotated_fn_type() {
+        let s = ast_str("f : int -> int");
+        assert!(s.contains("int"));
+        assert!(s.contains("->"));
+    }
+
+    #[test] fn annotated_tuple_type() {
+        let s = ast_str("p : int * string");
+        assert!(s.contains("int"));
+        assert!(s.contains("string"));
+    }
+
+    #[test] fn annotated_app_type() {
+        let s = ast_str("xs : int list");
+        assert!(s.contains("int"));
+        assert!(s.contains("list"));
+    }
+
+    #[test] fn annotated_type_var() {
+        // 'a is a polymorphic type variable
+        let s = ast_str("x : 'a");
+        assert!(s.contains("'a"));
+    }
+
+    #[test] fn annotated_paren_type() {
+        let s = ast_str("f : (int -> int)");
+        assert!(s.contains("int"));
+    }
+
+    #[test] fn fn_type_right_assoc() {
+        // int -> int -> int parses as int -> (int -> int)
+        let s = ast_str("f : int -> int -> int");
+        assert!(s.contains("int"));
+    }
+
     // Parity check: parse `simple` example through both parsers and
     // compare the kind string. Quick sanity that the two grammars
     // construct the same AST shape.
