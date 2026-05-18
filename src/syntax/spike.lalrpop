@@ -1,0 +1,249 @@
+// Licensed to Julian Hyde under one or more contributor license
+// agreements.  See the NOTICE file distributed with this work
+// for additional information regarding copyright ownership.
+// Julian Hyde licenses this file to you under the Apache
+// License, Version 2.0 (the "License"); you may not use this
+// file except in compliance with the License.  You may obtain a
+// copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+// either express or implied.  See the License for the specific
+// language governing permissions and limitations under the
+// License.
+
+// Phase 0 spike: prove the LR(1)-hostile parts of Morel's grammar
+// (the 13-level precedence cascade with `over` at 7.5, and the
+// postfix-dispatch lookahead from morel.pest:225-239) translate to
+// lalrpop without conflicts. Throwaway code — deleted in Phase 5.
+//
+// All binary-precedence rules use the iterative form
+//   <head> <(op tail)*>
+// rather than left-recursion. The left-recursive form caused LALR
+// lookahead merges that surfaced as spurious shift/reduce conflicts
+// between adjacent precedence levels. The iterative form matches the
+// pattern morel.pest uses (e.g. expr_additive at morel.pest:205-207)
+// and is what the existing parser.rs actions consume.
+
+use crate::syntax::spike::SE;
+
+grammar;
+
+match {
+    r"\s+" => { },
+
+    "implies", "orelse", "andalso", "o",
+    "elem", "notelem", "div", "mod", "over",
+
+    "::", "<=", ">=", "<>",
+    "(", ")", ",", ".", "~",
+    "+", "-", "^", "*", "/", "@",
+    "=", "<", ">",
+} else {
+    r"~[0-9]+" => NEG_INT,
+    r"[0-9]+" => INT,
+    r"[A-Za-z_][A-Za-z0-9_']*" => IDENT,
+}
+
+// --- Precedence cascade (iterative) -----------------------------
+
+pub Expr: SE = ImpliesExpr;
+
+ImpliesExpr: SE = {
+    <h:OrElseExpr> <r:("implies" <OrElseExpr>)*> => {
+        r.into_iter().fold(h, |a, b| SE::bin("implies", a, b))
+    },
+};
+
+OrElseExpr: SE = {
+    <h:AndAlsoExpr> <r:("orelse" <AndAlsoExpr>)*> => {
+        r.into_iter().fold(h, |a, b| SE::bin("orelse", a, b))
+    },
+};
+
+AndAlsoExpr: SE = {
+    <h:OExpr> <r:("andalso" <OExpr>)*> => {
+        r.into_iter().fold(h, |a, b| SE::bin("andalso", a, b))
+    },
+};
+
+OExpr: SE = {
+    <h:CompExpr> <r:("o" <CompExpr>)*> => {
+        r.into_iter().fold(h, |a, b| SE::bin("o", a, b))
+    },
+};
+
+CompExpr: SE = {
+    <h:ConsExpr> <r:(CompOp ConsExpr)*> => {
+        r.into_iter().fold(h, |a, (op, b)| SE::bin(op, a, b))
+    },
+};
+
+CompOp: &'static str = {
+    "="       => "=",
+    "<>"      => "<>",
+    "<="      => "<=",
+    ">="      => ">=",
+    "<"       => "<",
+    ">"       => ">",
+    "elem"    => "elem",
+    "notelem" => "notelem",
+};
+
+// `::` and `@` are right-associative. Iterative form collects the chain
+// left-to-right; the action folds from the right to get right-assoc
+// shape (mirrors parser.rs:269-300).
+ConsExpr: SE = {
+    <h:AddExpr> <r:(ConsOp AddExpr)*> => {
+        if r.is_empty() {
+            h
+        } else {
+            let mut e = h;
+            let mut acc: Vec<(&'static str, SE)> = Vec::new();
+            for (op, b) in r {
+                acc.insert(0, (op, e));
+                e = b;
+            }
+            acc.into_iter().fold(e, |right, (op, left)| SE::bin(op, left, right))
+        }
+    },
+};
+
+ConsOp: &'static str = { "::" => "::", "@" => "@", };
+
+AddExpr: SE = {
+    <h:MultExpr> <r:(AddOp MultExpr)*> => {
+        r.into_iter().fold(h, |a, (op, b)| SE::bin(op, a, b))
+    },
+};
+
+AddOp: &'static str = { "+" => "+", "-" => "-", "^" => "^", };
+
+MultExpr: SE = {
+    <h:OverExpr> <r:(MultOp OverExpr)*> => {
+        r.into_iter().fold(h, |a, (op, b)| SE::bin(op, a, b))
+    },
+};
+
+MultOp: &'static str = {
+    "*"   => "*",
+    "/"   => "/",
+    "div" => "div",
+    "mod" => "mod",
+};
+
+// Precedence 7.5. morel.pest:214 lets `over`'s RHS be a full `expr`,
+// but the action at parser.rs:366-373 only handles the single-`over`
+// case. We encode it iteratively, treating `over` as left-associative
+// at its own level — equivalent for every input the action accepts.
+OverExpr: SE = {
+    <h:ApplExpr> <r:("over" <ApplExpr>)*> => {
+        r.into_iter().fold(h, |a, b| SE::bin("over", a, b))
+    },
+};
+
+// Precedence 8: application by juxtaposition.
+//
+// Encodes morel.pest:225-239 in LR(1) form:
+//
+//   * Leading position takes a full postfix chain on any atom
+//     (UnaryExpr → PostfixExpr, left-recursive on `.`).
+//   * Argument position is ArgExpr; for IDENT atoms, any trailing
+//     `.label` is absorbed into the chain greedily (IdentArg). Other
+//     atoms (parens, literals) cannot carry a postfix tail in arg
+//     position — so `f (x).y` keeps `.y` off `(x)`.
+//   * Trailing `.label arg` is a separate AppliedExpr rule that
+//     requires at least one preceding arg, mirroring
+//     trailing_method_call's contract that it never fires on a bare
+//     leading expression.
+//
+// Decision boundaries:
+//   - After UnaryExpr, on `.`: PostfixExpr extends greedily (inside
+//     UnaryExpr). On any ArgExpr-starter: we transition to AppliedExpr.
+//   - After AppliedExpr, on `.`: trailing-method. On any ArgExpr-
+//     starter: another arg.
+//   - After IdentArg (inside ArgExpr), on `.`: extend chain greedily.
+
+ApplExpr: SE = {
+    UnaryExpr,
+    AppliedExpr,
+};
+
+AppliedExpr: SE = {
+    <h:UnaryExpr> <a:ArgExpr> => SE::apply(h, a),
+    <h:AppliedExpr> <a:ArgExpr> => SE::apply(h, a),
+    <h:AppliedExpr> "." <l:LabelTok> <a:MethodArg> => SE::trailing(h, l, a),
+};
+
+// Arg-position atom. Note: IdentArg's greedy `.label` chain (as in
+// morel.pest:233-234) is NOT representable in pure LR(1) — it
+// conflicts with the trailing-method rule's `.` at the AppliedExpr
+// level. PEG resolves with ordered choice; morel-java uses a mutable
+// inArg flag with multi-token semantic predicates (MorelParser.jj:70).
+// Neither tool is available in lalrpop. Production grammar needs a
+// custom-lexer trick (Phase 1): emit `x.y.z` (no whitespace) as a
+// single QUALIFIED_IDENT token. The spike here drops the chain rule
+// so the grammar compiles; tests below mark the affected cases.
+ArgExpr: SE = {
+    AtomNoIdent,
+    <i:IDENT>   => SE::var(i),
+    "~" <a:ArgExpr> => SE::neg(a),
+};
+
+UnaryExpr: SE = {
+    PostfixExpr,
+    "~" <e:UnaryExpr> => SE::neg(e),
+};
+
+PostfixExpr: SE = {
+    Atom,
+    <h:PostfixExpr> "." <l:LabelTok> => SE::dot(h, l),
+};
+
+// Method arg: a parenthesized arg list (possibly empty), or a single
+// atom. Mirrors `trailing_method_arg = postfix_args | atom`. Paren
+// forms inlined to avoid `(` overlap with Atom.
+MethodArg: SE = {
+    "(" ")"                                  => SE::unit(),
+    "(" <h:Expr> <t:CommaTail> ")" => {
+        let mut v = vec![h]; v.extend(t); SE::paren_args(v)
+    },
+    <i:IDENT>   => SE::var(i),
+    <n:INT>     => SE::int(n.parse().unwrap()),
+    <n:NEG_INT> => SE::int(-(n[1..].parse::<i64>().unwrap())),
+};
+
+LabelTok: String = {
+    <i:IDENT> => i.to_string(),
+};
+
+// Atom for ANY position (includes IDENT — used in leading position).
+Atom: SE = {
+    AtomNoIdent,
+    <i:IDENT>   => SE::var(i),
+};
+
+// Atom that is NOT a bare identifier — used in arg position so that
+// IDENT atoms can be routed through IdentArg (with greedy `.label`).
+AtomNoIdent: SE = {
+    <n:INT>     => SE::int(n.parse().unwrap()),
+    <n:NEG_INT> => SE::int(-(n[1..].parse::<i64>().unwrap())),
+    "(" ")"                          => SE::unit(),
+    "(" <h:Expr> <t:CommaTail> ")"   => {
+        if t.is_empty() {
+            h
+        } else {
+            let mut v = vec![h]; v.extend(t); SE::tuple(v)
+        }
+    },
+};
+
+// Tail of a comma-separated list inside parens. Iterative form rather
+// than `(","<Expr>)*` macro — keeps lookahead clean.
+CommaTail: Vec<SE> = {
+    => Vec::new(),
+    "," <h:Expr> <r:CommaTail> => { let mut v = vec![h]; v.extend(r); v },
+};

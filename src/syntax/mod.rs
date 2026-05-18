@@ -18,3 +18,4 @@
 // lint: sort until '^$' erase 'pub '
 pub mod ast;
 pub mod parser;
+pub mod spike;

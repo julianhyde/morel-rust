@@ -130,9 +130,80 @@ Pass `input: Rc<str>` via `grammar(input: Rc<str>);`. Action blocks construct `*
 
 ## Status
 
-- [ ] Phase 0 — Spike
+- [x] Phase 0 — Spike (see findings below)
 - [ ] Phase 1 — Production lexer
 - [ ] Phase 2 — Grammar port
 - [ ] Phase 3 — Error type and Span cleanup
 - [ ] Phase 4 — Benchmark & validate
 - [ ] Phase 5 — Remove pest
+
+## Phase 0 findings
+
+Spike in `src/syntax/spike.{lalrpop,rs}` — 18/18 tests pass after the
+restructure described below. Branch: `46-lalrpop`, commit
+[Phase 0 spike].
+
+### What works cleanly
+
+- 13-level precedence cascade, iterative form (`<head> <(op tail)*>`
+  rather than left-recursion). Left-recursive precedence rules tripped
+  spurious shift/reduce conflicts because lalrpop's lane-table
+  algorithm merges lookaheads across precedence levels; the iterative
+  form (which is what `morel.pest` already uses) avoids this.
+- Right-assoc `::` and `@` via collect-then-reverse in the action
+  (mirrors `parser.rs:269-300`).
+- Postfix dot on the leading expression (`PostfixExpr`) — greedy chain
+  on any atom.
+- Trailing-method `.label arg` on a built-up application — works as
+  long as it requires preceding args (which matches the morel.pest
+  semantic; see below).
+- Tuple/paren atom — once the empty-alt CommaTail was replaced with a
+  variant-per-form rule, no conflicts.
+
+### One hard case the LR(1) grammar can't represent
+
+The pest pattern `f x.y` — where `.y` is a postfix chain on the arg
+`x`, giving `(apply f (dot x y))` (morel.pest:233-234,
+`id_postfix_chain`) — is **genuinely ambiguous in LR(1)** with the
+trailing-method rule. After `f x .`, the parser must decide between:
+
+  (a) Extend the IdChain inside arg `x` (PEG/pest greedy behavior).
+  (b) End the arg, reduce to AppliedExpr, treat `.` as the start of a
+      trailing method on `Apply(f, x)`.
+
+Both are valid parses; one-token lookahead can't choose. The pest PEG
+resolves by ordered choice. morel-java (`MorelParser.jj:70`) uses a
+mutable `inArg` flag plus multi-token `LOOKAHEAD({...})` semantic
+predicates. lalrpop has neither.
+
+The spike grammar compiles by dropping `id_postfix_chain`, which
+means `f x.y` no longer parses (user must write `f (x.y)`).
+
+**Mitigation: lexer trick.** A grep of `tests/script/*.smli` shows
+that real Morel code never puts whitespace between an identifier and
+`.label` in a postfix chain — only license headers and prose comments
+do. So Phase 1's custom lexer can emit `x.y.z` as a single
+`QUALIFIED_IDENT` token when there is no intervening whitespace.
+Then `f x.y (z)` lexes as `f QID(x.y) (z)` — no `.` for the parser
+to decide on, and `(apply f (dot x y))` falls out trivially. The
+trailing-method rule continues to see `.` only when there IS
+whitespace, distinguishing `cs.complement ().complement ()` (chain)
+from `cs.complement().complement()` (different lex).
+
+Cost: a one-line user-visible rule change ("no spaces inside a
+postfix dot chain"). morel.pest currently allows them
+(`postfix_tail = ${ "." ~ WHITESPACE* ~ label }`) but no code uses
+the freedom.
+
+### Other deliberate divergences
+
+- `over` (precedence 7.5): pest grammar lets the RHS be a full `expr`
+  (morel.pest:214). That creates shift/reduce conflicts with every
+  higher precedence. We encode `over` as right-associative at its own
+  level — equivalent on every input the pest action handles, since
+  `parser.rs:366-373` only matches the single-binary-`over` case.
+
+### Decision needed before Phase 1
+
+The lexer trick above commits us to a small documented syntax change
+(no whitespace inside `.` chains). Confirm before I proceed.
