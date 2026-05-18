@@ -42,6 +42,7 @@ chrono-tz = { version = "0.10", default-features = false }
 im = "15.1.0"
 indexmap = "2.0"
 lalrpop-util = { version = "0.22", features = ["lexer", "unicode"] }
+logos = "0.16"
 pest = "2.8"
 pest_ascii_tree = "0.1.0"
 pest_consume = "1.1"

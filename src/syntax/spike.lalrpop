@@ -190,12 +190,12 @@ AppliedExpr: SE = {
 ArgExpr: SE = {
     AtomNoIdent,
     <i:IDENT>   => SE::var(i),
-    "~" <a:ArgExpr> => SE::neg(a),
+    "~" <a:ArgExpr> => SE::negate(a),
 };
 
 UnaryExpr: SE = {
     PostfixExpr,
-    "~" <e:UnaryExpr> => SE::neg(e),
+    "~" <e:UnaryExpr> => SE::negate(e),
 };
 
 PostfixExpr: SE = {

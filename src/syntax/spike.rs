@@ -68,7 +68,7 @@ impl SE {
     pub fn bin(op: &'static str, l: SE, r: SE) -> SE {
         SE::Bin(op, Box::new(l), Box::new(r))
     }
-    pub fn neg(e: SE) -> SE { SE::Neg(Box::new(e)) }
+    pub fn negate(e: SE) -> SE { SE::Neg(Box::new(e)) }
     pub fn dot(e: SE, l: String) -> SE { SE::Dot(Box::new(e), l) }
     pub fn trailing(h: SE, l: String, a: SE) -> SE {
         SE::Trailing(Box::new(h), l, Box::new(a))

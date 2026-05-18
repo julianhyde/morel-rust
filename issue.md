@@ -131,7 +131,7 @@ Pass `input: Rc<str>` via `grammar(input: Rc<str>);`. Action blocks construct `*
 ## Status
 
 - [x] Phase 0 — Spike (see findings below)
-- [ ] Phase 1 — Production lexer
+- [x] Phase 1 — Production lexer (`src/syntax/lexer.rs`, 29 tests)
 - [ ] Phase 2 — Grammar port
 - [ ] Phase 3 — Error type and Span cleanup
 - [ ] Phase 4 — Benchmark & validate
@@ -203,7 +203,29 @@ the freedom.
   level — equivalent on every input the pest action handles, since
   `parser.rs:366-373` only matches the single-binary-`over` case.
 
-### Decision needed before Phase 1
+### Decision recorded
 
-The lexer trick above commits us to a small documented syntax change
-(no whitespace inside `.` chains). Confirm before I proceed.
+**Option 2 chosen** (2026-05-18): no lexer trick. Users must write
+`f (x.y)` instead of `f x.y`. Affected `.smli` tests will be updated
+in Phase 4. The grammar drops the arg-position `.label` chain rule
+entirely; whitespace inside `.` chains remains as flexible as pest.
+
+## Phase 1 notes
+
+Lexer at `src/syntax/lexer.rs`, built on `logos = "0.16"`. 29 unit
+tests cover every token category and the trickier edge cases.
+
+- Nested block comments use a callback (`skip_block_comment`) that
+  scans the remainder manually — regex can't recognize balanced
+  delimiters. EOF mid-comment surfaces as
+  `LexError::UnterminatedBlockComment` via a sentinel variant.
+- `~`-prefix numerics (`~5`, `~3.14`, `~6.02e~23`) are single tokens
+  by virtue of the regex matching the longer span; `~ 5` (with
+  whitespace) lexes as `Tilde` then `IntLit`. Mirrors morel.pest:243.
+- `Ident` has `priority = 1` so every same-length keyword wins the
+  tie. Without this, single-letter keywords like `o` (morel.pest:116)
+  collide with the identifier regex.
+- `_` is `Underscore` (wildcard); pest's identifier rule disallows a
+  leading `_` so `_x` lexes as `Underscore + Ident(x)`.
+- The lexer wraps logos into the `(usize, Tok, usize)` triple
+  iterator that lalrpop's custom-token mode expects (Phase 2).
