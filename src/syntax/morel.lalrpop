@@ -33,8 +33,8 @@
 use std::rc::Rc;
 use crate::syntax::ast::{
     Decl, DeclKind, Expr, ExprKind, Label, LabeledExpr, Literal,
-    LiteralKind, Match, Pat, PatKind, Statement, StatementKind, Type,
-    TypeKind, ValBind,
+    LiteralKind, Match, Pat, PatKind, Statement, StatementKind,
+    Type, TypeKind, ValBind,
 };
 use crate::syntax::lalr_parser::{
     mk_add, mk_comp, mk_cons, mk_mult, mk_span,
@@ -50,6 +50,7 @@ extern {
     enum Tok {
         // Keywords (subset)
         "andalso"   => Tok::AndAlso,
+        "as"        => Tok::As,
         "case"      => Tok::Case,
         "div"       => Tok::Div,
         "elem"      => Tok::Elem,
@@ -153,9 +154,17 @@ Expr: Expr = {
 // `<expr> : <type>` at the very top of the precedence cascade
 // (morel.pest:169 `expr_annotated`). Annotation is optional; bare
 // expression skips it.
+//
+// Step 3 restriction: the annotation type is `AtomicType` only.
+// Compound types (fn types, tuple types, applied types) must be
+// parenthesized: `(x : (int -> int))`. This isolates the type
+// cascade from FOLLOW(Expr) pollution that otherwise creates
+// shift-reduce conflicts in TupleType (`*` chain) and ApplyType
+// (IDENT chain). morel.pest allows compound types without parens
+// because PEG is greedy; LR(1) needs the boundary.
 AnnotExpr: Expr = {
     OrElseExpr,
-    <e:OrElseExpr> ":" <t:Type> => {
+    <e:OrElseExpr> ":" <t:AtomicType> => {
         let span = e.span.union(&t.span);
         ExprKind::Annotated(Box::new(e), Box::new(t)).spanned(&span)
     },
@@ -375,7 +384,7 @@ MatchList: Vec<Match> = {
 // case/fn need parens. The body still allows `if`/`let` (no `|`
 // terminator) and the full precedence cascade.
 MatchP: Match = {
-    <p:SimplePat> "=>" <e:MatchBody> => Match { pat: p, expr: e },
+    <p:Pat> "=>" <e:MatchBody> => Match { pat: p, expr: e },
 };
 
 MatchBody: Expr = {
@@ -420,18 +429,54 @@ LabeledExprP: LabeledExpr = {
 Decl: Decl = ValDecl;
 
 ValDecl: Decl = {
-    <l:@L> "val" <rc:"rec"?> <p:SimplePat> "=" <e:Expr> <r:@R> => {
+    <l:@L> "val" <rc:"rec"?> <p:Pat> "=" <e:Expr> <r:@R> => {
         let vb = ValBind::of(&p, None, &e);
         DeclKind::Val(rc.is_some(), false, vec![vb])
             .spanned(&mk_span(&input, l, r))
     },
 };
 
-// Subset patterns: identifier, wildcard, and literal. Full pattern
-// grammar (cons, record, list, ctor, `as`, annotated) is Phase 3
-// step 3.
-SimplePat: Pat = {
+// =================================================================
+// Patterns
+// =================================================================
+
+// Step 3 narrowing: pattern annotations (`pat : type`) deferred.
+// They expose Type to FOLLOW(Pat), which interacts badly with the
+// already-fragile type cascade. Add back when types are robust.
+Pat: Pat = ConsPat;
+
+// `::` right-associative — collect with iterative tail then fold from
+// the right (mirrors the expression-level ConsExpr).
+ConsPat: Pat = {
+    <h:AlmostAtomicPat> <r:("::" <AlmostAtomicPat>)*> => {
+        if r.is_empty() {
+            h
+        } else {
+            let mut head = h;
+            let mut acc: Vec<Pat> = Vec::new();
+            for b in r {
+                acc.insert(0, head);
+                head = b;
+            }
+            acc.into_iter().fold(head, |right, left| {
+                let span = left.span.union(&right.span);
+                PatKind::Cons(Box::new(left), Box::new(right)).spanned(&span)
+            })
+        }
+    },
+};
+
+// Step 3 narrowed scope: drop ConstructorPat, ListPat, RecordPat for
+// now. These each interact with FOLLOW-set pollution from ApplExpr,
+// ListExpr, RecordExpr (shared tokens) and lalrpop's LALR-merge.
+// Phase 3 later steps reintroduce them.
+AlmostAtomicPat: Pat = AtomicPat;
+
+AtomicPat: Pat = {
     <l:@L> "_" <r:@R> => PatKind::Wildcard.spanned(&mk_span(&input, l, r)),
+    <l:@L> <name:IDENT> "as" <p:AtomicPat> <r:@R> => {
+        PatKind::As(name, Box::new(p)).spanned(&mk_span(&input, l, r))
+    },
     <l:@L> <i:IDENT> <r:@R> => {
         PatKind::Identifier(i).spanned(&mk_span(&input, l, r))
     },
@@ -439,7 +484,25 @@ SimplePat: Pat = {
         let sp = mk_span(&input, l, r);
         PatKind::Literal(lit.kind.spanned(&sp)).spanned(&sp)
     },
+    TuplePat,
 };
+
+TuplePat: Pat = {
+    <l:@L> "(" ")" <r:@R> => {
+        PatKind::Tuple(vec![]).spanned(&mk_span(&input, l, r))
+    },
+    <l:@L> "(" <h:Pat> <t:("," <Pat>)*> ")" <r:@R> => {
+        if t.is_empty() {
+            h
+        } else {
+            let mut v = vec![h]; v.extend(t);
+            PatKind::Tuple(v).spanned(&mk_span(&input, l, r))
+        }
+    },
+};
+
+// Pattern-only literal (avoids a circular dep with the expression
+// LiteralExpr rule).
 
 // =================================================================
 // Types (Phase 3 step 2 subset: id, type-var, parens, app, tuple, fn)

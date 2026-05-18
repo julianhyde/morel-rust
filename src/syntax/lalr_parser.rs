@@ -318,20 +318,22 @@ mod test {
         assert!(s.contains("int"));
     }
 
-    #[test] fn annotated_fn_type() {
-        let s = ast_str("f : int -> int");
+    // Compound types in annotations require parens (Phase 3 step 3
+    // restriction — see grammar comment on AnnotExpr).
+    #[test] fn annotated_fn_type_parens() {
+        let s = ast_str("f : (int -> int)");
         assert!(s.contains("int"));
         assert!(s.contains("->"));
     }
 
-    #[test] fn annotated_tuple_type() {
-        let s = ast_str("p : int * string");
+    #[test] fn annotated_tuple_type_parens() {
+        let s = ast_str("p : (int * string)");
         assert!(s.contains("int"));
         assert!(s.contains("string"));
     }
 
-    #[test] fn annotated_app_type() {
-        let s = ast_str("xs : int list");
+    #[test] fn annotated_app_type_parens() {
+        let s = ast_str("xs : (int list)");
         assert!(s.contains("int"));
         assert!(s.contains("list"));
     }
@@ -347,10 +349,33 @@ mod test {
         assert!(s.contains("int"));
     }
 
-    #[test] fn fn_type_right_assoc() {
+    #[test] fn fn_type_right_assoc_parens() {
         // int -> int -> int parses as int -> (int -> int)
-        let s = ast_str("f : int -> int -> int");
+        let s = ast_str("f : (int -> int -> int)");
         assert!(s.contains("int"));
+    }
+
+    // --- Phase 3 step 3: pattern grammar -------------------------
+
+    #[test] fn fn_with_tuple_pat() {
+        let s = ast_str("fn (x, y) => x + y");
+        assert!(s.contains("(x, y)"), "got: {}", s);
+    }
+
+    #[test] fn case_with_cons_pat() {
+        let s = ast_str("case xs of x :: rest => x | _ => 0");
+        assert!(s.contains("x :: rest"), "got: {}", s);
+    }
+
+    #[test] fn val_tuple_pat() {
+        let s = ast_str("val (x, y) = (1, 2)");
+        assert!(s.contains("(x, y)"), "got: {}", s);
+    }
+
+    #[test] fn as_pat() {
+        // `x as (a, b)` binds the whole tuple to x and decomposes
+        let s = ast_str("case p of x as (a, b) => x");
+        assert!(s.contains("as"), "got: {}", s);
     }
 
     // Parity check: parse `simple` example through both parsers and
