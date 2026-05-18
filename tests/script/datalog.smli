@@ -48,7 +48,7 @@ Datalog.translate program;
 (*) Basic validation - parse error
 Datalog.validate ".decl edge(x:int";
 > val it =
->   "Parse error: Unrecognized EOF found at 16\nExpected one of \")\" or \",\""
+>   "Parse error: Encountered \"<EOF>\" at line 1, column 16.\nWas expecting one of:\n    \")\" ...\n    \",\" ...\n    "
 >   : string
 
 (*) Schema validation - arity mismatch in fact
@@ -215,8 +215,8 @@ path(X,Z) :- path(X,Y), edge(Y,Z).
 >   ".decl edge(x:int, y:int)\n.decl path(x:int, y:int)\nedge(1,2).\nedge(2,3).\npath(X,Y) :- edge(X,Y).\npath(X,Z) :- path(X,Y), edge(Y,Z).\n.output path"
 >   : string
 Datalog.execute program;
-> val it = {path=[{x=1,y=2},{x=2,y=3},{x=1,y=3}]} : {path:{x:int, y:int} list}
->    variant
+> val it = {path=[{x=1,y=2},{x=2,y=3},{x=1,y=3}]}
+>   : {path:{x:int, y:int} list} variant
 Datalog.translate program;
 > val it =
 >   SOME "let\n  val edge = [(1, 2), (2, 3)]\n  val path =\n    Relational.iterate edge\n      (fn (allPath, newPath) =>\n        from (x, y) in newPath, (v0, z) in edge where y = v0 yield (x, z))\nin\n  {path = from (x, y) in path}\nend"
@@ -252,8 +252,8 @@ parent(\"Alice\", \"Bob\").
 parent(\"Alice\", \"Carol\").
 sibling(X,Y) :- parent(P,X), parent(P,Y), X < Y.
 .output sibling";
-> val it = {sibling=[{x="Bob",y="Carol"}]} : {sibling:{x:string, y:string} list}
->    variant
+> val it = {sibling=[{x="Bob",y="Carol"}]}
+>   : {sibling:{x:string, y:string} list} variant
 
 (*) Negation - set difference
 Datalog.execute ".decl student(name:string)
@@ -286,8 +286,7 @@ descendant(P,D) :- ancestor(D,P).
 >    descendant=
 >    [{d="Alice",p="Bob"},{d="Bob",p="Carol"},{d="Carol",p="Dan"},
 >     {d="Alice",p="Carol"},{d="Bob",p="Dan"},{d="Alice",p="Dan"}]}
->   : {ancestor:{a:string, d:string} list, descendant:{d:string, p:string} list}
->    variant
+>   : {ancestor:{a:string, d:string} list, descendant:{d:string, p:string} list} variant
 
 (*) Empty relation
 Datalog.validate ".decl empty(x:int)
@@ -318,8 +317,8 @@ edge(2,3).
 path(X,Y) :- edge(X,Y).
 path(X,Z) :- path(X,Y), edge(Y,Z).
 .output path";
-> val it = {path=[{x=1,y=2},{x=2,y=3},{x=1,y=3}]} : {path:{x:int, y:int} list}
->    variant
+> val it = {path=[{x=1,y=2},{x=2,y=3},{x=1,y=3}]}
+>   : {path:{x:int, y:int} list} variant
 
 (*
 Translated:
@@ -474,8 +473,8 @@ Datalog.execute program;
 >    fact=
 >    [{n=0,value=1},{n=1,value=1},{n=2,value=2},{n=3,value=6},{n=4,value=24},
 >     {n=5,value=120},{n=6,value=720},{n=7,value=5040},{n=8,value=40320},
->     {n=9,value=362880},{n=10,value=3628800}]} : {fact:{n:int, value:int} list}
->    variant
+>     {n=9,value=362880},{n=10,value=3628800}]}
+>   : {fact:{n:int, value:int} list} variant
 
 (* Fibonacci sequence --------------------------------------------- *)
 
@@ -592,8 +591,7 @@ reach2(X, Z) :- edge(X, Y), edge(Y, Z).
 >     {x="a",y="c"}],
 >    reach2=
 >    [{x="a",y="c"},{x="b",y="d"},{x="c",y="e"},{x="d",y="f"},{x="a",y="d"}]}
->   : {reach1:{x:string, y:string} list, reach2:{x:string, y:string} list}
->    variant
+>   : {reach1:{x:string, y:string} list, reach2:{x:string, y:string} list} variant
 
 (*
  * Shortest path with distance parameter.
@@ -706,7 +704,7 @@ Datalog.execute program;
  * directly.
  *)
 Datalog.execute ".decl dept(deptno:int, dname:string, loc:string)
-.input dept \"tests/data/datalog/depts.csv\"
+.input dept \"data/scott/depts.csv\"
 .output dept";
 > val it =
 >   {
@@ -720,7 +718,7 @@ Datalog.execute ".decl dept(deptno:int, dname:string, loc:string)
 (*) Which states adjoin both Florida and Tennessee?
 Datalog.execute ".decl adj(state:string, adjacent:string)
 .decl result(state:string)
-.input adj \"tests/data/datalog/adjacent-states.csv\"
+.input adj \"data/map/adjacent-states.csv\"
 result(state) :- adj(state, \"FL\"), adj(state, \"TN\").
 .output result";
 > val it = {result=["AL","GA"]} : {result:string list} variant
@@ -729,19 +727,19 @@ result(state) :- adj(state, \"FL\"), adj(state, \"TN\").
 Datalog.execute ".decl adj(state:string, adjacent:string)
 .decl path(state:string, adjacent:string, distance:int)
 .decl result(state:string)
-.input adj \"tests/data/datalog/adjacent-states.csv\"
+.input adj \"data/map/adjacent-states.csv\"
 path(X, Y, 1) :- adj(X, Y).
 path(X, Z, N+1) :- path(X, Y, N), adj(Y, Z), N < 3.
 result(state) :- path(\"FL\", state, 2).
 .output result";
-> val it = {result=["FL","GA","MS","TN","AL","NC","SC"]} : {result:string list}
->    variant
+> val it = {result=["FL","GA","MS","TN","AL","NC","SC"]}
+>   : {result:string list} variant
 
 (*) Exactly two hops from Maine (which does not includes NH)
 Datalog.execute ".decl adj(state:string, adjacent:string)
 .decl path(state:string, adjacent:string, distance:int)
 .decl result(state:string)
-.input adj \"tests/data/datalog/adjacent-states.csv\"
+.input adj \"data/map/adjacent-states.csv\"
 path(X, Y, 1) :- adj(X, Y).
 path(X, Z, N+1) :- path(X, Y, N), adj(Y, Z), N < 3.
 result(state) :- path(\"ME\", state, 2).
