@@ -1,0 +1,138 @@
+# Migrate morel parser from pest to lalrpop
+
+## Background
+
+morel-rust uses [pest](https://pest.rs/) (PEG, with `pest_consume`) for the Morel parser. The Datalog port (#323) introduced [lalrpop](https://lalrpop.github.io/lalrpop/) as an experiment. Should the Morel parser migrate too?
+
+## Measurements
+
+| Component                | Source LOC | Release binary |
+| ------------------------ | ---------: | -------------: |
+| Morel pest grammar       |        586 |              — |
+| Morel parser driver      |      2 581 |      434.5 KiB |
+| Morel AST                |      1 739 |      195.3 KiB |
+| **Morel parser + AST**   |  **4 906** |  **629.9 KiB** |
+| Datalog lalrpop grammar  |        199 |              — |
+| Datalog parser driver    |        237 |       31.3 KiB |
+| Datalog AST              |        259 |        5.3 KiB |
+| **Datalog parser + AST** |    **695** |   **36.6 KiB** |
+
+Per-line compiled cost: pest ≈ 740 B, lalrpop ≈ 144 B (~5×). Release binary 7.3 MiB; `.text` 3.6 MiB.
+
+## Pros
+
+- **Binary size** — extrapolating gives ~456 KiB vs current 630 KiB (~27% / 170 KiB saved). Rough: lalrpop tables grow super-linearly with conflicts.
+- **Stack usage** — pest is recursive descent; deeply nested `let`/`case`/`from` can stack-overflow. lalrpop uses heap stacks, bounded only by memory. **Strongest argument.**
+- **Speed** — lalrpop LR(1) typically 2–5× faster than pest (single pass, no backtracking). Needs a Morel benchmark.
+- **Consolidation** — Datalog already uses lalrpop; drop one parser generator from the build.
+
+## Cons
+
+- **LR(1) grammar surgery.** ML-family languages fight LR(1):
+  - Postfix dispatch `x.f y` (field vs method) — pest uses `expr_unary_arg` lookahead (parser.rs:225–238); LR(1) needs duplicated non-terminals.
+  - 13-level precedence cascade with `over` at fractional 7.5 — needs a wrapping non-terminal.
+  - Function application by juxtaposition `f x y` competes with infix ops at the same precedence — forces a separate `aexpr` non-terminal.
+  - Pattern/expression overlap — `(x, y)` is a pattern in `fun f (x, y) = ...`, expression elsewhere; needs separate non-terminals.
+- **Nested block comments** `(* outer (* inner *) outer *)` — regex tokens can't match nesting. Need a custom lexer (`extern { type Token = ...; }`) or a preprocessing pass (loses span fidelity).
+- **Error messages** — pest auto-emits `expected expr_unary at line 5, col 12`; lalrpop emits `unrecognized token ',' expected one of "=", "->", ...`. Recovering pest quality needs a custom formatting layer.
+- **Conflict debugging** — PEG picks first match; LR(1) shift-reduce/reduce-reduce conflicts can be opaque without `lalrpop --report`. Cost is during migration, not after.
+- **Build cost** — `build.rs` codegen produces 10K+ lines; slow incremental rebuilds on grammar changes.
+
+## AST and Span compatibility
+
+**Both preserved unchanged** — migration touches the parser, not its outputs.
+
+- AST nodes are plain types; pest builds them via `pest_consume::match_nodes!`, lalrpop builds them in action blocks (`Expr: Expr = { <l:@L> <a:Expr> "+" <b:Term> <r:@R> => ... }`). Same AST, different construction site.
+- `Span { input: Rc<str>, start: usize, end: usize }` maps 1:1 onto lalrpop's `@L`/`@R`. Thread `Rc<str>` in via `grammar(input: Rc<str>);` or a closure-captured action helper.
+- Delete `Span::make` (ast.rs:56) and `Span::to_pest_span` (ast.rs:102); keep `union`, `merge`, `sum`, `code`, `start_pos`.
+- External pest usage outside the parser: ~7 lines.
+
+## Recommendation
+
+Migrate, but spike the hard cases first:
+
+1. Skeleton for the 13-level precedence cascade with `over` at 7.5 — no unresolved conflicts.
+2. Postfix-dispatch lookahead — encodable without grammar explosion.
+3. Custom lexer for nested block comments and the keyword/identifier disambiguation pest does atomically.
+4. Benchmark parse time and binary size on `tests/script/*.smli`.
+5. Error-message quality on malformed inputs.
+
+If 1–3 fall out cleanly, the rest is mechanical. If any are nasty, savings don't justify a fragile parser.
+
+## Out of scope
+
+- `unifier.pest` — small, works fine.
+- AST surface changes — separate issue.
+- Pretty-printer — operates on `&Expr`, untouched.
+
+## References
+
+- `src/syntax/morel.pest` (586 lines), `src/syntax/parser.rs` (2 581), `src/syntax/ast.rs` (1 739)
+- `src/datalog/grammar.lalrpop`, `src/datalog/parser.rs` (35 lines around generated code) — reference lalrpop setup
+
+## Execution plan
+
+Phased migration with a go/no-go gate after the spike. Each phase ends with `fullMake --no-clean` passing, a commit, and an update to this section before moving on.
+
+### Phase 0 — Spike (go/no-go gate)
+
+Throwaway lalrpop grammar + lexer skeleton, no AST construction, exercising only the LR(1)-hostile cases:
+
+1. **Precedence cascade with `over` at 7.5.** All 13 levels including unary `~`, right-assoc `::`/`@`, and `expr_application = expr_unary expr_unary_arg* trailing_method_call*` (morel.pest:225–227). Zero conflicts under `lalrpop --report`.
+2. **Postfix dispatch.** `id_postfix_chain` (morel.pest:233–234) + `trailing_method_call` (morel.pest:238–239). Test cases: `cs.complement ()`, `cs.complement ().complement ()`, `f x.y (z)`.
+3. **Custom lexer skeleton** (`extern { type Token = ...; }`) handling nested block comments, keyword-vs-identifier atomicity, `~`-prefix lookahead for negative literals vs unary op.
+
+Output: `spike.lalrpop` + lexer prototype + conflict/state-count table. **Decision point:** if any of (1)–(3) is fragile, stop and report.
+
+### Phase 1 — Production lexer
+
+Hand-written lexer (logos preferred). Tokens emit `(usize, Tok, usize)` triples. Must handle:
+
+- Skipped: whitespace, line comments (morel.pest:21), nested block comments (morel.pest:22).
+- All 55 keywords (morel.pest:26–82) with `!(alnum|_|')` lookahead.
+- Identifiers (unquoted + backtick-quoted with `` `` `` escape), record selectors `#foo`, type vars `'a`, naturals, integers, reals, scientific notation, string literals with full escape set (parser.rs:2100–2146), char literals `#"x"`.
+- Negative-number lookahead: `~` is `NEG_INT_LIT` / `NEG_REAL_LIT` only when followed by digits with no space; otherwise emit `TILDE`. Mirrors morel.pest:243's `!literal ~ "~"`.
+
+Independent of the parser and unit-testable alone.
+
+### Phase 2 — Grammar port
+
+Mechanical port of morel.pest rule-by-rule into `src/syntax/morel.lalrpop`, building the existing AST in action blocks. Order: declarations → types → patterns → atoms → expressions (deepest precedence first) → top-level statement. Patterns and expressions stay as separate non-terminals.
+
+Pass `input: Rc<str>` via `grammar(input: Rc<str>);`. Action blocks construct `*Kind` with `Span { input: input.clone(), start: l, end: r }` from `<l:@L> ... <r:@R>`. Keep the three entry-point signatures unchanged: `parse_statement`, `parse_unadorned_statement`, `parse_type_scheme` (parser.rs:45–79).
+
+### Phase 3 — Error type and Span cleanup
+
+- Replace `pub type ParseError = pest::error::Error<Rule>;` (parser.rs:33) with a wrapper around `lalrpop_util::ParseError<usize, Tok, &'static str>` exposing a `line_col` accessor that `Span::from_line_col` consumes (shell/main.rs:898).
+- Delete `Span::make` (ast.rs:56) and `Span::to_pest_span` (ast.rs:102).
+- Refactor `compile/span.rs::from_pest_span` to take `(input: &str, start: usize, end: usize, base_line)` directly. Update the 25+ call sites in `src/compile/resolver.rs`, `src/compile/type_resolver.rs`, `src/shell/main.rs` to drop the no-op `to_pest_span()`→`from_pest_span()` round trips.
+- Delete `pest_ascii_tree` usage in parser.rs:2206–2213 (`assert_parse_tree`); replace dependent tests with assertions on the AST `Display` form.
+- Update tests that depend on `Rule::X` (parser.rs:2169–2204) to call public lalrpop entry points or new `pub(crate)` per-rule helpers.
+
+### Phase 4 — Benchmark & validate
+
+- Full `tests/script/*.smli` suite passes unchanged.
+- Add a `cargo bench` over the 39 `.smli` files; compare to baseline.
+- `cargo bloat --release`; compare to the 629.9 KiB baseline.
+- 5 hand-crafted malformed inputs; pest vs lalrpop error messages side-by-side. Decide whether a custom error-formatting layer is needed.
+
+### Phase 5 — Remove pest
+
+- Drop `pest`, `pest_consume`, `pest_ascii_tree` from `Cargo.toml`.
+- Delete `src/syntax/morel.pest`.
+- Record measured binary/parse-time delta here.
+
+### Out of scope (reaffirmed)
+
+- `src/unify/unifier.pest` (51 lines) — stays on pest.
+- AST surface changes.
+- `src/datalog/` — already lalrpop.
+
+## Status
+
+- [ ] Phase 0 — Spike
+- [ ] Phase 1 — Production lexer
+- [ ] Phase 2 — Grammar port
+- [ ] Phase 3 — Error type and Span cleanup
+- [ ] Phase 4 — Benchmark & validate
+- [ ] Phase 5 — Remove pest
