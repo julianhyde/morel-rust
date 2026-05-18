@@ -1,0 +1,342 @@
+// Licensed to Julian Hyde under one or more contributor license
+// agreements.  See the NOTICE file distributed with this work
+// for additional information regarding copyright ownership.
+// Julian Hyde licenses this file to you under the Apache
+// License, Version 2.0 (the "License"); you may not use this
+// file except in compliance with the License.  You may obtain a
+// copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+// either express or implied.  See the License for the specific
+// language governing permissions and limitations under the
+// License.
+//
+// Phase 2 of the pest→lalrpop migration. See issue.md.
+//
+// Initial subset scope: core expressions, simple `val` decls,
+// arithmetic/logical/comparison operators, function application,
+// `if`/`let`, tuples, lists, parens. NOT yet covered (preserved
+// in `/tmp/morel.full.lalrpop.draft` for incremental Phase 4
+// expansion): full pattern grammar, fun/datatype/sig decls,
+// relational queries (from/exists/forall), records, type
+// annotations, `case`/`fn`, `over`.
+//
+// All binary precedence levels use lalrpop's `*` macro on the
+// tail. Explicit `Empty | Recursive` rules surfaced LR(1)
+// conflicts that the macro form resolves cleanly (Phase 0 spike
+// proved this works for the iterative pattern).
+
+use std::rc::Rc;
+use crate::syntax::ast::{
+    Decl, DeclKind, Expr, ExprKind, LiteralKind, Pat, PatKind,
+    Statement, StatementKind, ValBind,
+};
+use crate::syntax::lalr_parser::{
+    mk_add, mk_comp, mk_cons, mk_mult, mk_span,
+};
+use crate::syntax::lexer::{Tok, LexError};
+
+grammar<'input>(input: &'input Rc<str>);
+
+extern {
+    type Location = usize;
+    type Error = LexError;
+
+    enum Tok {
+        // Keywords (subset)
+        "andalso"   => Tok::AndAlso,
+        "div"       => Tok::Div,
+        "elem"      => Tok::Elem,
+        "else"      => Tok::Else,
+        "end"       => Tok::End,
+        "if"        => Tok::If,
+        "in"        => Tok::In,
+        "let"       => Tok::Let,
+        "mod"       => Tok::Mod,
+        "notelem"   => Tok::NotElem,
+        "o"         => Tok::O,
+        "orelse"    => Tok::OrElse,
+        "rec"       => Tok::Rec,
+        "then"      => Tok::Then,
+        "val"       => Tok::Val,
+        "true"      => Tok::True,
+        "false"     => Tok::False,
+
+        // Punctuation
+        "::"   => Tok::DoubleColon,
+        "<="   => Tok::Le,
+        ">="   => Tok::Ge,
+        "<>"   => Tok::Ne,
+        "("    => Tok::LParen,
+        ")"    => Tok::RParen,
+        "["    => Tok::LBracket,
+        "]"    => Tok::RBracket,
+        ","    => Tok::Comma,
+        ";"    => Tok::Semicolon,
+        "~"    => Tok::Tilde,
+        "_"    => Tok::Underscore,
+        "="    => Tok::Eq,
+        "<"    => Tok::Lt,
+        ">"    => Tok::Gt,
+        "@"    => Tok::At,
+        "+"    => Tok::Plus,
+        "-"    => Tok::Minus,
+        "^"    => Tok::Caret,
+        "*"    => Tok::Star,
+        "/"    => Tok::Slash,
+
+        // Content
+        IDENT       => Tok::Ident(<String>),
+        INT_LIT     => Tok::IntLit(<String>),
+        REAL_LIT    => Tok::RealLit(<String>),
+        SCI_LIT     => Tok::SciLit(<String>),
+        STRING_LIT  => Tok::StringLit(<String>),
+        CHAR_LIT    => Tok::CharLit(<String>),
+    }
+}
+
+// =================================================================
+// Entry points
+// =================================================================
+
+pub StatementSemi: Statement = <s:Statement> ";" => s;
+
+pub Statement: Statement = {
+    <l:@L> <e:Expr> <r:@R> => Statement {
+        kind: StatementKind::Expr(e.kind.clone()),
+        span: mk_span(&input, l, r),
+        id: None,
+    },
+    <l:@L> <d:Decl> <r:@R> => Statement {
+        kind: StatementKind::Decl(d.kind.clone()),
+        span: mk_span(&input, l, r),
+        id: None,
+    },
+};
+
+// =================================================================
+// Expressions
+// =================================================================
+
+// `if` and `let` live at the top level only, not inside Atom. SML
+// follows the same convention because in LR(1), placing them at
+// Atom-level creates a dangling-else ambiguity with the application
+// rule: `if a then b else c d` could parse as either
+// `if a then b else (c d)` or `(if a then b else c) d`, and one-token
+// lookahead can't disambiguate. To use a `let`/`if` as a function
+// argument, parenthesize it: `f (let val x = 1 in x end)`. Morel-pest
+// allowed both via PEG greedy matching.
+Expr: Expr = {
+    OrElseExpr,
+    IfExpr,
+    LetExpr,
+};
+
+OrElseExpr: Expr = {
+    <h:AndAlsoExpr> <r:("orelse" <AndAlsoExpr>)*> => {
+        r.into_iter().fold(h, |a, b| {
+            let span = a.span.union(&b.span);
+            ExprKind::OrElse(Box::new(a), Box::new(b)).spanned(&span)
+        })
+    },
+};
+
+AndAlsoExpr: Expr = {
+    <h:CompExpr> <r:("andalso" <CompExpr>)*> => {
+        r.into_iter().fold(h, |a, b| {
+            let span = a.span.union(&b.span);
+            ExprKind::AndAlso(Box::new(a), Box::new(b)).spanned(&span)
+        })
+    },
+};
+
+CompExpr: Expr = {
+    <h:ConsExpr> <r:(<CompOp> <ConsExpr>)*> => {
+        r.into_iter().fold(h, |a, (op, b)| {
+            let span = a.span.union(&b.span);
+            mk_comp(op, a, b).spanned(&span)
+        })
+    },
+};
+
+CompOp: &'static str = {
+    "="       => "=",
+    "<>"      => "<>",
+    "<="      => "<=",
+    ">="      => ">=",
+    "<"       => "<",
+    ">"       => ">",
+    "elem"    => "elem",
+    "notelem" => "notelem",
+};
+
+// `::` and `@` right-associative — collect left-to-right then fold
+// from the right.
+ConsExpr: Expr = {
+    <h:AddExpr> <r:(<ConsOp> <AddExpr>)*> => {
+        if r.is_empty() {
+            h
+        } else {
+            let mut head = h;
+            let mut acc: Vec<(&'static str, Expr)> = Vec::new();
+            for (op, b) in r {
+                acc.insert(0, (op, head));
+                head = b;
+            }
+            acc.into_iter().fold(head, |right, (op, left)| {
+                let span = left.span.union(&right.span);
+                mk_cons(op, left, right).spanned(&span)
+            })
+        }
+    },
+};
+
+ConsOp: &'static str = { "::" => "::", "@" => "@", };
+
+AddExpr: Expr = {
+    <h:MultExpr> <r:(<AddOp> <MultExpr>)*> => {
+        r.into_iter().fold(h, |a, (op, b)| {
+            let span = a.span.union(&b.span);
+            mk_add(op, a, b).spanned(&span)
+        })
+    },
+};
+
+AddOp: &'static str = { "+" => "+", "-" => "-", "^" => "^", };
+
+MultExpr: Expr = {
+    <h:ApplExpr> <r:(<MultOp> <ApplExpr>)*> => {
+        r.into_iter().fold(h, |a, (op, b)| {
+            let span = a.span.union(&b.span);
+            mk_mult(op, a, b).spanned(&span)
+        })
+    },
+};
+
+MultOp: &'static str = {
+    "*"   => "*",
+    "/"   => "/",
+    "div" => "div",
+    "mod" => "mod",
+};
+
+// Function application: `f x y` ≡ `Apply(Apply(f, x), y)`.
+ApplExpr: Expr = {
+    UnaryExpr,
+    <h:ApplExpr> <a:Atom> => {
+        let span = h.span.union(&a.span);
+        ExprKind::Apply(Box::new(h), Box::new(a)).spanned(&span)
+    },
+};
+
+UnaryExpr: Expr = {
+    Atom,
+    <l:@L> "~" <e:UnaryExpr> <r:@R> => {
+        ExprKind::Negate(Box::new(e)).spanned(&mk_span(&input, l, r))
+    },
+};
+
+Atom: Expr = {
+    LiteralExpr,
+    <l:@L> <i:IDENT> <r:@R> => {
+        ExprKind::Identifier(i).spanned(&mk_span(&input, l, r))
+    },
+    TupleOrParen,
+    ListExpr,
+};
+
+LiteralExpr: Expr = {
+    <l:@L> <s:INT_LIT> <r:@R> => {
+        let sp = mk_span(&input, l, r);
+        ExprKind::Literal(LiteralKind::Int(s).spanned(&sp)).spanned(&sp)
+    },
+    <l:@L> <s:REAL_LIT> <r:@R> => {
+        let sp = mk_span(&input, l, r);
+        ExprKind::Literal(LiteralKind::Real(s).spanned(&sp)).spanned(&sp)
+    },
+    <l:@L> <s:SCI_LIT> <r:@R> => {
+        let sp = mk_span(&input, l, r);
+        ExprKind::Literal(LiteralKind::Real(s).spanned(&sp)).spanned(&sp)
+    },
+    <l:@L> <s:STRING_LIT> <r:@R> => {
+        let sp = mk_span(&input, l, r);
+        ExprKind::Literal(LiteralKind::String(s).spanned(&sp)).spanned(&sp)
+    },
+    <l:@L> <s:CHAR_LIT> <r:@R> => {
+        let sp = mk_span(&input, l, r);
+        ExprKind::Literal(LiteralKind::Char(s).spanned(&sp)).spanned(&sp)
+    },
+    <l:@L> "true" <r:@R> => {
+        let sp = mk_span(&input, l, r);
+        ExprKind::Literal(LiteralKind::Bool(true).spanned(&sp)).spanned(&sp)
+    },
+    <l:@L> "false" <r:@R> => {
+        let sp = mk_span(&input, l, r);
+        ExprKind::Literal(LiteralKind::Bool(false).spanned(&sp)).spanned(&sp)
+    },
+};
+
+TupleOrParen: Expr = {
+    <l:@L> "(" ")" <r:@R> => {
+        let sp = mk_span(&input, l, r);
+        ExprKind::Literal(LiteralKind::Unit.spanned(&sp)).spanned(&sp)
+    },
+    <l:@L> "(" <h:Expr> <t:("," <Expr>)*> ")" <r:@R> => {
+        if t.is_empty() {
+            h
+        } else {
+            let mut v = vec![h]; v.extend(t);
+            ExprKind::Tuple(v).spanned(&mk_span(&input, l, r))
+        }
+    },
+};
+
+ListExpr: Expr = {
+    <l:@L> "[" "]" <r:@R> => {
+        ExprKind::List(vec![]).spanned(&mk_span(&input, l, r))
+    },
+    <l:@L> "[" <h:Expr> <t:("," <Expr>)*> "]" <r:@R> => {
+        let mut v = vec![h]; v.extend(t);
+        ExprKind::List(v).spanned(&mk_span(&input, l, r))
+    },
+};
+
+IfExpr: Expr = {
+    <l:@L> "if" <c:Expr> "then" <t:Expr> "else" <e:Expr> <r:@R> => {
+        ExprKind::If(Box::new(c), Box::new(t), Box::new(e))
+            .spanned(&mk_span(&input, l, r))
+    },
+};
+
+LetExpr: Expr = {
+    <l:@L> "let" <h:Decl> <t:(";"? <Decl>)*> ";"? "in" <e:Expr> "end" <r:@R> => {
+        let mut decls = vec![h]; decls.extend(t);
+        ExprKind::Let(decls, Box::new(e)).spanned(&mk_span(&input, l, r))
+    },
+};
+
+// =================================================================
+// Declarations (subset: val only)
+// =================================================================
+
+Decl: Decl = ValDecl;
+
+ValDecl: Decl = {
+    <l:@L> "val" <rc:"rec"?> <p:SimplePat> "=" <e:Expr> <r:@R> => {
+        let vb = ValBind::of(&p, None, &e);
+        DeclKind::Val(rc.is_some(), false, vec![vb])
+            .spanned(&mk_span(&input, l, r))
+    },
+};
+
+// Subset patterns: identifier and wildcard only.
+SimplePat: Pat = {
+    <l:@L> "_" <r:@R> => PatKind::Wildcard.spanned(&mk_span(&input, l, r)),
+    <l:@L> <i:IDENT> <r:@R> => {
+        PatKind::Identifier(i).spanned(&mk_span(&input, l, r))
+    },
+};

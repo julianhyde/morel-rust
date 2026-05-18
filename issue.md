@@ -132,7 +132,7 @@ Pass `input: Rc<str>` via `grammar(input: Rc<str>);`. Action blocks construct `*
 
 - [x] Phase 0 — Spike (see findings below)
 - [x] Phase 1 — Production lexer (`src/syntax/lexer.rs`, 29 tests)
-- [ ] Phase 2 — Grammar port
+- [x] Phase 2 — Grammar port (subset; see Phase 2 notes below)
 - [ ] Phase 3 — Error type and Span cleanup
 - [ ] Phase 4 — Benchmark & validate
 - [ ] Phase 5 — Remove pest
@@ -229,3 +229,51 @@ tests cover every token category and the trickier edge cases.
   leading `_` so `_x` lexes as `Underscore + Ident(x)`.
 - The lexer wraps logos into the `(usize, Tok, usize)` triple
   iterator that lalrpop's custom-token mode expects (Phase 2).
+
+## Phase 2 notes
+
+Grammar at `src/syntax/morel.lalrpop`; parser entry points at
+`src/syntax/lalr_parser.rs`. 19 unit tests pass, including a parity
+check that diff-compares the lalrpop AST against pest for a handful
+of inputs.
+
+### Scope (intentional subset)
+
+Landed: arithmetic, comparison, logical, cons/append operators;
+function application; unary negation; `if`/`let`; `val [rec]` decls
+with single identifier pattern; tuples; lists; literals; parens.
+
+Deferred to a follow-up commit (preserved as a draft at
+`/tmp/morel.full.lalrpop.draft` outside the repo): records, `case`,
+`fn`, type annotations, full pattern grammar (cons, record, list,
+ctor, `as`), `fun`/`type`/`datatype`/`signature` decls, relational
+queries (`from`/`exists`/`forall` + steps), the `over` operator,
+type-scheme entry point. These will go in piece-by-piece in Phase 4.
+
+### Three grammar lessons learned
+
+1. **Iterative tail with `*` macro, not explicit `Empty | Recursive`.**
+   The Phase 0 spike worked because it used `<h:X> <r:("op" <X>)*>`.
+   Re-encoding as `<h:X> <r:Tail>; Tail = empty | "op" X Tail`
+   surfaced shift/reduce conflicts (the empty alt's lookahead leaks
+   into adjacent precedence levels). lalrpop treats `*`/`+` macros
+   specially.
+
+2. **`if`/`let` cannot be atoms in LR(1).** Morel-pest allows
+   `f (let val x = 1 in x end)` without parens because PEG is
+   greedy; in LR(1) it creates a dangling-else-like ambiguity
+   between `f (let ... end)` and `(f let) ...`. The grammar places
+   them at top-level Expr only; users parenthesize to apply.
+
+3. **First grammar draft hit lalrpop state explosion.** A complete
+   port covering ~150 morel.pest rules ran lalrpop for 7+ minutes
+   without finishing. The fix was scope reduction, not algorithm
+   tuning — lalrpop's lane-table works fine on a tighter grammar
+   that compiles in ~15s.
+
+### `grammar` parameter
+
+`grammar<'input>(input: &'input Rc<str>);` — passed by reference so
+the same `Rc` can be cloned into many `Span`s without being moved.
+The first attempt (`grammar(input: Rc<str>);`) produced 98 "use of
+moved value" errors in the generated code.

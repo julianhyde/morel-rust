@@ -61,6 +61,12 @@ impl Span {
         }
     }
 
+    /// Creates a span from raw byte offsets. Used by the lalrpop
+    /// parser, whose actions get `<l:@L> ... <r:@R>` byte positions.
+    pub fn new(input: Rc<str>, start: usize, end: usize) -> Self {
+        Span { input, start, end }
+    }
+
     /// Creates the union of two spans.
     pub fn union(&self, other: &Span) -> Self {
         use std::cmp::{max, min};
