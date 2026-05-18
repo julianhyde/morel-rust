@@ -154,10 +154,17 @@ Gate for moving to Phase 4: every `.smli` file parses through the new parser and
 
 ## Status
 
+**Migration stopped 2026-05-18.** See "Decision: stop the
+migration" below for reasoning, and "Grammar ambiguities vs LR(1)
+limitations" for the full categorisation. Regression tests for
+the three genuine ambiguities live in `tests/ambiguity.rs`.
+
+Pre-stop progress (record only — does not get merged):
+
 - [x] Phase 0 — Spike (see findings below)
 - [x] Phase 1 — Production lexer (`src/syntax/lexer.rs`, 29 tests)
 - [x] Phase 2 — Grammar port (subset; see Phase 2 notes below)
-- [ ] Phase 3 — Grammar expansion (10 incremental steps; gate: full `.smli` corpus parses)
+- [~] Phase 3 — Grammar expansion (steps 1-3 of 10 landed; step 4 hit the wall and was rolled back)
 - [ ] Phase 4 — Cutover and Span cleanup
 - [ ] Phase 5 — Benchmark & validate
 - [ ] Phase 6 — Remove pest
@@ -359,21 +366,185 @@ By step 3 the lalrpop parser already requires:
 Step 4 would add: single-bind `val`/`fun` only (no `and`); fun
 without result-type annotation; no `type`/`datatype`/`sig` decls.
 
-### Decision point
+### Decision: stop the migration
 
-This is the gate the original issue.md flagged:
+**Decided 2026-05-18.** Keeping pest. The lalrpop migration is
+abandoned on branch `46-lalrpop`. The grammar work and its findings
+remain in tree (and in this document) as a record; nothing merges
+to main.
+
+Recap of the gate from the original plan:
 
 > If any are nasty, savings don't justify a fragile parser.
 
-Three options going forward:
+Three of the conflicts ARE nasty (and inherent to the language —
+not parser-tool-specific). Most of the rest are LR(1) algorithmic
+limitations, not real ambiguities, but they still cost
+user-visible language changes to dodge in lalrpop because the
+tool has no `LOOKAHEAD(k)`, `inline`, or semantic-predicate
+escape hatch strong enough.
 
-1. **Keep pushing.** Accept all of these restrictions, document the
-   user-visible diffs, port the rest of the grammar with the same
-   incremental approach. Each new feature adds more restrictions.
-2. **Hybrid.** Hand-write a small recursive-descent parser for the
-   parts lalrpop can't handle cleanly (types, declarations) and
-   keep lalrpop for the expression cascade. Adds complexity but
-   preserves the original Morel surface syntax.
-3. **Stop the migration.** Update issue 43 with the findings, drop
-   the `46-lalrpop` branch, keep pest. The .smli tests already
-   pass; this is the do-nothing option.
+The .smli corpus passes against the pest parser today; the
+do-nothing option preserves morel-rust's surface syntax
+compatibility with morel-java.
+
+## Grammar ambiguities vs LR(1) limitations
+
+The conflicts encountered during the migration attempt fall into
+two qualitatively different categories. **Same word, very
+different problems.**
+
+### A. Genuine grammar ambiguities
+
+Same input string admits two valid parse trees. The grammar
+itself doesn't pick one. No amount of lookahead — not LR(k), not
+GLR, not LL(∞) — can resolve these without a tiebreaker rule
+imposed *outside* the grammar (e.g., ordered choice in a PEG,
+semantic predicates in JavaCC, or a written-in-the-language-spec
+convention like SML's "innermost match owns the `|`").
+
+Every parser implementation — pest, lalrpop, JavaCC,
+hand-written — has to commit to a convention for each of these.
+
+Each genuine ambiguity has a regression test in
+`tests/ambiguity.rs` that pins down which parse Morel produces
+and documents what the alternative parse *would* have produced.
+Where SML/NJ has the same ambiguity, the test references its
+behaviour.
+
+| # | Input | Parse A (chosen) | Parse B (rejected) | SML/NJ |
+| --- | --- | --- | --- | --- |
+| A1 | `f x.y (z)` | `Apply(Apply(f, x.y), z)` | `Trailing(Apply(f, x), y, z)` | N/A — Morel-specific extension |
+| A2 | `if a then b else c d` | `If(a, b, Apply(c, d))` | `Apply(If(a, b, c), d)` | Same as A — verified |
+| A3 | `fn p => fn q => 1 \| r => 2` | inner fn owns `\| r => 2` | outer fn owns `\| r => 2` | Same as A — verified |
+
+A1 is unique to Morel because Standard ML has no postfix `.field`
+syntax — it uses prefix `#field`. The chosen resolution mirrors
+the PEG-greedy "argument absorbs the chain" rule already in
+`morel.pest:225-239` and `MorelParser.jj:835-911`.
+
+A2 and A3 are classic ML dangling-`X` ambiguities. SML/NJ resolves
+both by making the inner / right-most construct greedy; Morel does
+the same. Verified by running both in `sml` and comparing.
+
+### B. LR(1)/LALR(1) algorithm limitations
+
+These look like conflicts but are *not* grammar ambiguities. Each
+input has exactly one valid parse tree. The grammar is
+unambiguous. The problem is that LR(1) with one-token lookahead
+(or LALR(1)'s extra state-merging) can't *decide* which
+production to use at the point it must commit.
+
+Pest, JavaCC, hand-written recursive descent, GLR — all handle
+these natively because they have more flexibility (PEG's ordered
+choice, JavaCC's `LOOKAHEAD(k)` with arbitrary `k`, RD's
+arbitrary peek, GLR's parallel parses with later commit).
+Lalrpop's lane-table can resolve *some* of these (it did so for
+the smaller Phase 2 grammar), but the resolution power isn't
+enough once the grammar grows past a threshold.
+
+Each B-class problem below names the input that triggers it and
+which two productions lalrpop confused.
+
+#### B1. Anonymous vs labeled record field
+
+```
+{ foo }      → Record(None, [Anonymous(Identifier "foo")])
+{ foo = 1 }  → Record(None, [Labeled("foo", 1)])
+```
+
+After `{ IDENT`, lookahead `=` says labeled, `}` says anonymous.
+Each input has one parse. lalrpop blocks because the
+`Atom → IDENT` reduction has `=` in its FOLLOW set (since `x = y`
+is a valid comparison expression in some other context), so it
+can't tell whether to reduce-then-comparison or shift-as-label.
+
+#### B2. `{e with field = val}` vs `{field = val}`
+
+```
+{ x = 1 }          → labeled-only record
+{ x with y = 1 }   → copy x, update y
+```
+
+After `{ IDENT`, lookahead `with` says with-form, `=` says
+labeled, `+`/`*`/etc. says with-form starting an expression. One
+token decides. Unambiguous. Lalrpop fails because the LALR
+state-merge across the two RecordBody alternatives loses the
+discrimination.
+
+#### B3. Type-application boundary: `(x : int list)` vs `f (x : int) list`
+
+```
+(x : int list)    → AnnotatedExpr where the type is App(int, list)
+f (x : int) list  → apply (x : int) to `list` (then to nothing)
+```
+
+Both inputs have one parse. Lalrpop blocks at
+`ApplyType (*) IDENT` because IDENT is in FOLLOW(ApplyType) when
+the type appears in an Expr position (since Expr's apply chain
+also takes IDENTs). The lookahead is the same token; the
+context — "inside paren type" vs "outside as function arg" —
+differs but LALR loses that distinction.
+
+#### B4. Constructor with vs without type: `Red` vs `Pair of int`
+
+```
+datatype t = Red                  → bare ctor
+datatype t = Pair of int          → ctor with type
+```
+
+After IDENT in a constructor binding, lookahead `of` is shift,
+anything else is reduce. Unambiguous. Lalrpop fails because `of`
+also appears in `case e of` and the LALR-merged state combines
+both contexts' lookaheads.
+
+#### B5. Multi-bind `val x = 1 and y = 2`
+
+```
+val x = 1            → single bind
+val x = 1 and y = 2  → two binds in one decl
+val x = 1; val y = 2 → two separate decls
+```
+
+After the first bind, lookahead `and` continues, `;`/`val`/etc.
+stops. Unambiguous. Lalrpop fails because `and` is the prefix of
+`andalso` and the val-decl's `and` follow conflates with the
+expression context where `andalso` lives.
+
+#### B6. `<head> <(op tail)*>` precedence pattern
+
+The iterative-tail pattern that works fine on the small Phase 2
+grammar (and matches `morel.pest`'s structure) develops spurious
+shift/reduce conflicts at every precedence level once the
+grammar grows. Cause: LALR(1) FOLLOW computation merging
+lookaheads across all uses of a non-terminal. E.g., `AddExpr`
+appears as the RHS of `*` in `MultExpr`, the LHS of `+` in
+itself, inside `(...)`, inside `case _ of _ =>`, etc. The merged
+FOLLOW union includes tokens from every position, producing
+phantom conflicts inside the iterative tail.
+
+### Migration-attempt user-visible restrictions (cumulative)
+
+The lalrpop work-in-progress on this branch (commits 363cde5,
+7ee9763, c5f8b32, 1b7e361, 1e81258, dd4118d, e1b038f) forced
+*twelve* user-visible language changes to side-step the
+B-category limitations. Each is a real divergence from
+`morel.pest`:
+
+1. `f x.y` requires parens: `f (x.y)` (A1 resolution choice).
+2. `if a then b else c d` and `let val x = 1 in x end d` and `case ... of _ => x d` cannot apply the if/let/case directly; parenthesise to apply.
+3. `e : t` annotations must be in parens: `(e : t)`.
+4. Compound-type annotations need extra parens: `(e : (int -> int))`, not `(e : int -> int)`.
+5. Anonymous record field shorthand `{x}` doesn't work; write `{x = x}`.
+6. `{e with field = val}` copy-update form doesn't work.
+7. List patterns `[a, b]` not supported in patterns.
+8. Record patterns `{x = pat}` not supported.
+9. Constructor patterns `Leaf x` parse as bare identifier `Leaf` only.
+10. `IDENT as <pat>` requires `<pat>` to be atomic; nested cons in an as-pat needs another wrapper.
+11. Single-bind `val` and `fun` only; no `and`-chained multi-bind.
+12. No type annotation on `fun` result: `fun f x = e`, not `fun f x : t = e`.
+
+This list is the real cost-of-migration number. Beyond these,
+step 4 (fun/type/datatype/sig decls) was a rolling
+whack-a-mole — every fix surfaced another conflict — and
+relational queries (step 9 in the plan) were never attempted.
