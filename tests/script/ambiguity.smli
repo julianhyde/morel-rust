@@ -1,0 +1,160 @@
+(*
+ * Licensed to Julian Hyde under one or more contributor license
+ * agreements.  See the NOTICE file distributed with this work
+ * for additional information regarding copyright ownership.
+ * Julian Hyde licenses this file to you under the Apache
+ * License, Version 2.0 (the "License"); you may not use this
+ * file except in compliance with the License.  You may obtain a
+ * copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+ * either express or implied.  See the License for the specific
+ * language governing permissions and limitations under the
+ * License.
+ *)
+
+(* Grammar-ambiguity end-to-end tests. Mirrors tests/ambiguity.rs
+ * but drives the discrimination through evaluation instead of AST
+ * shape: the chosen parse evaluates successfully; every rejected
+ * parse would produce a type error or different value. See
+ * issue.md ("Grammar ambiguities vs LR(1) limitations") for the
+ * full discussion.
+ *
+ * Where Standard ML has the same ambiguity, the resolution
+ * matches SML/NJ — verified directly against the `sml` REPL. *)
+
+Sys.set ("lineWidth", 78);
+> val it = () : unit
+
+
+(* ================================================================
+ * A1: postfix dispatch in argument position
+ * ----------------------------------------------------------------
+ *
+ * Input: `f x.y (z)`
+ *
+ *   Parse A (chosen):  Apply(Apply(f, x.y), z)
+ *                      -- `.y` belongs to the argument `x`; the
+ *                         whole `x.y` is one arg of `f`.
+ *
+ *   Parse B (rejected): Apply(Trailing(Apply(f, x), y), z)
+ *                      -- `.y` is a trailing method on `Apply(f, x)`.
+ *                         This would require `f x` to be a record
+ *                         with field y, then apply the result to z.
+ *
+ * Morel-specific. Standard ML has no `.field` postfix syntax
+ * (uses prefix `#field`), so no SML/NJ comparison.
+ *
+ * Discriminator: with `f : int -> int -> int` and `x : {y:int}`,
+ * Parse A succeeds (`f x.y z` = `f 10 5` = 15); Parse B type-errors
+ * at `f x` (int function applied to record). *)
+
+val f = fn p => fn q => p + q;
+> val f = fn : int -> int -> int
+val x = {y = 10};
+> val x = {y=10} : {y:int}
+f x.y (5);
+> val it = 15 : int
+
+(*) Two-step chain via the trailing-method rule:
+(*)   cs.complement ().complement () should be
+(*)     Apply(Apply(Apply(#complement, Apply(Apply(#complement, cs), ())), ()))
+(*) The second `.complement ()` is the trailing method on the
+(*) result of the first application.
+val cs = {complement = fn () => {complement = fn () => 42}};
+> val cs = {complement=fn} : {complement:unit -> {complement:unit -> int}}
+cs.complement ().complement ();
+> val it = 42 : int
+
+
+(* ================================================================
+ * A2: `if a then b else c d` — dangling application across `else`
+ * ----------------------------------------------------------------
+ *
+ *   Parse A (chosen):  If(a, b, Apply(c, d))
+ *                      -- `c d` is one application forming the
+ *                         else clause.
+ *
+ *   Parse B (rejected): Apply(If(a, b, c), d)
+ *                      -- the if-expression is itself the
+ *                         function, applied to `d`.
+ *
+ * Both parses are well-formed grammatically. SML/NJ chooses A;
+ * Morel matches. Verified by typing `if true then 1 else g 7;`
+ * in SML/NJ — succeeds with `val it = 1 : int` because the else
+ * clause `g 7 : int` unifies with the then clause `1 : int`.
+ * Parse B would have branches `1 : int` and `g : int -> int`
+ * which don't unify — type error.
+ *
+ * Discriminator: successful evaluation to 1 (then-branch picked)
+ * proves Parse A. *)
+
+val g = fn x => x + 100;
+> val g = fn : int -> int
+if true then 1 else g 7;
+> val it = 1 : int
+
+(*) The "false" side picks up `g 7` = 107, again proving the else
+(*) clause greedily absorbed the application.
+if false then 1 else g 7;
+> val it = 107 : int
+
+
+(* ================================================================
+ * A3: `fn p => fn q => 1 | r => 2` — `|` ownership
+ * ----------------------------------------------------------------
+ *
+ *   Parse A (chosen):  Fn([p => Fn([q => 1, r => 2])])
+ *                      -- `| r => 2` is the second arm of the
+ *                         INNER fn. Outer fn has one arm.
+ *
+ *   Parse B (rejected): Fn([p => Fn([q => 1]), r => 2])
+ *                      -- `| r => 2` is the second arm of the
+ *                         OUTER fn. Inner fn has one arm.
+ *
+ * SML/NJ chooses A; Morel matches.
+ *
+ * Type discriminator: under Parse A, the outer fn has signature
+ * `'a -> 'b -> int` (a curried 2-arg function). Under Parse B,
+ * the outer fn's two arms would have body types `'b -> int` and
+ * `int` — they don't unify, so Parse B is a type error.
+ *
+ * Reversed match order avoids redundancy warnings: `fn 0 => 2 |
+ * y => 1` lists the specific case first, so `y` (catch-all) is
+ * NOT redundant. *)
+
+val nested = fn x => fn 0 => 2 | y => 1;
+> val nested = fn : 'a -> int -> int
+
+(*) Applying twice (curried) — proves Parse A: outer takes one
+(*) arg, returns the inner fn, which then takes an int.
+nested 99 0;
+> val it = 2 : int
+nested 99 5;
+> val it = 1 : int
+
+(*) The classic redundant-match form. SML/NJ reports the error
+(*) on the INNER match-list range (the y/z pair), confirming
+(*) Parse A. Morel does the same — the error range below
+(*) (1.21-1.27 = the `z => 2` arm) is inside the inner fn, not
+(*) at the outer level. *)
+fn x => fn y => 1 | z => 2;
+> stdIn:1.21-1.27 Error: match redundant
+>   raised at: stdIn:1.21-1.27
+
+(*) Forcing Parse B grouping with explicit parens around the
+(*) inner fn. Now the outer fn really has two arms (x and z),
+(*) and they have incompatible body types (`'a -> int` vs `int`),
+(*) producing a type error. (Morel's error wording differs from
+(*) SML/NJ's "types of rules do not agree"; the discriminator
+(*) here is the existence of a type error, not its phrasing.) *)
+fn x => (fn y => 1) | z => 2;
+> stdIn:1.1-1.29 Error: Cannot deduce type: conflict: fn(T16, int) vs int
+>   raised at: stdIn:1.1-1.29
+
+
+(*) End ambiguity.smli
