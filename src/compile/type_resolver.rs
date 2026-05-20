@@ -378,15 +378,6 @@ impl<'a> TermToTypeConverter<'a> {
                             PrimitiveType::parse_name(op_name).unwrap();
                         Box::new(Type::Primitive(primitive_type))
                     }
-                    "either" => {
-                        assert_eq!(sequence.terms.len(), 2);
-                        let arg1 = *self.term_type(&sequence.terms[0]);
-                        let arg2 = *self.term_type(&sequence.terms[1]);
-                        Box::new(Type::Data(
-                            op_name.to_string(),
-                            vec![arg1, arg2],
-                        ))
-                    }
                     "fn" => {
                         assert_eq!(sequence.terms.len(), 2);
                         let param_type = self.term_type(&sequence.terms[0]);
@@ -397,17 +388,6 @@ impl<'a> TermToTypeConverter<'a> {
                         assert_eq!(sequence.terms.len(), 1);
                         let type_ = self.term_type(&sequence.terms[0]);
                         Box::new(Type::List(type_))
-                    }
-                    "option" | "descending" | "range" | "continuous_set"
-                    | "discrete_set" => {
-                        assert_eq!(sequence.terms.len(), 1);
-                        let args = vec![*self.term_type(&sequence.terms[0])];
-                        Box::new(Type::Data(op_name.to_string(), args))
-                    }
-                    "order" | "variant" | "time" | "date" | "weekday"
-                    | "month" => {
-                        assert_eq!(sequence.terms.len(), 0);
-                        Box::new(Type::Data(op_name.to_string(), vec![]))
                     }
                     "tuple" => {
                         let types = sequence
@@ -433,14 +413,13 @@ impl<'a> TermToTypeConverter<'a> {
                         }
                         Box::new(Type::Record(false, fields))
                     }
-                    "vector" => {
-                        assert_eq!(sequence.terms.len(), 1);
-                        let args = vec![*self.term_type(&sequence.terms[0])];
-                        Box::new(Type::Data(op_name.to_string(), args))
-                    }
                     _ => {
-                        // User-defined datatype: convert each
-                        // argument term back to a Type.
+                        // Every other named type — built-in
+                        // (`option`, `either`, `range`, `variant`, …)
+                        // or user-declared — lowers uniformly to
+                        // `Type::Data`. Arity is enforced by the
+                        // unifier; assertions here would be
+                        // redundant.
                         let args: Vec<Type> = sequence
                             .terms
                             .iter()
@@ -605,14 +584,14 @@ pub struct TypeResolver {
     /// and `datatype` declarations.
     pub type_aliases: HashMap<String, Type>,
 
-    /// Parameter count (arity) of every datatype known to the
-    /// resolver — built-in (seeded by `new`) and user-declared
-    /// (added by `deduce_datatype_decl_type` or by the session before
-    /// deduction). Read by the `TypeKind::App` arity check; updated
-    /// freely as datatypes are redeclared. Kept separate from the
-    /// unifier because the unifier's op arity is set on first use and
-    /// cannot be changed.
-    pub datatype_arities: HashMap<String, usize>,
+    /// Parameter count (arity) of every user-declared datatype seen
+    /// so far (added by `deduce_datatype_decl_type` or seeded by
+    /// the session from prior statements). Built-in datatype
+    /// arities are *not* stored here — they're read on demand from
+    /// `library::BuiltInDatatype` / `library::BuiltInEqtype` via
+    /// `library::builtin_type_arity`. A redeclaration overwrites the
+    /// previous entry.
+    pub user_datatype_arities: HashMap<String, usize>,
 
     /// Constructor bindings from `datatype` declarations, stored
     /// here during `deduce_datatype_decl_type` and merged into
@@ -679,6 +658,17 @@ impl Default for TypeResolver {
 }
 
 impl TypeResolver {
+    /// Returns the declared parameter count (arity) of a type
+    /// constructor by name, or `None` if it isn't a known one.
+    /// Consults both built-in types (via [`library::BuiltInDatatype`]
+    /// / [`library::BuiltInEqtype`] strum properties) and
+    /// user-declared datatypes accumulated in
+    /// `self.user_datatype_arities`.
+    fn arity_of_type_ctor(&self, name: &str) -> Option<usize> {
+        library::builtin_type_arity(name)
+            .or_else(|| self.user_datatype_arities.get(name).copied())
+    }
+
     /// Walks an AST type and pushes errors for invalid forms:
     /// standalone `(t1, ..., tn)` tuple types, and wrong-arity
     /// applications of known type constructors. Used by code paths
@@ -701,8 +691,7 @@ impl TypeResolver {
             TypeKind::App(args, base) => {
                 let flat_args = AstType::flatten(args);
                 if let TypeKind::Id(name) = &base.kind
-                    && let Some(&expected) =
-                        self.datatype_arities.get(name.as_str())
+                    && let Some(expected) = self.arity_of_type_ctor(name)
                     && expected != flat_args.len()
                 {
                     let actual = flat_args.len();
@@ -755,12 +744,6 @@ impl TypeResolver {
         let record_op = unifier.op("record", None);
         let fn_op = unifier.op("fn", Some(2));
         let int_op = unifier.op("int", Some(0));
-        // Seed the arity table with built-in datatypes so they share
-        // the `TypeKind::App` arity-check code path with user-declared
-        // datatypes (which add their own entries during decl
-        // processing, and whose entries flow in from prior statements
-        // via the session).
-        let datatype_arities = library::built_in_datatype_arities();
         Self {
             warnings: Vec::new(),
             node_var_map: HashMap::new(),
@@ -780,7 +763,7 @@ impl TypeResolver {
             fn_op,
             decl_type_vars: BTreeMap::new(),
             type_aliases: HashMap::new(),
-            datatype_arities,
+            user_datatype_arities: HashMap::new(),
             datatype_bindings: Vec::new(),
             prior_datatype_constructors: HashMap::new(),
             prior_constructor_arg_types: HashMap::new(),
@@ -1453,7 +1436,7 @@ impl TypeResolver {
         // Phase 1: Register each datatype's name as a type alias
         // so that constructor types can reference it (including
         // self-references and mutual references). Publish the arity
-        // to `datatype_arities` so that `(t1, …, tn) name` in a
+        // to `user_datatype_arities` so that `(t1, …, tn) name` in a
         // later annotation is arity-checked. A redeclaration with a
         // new arity overwrites the previous entry.
         for db in datatype_binds {
@@ -1462,7 +1445,7 @@ impl TypeResolver {
                 .collect();
             let data_type = Type::Data(db.name.clone(), type_var_types);
             self.type_aliases.insert(db.name.clone(), data_type);
-            self.datatype_arities
+            self.user_datatype_arities
                 .insert(db.name.clone(), db.type_vars.len());
         }
 
@@ -3708,21 +3691,15 @@ impl TypeResolver {
             "bag" => Some(Box::new(Type::Bag(Box::new(Type::Primitive(
                 PrimitiveType::Unit,
             ))))),
-            "option" => {
-                // Option of any element type; dispatch keys on the
-                // "option" Data name.
-                Some(Box::new(Type::Data(
-                    "option".to_string(),
-                    vec![Type::Primitive(PrimitiveType::Unit)],
-                )))
-            }
-            "range" | "continuous_set" | "discrete_set" => {
-                // postfix_dispatch only keys on the data-type name;
-                // the element-type slot is filled with a placeholder.
-                Some(Box::new(Type::Data(
-                    op_name.clone(),
-                    vec![Type::Primitive(PrimitiveType::Unit)],
-                )))
+            s if let Some(arity) = library::builtin_type_arity(s) => {
+                // Any other built-in named type (`option`, `range`,
+                // `continuous_set`, …): postfix_dispatch only keys
+                // on the data-type name, so the element-type slots
+                // are filled with placeholders.
+                let args = (0..arity)
+                    .map(|_| Type::Primitive(PrimitiveType::Unit))
+                    .collect();
+                Some(Box::new(Type::Data(op_name.to_string(), args)))
             }
             _ => None,
         }
@@ -5321,12 +5298,12 @@ pub(crate) fn ast_type_to_core_type(ast_type: &AstType) -> Option<Type> {
     match &ast_type.kind {
         TypeKind::Id(name) => PrimitiveType::parse_name(name)
             .map(Type::Primitive)
-            .or_else(|| match name.as_str() {
-                "order" | "option" | "list" | "bag" | "vector" | "variant"
-                | "time" | "date" | "weekday" | "month" | "exn" => {
-                    Some(Type::Data(name.clone(), vec![]))
-                }
-                _ => None,
+            .or_else(|| {
+                // Bare name of a built-in datatype/eqtype: build a
+                // placeholder `Type::Data` with no args; later
+                // unification fills in fresh type variables.
+                library::builtin_type_arity(name.as_str())
+                    .map(|_| Type::Data(name.clone(), vec![]))
             }),
         TypeKind::Tuple(types) => {
             let cores: Vec<Type> =
@@ -5458,11 +5435,8 @@ impl<'a> TypeToTermConverter<'a> {
                     // applications. Without this, e.g. `(bool, int) list`
                     // either panics in the unifier or silently drops the
                     // extra arg.
-                    let expected_opt = self
-                        .type_resolver
-                        .datatype_arities
-                        .get(name.as_str())
-                        .copied();
+                    let expected_opt =
+                        self.type_resolver.arity_of_type_ctor(name.as_str());
                     if let Some(expected) = expected_opt
                         && expected != terms.len()
                     {

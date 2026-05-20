@@ -1735,6 +1735,10 @@ impl BuiltInDatatype {
     pub fn var_count(&self) -> usize {
         self.get_str("varCount").unwrap().parse().unwrap()
     }
+    /// Looks up a built-in datatype by its ML-level name.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::iter().find(|d| d.name() == name)
+    }
 }
 
 /// Built-in equality type: a parameterized type that admits structural
@@ -1766,6 +1770,19 @@ impl BuiltInEqtype {
     pub fn var_count(&self) -> usize {
         self.get_str("varCount").unwrap().parse().unwrap()
     }
+    /// Looks up a built-in equality type by its ML-level name.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::iter().find(|e| e.name() == name)
+    }
+}
+
+/// Returns the parameter count (arity) of any built-in type — a
+/// [`BuiltInDatatype`] or a [`BuiltInEqtype`] — by its ML-level
+/// name, or `None` if the name isn't a built-in type.
+pub fn builtin_type_arity(name: &str) -> Option<usize> {
+    BuiltInDatatype::from_name(name)
+        .map(|d| d.var_count())
+        .or_else(|| BuiltInEqtype::from_name(name).map(|e| e.var_count()))
 }
 
 /// Built-in function or record.
@@ -1899,22 +1916,6 @@ pub fn built_in_datatype_constructors() -> HashMap<String, Vec<String>> {
                 .or_default()
                 .push(f.name().to_string());
         }
-    }
-    map
-}
-
-/// Returns the parameter count (arity) of each built-in datatype
-/// and equality type, keyed by ML-level name. Used by the type
-/// resolver to reject wrong-arity applications such as
-/// `(bool, int) list`. Built solely from the [`BuiltInDatatype`]
-/// and [`BuiltInEqtype`] registries — no extra fallback table.
-pub fn built_in_datatype_arities() -> HashMap<String, usize> {
-    let mut map: HashMap<String, usize> = HashMap::new();
-    for d in BuiltInDatatype::iter() {
-        map.insert(d.name().to_string(), d.var_count());
-    }
-    for e in BuiltInEqtype::iter() {
-        map.insert(e.name().to_string(), e.var_count());
     }
     map
 }
