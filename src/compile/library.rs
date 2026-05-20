@@ -832,40 +832,40 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Math", name = "tanh", type = "real -> real"))]
     MathTanh,
     #[strum(props(p = "Date", name = "Apr", global = true))]
-    #[strum(props(type = "`month`", constructor = true))]
+    #[strum(props(type = "`month`", constructor = true, datatype = "month"))]
     MonthApr,
     #[strum(props(p = "Date", name = "Aug", global = true))]
-    #[strum(props(type = "`month`", constructor = true))]
+    #[strum(props(type = "`month`", constructor = true, datatype = "month"))]
     MonthAug,
     #[strum(props(p = "Date", name = "Dec", global = true))]
-    #[strum(props(type = "`month`", constructor = true))]
+    #[strum(props(type = "`month`", constructor = true, datatype = "month"))]
     MonthDec,
     #[strum(props(p = "Date", name = "Feb", global = true))]
-    #[strum(props(type = "`month`", constructor = true))]
+    #[strum(props(type = "`month`", constructor = true, datatype = "month"))]
     MonthFeb,
     #[strum(props(p = "Date", name = "Jan", global = true))]
-    #[strum(props(type = "`month`", constructor = true))]
+    #[strum(props(type = "`month`", constructor = true, datatype = "month"))]
     MonthJan,
     #[strum(props(p = "Date", name = "Jul", global = true))]
-    #[strum(props(type = "`month`", constructor = true))]
+    #[strum(props(type = "`month`", constructor = true, datatype = "month"))]
     MonthJul,
     #[strum(props(p = "Date", name = "Jun", global = true))]
-    #[strum(props(type = "`month`", constructor = true))]
+    #[strum(props(type = "`month`", constructor = true, datatype = "month"))]
     MonthJun,
     #[strum(props(p = "Date", name = "Mar", global = true))]
-    #[strum(props(type = "`month`", constructor = true))]
+    #[strum(props(type = "`month`", constructor = true, datatype = "month"))]
     MonthMar,
     #[strum(props(p = "Date", name = "May", global = true))]
-    #[strum(props(type = "`month`", constructor = true))]
+    #[strum(props(type = "`month`", constructor = true, datatype = "month"))]
     MonthMay,
     #[strum(props(p = "Date", name = "Nov", global = true))]
-    #[strum(props(type = "`month`", constructor = true))]
+    #[strum(props(type = "`month`", constructor = true, datatype = "month"))]
     MonthNov,
     #[strum(props(p = "Date", name = "Oct", global = true))]
-    #[strum(props(type = "`month`", constructor = true))]
+    #[strum(props(type = "`month`", constructor = true, datatype = "month"))]
     MonthOct,
     #[strum(props(p = "Date", name = "Sep", global = true))]
-    #[strum(props(type = "`month`", constructor = true))]
+    #[strum(props(type = "`month`", constructor = true, datatype = "month"))]
     MonthSep,
     #[strum(props(p = "Option", name = "app"))]
     #[strum(props(type = "forall 1 ('a -> unit) -> 'a option -> unit"))]
@@ -925,19 +925,39 @@ pub enum BuiltInFunction {
     #[strum(props(constructor = true, datatype = "order"))]
     OrderLess,
     #[strum(props(p = "Range", name = "ALL", global = true))]
-    #[strum(props(type = "forall 1 'a range", constructor = true))]
+    #[strum(props(
+        type = "forall 1 'a range",
+        constructor = true,
+        datatype = "range"
+    ))]
     RangeAll,
     #[strum(props(p = "Range", name = "AT_LEAST", global = true))]
-    #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
+    #[strum(props(
+        type = "forall 1 'a -> 'a range",
+        constructor = true,
+        datatype = "range"
+    ))]
     RangeAtLeast,
     #[strum(props(p = "Range", name = "AT_MOST", global = true))]
-    #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
+    #[strum(props(
+        type = "forall 1 'a -> 'a range",
+        constructor = true,
+        datatype = "range"
+    ))]
     RangeAtMost,
     #[strum(props(p = "Range", name = "CLOSED", global = true))]
-    #[strum(props(type = "forall 1 'a * 'a -> 'a range", constructor = true))]
+    #[strum(props(
+        type = "forall 1 'a * 'a -> 'a range",
+        constructor = true,
+        datatype = "range"
+    ))]
     RangeClosed,
     #[strum(props(p = "Range", name = "CLOSED_OPEN", global = true))]
-    #[strum(props(type = "forall 1 'a * 'a -> 'a range", constructor = true))]
+    #[strum(props(
+        type = "forall 1 'a * 'a -> 'a range",
+        constructor = true,
+        datatype = "range"
+    ))]
     RangeClosedOpen,
     #[strum(props(p = "Range", name = "contains"))]
     #[strum(props(type = "forall 1 'a range -> 'a -> bool"))]
@@ -967,19 +987,39 @@ pub enum BuiltInFunction {
     #[strum(props(type = "forall 1 'a discrete_set -> 'a range list"))]
     RangeDsRanges,
     #[strum(props(p = "Range", name = "GREATER_THAN", global = true))]
-    #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
+    #[strum(props(
+        type = "forall 1 'a -> 'a range",
+        constructor = true,
+        datatype = "range"
+    ))]
     RangeGreaterThan,
     #[strum(props(p = "Range", name = "LESS_THAN", global = true))]
-    #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
+    #[strum(props(
+        type = "forall 1 'a -> 'a range",
+        constructor = true,
+        datatype = "range"
+    ))]
     RangeLessThan,
     #[strum(props(p = "Range", name = "OPEN", global = true))]
-    #[strum(props(type = "forall 1 'a * 'a -> 'a range", constructor = true))]
+    #[strum(props(
+        type = "forall 1 'a * 'a -> 'a range",
+        constructor = true,
+        datatype = "range"
+    ))]
     RangeOpen,
     #[strum(props(p = "Range", name = "OPEN_CLOSED", global = true))]
-    #[strum(props(type = "forall 1 'a * 'a -> 'a range", constructor = true))]
+    #[strum(props(
+        type = "forall 1 'a * 'a -> 'a range",
+        constructor = true,
+        datatype = "range"
+    ))]
     RangeOpenClosed,
     #[strum(props(p = "Range", name = "POINT", global = true))]
-    #[strum(props(type = "forall 1 'a -> 'a range", constructor = true))]
+    #[strum(props(
+        type = "forall 1 'a -> 'a range",
+        constructor = true,
+        datatype = "range"
+    ))]
     RangePoint,
     #[strum(props(p = "Range", name = "toBag"))]
     #[strum(props(type = "forall 1 'a discrete_set -> 'a bag"))]
@@ -1321,39 +1361,67 @@ pub enum BuiltInFunction {
     TimeZeroTime,
     /// `Variant.BAG`: a constructor of the `variant` datatype.
     #[strum(props(p = "Variant", name = "BAG", global = true))]
-    #[strum(props(type = "variant list -> variant", constructor = true))]
+    #[strum(props(
+        type = "variant list -> variant",
+        constructor = true,
+        datatype = "variant"
+    ))]
     VariantBag,
     /// `Variant.BOOL`: a constructor of the `variant` datatype.
     #[strum(props(p = "Variant", name = "BOOL", global = true))]
-    #[strum(props(type = "bool -> variant", constructor = true))]
+    #[strum(props(
+        type = "bool -> variant",
+        constructor = true,
+        datatype = "variant"
+    ))]
     VariantBool,
     /// `Variant.CHAR`: a constructor of the `variant` datatype.
     #[strum(props(p = "Variant", name = "CHAR", global = true))]
-    #[strum(props(type = "char -> variant", constructor = true))]
+    #[strum(props(
+        type = "char -> variant",
+        constructor = true,
+        datatype = "variant"
+    ))]
     VariantChar,
     /// `Variant.CONSTANT`: a constructor of the `variant` datatype that
     /// represents a nullary constructor of any datatype, given by name.
     #[strum(props(p = "Variant", name = "CONSTANT", global = true))]
-    #[strum(props(type = "string -> variant", constructor = true))]
+    #[strum(props(
+        type = "string -> variant",
+        constructor = true,
+        datatype = "variant"
+    ))]
     VariantConstant,
     /// `Variant.CONSTRUCT`: a constructor of the `variant` datatype that
     /// represents a unary constructor of any datatype, given by name and
     /// payload.
     #[strum(props(p = "Variant", name = "CONSTRUCT", global = true))]
-    #[strum(props(type = "string * variant -> variant", constructor = true))]
+    #[strum(props(
+        type = "string * variant -> variant",
+        constructor = true,
+        datatype = "variant"
+    ))]
     VariantConstruct,
     /// `Variant.INT`: a constructor of the `variant` datatype.
     #[strum(props(p = "Variant", name = "INT", global = true))]
-    #[strum(props(type = "int -> variant", constructor = true))]
+    #[strum(props(
+        type = "int -> variant",
+        constructor = true,
+        datatype = "variant"
+    ))]
     VariantInt,
     /// `Variant.LIST`: a constructor of the `variant` datatype.
     #[strum(props(p = "Variant", name = "LIST", global = true))]
-    #[strum(props(type = "variant list -> variant", constructor = true))]
+    #[strum(props(
+        type = "variant list -> variant",
+        constructor = true,
+        datatype = "variant"
+    ))]
     VariantList,
     /// `Variant.VARIANT_NONE`: a nullary constructor representing `NONE`
     /// of any option type.
     #[strum(props(p = "Variant", name = "VARIANT_NONE", global = true))]
-    #[strum(props(type = "variant", constructor = true))]
+    #[strum(props(type = "variant", constructor = true, datatype = "variant"))]
     VariantNone,
     /// `Variant.parse s`: the inverse of `Variant.print`; parses a
     /// construction-expression string into the corresponding variant.
@@ -1367,32 +1435,49 @@ pub enum BuiltInFunction {
     VariantPrint,
     /// `Variant.REAL`: a constructor of the `variant` datatype.
     #[strum(props(p = "Variant", name = "REAL", global = true))]
-    #[strum(props(type = "real -> variant", constructor = true))]
+    #[strum(props(
+        type = "real -> variant",
+        constructor = true,
+        datatype = "variant"
+    ))]
     VariantReal,
     /// `Variant.RECORD`: a constructor of the `variant` datatype that
     /// wraps a list of `(label, variant)` pairs as a record value.
     #[strum(props(p = "Variant", name = "RECORD", global = true))]
     #[strum(props(
         type = "(string * variant) list -> variant",
-        constructor = true
+        constructor = true,
+        datatype = "variant"
     ))]
     VariantRecord,
     /// `Variant.VARIANT_SOME`: a unary constructor representing `SOME v`
     /// where `v` is itself a variant.
     #[strum(props(p = "Variant", name = "VARIANT_SOME", global = true))]
-    #[strum(props(type = "variant -> variant", constructor = true))]
+    #[strum(props(
+        type = "variant -> variant",
+        constructor = true,
+        datatype = "variant"
+    ))]
     VariantSome,
     /// `Variant.STRING`: a constructor of the `variant` datatype.
     #[strum(props(p = "Variant", name = "STRING", global = true))]
-    #[strum(props(type = "string -> variant", constructor = true))]
+    #[strum(props(
+        type = "string -> variant",
+        constructor = true,
+        datatype = "variant"
+    ))]
     VariantString,
     /// `Variant.UNIT`: a nullary constructor of the `variant` datatype.
     #[strum(props(p = "Variant", name = "UNIT", global = true))]
-    #[strum(props(type = "variant", constructor = true))]
+    #[strum(props(type = "variant", constructor = true, datatype = "variant"))]
     VariantUnit,
     /// `Variant.VECTOR`: a constructor of the `variant` datatype.
     #[strum(props(p = "Variant", name = "VECTOR", global = true))]
-    #[strum(props(type = "variant list -> variant", constructor = true))]
+    #[strum(props(
+        type = "variant list -> variant",
+        constructor = true,
+        datatype = "variant"
+    ))]
     VariantVector,
     /// `vector` is a synonym for `Vector.fromList`
     #[strum(props(name = "vector", global = true, throws = "Size"))]
@@ -1469,25 +1554,53 @@ pub enum BuiltInFunction {
     #[strum(props(type = "forall 1 'a vector * int * 'a -> 'a vector"))]
     VectorUpdate,
     #[strum(props(p = "Date", name = "Fri", global = true))]
-    #[strum(props(type = "`weekday`", constructor = true))]
+    #[strum(props(
+        type = "`weekday`",
+        constructor = true,
+        datatype = "weekday"
+    ))]
     WeekdayFri,
     #[strum(props(p = "Date", name = "Mon", global = true))]
-    #[strum(props(type = "`weekday`", constructor = true))]
+    #[strum(props(
+        type = "`weekday`",
+        constructor = true,
+        datatype = "weekday"
+    ))]
     WeekdayMon,
     #[strum(props(p = "Date", name = "Sat", global = true))]
-    #[strum(props(type = "`weekday`", constructor = true))]
+    #[strum(props(
+        type = "`weekday`",
+        constructor = true,
+        datatype = "weekday"
+    ))]
     WeekdaySat,
     #[strum(props(p = "Date", name = "Sun", global = true))]
-    #[strum(props(type = "`weekday`", constructor = true))]
+    #[strum(props(
+        type = "`weekday`",
+        constructor = true,
+        datatype = "weekday"
+    ))]
     WeekdaySun,
     #[strum(props(p = "Date", name = "Thu", global = true))]
-    #[strum(props(type = "`weekday`", constructor = true))]
+    #[strum(props(
+        type = "`weekday`",
+        constructor = true,
+        datatype = "weekday"
+    ))]
     WeekdayThu,
     #[strum(props(p = "Date", name = "Tue", global = true))]
-    #[strum(props(type = "`weekday`", constructor = true))]
+    #[strum(props(
+        type = "`weekday`",
+        constructor = true,
+        datatype = "weekday"
+    ))]
     WeekdayTue,
     #[strum(props(p = "Date", name = "Wed", global = true))]
-    #[strum(props(type = "`weekday`", constructor = true))]
+    #[strum(props(
+        type = "`weekday`",
+        constructor = true,
+        datatype = "weekday"
+    ))]
     WeekdayWed,
 }
 
@@ -1709,7 +1822,7 @@ pub enum BuiltInDatatype {
         p = "Range",
         name = "continuous_set",
         varCount = "1",
-        constructors = "CONTINUOUS_SET"
+        constructors = ""
     ))]
     ContinuousSet,
     #[strum(props(
@@ -1723,7 +1836,7 @@ pub enum BuiltInDatatype {
         p = "Range",
         name = "discrete_set",
         varCount = "1",
-        constructors = "DISCRETE_SET"
+        constructors = ""
     ))]
     DiscreteSet,
     #[strum(props(
@@ -2077,4 +2190,92 @@ pub fn lookup_struct_field(
         f.get_str("p") == Some(struct_name)
             && f.get_str("name") == Some(field_name)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every constructor named in a `BuiltInDatatype`'s
+    /// `constructors = "..."` prop must correspond to a
+    /// `BuiltInFunction` variant with that same ML-level name —
+    /// otherwise the datatype claims constructors that don't exist
+    /// as runtime functions.
+    #[test]
+    fn datatype_constructors_match_built_in_functions() {
+        let by_name: HashMap<&'static str, BuiltInFunction> =
+            BuiltInFunction::iter()
+                .filter(|f| f.is_constructor())
+                .map(|f| (f.name(), f))
+                .collect();
+        let mut missing: Vec<String> = Vec::new();
+        for d in BuiltInDatatype::iter() {
+            for cn in d.constructor_names() {
+                if !by_name.contains_key(cn) {
+                    missing.push(format!(
+                        "BuiltInDatatype::{} lists constructor {:?}, \
+                         but no BuiltInFunction is a constructor with \
+                         that name",
+                        d.name(),
+                        cn,
+                    ));
+                }
+            }
+        }
+        assert!(missing.is_empty(), "{}", missing.join("\n"));
+    }
+
+    /// Every `BuiltInFunction` that flags itself as a constructor
+    /// (`is_constructor()` true) must declare which type it
+    /// constructs via the `datatype = "..."` strum prop, and the
+    /// target must be either a [`BuiltInDatatype`] (in which case
+    /// the function's name must appear in that datatype's
+    /// `constructors` list) or a [`BuiltInEqtype`] or primitive
+    /// type (for pseudo-datatypes like `bool`, `list`, `bag`).
+    /// Three failure modes are reported:
+    /// - the constructor has no `datatype = "..."` tag at all
+    ///   (orphaned constructor — consumers of constructor metadata
+    ///   won't see it);
+    /// - the tag points to a name that isn't any built-in type;
+    /// - the tag points to a `BuiltInDatatype` whose constructor
+    ///   list doesn't include this function's name.
+    #[test]
+    fn built_in_function_constructors_belong_to_datatypes() {
+        let datatypes_by_name: HashMap<&'static str, BuiltInDatatype> =
+            BuiltInDatatype::iter().map(|d| (d.name(), d)).collect();
+        let mut errors: Vec<String> = Vec::new();
+        for f in BuiltInFunction::iter() {
+            if !f.is_constructor() {
+                continue;
+            }
+            let Some(dt_name) = f.datatype() else {
+                errors.push(format!(
+                    "BuiltInFunction::{:?} is a constructor but has no \
+                     `datatype = \"...\"` tag",
+                    f,
+                ));
+                continue;
+            };
+            if let Some(dt) = datatypes_by_name.get(dt_name) {
+                let ctors = dt.constructor_names();
+                if !ctors.contains(&f.name()) {
+                    errors.push(format!(
+                        "BuiltInFunction::{:?} (name {:?}) claims datatype \
+                         {:?}, but that datatype's constructor list is {:?}",
+                        f,
+                        f.name(),
+                        dt_name,
+                        ctors,
+                    ));
+                }
+            } else if BuiltInType::from_name(dt_name).is_none() {
+                errors.push(format!(
+                    "BuiltInFunction::{:?} claims datatype {:?}, but no \
+                     built-in type has that name",
+                    f, dt_name,
+                ));
+            }
+        }
+        assert!(errors.is_empty(), "{}", errors.join("\n"));
+    }
 }
