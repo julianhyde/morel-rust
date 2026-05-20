@@ -1693,6 +1693,81 @@ SIZE("General", "Size"),
 UNEQUAL_LENGTHS("ListPair", "UnequalLengths"),
  */
 
+/// Built-in datatype: a parameterized type with named constructors.
+/// Analogue of morel-java's `BuiltIn.Datatype`. Each variant carries
+/// its package (`p`), ML-level name (`name`), and parameter count
+/// (`varCount`) as strum properties.
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
+#[repr(u8)]
+#[derive(
+    EnumCount, EnumIter, EnumProperty, EnumString, strum_macros::Display,
+)]
+pub enum BuiltInDatatype {
+    // lint: sort until '#}' where '##[A-Z]'
+    #[strum(props(p = "Range", name = "continuous_set", varCount = "1"))]
+    ContinuousSet,
+    #[strum(props(p = "Relational", name = "descending", varCount = "1"))]
+    Descending,
+    #[strum(props(p = "Range", name = "discrete_set", varCount = "1"))]
+    DiscreteSet,
+    #[strum(props(p = "Either", name = "either", varCount = "2"))]
+    Either,
+    #[strum(props(p = "General", name = "exn", varCount = "0"))]
+    Exn,
+    #[strum(props(p = "Date", name = "month", varCount = "0"))]
+    Month,
+    #[strum(props(p = "Option", name = "option", varCount = "1"))]
+    Option,
+    #[strum(props(p = "General", name = "order", varCount = "0"))]
+    Order,
+    #[strum(props(p = "Range", name = "range", varCount = "1"))]
+    Range,
+    #[strum(props(p = "Variant", name = "variant", varCount = "0"))]
+    Variant,
+    #[strum(props(p = "Date", name = "weekday", varCount = "0"))]
+    Weekday,
+}
+
+impl BuiltInDatatype {
+    pub fn name(&self) -> &'static str {
+        self.get_str("name").unwrap()
+    }
+    pub fn var_count(&self) -> usize {
+        self.get_str("varCount").unwrap().parse().unwrap()
+    }
+}
+
+/// Built-in equality type: a parameterized type that admits structural
+/// equality but has no exposed constructors. Analogue of morel-java's
+/// `BuiltIn.Eqtype`.
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
+#[repr(u8)]
+#[derive(
+    EnumCount, EnumIter, EnumProperty, EnumString, strum_macros::Display,
+)]
+pub enum BuiltInEqtype {
+    // lint: sort until '#}' where '##[A-Z]'
+    #[strum(props(name = "bag", varCount = "1"))]
+    Bag,
+    #[strum(props(name = "date", varCount = "0"))]
+    Date,
+    #[strum(props(name = "list", varCount = "1"))]
+    List,
+    #[strum(props(name = "time", varCount = "0"))]
+    Time,
+    #[strum(props(name = "vector", varCount = "1"))]
+    Vector,
+}
+
+impl BuiltInEqtype {
+    pub fn name(&self) -> &'static str {
+        self.get_str("name").unwrap()
+    }
+    pub fn var_count(&self) -> usize {
+        self.get_str("varCount").unwrap().parse().unwrap()
+    }
+}
+
 /// Built-in function or record.
 #[repr(u16)]
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
@@ -1828,43 +1903,18 @@ pub fn built_in_datatype_constructors() -> HashMap<String, Vec<String>> {
     map
 }
 
-/// Returns the parameter count (arity) of each built-in datatype.
-/// Used by the type resolver to reject wrong-arity applications such
-/// as `(bool, int) list`.
-///
-/// Where possible, arities are derived from existing library
-/// metadata: for any constructor tagged with `datatype = "..."`,
-/// the outer `forall N` of its declared type *is* the datatype's
-/// arity. The fallback list at the end covers two cases that the
-/// derivation can't see:
-/// - Abstract types with no constructors at all (`date`, `time`,
-///   `continuous_set`, `discrete_set`).
-/// - Types whose constructors don't carry the `datatype = "..."`
-///   tag yet (`range`, `variant`, `weekday`, `month`).
+/// Returns the parameter count (arity) of each built-in datatype
+/// and equality type, keyed by ML-level name. Used by the type
+/// resolver to reject wrong-arity applications such as
+/// `(bool, int) list`. Built solely from the [`BuiltInDatatype`]
+/// and [`BuiltInEqtype`] registries — no extra fallback table.
 pub fn built_in_datatype_arities() -> HashMap<String, usize> {
     let mut map: HashMap<String, usize> = HashMap::new();
-    for f in BuiltInFunction::iter() {
-        if f.is_constructor()
-            && let Some(dt) = f.datatype()
-        {
-            let arity = match *f.get_type() {
-                Type::Forall(_, n) => n,
-                _ => 0,
-            };
-            map.insert(dt.to_string(), arity);
-        }
+    for d in BuiltInDatatype::iter() {
+        map.insert(d.name().to_string(), d.var_count());
     }
-    for (name, arity) in [
-        ("continuous_set", 1),
-        ("date", 0),
-        ("discrete_set", 1),
-        ("month", 0),
-        ("range", 1),
-        ("time", 0),
-        ("variant", 0),
-        ("weekday", 0),
-    ] {
-        map.entry(name.to_string()).or_insert(arity);
+    for e in BuiltInEqtype::iter() {
+        map.insert(e.name().to_string(), e.var_count());
     }
     map
 }
