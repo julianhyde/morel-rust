@@ -15,6 +15,7 @@
 // language governing permissions and limitations under the
 // License.
 
+use crate::compile::library;
 use crate::compile::types::{Op, PrimitiveType, Type, TypeVariable};
 use crate::eval::code;
 use crate::eval::date;
@@ -776,61 +777,17 @@ impl Pretty {
             return write!(buf, "{}", date::format_iso(*d, *o))
                 .map_err(|_| fmt::Error);
         }
-        if name == "weekday"
-            && let Val::Constructor(ord, _) = value
+        // Datatypes whose constructor values are
+        // `Val::Constructor(ordinal, _)` with a dense `base - i`
+        // ordinal scheme (weekday/month/exn): map back through the
+        // `BuiltInDatatype` registry.
+        if let Val::Constructor(ord, inner) = value
+            && let Some(d) = library::BuiltInDatatype::from_name(name)
+            && let Some(label) = d.constructor_name_for_ordinal(*ord)
         {
-            let label = match *ord {
-                val::WEEKDAY_MON_ORDINAL => "Mon",
-                val::WEEKDAY_TUE_ORDINAL => "Tue",
-                val::WEEKDAY_WED_ORDINAL => "Wed",
-                val::WEEKDAY_THU_ORDINAL => "Thu",
-                val::WEEKDAY_FRI_ORDINAL => "Fri",
-                val::WEEKDAY_SAT_ORDINAL => "Sat",
-                val::WEEKDAY_SUN_ORDINAL => "Sun",
-                _ => return Err(fmt::Error),
-            };
-            return self.pretty_raw(buf, indent, line_end, depth, label);
-        }
-        if name == "month"
-            && let Val::Constructor(ord, _) = value
-        {
-            let label = match *ord {
-                val::MONTH_JAN_ORDINAL => "Jan",
-                val::MONTH_FEB_ORDINAL => "Feb",
-                val::MONTH_MAR_ORDINAL => "Mar",
-                val::MONTH_APR_ORDINAL => "Apr",
-                val::MONTH_MAY_ORDINAL => "May",
-                val::MONTH_JUN_ORDINAL => "Jun",
-                val::MONTH_JUL_ORDINAL => "Jul",
-                val::MONTH_AUG_ORDINAL => "Aug",
-                val::MONTH_SEP_ORDINAL => "Sep",
-                val::MONTH_OCT_ORDINAL => "Oct",
-                val::MONTH_NOV_ORDINAL => "Nov",
-                val::MONTH_DEC_ORDINAL => "Dec",
-                _ => return Err(fmt::Error),
-            };
-            return self.pretty_raw(buf, indent, line_end, depth, label);
-        }
-        if name == "exn"
-            && let Val::Constructor(ord, inner) = value
-        {
-            let label = match *ord {
-                val::EXN_BIND_ORDINAL => "Bind",
-                val::EXN_CHR_ORDINAL => "Chr",
-                val::EXN_DIV_ORDINAL => "Div",
-                val::EXN_DOMAIN_ORDINAL => "Domain",
-                val::EXN_EMPTY_ORDINAL => "Empty",
-                val::EXN_FAIL_ORDINAL => "Fail",
-                val::EXN_MATCH_ORDINAL => "Match",
-                val::EXN_OVERFLOW_ORDINAL => "Overflow",
-                val::EXN_SIZE_ORDINAL => "Size",
-                val::EXN_SPAN_ORDINAL => "Span",
-                val::EXN_SUBSCRIPT_ORDINAL => "Subscript",
-                val::EXN_UNEQUAL_LENGTHS_ORDINAL => "UnequalLengths",
-                val::EXN_UNORDERED_ORDINAL => "Unordered",
-                _ => return Err(fmt::Error),
-            };
-            if *ord == val::EXN_FAIL_ORDINAL {
+            if d == library::BuiltInDatatype::Exn
+                && *ord == val::EXN_FAIL_ORDINAL
+            {
                 self.pretty_raw(buf, indent, line_end, depth, label)?;
                 buf.push(' ');
                 let string_type = Type::Primitive(PrimitiveType::String);

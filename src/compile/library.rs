@@ -17,6 +17,7 @@
 
 use crate::compile::types::{PrimitiveType, Type};
 use crate::eval::code::{Impl, LIBRARY};
+use crate::eval::val;
 use crate::eval::val::Val;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::LazyLock;
@@ -1800,6 +1801,31 @@ impl BuiltInDatatype {
             .split(',')
             .filter(|s| !s.is_empty())
             .collect()
+    }
+    /// Ordinal of the first constructor (in logical order) when this
+    /// datatype uses the dense `base-i` ordinal scheme. Returns
+    /// `None` for datatypes that don't follow that scheme
+    /// (`option`, `either`, `descending`, `continuous_set`,
+    /// `discrete_set`, `variant`, `range`, `order`).
+    fn first_constructor_ordinal(&self) -> Option<usize> {
+        Some(match self {
+            BuiltInDatatype::Weekday => val::WEEKDAY_MON_ORDINAL,
+            BuiltInDatatype::Month => val::MONTH_JAN_ORDINAL,
+            BuiltInDatatype::Exn => val::EXN_BIND_ORDINAL,
+            _ => return None,
+        })
+    }
+    /// Maps an ordinal stored in `Val::Constructor` back to its
+    /// constructor's ML-level name, using `first_constructor_ordinal`
+    /// as the base and [`Self::constructor_names`] as the lookup
+    /// table.
+    pub fn constructor_name_for_ordinal(
+        &self,
+        ord: usize,
+    ) -> Option<&'static str> {
+        let base = self.first_constructor_ordinal()?;
+        let index = base.checked_sub(ord)?;
+        self.constructor_names().get(index).copied()
     }
     /// Looks up a built-in datatype by its ML-level name.
     pub fn from_name(name: &str) -> Option<Self> {

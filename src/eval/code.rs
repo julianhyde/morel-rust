@@ -15,6 +15,7 @@
 // language governing permissions and limitations under the
 // License.
 
+use crate::compile::library;
 use crate::compile::library::{
     BuiltIn, BuiltInExn, BuiltInFunction, BuiltInRecord,
 };
@@ -417,11 +418,23 @@ impl Code {
         t: &Option<Code>,
     ) -> Code {
         // Determine whether this is a built-in constructor (SOME,
-        // NONE, INL, INR, order values) or a user-defined one.
+        // NONE, INL, INR, order values, …) or a user-defined one.
+        // The built-in case here covers datatypes whose constructor
+        // patterns are matched by *name* via `BindConstructor` /
+        // `BindLiteral`; datatypes whose constructors use the
+        // ordinal-based `Val::Constructor(ord, _)` scheme
+        // (weekday, month, exn, …) fall through to
+        // `BindConstructor2` along with user-declared ones.
         let is_builtin = match type_ {
             Type::Data(n, _) => matches!(
-                n.as_str(),
-                "option" | "either" | "order" | "descending" | "variant"
+                library::BuiltInDatatype::from_name(n.as_str()),
+                Some(
+                    library::BuiltInDatatype::Option
+                        | library::BuiltInDatatype::Either
+                        | library::BuiltInDatatype::Order
+                        | library::BuiltInDatatype::Descending
+                        | library::BuiltInDatatype::Variant
+                )
             ),
             _ => true,
         };
@@ -4833,32 +4846,25 @@ fn is_datatype_constructor(f: BuiltInFunction, name: &str) -> bool {
 
 /// Maps a runtime value of type `exn` to a [`BuiltInExn`] tag and an
 /// optional payload string. Used by [`Code::Raise`] to convert an
-/// `exn` value into a `MorelError::Runtime2`.
+/// `exn` value into a `MorelError::Runtime2`. The exn constructor's
+/// ML-level name is recovered via the `BuiltInDatatype::Exn` registry,
+/// then mapped to a [`BuiltInExn`] variant by name.
 fn exn_from_val(value: &Val) -> (BuiltInExn, Option<String>) {
     if let Val::Constructor(ord, inner) = value {
-        let exn = match *ord {
-            val::EXN_BIND_ORDINAL => BuiltInExn::Bind,
-            val::EXN_CHR_ORDINAL => BuiltInExn::Chr,
-            val::EXN_DIV_ORDINAL => BuiltInExn::Div,
-            val::EXN_DOMAIN_ORDINAL => BuiltInExn::Domain,
-            val::EXN_EMPTY_ORDINAL => BuiltInExn::Empty,
-            val::EXN_FAIL_ORDINAL => {
-                let msg = match inner.as_ref() {
-                    Val::String(s) => Some(s.clone()),
-                    _ => None,
-                };
-                return (BuiltInExn::Fail, msg);
+        let name = library::BuiltInDatatype::Exn
+            .constructor_name_for_ordinal(*ord)
+            .unwrap_or_else(|| panic!("unknown exn ordinal: {}", ord));
+        let exn = BuiltInExn::from_str(name)
+            .unwrap_or_else(|_| panic!("unknown exn constructor: {}", name));
+        let payload = if exn == BuiltInExn::Fail {
+            match inner.as_ref() {
+                Val::String(s) => Some(s.clone()),
+                _ => None,
             }
-            val::EXN_MATCH_ORDINAL => BuiltInExn::Match,
-            val::EXN_OVERFLOW_ORDINAL => BuiltInExn::Overflow,
-            val::EXN_SIZE_ORDINAL => BuiltInExn::Size,
-            val::EXN_SPAN_ORDINAL => BuiltInExn::Span,
-            val::EXN_SUBSCRIPT_ORDINAL => BuiltInExn::Subscript,
-            val::EXN_UNEQUAL_LENGTHS_ORDINAL => BuiltInExn::UnequalLengths,
-            val::EXN_UNORDERED_ORDINAL => BuiltInExn::Unordered,
-            _ => panic!("unknown exn ordinal: {}", ord),
+        } else {
+            None
         };
-        return (exn, None);
+        return (exn, payload);
     }
     panic!("not an exn value: {:?}", value)
 }
