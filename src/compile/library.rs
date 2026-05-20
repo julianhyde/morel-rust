@@ -1704,27 +1704,82 @@ UNEQUAL_LENGTHS("ListPair", "UnequalLengths"),
 )]
 pub enum BuiltInDatatype {
     // lint: sort until '#}' where '##[A-Z]'
-    #[strum(props(p = "Range", name = "continuous_set", varCount = "1"))]
+    #[strum(props(
+        p = "Range",
+        name = "continuous_set",
+        varCount = "1",
+        constructors = "CONTINUOUS_SET"
+    ))]
     ContinuousSet,
-    #[strum(props(p = "Relational", name = "descending", varCount = "1"))]
+    #[strum(props(
+        p = "Relational",
+        name = "descending",
+        varCount = "1",
+        constructors = "DESC"
+    ))]
     Descending,
-    #[strum(props(p = "Range", name = "discrete_set", varCount = "1"))]
+    #[strum(props(
+        p = "Range",
+        name = "discrete_set",
+        varCount = "1",
+        constructors = "DISCRETE_SET"
+    ))]
     DiscreteSet,
-    #[strum(props(p = "Either", name = "either", varCount = "2"))]
+    #[strum(props(
+        p = "Either",
+        name = "either",
+        varCount = "2",
+        constructors = "INL,INR"
+    ))]
     Either,
-    #[strum(props(p = "General", name = "exn", varCount = "0"))]
+    #[strum(props(
+        p = "General",
+        name = "exn",
+        varCount = "0",
+        constructors = "Bind,Chr,Div,Domain,Empty,Fail,Match,Overflow,Size,Span,Subscript,UnequalLengths,Unordered"
+    ))]
     Exn,
-    #[strum(props(p = "Date", name = "month", varCount = "0"))]
+    #[strum(props(
+        p = "Date",
+        name = "month",
+        varCount = "0",
+        constructors = "Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec"
+    ))]
     Month,
-    #[strum(props(p = "Option", name = "option", varCount = "1"))]
+    #[strum(props(
+        p = "Option",
+        name = "option",
+        varCount = "1",
+        constructors = "NONE,SOME"
+    ))]
     Option,
-    #[strum(props(p = "General", name = "order", varCount = "0"))]
+    #[strum(props(
+        p = "General",
+        name = "order",
+        varCount = "0",
+        constructors = "LESS,EQUAL,GREATER"
+    ))]
     Order,
-    #[strum(props(p = "Range", name = "range", varCount = "1"))]
+    #[strum(props(
+        p = "Range",
+        name = "range",
+        varCount = "1",
+        constructors = "ALL,AT_LEAST,AT_MOST,CLOSED,CLOSED_OPEN,GREATER_THAN,LESS_THAN,OPEN,OPEN_CLOSED,POINT"
+    ))]
     Range,
-    #[strum(props(p = "Variant", name = "variant", varCount = "0"))]
+    #[strum(props(
+        p = "Variant",
+        name = "variant",
+        varCount = "0",
+        constructors = "UNIT,BOOL,INT,REAL,CHAR,STRING,LIST,BAG,VECTOR,VARIANT_NONE,VARIANT_SOME,RECORD,CONSTANT,CONSTRUCT"
+    ))]
     Variant,
-    #[strum(props(p = "Date", name = "weekday", varCount = "0"))]
+    #[strum(props(
+        p = "Date",
+        name = "weekday",
+        varCount = "0",
+        constructors = "Mon,Tue,Wed,Thu,Fri,Sat,Sun"
+    ))]
     Weekday,
 }
 
@@ -1734,6 +1789,17 @@ impl BuiltInDatatype {
     }
     pub fn var_count(&self) -> usize {
         self.get_str("varCount").unwrap().parse().unwrap()
+    }
+    /// Constructor ML-level names in *logical* (declaration) order
+    /// — `LESS, EQUAL, GREATER` for `order`, not alphabetical
+    /// `EQUAL, GREATER, LESS`. Mirrors the order in morel-java's
+    /// `BuiltIn.Datatype` transform chain.
+    pub fn constructor_names(&self) -> Vec<&'static str> {
+        self.get_str("constructors")
+            .unwrap_or("")
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .collect()
     }
     /// Looks up a built-in datatype by its ML-level name.
     pub fn from_name(name: &str) -> Option<Self> {
@@ -1908,14 +1974,14 @@ pub(crate) fn populate_env(map: &mut BTreeMap<&str, (Type, Option<Val>)>) {
 /// top.
 pub fn built_in_datatype_constructors() -> HashMap<String, Vec<String>> {
     let mut map: HashMap<String, Vec<String>> = HashMap::new();
-    for f in BuiltInFunction::iter() {
-        if f.is_constructor()
-            && let Some(dt) = f.datatype()
-        {
-            map.entry(dt.to_string())
-                .or_default()
-                .push(f.name().to_string());
-        }
+    for d in BuiltInDatatype::iter() {
+        map.insert(
+            d.name().to_string(),
+            d.constructor_names()
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        );
     }
     map
 }
