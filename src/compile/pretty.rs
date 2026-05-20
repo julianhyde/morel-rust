@@ -779,30 +779,44 @@ impl Pretty {
         }
         // Datatypes whose constructor values are
         // `Val::Constructor(ordinal, _)` with a dense `base - i`
-        // ordinal scheme (weekday/month/exn): map back through the
-        // `BuiltInDatatype` registry.
+        // ordinal scheme (weekday, month, exn, range): map back
+        // through the `BuiltInDatatype` registry to print the
+        // constructor name, then the argument (if any).
         if let Val::Constructor(ord, inner) = value
             && let Some(d) = library::BuiltInDatatype::from_name(name)
             && let Some(label) = d.constructor_name_for_ordinal(*ord)
         {
-            if d == library::BuiltInDatatype::Exn
-                && *ord == val::EXN_FAIL_ORDINAL
-            {
-                self.pretty_raw(buf, indent, line_end, depth, label)?;
-                buf.push(' ');
-                let string_type = Type::Primitive(PrimitiveType::String);
-                return self.pretty1(
-                    buf,
-                    indent,
-                    line_end,
-                    depth,
-                    &string_type,
-                    inner,
-                    0,
-                    0,
-                );
+            self.pretty_raw(buf, indent, line_end, depth, label)?;
+            if **inner == Val::Unit {
+                return Ok(());
             }
-            return self.pretty_raw(buf, indent, line_end, depth, label);
+            buf.push(' ');
+            // Determine the argument's pretty-print type.
+            // - `Fail` carries a string payload.
+            // - Range's bracket constructors carry a `(low, high)`
+            //   pair; the others carry a single point.
+            // - Otherwise the datatype's first (only) type
+            //   parameter, taken from `args`.
+            let inner_type = match (d, label) {
+                (library::BuiltInDatatype::Exn, "Fail") => {
+                    Type::Primitive(PrimitiveType::String)
+                }
+                (
+                    library::BuiltInDatatype::Range,
+                    "CLOSED" | "CLOSED_OPEN" | "OPEN" | "OPEN_CLOSED",
+                ) => Type::Tuple(vec![args[0].clone(), args[0].clone()]),
+                _ => args[0].clone(),
+            };
+            return self.pretty1(
+                buf,
+                indent,
+                line_end,
+                depth,
+                &inner_type,
+                inner,
+                0,
+                0,
+            );
         }
         if (name == "continuous_set" || name == "discrete_set")
             && let Val::Constructor(ordinal, inner) = value
@@ -820,45 +834,6 @@ impl Pretty {
             let list_type = Type::List(Box::new(range_type));
             return self.pretty1(
                 buf, indent, line_end, depth, &list_type, inner, 0, 0,
-            );
-        }
-        if name == "range"
-            && let Val::Constructor(ordinal, inner) = value
-        {
-            let (ctor_name, pair_arg) = match *ordinal {
-                val::RANGE_ALL_ORDINAL => ("ALL", false),
-                val::RANGE_AT_LEAST_ORDINAL => ("AT_LEAST", false),
-                val::RANGE_AT_MOST_ORDINAL => ("AT_MOST", false),
-                val::RANGE_CLOSED_ORDINAL => ("CLOSED", true),
-                val::RANGE_CLOSED_OPEN_ORDINAL => ("CLOSED_OPEN", true),
-                val::RANGE_GREATER_THAN_ORDINAL => ("GREATER_THAN", false),
-                val::RANGE_LESS_THAN_ORDINAL => ("LESS_THAN", false),
-                val::RANGE_OPEN_ORDINAL => ("OPEN", true),
-                val::RANGE_OPEN_CLOSED_ORDINAL => ("OPEN_CLOSED", true),
-                val::RANGE_POINT_ORDINAL => ("POINT", false),
-                _ => {
-                    return Err(fmt::Error);
-                }
-            };
-            self.pretty_raw(buf, indent, line_end, depth, ctor_name)?;
-            if **inner == Val::Unit {
-                return Ok(());
-            }
-            buf.push(' ');
-            let inner_type = if pair_arg {
-                Type::Tuple(vec![args[0].clone(), args[0].clone()])
-            } else {
-                args[0].clone()
-            };
-            return self.pretty1(
-                buf,
-                indent,
-                line_end,
-                depth,
-                &inner_type,
-                inner,
-                0,
-                0,
             );
         }
         let list = match &value {

@@ -55,47 +55,20 @@ pub const RANGE_POINT_ORDINAL: usize = usize::MAX - 19;
 pub const CONTINUOUS_SET_ORDINAL: usize = usize::MAX - 20;
 pub const DISCRETE_SET_ORDINAL: usize = usize::MAX - 21;
 
-/// Sentinel ordinals for the 7 nullary constructors of the `weekday`
-/// datatype. Stored values are `Val::Constructor(o, Box::new(Val::Unit))`.
+/// Base ordinal for the dense `weekday` constructor scheme: `Mon`
+/// is at this ordinal, `Tue` at `BASE - 1`, …, `Sun` at `BASE - 6`.
+/// `BuiltInDatatype::Weekday::constructor_name_for_ordinal` /
+/// `ordinal_for_constructor` does the index arithmetic.
 pub const WEEKDAY_MON_ORDINAL: usize = usize::MAX - 30;
-pub const WEEKDAY_TUE_ORDINAL: usize = usize::MAX - 31;
-pub const WEEKDAY_WED_ORDINAL: usize = usize::MAX - 32;
-pub const WEEKDAY_THU_ORDINAL: usize = usize::MAX - 33;
-pub const WEEKDAY_FRI_ORDINAL: usize = usize::MAX - 34;
-pub const WEEKDAY_SAT_ORDINAL: usize = usize::MAX - 35;
-pub const WEEKDAY_SUN_ORDINAL: usize = usize::MAX - 36;
 
-/// Sentinel ordinals for the 12 nullary constructors of the `month`
-/// datatype. Stored values are `Val::Constructor(o, Box::new(Val::Unit))`.
+/// Base ordinal for the dense `month` constructor scheme: `Jan` at
+/// `BASE`, `Feb` at `BASE - 1`, …, `Dec` at `BASE - 11`.
 pub const MONTH_JAN_ORDINAL: usize = usize::MAX - 40;
-pub const MONTH_FEB_ORDINAL: usize = usize::MAX - 41;
-pub const MONTH_MAR_ORDINAL: usize = usize::MAX - 42;
-pub const MONTH_APR_ORDINAL: usize = usize::MAX - 43;
-pub const MONTH_MAY_ORDINAL: usize = usize::MAX - 44;
-pub const MONTH_JUN_ORDINAL: usize = usize::MAX - 45;
-pub const MONTH_JUL_ORDINAL: usize = usize::MAX - 46;
-pub const MONTH_AUG_ORDINAL: usize = usize::MAX - 47;
-pub const MONTH_SEP_ORDINAL: usize = usize::MAX - 48;
-pub const MONTH_OCT_ORDINAL: usize = usize::MAX - 49;
-pub const MONTH_NOV_ORDINAL: usize = usize::MAX - 50;
-pub const MONTH_DEC_ORDINAL: usize = usize::MAX - 51;
 
-// Ordinals for the constructors of the built-in `exn` datatype. The
-// `Fail` constructor carries a `string` payload; the others carry
-// `Val::Unit`.
+/// Base ordinal for the dense `exn` constructor scheme: `Bind` at
+/// `BASE`, then the rest of `BuiltInDatatype::Exn`'s `constructors`
+/// list at `BASE - 1`, `BASE - 2`, …
 pub const EXN_BIND_ORDINAL: usize = usize::MAX - 60;
-pub const EXN_CHR_ORDINAL: usize = usize::MAX - 61;
-pub const EXN_DIV_ORDINAL: usize = usize::MAX - 62;
-pub const EXN_DOMAIN_ORDINAL: usize = usize::MAX - 63;
-pub const EXN_EMPTY_ORDINAL: usize = usize::MAX - 64;
-pub const EXN_FAIL_ORDINAL: usize = usize::MAX - 65;
-pub const EXN_MATCH_ORDINAL: usize = usize::MAX - 66;
-pub const EXN_OVERFLOW_ORDINAL: usize = usize::MAX - 67;
-pub const EXN_SIZE_ORDINAL: usize = usize::MAX - 68;
-pub const EXN_SPAN_ORDINAL: usize = usize::MAX - 69;
-pub const EXN_SUBSCRIPT_ORDINAL: usize = usize::MAX - 70;
-pub const EXN_UNEQUAL_LENGTHS_ORDINAL: usize = usize::MAX - 71;
-pub const EXN_UNORDERED_ORDINAL: usize = usize::MAX - 72;
 
 /// Runtime value.
 ///

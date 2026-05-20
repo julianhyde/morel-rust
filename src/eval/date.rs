@@ -26,14 +26,7 @@ use crate::compile::library::BuiltInExn;
 use crate::compile::span::Span;
 use crate::eval::order::Order;
 use crate::eval::session::Session;
-use crate::eval::val::{
-    MONTH_APR_ORDINAL, MONTH_AUG_ORDINAL, MONTH_DEC_ORDINAL, MONTH_FEB_ORDINAL,
-    MONTH_JAN_ORDINAL, MONTH_JUL_ORDINAL, MONTH_JUN_ORDINAL, MONTH_MAR_ORDINAL,
-    MONTH_MAY_ORDINAL, MONTH_NOV_ORDINAL, MONTH_OCT_ORDINAL, MONTH_SEP_ORDINAL,
-    Val, WEEKDAY_FRI_ORDINAL, WEEKDAY_MON_ORDINAL, WEEKDAY_SAT_ORDINAL,
-    WEEKDAY_SUN_ORDINAL, WEEKDAY_THU_ORDINAL, WEEKDAY_TUE_ORDINAL,
-    WEEKDAY_WED_ORDINAL,
-};
+use crate::eval::val::{MONTH_JAN_ORDINAL, Val, WEEKDAY_MON_ORDINAL};
 use crate::shell::main::MorelError;
 use crate::shell::prop::{Prop, PropVal};
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
@@ -59,55 +52,30 @@ struct Broken {
     yearday: u32, // 0..365
 }
 
+// The `weekday` and `month` constructors store ordinals in the
+// dense `BASE - i` scheme, so the chrono index maps to an ordinal
+// (and back) with simple arithmetic. `BuiltInDatatype::Weekday` /
+// `Month` is the source of truth for `BASE` and the constructor
+// order.
+
 fn weekday_ordinal(w: u32) -> usize {
-    match w {
-        0 => WEEKDAY_MON_ORDINAL,
-        1 => WEEKDAY_TUE_ORDINAL,
-        2 => WEEKDAY_WED_ORDINAL,
-        3 => WEEKDAY_THU_ORDINAL,
-        4 => WEEKDAY_FRI_ORDINAL,
-        5 => WEEKDAY_SAT_ORDINAL,
-        6 => WEEKDAY_SUN_ORDINAL,
-        _ => panic!("invalid weekday: {}", w),
-    }
+    assert!(w < 7, "invalid weekday: {}", w);
+    WEEKDAY_MON_ORDINAL - w as usize
 }
 
 fn month_ordinal(m: u32) -> usize {
-    match m {
-        1 => MONTH_JAN_ORDINAL,
-        2 => MONTH_FEB_ORDINAL,
-        3 => MONTH_MAR_ORDINAL,
-        4 => MONTH_APR_ORDINAL,
-        5 => MONTH_MAY_ORDINAL,
-        6 => MONTH_JUN_ORDINAL,
-        7 => MONTH_JUL_ORDINAL,
-        8 => MONTH_AUG_ORDINAL,
-        9 => MONTH_SEP_ORDINAL,
-        10 => MONTH_OCT_ORDINAL,
-        11 => MONTH_NOV_ORDINAL,
-        12 => MONTH_DEC_ORDINAL,
-        _ => panic!("invalid month: {}", m),
-    }
+    assert!((1..=12).contains(&m), "invalid month: {}", m);
+    MONTH_JAN_ORDINAL - (m as usize - 1)
 }
 
 /// Returns the 1-based month (1..12) for the given month constructor
 /// ordinal.
 pub(crate) fn ordinal_to_month(o: usize) -> u32 {
-    match o {
-        x if x == MONTH_JAN_ORDINAL => 1,
-        x if x == MONTH_FEB_ORDINAL => 2,
-        x if x == MONTH_MAR_ORDINAL => 3,
-        x if x == MONTH_APR_ORDINAL => 4,
-        x if x == MONTH_MAY_ORDINAL => 5,
-        x if x == MONTH_JUN_ORDINAL => 6,
-        x if x == MONTH_JUL_ORDINAL => 7,
-        x if x == MONTH_AUG_ORDINAL => 8,
-        x if x == MONTH_SEP_ORDINAL => 9,
-        x if x == MONTH_OCT_ORDINAL => 10,
-        x if x == MONTH_NOV_ORDINAL => 11,
-        x if x == MONTH_DEC_ORDINAL => 12,
-        _ => panic!("not a month ordinal: {}", o),
-    }
+    let index = MONTH_JAN_ORDINAL
+        .checked_sub(o)
+        .unwrap_or_else(|| panic!("not a month ordinal: {}", o));
+    assert!(index < 12, "not a month ordinal: {}", o);
+    index as u32 + 1
 }
 
 /// Wraps a date constructor as a `Val::Constructor` with `Val::Unit`

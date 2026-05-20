@@ -1652,6 +1652,34 @@ impl BuiltInFunction {
         self.get_bool("constructor").is_some_and(|b| b)
     }
 
+    /// For a `BuiltInFunction` that is a constructor of a built-in
+    /// datatype using the dense `base - i` ordinal scheme (e.g.
+    /// `Bind`, `Mon`, `Jan`, `Fail`), returns the ordinal it stores
+    /// in its `Val::Constructor`. Panics if this function isn't
+    /// such a constructor.
+    pub(crate) fn constructor_ordinal(&self) -> usize {
+        let dt_name = self
+            .datatype()
+            .expect("constructor_ordinal: missing `datatype` tag");
+        let dt = BuiltInDatatype::from_name(dt_name).unwrap_or_else(|| {
+            panic!("constructor_ordinal: unknown datatype {:?}", dt_name)
+        });
+        dt.ordinal_for_constructor(self.name()).unwrap_or_else(|| {
+            panic!(
+                "constructor_ordinal: {:?} is not a constructor of {:?} \
+                 (or that datatype doesn't use the dense ordinal scheme)",
+                self.name(),
+                dt_name,
+            )
+        })
+    }
+
+    /// Convenience for nullary constructors: returns
+    /// `Val::Constructor(self.constructor_ordinal(), Val::Unit)`.
+    pub(crate) fn nullary_constructor_val(&self) -> Val {
+        Val::Constructor(self.constructor_ordinal(), Box::new(Val::Unit))
+    }
+
     /// Returns the name of the datatype this constructor belongs to
     /// (e.g. `"bool"`, `"option"`, `"list"`), or `None` if this function
     /// is not a constructor.
@@ -1919,9 +1947,10 @@ impl BuiltInDatatype {
     /// datatype uses the dense `base-i` ordinal scheme. Returns
     /// `None` for datatypes that don't follow that scheme
     /// (`option`, `either`, `descending`, `continuous_set`,
-    /// `discrete_set`, `variant`, `range`, `order`).
+    /// `discrete_set`, `variant`, `order`).
     fn first_constructor_ordinal(&self) -> Option<usize> {
         Some(match self {
+            BuiltInDatatype::Range => val::RANGE_ALL_ORDINAL,
             BuiltInDatatype::Weekday => val::WEEKDAY_MON_ORDINAL,
             BuiltInDatatype::Month => val::MONTH_JAN_ORDINAL,
             BuiltInDatatype::Exn => val::EXN_BIND_ORDINAL,
@@ -1939,6 +1968,16 @@ impl BuiltInDatatype {
         let base = self.first_constructor_ordinal()?;
         let index = base.checked_sub(ord)?;
         self.constructor_names().get(index).copied()
+    }
+    /// Inverse of [`Self::constructor_name_for_ordinal`]: maps a
+    /// constructor's ML-level name back to the ordinal stored in
+    /// its `Val::Constructor`. Returns `None` if this datatype
+    /// doesn't use the dense ordinal scheme or `name` isn't one
+    /// of its constructors.
+    pub fn ordinal_for_constructor(&self, name: &str) -> Option<usize> {
+        let base = self.first_constructor_ordinal()?;
+        let index = self.constructor_names().iter().position(|n| *n == name)?;
+        Some(base - index)
     }
     /// Looks up a built-in datatype by its ML-level name.
     pub fn from_name(name: &str) -> Option<Self> {

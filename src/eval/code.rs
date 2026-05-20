@@ -2293,94 +2293,49 @@ impl Eager0 {
             CharMaxChar => Val::Char(Char::MAX_CHAR),
             CharMaxOrd => Val::Int(Char::MAX_ORD),
             CharMinChar => Val::Char(Char::MIN_CHAR),
-            ExnBind => {
-                Val::Constructor(val::EXN_BIND_ORDINAL, Box::new(Val::Unit))
-            }
-            ExnChr => {
-                Val::Constructor(val::EXN_CHR_ORDINAL, Box::new(Val::Unit))
-            }
-            ExnDiv => {
-                Val::Constructor(val::EXN_DIV_ORDINAL, Box::new(Val::Unit))
-            }
-            ExnDomain => {
-                Val::Constructor(val::EXN_DOMAIN_ORDINAL, Box::new(Val::Unit))
-            }
-            ExnEmpty => {
-                Val::Constructor(val::EXN_EMPTY_ORDINAL, Box::new(Val::Unit))
-            }
-            ExnMatch => {
-                Val::Constructor(val::EXN_MATCH_ORDINAL, Box::new(Val::Unit))
-            }
+            ExnBind => BuiltInFunction::ExnBind.nullary_constructor_val(),
+            ExnChr => BuiltInFunction::ExnChr.nullary_constructor_val(),
+            ExnDiv => BuiltInFunction::ExnDiv.nullary_constructor_val(),
+            ExnDomain => BuiltInFunction::ExnDomain.nullary_constructor_val(),
+            ExnEmpty => BuiltInFunction::ExnEmpty.nullary_constructor_val(),
+            ExnMatch => BuiltInFunction::ExnMatch.nullary_constructor_val(),
             ExnOverflow => {
-                Val::Constructor(val::EXN_OVERFLOW_ORDINAL, Box::new(Val::Unit))
+                BuiltInFunction::ExnOverflow.nullary_constructor_val()
             }
-            ExnSize => {
-                Val::Constructor(val::EXN_SIZE_ORDINAL, Box::new(Val::Unit))
+            ExnSize => BuiltInFunction::ExnSize.nullary_constructor_val(),
+            ExnSpan => BuiltInFunction::ExnSpan.nullary_constructor_val(),
+            ExnSubscript => {
+                BuiltInFunction::ExnSubscript.nullary_constructor_val()
             }
-            ExnSpan => {
-                Val::Constructor(val::EXN_SPAN_ORDINAL, Box::new(Val::Unit))
+            ExnUnequalLengths => {
+                BuiltInFunction::ExnUnequalLengths.nullary_constructor_val()
             }
-            ExnSubscript => Val::Constructor(
-                val::EXN_SUBSCRIPT_ORDINAL,
-                Box::new(Val::Unit),
-            ),
-            ExnUnequalLengths => Val::Constructor(
-                val::EXN_UNEQUAL_LENGTHS_ORDINAL,
-                Box::new(Val::Unit),
-            ),
-            ExnUnordered => Val::Constructor(
-                val::EXN_UNORDERED_ORDINAL,
-                Box::new(Val::Unit),
-            ),
+            ExnUnordered => {
+                BuiltInFunction::ExnUnordered.nullary_constructor_val()
+            }
             IntMaxInt => Val::Some(Box::new(Val::Int(i32::MAX))),
             IntMinInt => Val::Some(Box::new(Val::Int(i32::MIN))),
             IntPrecision => Val::Some(Box::new(Val::Int(32))),
             ListNil => Val::List(vec![]),
             MathE => Val::Real(Math::E),
             MathPi => Val::Real(Math::PI),
-            MonthApr => {
-                Val::Constructor(val::MONTH_APR_ORDINAL, Box::new(Val::Unit))
-            }
-            MonthAug => {
-                Val::Constructor(val::MONTH_AUG_ORDINAL, Box::new(Val::Unit))
-            }
-            MonthDec => {
-                Val::Constructor(val::MONTH_DEC_ORDINAL, Box::new(Val::Unit))
-            }
-            MonthFeb => {
-                Val::Constructor(val::MONTH_FEB_ORDINAL, Box::new(Val::Unit))
-            }
-            MonthJan => {
-                Val::Constructor(val::MONTH_JAN_ORDINAL, Box::new(Val::Unit))
-            }
-            MonthJul => {
-                Val::Constructor(val::MONTH_JUL_ORDINAL, Box::new(Val::Unit))
-            }
-            MonthJun => {
-                Val::Constructor(val::MONTH_JUN_ORDINAL, Box::new(Val::Unit))
-            }
-            MonthMar => {
-                Val::Constructor(val::MONTH_MAR_ORDINAL, Box::new(Val::Unit))
-            }
-            MonthMay => {
-                Val::Constructor(val::MONTH_MAY_ORDINAL, Box::new(Val::Unit))
-            }
-            MonthNov => {
-                Val::Constructor(val::MONTH_NOV_ORDINAL, Box::new(Val::Unit))
-            }
-            MonthOct => {
-                Val::Constructor(val::MONTH_OCT_ORDINAL, Box::new(Val::Unit))
-            }
-            MonthSep => {
-                Val::Constructor(val::MONTH_SEP_ORDINAL, Box::new(Val::Unit))
-            }
+            MonthApr => BuiltInFunction::MonthApr.nullary_constructor_val(),
+            MonthAug => BuiltInFunction::MonthAug.nullary_constructor_val(),
+            MonthDec => BuiltInFunction::MonthDec.nullary_constructor_val(),
+            MonthFeb => BuiltInFunction::MonthFeb.nullary_constructor_val(),
+            MonthJan => BuiltInFunction::MonthJan.nullary_constructor_val(),
+            MonthJul => BuiltInFunction::MonthJul.nullary_constructor_val(),
+            MonthJun => BuiltInFunction::MonthJun.nullary_constructor_val(),
+            MonthMar => BuiltInFunction::MonthMar.nullary_constructor_val(),
+            MonthMay => BuiltInFunction::MonthMay.nullary_constructor_val(),
+            MonthNov => BuiltInFunction::MonthNov.nullary_constructor_val(),
+            MonthOct => BuiltInFunction::MonthOct.nullary_constructor_val(),
+            MonthSep => BuiltInFunction::MonthSep.nullary_constructor_val(),
             OptionNone => Val::Unit,
             OrderEqual => Val::Order(Order(Ordering::Equal)),
             OrderGreater => Val::Order(Order(Ordering::Greater)),
             OrderLess => Val::Order(Order(Ordering::Less)),
-            RangeAll => {
-                Val::Constructor(val::RANGE_ALL_ORDINAL, Box::new(Val::Unit))
-            }
+            RangeAll => BuiltInFunction::RangeAll.nullary_constructor_val(),
             RealMaxFinite => Val::Real(f32::MAX),
             RealMinNormalPos => Val::Real(f32::MIN_POSITIVE),
             // Smallest denormalized positive (2^-149)
@@ -2394,27 +2349,13 @@ impl Eager0 {
             VariantNone => variant::none(),
             VariantUnit => variant::unit(),
             VectorMaxLen => Val::Int(Vector::max_len()),
-            WeekdayFri => {
-                Val::Constructor(val::WEEKDAY_FRI_ORDINAL, Box::new(Val::Unit))
-            }
-            WeekdayMon => {
-                Val::Constructor(val::WEEKDAY_MON_ORDINAL, Box::new(Val::Unit))
-            }
-            WeekdaySat => {
-                Val::Constructor(val::WEEKDAY_SAT_ORDINAL, Box::new(Val::Unit))
-            }
-            WeekdaySun => {
-                Val::Constructor(val::WEEKDAY_SUN_ORDINAL, Box::new(Val::Unit))
-            }
-            WeekdayThu => {
-                Val::Constructor(val::WEEKDAY_THU_ORDINAL, Box::new(Val::Unit))
-            }
-            WeekdayTue => {
-                Val::Constructor(val::WEEKDAY_TUE_ORDINAL, Box::new(Val::Unit))
-            }
-            WeekdayWed => {
-                Val::Constructor(val::WEEKDAY_WED_ORDINAL, Box::new(Val::Unit))
-            }
+            WeekdayFri => BuiltInFunction::WeekdayFri.nullary_constructor_val(),
+            WeekdayMon => BuiltInFunction::WeekdayMon.nullary_constructor_val(),
+            WeekdaySat => BuiltInFunction::WeekdaySat.nullary_constructor_val(),
+            WeekdaySun => BuiltInFunction::WeekdaySun.nullary_constructor_val(),
+            WeekdayThu => BuiltInFunction::WeekdayThu.nullary_constructor_val(),
+            WeekdayTue => BuiltInFunction::WeekdayTue.nullary_constructor_val(),
+            WeekdayWed => BuiltInFunction::WeekdayWed.nullary_constructor_val(),
         }
     }
 
@@ -3026,7 +2967,10 @@ impl Eager1 {
             EitherIsRight => Val::Bool(Either::is_right(&a0)),
             EitherPartition => Either::partition(a0.expect_list()),
             EitherProj => Either::proj(&a0),
-            ExnFail => Val::Constructor(val::EXN_FAIL_ORDINAL, Box::new(a0)),
+            ExnFail => Val::Constructor(
+                BuiltInFunction::ExnFail.constructor_ordinal(),
+                Box::new(a0),
+            ),
             FnId => a0,
             GeneralIgnore => Val::Unit,
             IntFromInt => a0,
