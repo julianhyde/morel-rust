@@ -675,7 +675,7 @@ impl TypeResolver {
     /// applications of known type constructors. Used by code paths
     /// (datatype/type declarations) that lower types via
     /// [`ast_type_to_core_type_with_vars`], which silently swallows
-    /// errors. See hydromatic/morel#360.
+    /// errors.
     fn validate_ast_type(&self, ast_type: &AstType) {
         match &ast_type.kind {
             TypeKind::Composite(types) => {
@@ -750,7 +750,6 @@ impl TypeResolver {
         // `TypeKind::App` can detect a wrong number of type-constructor
         // arguments (e.g. `(bool, int) list`) up front, instead of
         // panicking deep in the unifier or silently dropping args.
-        // See hydromatic/morel#360.
         for (name, arity) in [
             ("option", 1usize),
             ("either", 2),
@@ -5454,11 +5453,11 @@ impl<'a> TypeToTermConverter<'a> {
                         let arg2 = self.type_term(&arg, subst, &v2);
                         args2.push(arg2);
                     }
-                    // Arity check (hydromatic/morel#360): if the type
-                    // constructor is already registered with a specific
-                    // arity, reject mismatched applications. Without
-                    // this, e.g. `(bool, int) list` either panics in
-                    // the unifier or silently drops the extra arg.
+                    // Arity check: if the type constructor is already
+                    // registered with a specific arity, reject mismatched
+                    // applications. Without this, e.g. `(bool, int) list`
+                    // either panics in the unifier or silently drops the
+                    // extra arg.
                     let existing =
                         self.type_resolver.unifier.lookup_op(name.as_str());
                     if let Some(op) = existing
@@ -5502,8 +5501,7 @@ impl<'a> TypeToTermConverter<'a> {
                 // `(t1, ..., tn)` is only valid as the argument list of
                 // a parameterized type, e.g. `(int, string) either`.
                 // It is not valid by itself: a tuple type must be
-                // written `t1 * ... * tn`, e.g. `int * string`
-                // (hydromatic/morel#360).
+                // written `t1 * ... * tn`, e.g. `int * string`.
                 self.type_resolver.field_errors.borrow_mut().push((
                     "tuple types must be written 't1 * ... * tn', \
                      not '(t1, ..., tn)'"

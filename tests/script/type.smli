@@ -81,12 +81,12 @@ fn (x: int * bool * int) => true;
 (2, [true]): int * (bool list);
 > val it = (2,[true]) : int * bool list
 (*) Standalone '(t1, ..., tn)' is not a valid type; a tuple type must
-(*) be written 't1 * ... * tn' (hydromatic/morel#360).
+(*) be written 't1 * ... * tn'.
 fn (x: (int, bool)) => true;
 > stdIn:1.8-1.19 Error: tuple types must be written 't1 * ... * tn', not '(t1, ..., tn)'
 >   raised at: stdIn:1.8-1.19
 
-(*) Multi-arg type constructors do not parenthesise tuple-typed arguments
+(*) Multi-arg type constructors do not parenthesize tuple-typed arguments
 (*) (the outer '(', ',', ')' already disambiguates them); single-arg
 (*) constructors do.
 INL (1, true);

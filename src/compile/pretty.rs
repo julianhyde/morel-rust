@@ -1159,7 +1159,7 @@ impl Pretty {
                 // `*` is non-associative — `(t1 * t2) * t3`,
                 // `t1 * (t2 * t3)`, and `t1 * t2 * t3` are three
                 // distinct types. So any tuple-typed element must be
-                // surrounded by parentheses (hydromatic/morel#360).
+                // surrounded by parentheses.
                 const OP: Op = Op::TUPLE;
                 let start = buf.len();
                 for (i, arg_type) in arg_types.iter().enumerate() {
