@@ -50,7 +50,7 @@ Working order. Each commit must include a `.smli` change and pass
 `/usr/local/bin/fullMake --no-clean` before commit.
 
 - [x] **0.** Write this plan, record retroactive propagations.
-- [ ] **1.** `647aae7b` — Add `raise` command (#364). Adds `exception.smli`.
+- [x] **1.** `647aae7b` — Add `raise` command (#364). Adds `exception.smli`.
 - [ ] **2.** `9c24b6ba` — Composite val should not assign `it` (#355). Adds `it.smli`.
 - [ ] **3.** `e659bffa` — Reject `(t1, …, tn)` as a stand-alone tuple type (#360).
 - [ ] **4.** `1431965b` — `Sys.planEx phase` to print extended plans (#329).
