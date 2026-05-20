@@ -1828,6 +1828,47 @@ pub fn built_in_datatype_constructors() -> HashMap<String, Vec<String>> {
     map
 }
 
+/// Returns the parameter count (arity) of each built-in datatype.
+/// Used by the type resolver to reject wrong-arity applications such
+/// as `(bool, int) list`.
+///
+/// Where possible, arities are derived from existing library
+/// metadata: for any constructor tagged with `datatype = "..."`,
+/// the outer `forall N` of its declared type *is* the datatype's
+/// arity. The fallback list at the end covers two cases that the
+/// derivation can't see:
+/// - Abstract types with no constructors at all (`date`, `time`,
+///   `continuous_set`, `discrete_set`).
+/// - Types whose constructors don't carry the `datatype = "..."`
+///   tag yet (`range`, `variant`, `weekday`, `month`).
+pub fn built_in_datatype_arities() -> HashMap<String, usize> {
+    let mut map: HashMap<String, usize> = HashMap::new();
+    for f in BuiltInFunction::iter() {
+        if f.is_constructor()
+            && let Some(dt) = f.datatype()
+        {
+            let arity = match *f.get_type() {
+                Type::Forall(_, n) => n,
+                _ => 0,
+            };
+            map.insert(dt.to_string(), arity);
+        }
+    }
+    for (name, arity) in [
+        ("continuous_set", 1),
+        ("date", 0),
+        ("discrete_set", 1),
+        ("month", 0),
+        ("range", 1),
+        ("time", 0),
+        ("variant", 0),
+        ("weekday", 0),
+    ] {
+        map.entry(name.to_string()).or_insert(arity);
+    }
+    map
+}
+
 /// Looks up a built-in (function or structure) by name.
 pub fn lookup(name: &str) -> Option<BuiltIn> {
     LIBRARY.name_to_built_in.get(name).cloned()

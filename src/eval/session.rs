@@ -69,6 +69,11 @@ pub struct Session {
     /// coverage checker knows the constructor set of previously
     /// declared datatypes.
     pub datatype_constructors: HashMap<String, Vec<String>>,
+    /// Accumulated parameter counts (arities) of user-declared
+    /// datatypes. Seeded into each new `TypeResolver` so that
+    /// `(t1, …, tn) name` is arity-checked even when the datatype
+    /// was declared in a prior statement.
+    pub datatype_arities: HashMap<String, usize>,
     /// Constructor argument types accumulated across statements.
     /// Used by the pretty printer to format record arguments.
     pub constructor_arg_types: HashMap<String, Type>,
@@ -130,6 +135,7 @@ impl Session {
             type_bindings: HashMap::new(),
             type_aliases: HashMap::new(),
             datatype_constructors,
+            datatype_arities: HashMap::new(),
             constructor_arg_types: HashMap::new(),
             overloads,
             fn_bindings: HashMap::new(),
@@ -199,6 +205,12 @@ impl Session {
         // so that 'type myInt = int' in one statement and 'val x: myInt = 5'
         // in the next can both refer to the alias.
         type_resolver.type_aliases = self.type_aliases.clone();
+        // Same for datatype arities. Built-in arities were already
+        // populated by `TypeResolver::new`; extending preserves them
+        // while adding user-declared datatypes from prior statements.
+        for (name, arity) in &self.datatype_arities {
+            type_resolver.datatype_arities.insert(name.clone(), *arity);
+        }
         type_resolver.prior_datatype_constructors =
             self.datatype_constructors.clone();
         type_resolver.prior_constructor_arg_types =
@@ -229,6 +241,11 @@ impl Session {
         // Capture any new aliases introduced by this statement.
         for (name, t) in &type_resolver.type_aliases {
             self.type_aliases.insert(name.clone(), t.clone());
+        }
+
+        // Capture any new (or redeclared) datatype arities.
+        for (name, arity) in &type_resolver.datatype_arities {
+            self.datatype_arities.insert(name.clone(), *arity);
         }
 
         // Capture any new constructor sets from datatype declarations.

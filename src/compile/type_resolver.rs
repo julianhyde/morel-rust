@@ -19,6 +19,7 @@
 #![allow(clippy::needless_borrow)]
 #![allow(clippy::collapsible_if)]
 
+use crate::compile::library;
 use crate::compile::pat_coverage::check_coverage;
 use crate::compile::postfix::{PostfixKind, peel_type, postfix_dispatch};
 use crate::compile::type_env::{
@@ -604,6 +605,15 @@ pub struct TypeResolver {
     /// and `datatype` declarations.
     pub type_aliases: HashMap<String, Type>,
 
+    /// Parameter count (arity) of every datatype known to the
+    /// resolver — built-in (seeded by `new`) and user-declared
+    /// (added by `deduce_datatype_decl_type` or by the session before
+    /// deduction). Read by the `TypeKind::App` arity check; updated
+    /// freely as datatypes are redeclared. Kept separate from the
+    /// unifier because the unifier's op arity is set on first use and
+    /// cannot be changed.
+    pub datatype_arities: HashMap<String, usize>,
+
     /// Constructor bindings from `datatype` declarations, stored
     /// here during `deduce_datatype_decl_type` and merged into
     /// `Resolved::bindings` at the end of `deduce_type`.
@@ -668,7 +678,6 @@ impl Default for TypeResolver {
     }
 }
 
-#[allow(dead_code)]
 impl TypeResolver {
     /// Walks an AST type and pushes errors for invalid forms:
     /// standalone `(t1, ..., tn)` tuple types, and wrong-arity
@@ -692,8 +701,8 @@ impl TypeResolver {
             TypeKind::App(args, base) => {
                 let flat_args = AstType::flatten(args);
                 if let TypeKind::Id(name) = &base.kind
-                    && let Some(op) = self.unifier.lookup_op(name.as_str())
-                    && let Some(expected) = self.unifier.op_arity(&op)
+                    && let Some(&expected) =
+                        self.datatype_arities.get(name.as_str())
                     && expected != flat_args.len()
                 {
                     let actual = flat_args.len();
@@ -746,27 +755,12 @@ impl TypeResolver {
         let record_op = unifier.op("record", None);
         let fn_op = unifier.op("fn", Some(2));
         let int_op = unifier.op("int", Some(0));
-        // Pre-register built-in datatypes with their arity so that
-        // `TypeKind::App` can detect a wrong number of type-constructor
-        // arguments (e.g. `(bool, int) list`) up front, instead of
-        // panicking deep in the unifier or silently dropping args.
-        for (name, arity) in [
-            ("option", 1usize),
-            ("either", 2),
-            ("descending", 1),
-            ("order", 0),
-            ("range", 1),
-            ("continuous_set", 1),
-            ("discrete_set", 1),
-            ("variant", 0),
-            ("time", 0),
-            ("date", 0),
-            ("weekday", 0),
-            ("month", 0),
-            ("exn", 0),
-        ] {
-            unifier.op(name, Some(arity));
-        }
+        // Seed the arity table with built-in datatypes so they share
+        // the `TypeKind::App` arity-check code path with user-declared
+        // datatypes (which add their own entries during decl
+        // processing, and whose entries flow in from prior statements
+        // via the session).
+        let datatype_arities = library::built_in_datatype_arities();
         Self {
             warnings: Vec::new(),
             node_var_map: HashMap::new(),
@@ -786,6 +780,7 @@ impl TypeResolver {
             fn_op,
             decl_type_vars: BTreeMap::new(),
             type_aliases: HashMap::new(),
+            datatype_arities,
             datatype_bindings: Vec::new(),
             prior_datatype_constructors: HashMap::new(),
             prior_constructor_arg_types: HashMap::new(),
@@ -1457,13 +1452,18 @@ impl TypeResolver {
     ) -> Result<(), Error> {
         // Phase 1: Register each datatype's name as a type alias
         // so that constructor types can reference it (including
-        // self-references and mutual references).
+        // self-references and mutual references). Publish the arity
+        // to `datatype_arities` so that `(t1, …, tn) name` in a
+        // later annotation is arity-checked. A redeclaration with a
+        // new arity overwrites the previous entry.
         for db in datatype_binds {
             let type_var_types: Vec<Type> = (0..db.type_vars.len())
                 .map(|i| Type::Variable(TypeVariable::new(i)))
                 .collect();
             let data_type = Type::Data(db.name.clone(), type_var_types);
             self.type_aliases.insert(db.name.clone(), data_type);
+            self.datatype_arities
+                .insert(db.name.clone(), db.type_vars.len());
         }
 
         // Phase 2: For each datatype, process constructors and
@@ -5453,16 +5453,17 @@ impl<'a> TypeToTermConverter<'a> {
                         let arg2 = self.type_term(&arg, subst, &v2);
                         args2.push(arg2);
                     }
-                    // Arity check: if the type constructor is already
-                    // registered with a specific arity, reject mismatched
+                    // Arity check: if the type constructor is known
+                    // (built-in or previously declared), reject mismatched
                     // applications. Without this, e.g. `(bool, int) list`
                     // either panics in the unifier or silently drops the
                     // extra arg.
-                    let existing =
-                        self.type_resolver.unifier.lookup_op(name.as_str());
-                    if let Some(op) = existing
-                        && let Some(expected) =
-                            self.type_resolver.unifier.op_arity(&op)
+                    let expected_opt = self
+                        .type_resolver
+                        .datatype_arities
+                        .get(name.as_str())
+                        .copied();
+                    if let Some(expected) = expected_opt
                         && expected != terms.len()
                     {
                         let actual = terms.len();
