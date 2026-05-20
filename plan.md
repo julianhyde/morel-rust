@@ -51,7 +51,7 @@ Working order. Each commit must include a `.smli` change and pass
 
 - [x] **0.** Write this plan, record retroactive propagations.
 - [x] **1.** `647aae7b` — Add `raise` command (#364). Adds `exception.smli`.
-- [ ] **2.** `9c24b6ba` — Composite val should not assign `it` (#355). Adds `it.smli`.
+- [x] **2.** `9c24b6ba` — Composite val should not assign `it` (#355). Adds `it.smli`.
 - [ ] **3.** `e659bffa` — Reject `(t1, …, tn)` as a stand-alone tuple type (#360).
 - [ ] **4.** `1431965b` — `Sys.planEx phase` to print extended plans (#329).
 - [ ] **5.** `3ec81171` — Predicate inversion should filter by outer-scope variables (#347).
