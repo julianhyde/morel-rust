@@ -1156,26 +1156,46 @@ impl Pretty {
                 Ok(())
             }
             Type::Tuple(arg_types) => {
+                // `*` is non-associative — `(t1 * t2) * t3`,
+                // `t1 * (t2 * t3)`, and `t1 * t2 * t3` are three
+                // distinct types. So any tuple-typed element must be
+                // surrounded by parentheses (hydromatic/morel#360).
                 const OP: Op = Op::TUPLE;
                 let start = buf.len();
                 for (i, arg_type) in arg_types.iter().enumerate() {
                     if buf.len() > start {
                         self.pretty_raw(buf, indent2, line_end, depth, " * ")?;
                     }
-                    self.pretty1(
-                        buf,
-                        indent2,
-                        line_end,
-                        depth,
-                        &BOOL,
-                        &Val::new_type("", arg_type),
-                        if i == 0 { left } else { OP.right },
-                        if i == arg_types.len() - 1 {
-                            right
-                        } else {
-                            OP.left
-                        },
-                    )?;
+                    let wrap = matches!(arg_type, Type::Tuple(_));
+                    if wrap {
+                        self.pretty_raw(buf, indent2, line_end, depth, "(")?;
+                        self.pretty1(
+                            buf,
+                            indent2,
+                            line_end,
+                            depth,
+                            &BOOL,
+                            &Val::new_type("", arg_type),
+                            0,
+                            0,
+                        )?;
+                        self.pretty_raw(buf, indent2, line_end, depth, ")")?;
+                    } else {
+                        self.pretty1(
+                            buf,
+                            indent2,
+                            line_end,
+                            depth,
+                            &BOOL,
+                            &Val::new_type("", arg_type),
+                            if i == 0 { left } else { OP.right },
+                            if i == arg_types.len() - 1 {
+                                right
+                            } else {
+                                OP.left
+                            },
+                        )?;
+                    }
                 }
                 Ok(())
             }

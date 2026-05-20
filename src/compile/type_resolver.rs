@@ -5375,6 +5375,26 @@ impl<'a> TypeToTermConverter<'a> {
                     panic!("{:?}", type_node.kind)
                 }
             }
+            TypeKind::Composite(_) => {
+                // `(t1, ..., tn)` is only valid as the argument list of
+                // a parameterized type, e.g. `(int, string) either`.
+                // It is not valid by itself: a tuple type must be
+                // written `t1 * ... * tn`, e.g. `int * string`
+                // (hydromatic/morel#360).
+                self.type_resolver.field_errors.borrow_mut().push((
+                    "tuple types must be written 't1 * ... * tn', \
+                     not '(t1, ..., tn)'"
+                        .to_string(),
+                    type_node.span.clone(),
+                ));
+                // Bind to a fresh variable so resolution can continue
+                // and the error is reported.
+                self.type_resolver.reg_type(
+                    &type_node.kind,
+                    &type_node.span,
+                    &v,
+                )
+            }
             TypeKind::Expression(expr) => {
                 // `typeof expr` — the type of this annotation is the type
                 // of `expr`. Deduce `expr`'s type into a fresh variable and
