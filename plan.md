@@ -57,7 +57,7 @@ Working order. Each commit must include a `.smli` change and pass
 - [ ] **5.** `3ec81171` — Predicate inversion should filter by outer-scope variables (#347).
 - [ ] **6.** `d0249a04` — Invert `case` expressions with multiple arms (#341).
 - [ ] **7.** `27f98a5c` — Refactor predicate inversion logic.
-- [ ] **8.** `6802b06e` — `intersect`/`except` steps should count and preserve order (#321).
+- [x] **8.** `6802b06e` — `intersect`/`except` steps should count and preserve order (#321).
 - [ ] **9.** `fc0355fe` — Don't allow `on` after singleton scan `=` (#317).
 - [ ] **10.** `ed919a2b` — Add attributes and doc comments (#369). Adds `attribute.smli`.
 - [ ] **11.** `553d17ba` — Move doc metadata from `functions.toml` to `.sig` files (#368).
