@@ -75,11 +75,7 @@ fn type_recv_key(t: &Type) -> Option<&'static str> {
         // `'a bag` to `Type::Named(_, "bag")` — accept both spellings,
         // and similarly for every other built-in datatype/eqtype.
         Type::Named(_, name) | Type::Data(name, _) => {
-            library::BuiltInDatatype::from_name(name)
-                .map(|d| d.name())
-                .or_else(|| {
-                    library::BuiltInEqtype::from_name(name).map(|e| e.name())
-                })
+            library::BuiltInType::from_name(name).map(|t| t.name())
         }
         _ => None,
     }

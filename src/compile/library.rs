@@ -15,7 +15,7 @@
 // language governing permissions and limitations under the
 // License.
 
-use crate::compile::types::Type;
+use crate::compile::types::{PrimitiveType, Type};
 use crate::eval::code::{Impl, LIBRARY};
 use crate::eval::val::Val;
 use std::collections::{BTreeMap, HashMap};
@@ -1842,9 +1842,59 @@ impl BuiltInEqtype {
     }
 }
 
-/// Returns the parameter count (arity) of any built-in type — a
-/// [`BuiltInDatatype`] or a [`BuiltInEqtype`] — by its ML-level
-/// name, or `None` if the name isn't a built-in type.
+/// Any built-in named type — a primitive, a datatype (with
+/// exposed constructors), or an equality type (parameterised but
+/// constructorless). Used to look up a type by ML-level name when
+/// the caller doesn't care which kind it is, and to ask uniform
+/// questions like "what's its arity?".
+///
+/// The three sub-enums (`PrimitiveType`, `BuiltInDatatype`,
+/// `BuiltInEqtype`) have disjoint names, so the lookup is
+/// unambiguous.
+#[derive(Clone, PartialEq, Debug)]
+pub enum BuiltInType {
+    Primitive(PrimitiveType),
+    Datatype(BuiltInDatatype),
+    Eqtype(BuiltInEqtype),
+}
+
+impl BuiltInType {
+    /// ML-level name (e.g. `"int"`, `"option"`, `"bag"`).
+    pub fn name(&self) -> &'static str {
+        match self {
+            BuiltInType::Primitive(p) => p.as_str(),
+            BuiltInType::Datatype(d) => d.name(),
+            BuiltInType::Eqtype(e) => e.name(),
+        }
+    }
+
+    /// Parameter count (arity): always 0 for primitives, the
+    /// declared `varCount` for datatypes/eqtypes.
+    pub fn var_count(&self) -> usize {
+        match self {
+            BuiltInType::Primitive(_) => 0,
+            BuiltInType::Datatype(d) => d.var_count(),
+            BuiltInType::Eqtype(e) => e.var_count(),
+        }
+    }
+
+    /// Looks up a built-in type by ML-level name. Tries primitives,
+    /// then datatypes, then eqtypes — the three namespaces are
+    /// disjoint, so the order doesn't change the answer.
+    pub fn from_name(name: &str) -> Option<Self> {
+        PrimitiveType::parse_name(name)
+            .map(Self::Primitive)
+            .or_else(|| BuiltInDatatype::from_name(name).map(Self::Datatype))
+            .or_else(|| BuiltInEqtype::from_name(name).map(Self::Eqtype))
+    }
+}
+
+/// Returns the parameter count (arity) of any built-in parameterised
+/// type — a [`BuiltInDatatype`] or a [`BuiltInEqtype`] — by its
+/// ML-level name. Returns `None` for primitives and for names that
+/// aren't built-in types. Used by the type resolver's
+/// `TypeKind::App` arity check, which only cares about types that
+/// take type arguments.
 pub fn builtin_type_arity(name: &str) -> Option<usize> {
     BuiltInDatatype::from_name(name)
         .map(|d| d.var_count())
