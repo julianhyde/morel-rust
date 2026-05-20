@@ -1002,6 +1002,12 @@ impl Unifier {
         }
     }
 
+    /// Looks up an operator by name without creating one. Returns `None`
+    /// if no operator with this name has been registered.
+    pub fn lookup_op(&self, name: &str) -> Option<Op> {
+        self.op_by_name.get(name).copied()
+    }
+
     /// Looks up or creates a new operator with the given name.
     pub fn op(&mut self, name: &str, arity: Option<usize>) -> Op {
         if let Some(op) = self.op_by_name.get(name) {

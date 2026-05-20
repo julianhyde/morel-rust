@@ -670,6 +670,71 @@ impl Default for TypeResolver {
 
 #[allow(dead_code)]
 impl TypeResolver {
+    /// Walks an AST type and pushes errors for invalid forms:
+    /// standalone `(t1, ..., tn)` tuple types, and wrong-arity
+    /// applications of known type constructors. Used by code paths
+    /// (datatype/type declarations) that lower types via
+    /// [`ast_type_to_core_type_with_vars`], which silently swallows
+    /// errors. See hydromatic/morel#360.
+    fn validate_ast_type(&self, ast_type: &AstType) {
+        match &ast_type.kind {
+            TypeKind::Composite(types) => {
+                self.field_errors.borrow_mut().push((
+                    "tuple types must be written 't1 * ... * tn', \
+                     not '(t1, ..., tn)'"
+                        .to_string(),
+                    ast_type.span.clone(),
+                ));
+                for t in types {
+                    self.validate_ast_type(t);
+                }
+            }
+            TypeKind::App(args, base) => {
+                let flat_args = AstType::flatten(args);
+                if let TypeKind::Id(name) = &base.kind
+                    && let Some(op) = self.unifier.lookup_op(name.as_str())
+                    && let Some(expected) = self.unifier.op_arity(&op)
+                    && expected != flat_args.len()
+                {
+                    let actual = flat_args.len();
+                    self.field_errors.borrow_mut().push((
+                        format!(
+                            "type constructor {} given {} argument{}, \
+                             wants {}",
+                            name,
+                            actual,
+                            if actual == 1 { "" } else { "s" },
+                            expected,
+                        ),
+                        ast_type.span.clone(),
+                    ));
+                }
+                for arg in &flat_args {
+                    self.validate_ast_type(arg);
+                }
+            }
+            TypeKind::Fn(a, b) => {
+                self.validate_ast_type(a);
+                self.validate_ast_type(b);
+            }
+            TypeKind::Tuple(types) => {
+                for t in types {
+                    self.validate_ast_type(t);
+                }
+            }
+            TypeKind::Record(fields) => {
+                for f in fields {
+                    self.validate_ast_type(&f.type_);
+                }
+            }
+            TypeKind::Con(_)
+            | TypeKind::Id(_)
+            | TypeKind::Unit
+            | TypeKind::Var(_)
+            | TypeKind::Expression(_) => {}
+        }
+    }
+
     /// Creates a new type resolver.
     pub fn new() -> Self {
         let mut unifier = Unifier::new(true);
@@ -681,6 +746,28 @@ impl TypeResolver {
         let record_op = unifier.op("record", None);
         let fn_op = unifier.op("fn", Some(2));
         let int_op = unifier.op("int", Some(0));
+        // Pre-register built-in datatypes with their arity so that
+        // `TypeKind::App` can detect a wrong number of type-constructor
+        // arguments (e.g. `(bool, int) list`) up front, instead of
+        // panicking deep in the unifier or silently dropping args.
+        // See hydromatic/morel#360.
+        for (name, arity) in [
+            ("option", 1usize),
+            ("either", 2),
+            ("descending", 1),
+            ("order", 0),
+            ("range", 1),
+            ("continuous_set", 1),
+            ("discrete_set", 1),
+            ("variant", 0),
+            ("time", 0),
+            ("date", 0),
+            ("weekday", 0),
+            ("month", 0),
+            ("exn", 0),
+        ] {
+            unifier.op(name, Some(arity));
+        }
         Self {
             warnings: Vec::new(),
             node_var_map: HashMap::new(),
@@ -1180,6 +1267,7 @@ impl TypeResolver {
                 // resolved core type of the RHS, so subsequent uses of
                 // 'myInt' in type position resolve to 'int'.
                 for tb in type_binds {
+                    self.validate_ast_type(&tb.type_);
                     if let Some(rhs_type) = ast_type_to_core_type(&tb.type_) {
                         self.type_aliases.insert(tb.name.clone(), rhs_type);
                     }
@@ -1393,6 +1481,9 @@ impl TypeResolver {
                 //   nullary  → datatype  (e.g. Empty : 'a tree)
                 //   with arg → Fn(arg_type, datatype)
                 let con_type = if let Some(ast_type) = &con.type_ {
+                    // Surface composite/arity errors that would
+                    // otherwise be swallowed by the unwrap_or below.
+                    self.validate_ast_type(ast_type);
                     let arg_core = ast_type_to_core_type_with_vars(
                         ast_type,
                         &db.type_vars,
@@ -5362,6 +5453,38 @@ impl<'a> TypeToTermConverter<'a> {
                         terms.push(Term::Variable(v2));
                         let arg2 = self.type_term(&arg, subst, &v2);
                         args2.push(arg2);
+                    }
+                    // Arity check (hydromatic/morel#360): if the type
+                    // constructor is already registered with a specific
+                    // arity, reject mismatched applications. Without
+                    // this, e.g. `(bool, int) list` either panics in
+                    // the unifier or silently drops the extra arg.
+                    let existing =
+                        self.type_resolver.unifier.lookup_op(name.as_str());
+                    if let Some(op) = existing
+                        && let Some(expected) =
+                            self.type_resolver.unifier.op_arity(&op)
+                        && expected != terms.len()
+                    {
+                        let actual = terms.len();
+                        self.type_resolver.field_errors.borrow_mut().push((
+                            format!(
+                                "type constructor {} given {} argument{}, \
+                                 wants {}",
+                                name,
+                                actual,
+                                if actual == 1 { "" } else { "s" },
+                                expected,
+                            ),
+                            type_node.span.clone(),
+                        ));
+                        // Bind to a fresh variable so resolution can
+                        // continue and the error is reported.
+                        return self.type_resolver.reg_type(
+                            &type_node.kind,
+                            &type_node.span,
+                            &v,
+                        );
                     }
                     let op = self
                         .type_resolver
