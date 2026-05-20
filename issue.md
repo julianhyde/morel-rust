@@ -548,3 +548,115 @@ This list is the real cost-of-migration number. Beyond these,
 step 4 (fun/type/datatype/sig decls) was a rolling
 whack-a-mole — every fix surfaced another conflict — and
 relational queries (step 9 in the plan) were never attempted.
+
+## Stack overflow: confirmed in the parser
+
+After the migration was stopped, we tested whether the original
+"stack overflow on deeply nested let/case/from" motivation is
+actually biting in practice. **It is.**
+
+### Threshold
+
+```
+N nested (from e in ... yield e) levels around `emps`:
+  depth 50: pass
+  depth 55: pass
+  depth 56: stack overflow
+  depth 100: stack overflow
+```
+
+The 8-deep case in `tests/script/relational.smli` already passes
+in morel-rust today, but a query nested ~10× deeper than the
+existing test fails — and the same query works in morel-java
+(JVM threads default to a heap-grown stack).
+
+### Where it overflows
+
+`lldb` backtrace at depth 56 shows ~23 stack frames per nesting
+level. The repeating pattern is the entire expression-precedence
+cascade walked once per nesting:
+
+```
+atom → expr_postfix → expr_unary → expr_application → expr_over
+     → expr_multiplicative → expr_additive → expr_cons → expr_comp
+     → expr_o → expr_andalso → expr_orelse → expr_implies
+     → expr_annotated → expr
+     → scan1_in → scan1 → scan_list → from_expr
+     → atom  (next level up)
+```
+
+15 frames are the precedence cascade itself; 4 frames are the
+relational query rules; ~3 frames per level are `pest_consume`'s
+closure/iterator machinery. At depth 56, that's 56 × 23 ≈ 1300
+frames just from the parser, which exhausts the 8 MB main-thread
+stack.
+
+### Cause analysis
+
+The overhead is *purely* the precedence-cascade shape. Even a
+trivial expression with no operators (just a bare atom) walks
+all 13 precedence levels because each rule reduces to the next.
+Each level is unconditional descent — no operators, no
+shortcuts, just `expr_implies → expr_orelse` for every input.
+
+**This is not specific to pest.** Hand-written recursive
+descent with one function per precedence level has the same
+shape. Combinator libraries (chumsky, nom, winnow) all do the
+same unless explicitly built with Pratt parsing.
+
+### The surgical fix: Pratt parsing
+
+Pratt parsing handles the entire expression cascade in **one
+function** that dispatches on operator precedence as tokens
+arrive. A bare expression reaches the atom in one frame instead
+of thirteen. The 56-deep `from` query would use ~3 frames per
+level instead of ~23 — roughly **8× headroom**, raising the
+theoretical depth limit from ~55 to ~400+ on the same stack.
+
+Pest **already has built-in Pratt support** via
+`pest::pratt_parser::PrattParser` (added in pest 2.x). The
+minimal-change route is:
+
+1. Replace the 13 cascade rules in `morel.pest` with a single
+   flat rule `expr = atom (op atom)*`.
+2. Rewrite the 13 corresponding actions in `parser.rs` as one
+   `PrattParser` builder with `op!`/`prefix!`/`postfix!`
+   declarations for the operator set.
+3. Everything else (atoms, relational queries, decls, types,
+   patterns) stays as-is.
+
+Order of magnitude: ~200 LOC change, well-scoped, doesn't
+touch the AST or any other module.
+
+### Parser options reconsidered
+
+The earlier "Other options" menu over-credited hand-written
+recursive descent. Updated comparison:
+
+| Option | Solves stack | Effort | Notes |
+| --- | --- | --- | --- |
+| **Pest + PrattParser** | yes (~8× headroom) | small, ~200 LOC | Smallest possible change. Keeps pest, AST, error messages, everything else. |
+| Hand-written parser with Pratt | yes (~8×) | medium, ~2000 LOC | Drops pest. Matches MorelParser.jj's algorithm. |
+| Tree-sitter | yes (heap stack, unbounded depth) | large | Only option that scales arbitrarily. GLR. New runtime dep. |
+| Keep pest as-is | no | 0 | Stack overflow stays. |
+| Hand-written RD *without* Pratt | no | medium | Same precedence-cascade shape as today. |
+| chumsky / nom / winnow without Pratt | no | medium | All recursive; chumsky 1.0 has a Pratt combinator that would work. |
+
+### Recommendation
+
+**Try pest + PrattParser first.** It's surgical: rewrite the
+precedence-cascade rules and actions, leave everything else.
+If the 8× constant-factor improvement isn't enough for real
+workloads (depths >~400), reconsider tree-sitter as the only
+heap-stack option in the Rust ecosystem.
+
+Verification path before committing to the rewrite: run the
+deep-nest query in a thread with a larger stack
+(`thread::Builder::new().stack_size(N)`). If parse depth scales
+linearly with N, Pratt's constant-factor win is exactly the
+predicted ~8×. If it doesn't scale linearly, the cascade isn't
+the only contributor and Pratt may not be sufficient.
+
+The lalrpop migration is still abandoned — none of the above
+involves lalrpop. The B-class LR(1) limitations from this
+document remain irrelevant if pest stays in place.
