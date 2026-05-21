@@ -22,6 +22,7 @@ falsify) each one.
 | 2026-05-21 | baseline | 29.0 s | 2.95 s |
 | 2026-05-21 | H1a (cache base Env) | 26.4 s | 0.45 s |
 | 2026-05-21 | H3a (im → std HashMap) | 15.8 s | 0.45 s |
+| 2026-05-21 | New-1 (one resolver pass) | 15.3 s | 0.45 s |
 
 H1a — `Session::base_env()` lazily builds the inliner `Env` populated
 with all built-ins once per session, then layers per-statement
@@ -42,6 +43,22 @@ per-statement substitution maps are too small for HAMT vs flat
 hashmap constant factors to matter. We captured ~90 % of the
 unifier-HAMT headroom the original flamegraph identified
 (~41 % of pre-H1a runtime in HAMT iteration + teardown).
+
+New-1 — Eliminate the duplicate resolver pass. Previously
+`evaluate_node` called both `resolver::resolve_pre_expander` and
+`resolver::resolve_with_session_fns_rec`, each doing a full
+AST→Core walk. Now `resolve_with_session_fns_rec` does the
+resolver pass once and eagerly extracts the pre-expander
+`fn p => body` bindings (a top-level-only walk, cheap) before
+moving the decl into the expander. The shell commits those
+extracted bindings into `rec_fn_bindings` after the statement
+succeeds. Bench-built-in: 15.8 → 15.3 s (~3 %). Smaller than the
+~11 % the flamegraph suggested — possibly because the flamegraph
+double-counted `resolve_decl` samples (it appeared under both
+parent functions, inflating each parent's reported %), or because
+the expander's portion of `resolve_with_session_fns_rec` is
+larger than the resolver's portion. Either way, the change is
+mechanically correct and removes the redundancy.
 
 ## Post-H1a+H3a flamegraphs (May 2026)
 

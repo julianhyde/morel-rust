@@ -1061,16 +1061,18 @@ impl Shell {
     fn evaluate_node(&mut self, resolved: &Resolved) -> ShellResult<String> {
         let session_fns = self.session.borrow().fn_bindings.clone();
         let rec_session_fns = self.session.borrow().rec_fn_bindings.clone();
-        // Capture pre-expander fn bindings from this statement's
-        // resolved decl. We need them BEFORE the expander runs
-        // (which inverts step predicates) so Phase 2 of recursive
-        // predicate inversion sees the original conjuncts.
-        let pre_decl = resolver::resolve_pre_expander(resolved);
-        let (decl, resolve_errors) = resolver::resolve_with_session_fns_rec(
-            resolved,
-            &session_fns,
-            &rec_session_fns,
-        );
+        // Resolve once. The pre-expander fn-bindings (for Phase 2 of
+        // recursive predicate inversion) are extracted eagerly from
+        // the pre-expander decl so we don't need to keep the whole
+        // pre-expander tree alive past the expander pass. The
+        // post-expander decl flows through the rest of the pipeline
+        // as before.
+        let (decl, pre_fn_env, resolve_errors) =
+            resolver::resolve_with_session_fns_rec(
+                resolved,
+                &session_fns,
+                &rec_session_fns,
+            );
         if let Some((msg, span)) = resolve_errors.first() {
             return Ok(format!(
                 "{} Error: {}\n  raised at: {}\n",
@@ -1216,17 +1218,15 @@ impl Shell {
         // Record any single-arm `fn p => body` value-bindings for
         // future statements' predicate inversion (#223). Save the
         // post-expander bodies into `fn_bindings` (used by
-        // `inline_tuple_fn_calls_in_where`) and the pre-expander
-        // bodies into `rec_fn_bindings` (used by Phase 2 of
-        // recursive predicate inversion, #217).
+        // `inline_tuple_fn_calls_in_where`). The pre-expander
+        // bodies (used by Phase 2 of recursive predicate inversion,
+        // #217) were already captured into `pre_fn_env` before the
+        // expander ran; commit them here.
         collect_session_fn_bindings(
             &decl,
             &mut self.session.borrow_mut().fn_bindings,
         );
-        collect_session_fn_bindings(
-            &pre_decl,
-            &mut self.session.borrow_mut().rec_fn_bindings,
-        );
+        self.session.borrow_mut().rec_fn_bindings.extend(pre_fn_env);
 
         Ok(result)
     }
