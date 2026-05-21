@@ -15,6 +15,22 @@ falsify) each one.
 * The underlying performance characteristics (and the per-statement
   fixed cost) remain unchanged, which is what this document focuses on.
 
+## Progress log
+
+| Date | Change | bench-built-in (release) | 10 000×`1+2;` |
+|---|---|---:|---:|
+| 2026-05-21 | baseline | 29.0 s | 2.95 s |
+| 2026-05-21 | H1a (cache base Env) | 26.4 s | 0.45 s |
+
+H1a — `Session::base_env()` lazily builds the inliner `Env` populated
+with all built-ins once per session, then layers per-statement
+session bindings on top via `Env::child` (HAMT path-copy on top of
+the cached structural-sharing parent). Removes ~460 `Type::clone`s
++ a HAMT rebuild from every statement. Lands `1+2;` throughput at
+~45 µs/stmt (was ~295 µs/stmt). Bench-built-in moves only 9 %
+because most of its statements are large enough that per-node
+unifier work (H3) dominates.
+
 ## Overall-progress benchmark (May 2026)
 
 `tests/script/bench-built-in-rust.smli` and

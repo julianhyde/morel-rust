@@ -23,7 +23,6 @@
 
 use crate::compile::core::{Decl, Expr};
 use crate::compile::expander::collect_session_fn_bindings;
-use crate::compile::inliner::Env;
 use crate::compile::library::{
     BuiltInExn, BuiltInFunction, name_to_fn, name_to_rec,
 };
@@ -32,7 +31,7 @@ use crate::compile::span::Span;
 use crate::compile::type_env::{Binding, EmptyTypeEnv, FunTypeEnv, TypeEnv};
 use crate::compile::type_resolver::Resolved;
 use crate::compile::types::{PrimitiveType, Type};
-use crate::compile::{compiler, inliner, library};
+use crate::compile::{compiler, inliner};
 use crate::eval::code::Effect;
 use crate::eval::link_table::LinkTable;
 use crate::eval::session::Config as SessionConfig;
@@ -47,7 +46,7 @@ use crate::shell::utils::{prefix_lines, strip_prefix};
 use crate::syntax::ast::Statement;
 use crate::syntax::parser;
 use std::cell::{Ref, RefCell};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::env::current_dir;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::fs;
@@ -1011,16 +1010,10 @@ impl Shell {
         if !resolve_errors.is_empty() {
             return;
         }
-        let env = Env::empty();
-        let mut map: BTreeMap<&str, (Type, Option<Val>)> = BTreeMap::new();
-        self.environment.bindings.iter().for_each(|(k, v)| {
-            map.insert(
-                k,
-                (Type::Primitive(PrimitiveType::Unit), Some(v.clone())),
-            );
-        });
-        library::populate_env(&mut map);
-        let env2 = env.multi(&map);
+        let mut env2 = self.session.borrow().base_env().clone();
+        for (k, v) in &self.environment.bindings {
+            env2 = env2.child(k, &Type::Primitive(PrimitiveType::Unit), v);
+        }
         let decl2 = inliner::inline_decl(&env2, &decl);
         if !is_plan_or_plan_ex_call(&decl2) {
             let mut session = self.session.borrow_mut();
@@ -1085,16 +1078,10 @@ impl Shell {
             ));
         }
 
-        let env = Env::empty();
-        let mut map: BTreeMap<&str, (Type, Option<Val>)> = BTreeMap::new();
-        self.environment.bindings.iter().for_each(|(k, v)| {
-            map.insert(
-                k,
-                (Type::Primitive(PrimitiveType::Unit), Some(v.clone())),
-            );
-        });
-        library::populate_env(&mut map);
-        let mut env2 = env.multi(&map);
+        let mut env2 = self.session.borrow().base_env().clone();
+        for (k, v) in &self.environment.bindings {
+            env2 = env2.child(k, &Type::Primitive(PrimitiveType::Unit), v);
+        }
         // Bring in expressions from previous compile units so that
         // identifiers like `inc` (bound to `fn x => x + 1` in an
         // earlier statement) can be inlined. The inliner's identifier
