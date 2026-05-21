@@ -20,7 +20,6 @@ use crate::compile::types::{Op, PrimitiveType, Type, TypeVariable};
 use crate::eval::code;
 use crate::eval::date;
 use crate::eval::real::Real;
-use crate::eval::val;
 use crate::eval::val::Val;
 use crate::shell::prop::Output as PropOutput;
 use crate::syntax::parser::{
@@ -782,9 +781,9 @@ impl Pretty {
         // ordinal scheme (weekday, month, exn, range): map back
         // through the `BuiltInDatatype` registry to print the
         // constructor name, then the argument (if any).
-        if let Val::Constructor(ord, inner) = value
+        if let Val::Constructor(tag, inner) = value
             && let Some(d) = library::BuiltInDatatype::from_name(name)
-            && let Some(label) = d.constructor_name_for_ordinal(*ord)
+            && let Some(label) = d.constructor_name_for_tag(*tag)
         {
             self.pretty_raw(buf, indent, line_end, depth, label)?;
             if **inner == Val::Unit {
@@ -805,6 +804,14 @@ impl Pretty {
                     library::BuiltInDatatype::Range,
                     "CLOSED" | "CLOSED_OPEN" | "OPEN" | "OPEN_CLOSED",
                 ) => Type::Tuple(vec![args[0].clone(), args[0].clone()]),
+                (
+                    library::BuiltInDatatype::ContinuousSet
+                    | library::BuiltInDatatype::DiscreteSet,
+                    _,
+                ) => Type::List(Box::new(Type::Data(
+                    "range".to_string(),
+                    vec![args[0].clone()],
+                ))),
                 _ => args[0].clone(),
             };
             return self.pretty1(
@@ -816,24 +823,6 @@ impl Pretty {
                 inner,
                 0,
                 0,
-            );
-        }
-        if (name == "continuous_set" || name == "discrete_set")
-            && let Val::Constructor(ordinal, inner) = value
-            && (*ordinal == val::CONTINUOUS_SET_ORDINAL
-                || *ordinal == val::DISCRETE_SET_ORDINAL)
-        {
-            let label = if name == "continuous_set" {
-                "CONTINUOUS_SET "
-            } else {
-                "DISCRETE_SET "
-            };
-            self.pretty_raw(buf, indent, line_end, depth, label)?;
-            let range_type =
-                Type::Data("range".to_string(), vec![args[0].clone()]);
-            let list_type = Type::List(Box::new(range_type));
-            return self.pretty1(
-                buf, indent, line_end, depth, &list_type, inner, 0, 0,
             );
         }
         let list = match &value {

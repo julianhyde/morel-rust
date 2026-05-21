@@ -62,6 +62,11 @@ use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 use strum::{EnumProperty, IntoEnumIterator};
+use val::{
+    RANGE_ALL, RANGE_AT_LEAST, RANGE_AT_MOST, RANGE_CLOSED, RANGE_CLOSED_OPEN,
+    RANGE_CONTINUOUS_SET, RANGE_DISCRETE_SET, RANGE_GREATER_THAN,
+    RANGE_LESS_THAN, RANGE_OPEN, RANGE_OPEN_CLOSED, RANGE_POINT,
+};
 
 /// Evaluation mode.
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -179,10 +184,12 @@ pub enum Code {
     /// type-constructor called `name` and its argument matches `pat`.
     /// (Zero argument constructors become [Code::BindLiteral].)
     BindConstructor(String, Box<Code>),
-    /// `BindConstructor2(ordinal, pat_code)` matches a user-defined
-    /// constructor value. It succeeds if `a0` is
-    /// `Val::Constructor(ordinal, inner)` and the inner value matches
-    /// `pat_code`.
+    /// `BindConstructor2(tag, pat_code)` matches a datatype constructor
+    /// value. It succeeds if `a0` is `Val::Constructor(tag, inner)`
+    /// and the inner value matches `pat_code`. The tag is whatever
+    /// `Compiler::constructor_tag` chose for this constructor — a
+    /// `BuiltInFunction` discriminant for built-in datatypes, or a
+    /// 0-based position for user-declared datatypes.
     BindConstructor2(usize, Option<Box<Code>>),
     /// `BindList(patterns)` succeeds if the argument is a list the same length
     /// as `patterns` and each element successfully binds.
@@ -215,11 +222,11 @@ pub enum Code {
     /// the value more intelligently.
     Constant(Box<Type>, Val),
 
-    /// `ConstructorWrap(ordinal)` is a function that, when applied
-    /// to a value via `eval_f1`, wraps it in
-    /// `Val::Constructor(ordinal, Box::new(arg))`. Used as the
-    /// runtime representation of value-carrying user-defined
-    /// datatype constructors.
+    /// `ConstructorWrap(tag)` is a function that, when applied to a
+    /// value via `eval_f1`, wraps it in
+    /// `Val::Constructor(tag, Box::new(arg))`. Used as the runtime
+    /// representation of value-carrying user-defined datatype
+    /// constructors.
     ConstructorWrap(usize),
 
     /// `CreateClosure(frame, matches, binds, no_match)` creates a
@@ -329,9 +336,9 @@ pub enum Code {
     RangeContains(CmpRef, Box<Code>, Box<Code>),
     /// `RangeCsOf(cmp, ranges_code)` evaluates the input
     /// list of ranges and returns a normalized `continuous_set` — a
-    /// `Val::Constructor(CONTINUOUS_SET_ORDINAL, ...)` wrapping the
-    /// merged range list. The pre-built type-directed comparator
-    /// handles element types with non-natural ordering.
+    /// `Val::Constructor` tagged with `RangeContinuousSet`'s runtime
+    /// tag, wrapping the merged range list. The pre-built type-directed
+    /// comparator handles element types with non-natural ordering.
     RangeCsOf(CmpRef, Box<Code>),
     /// `RangeDsComplement(discrete, set_code)` evaluates a
     /// `discrete_set` and returns its complement as a `discrete_set`,
@@ -414,7 +421,7 @@ impl Code {
     pub(crate) fn new_bind_constructor(
         type_: &Type,
         name: &str,
-        ordinal: Option<usize>,
+        tag: Option<usize>,
         t: &Option<Code>,
     ) -> Code {
         // Determine whether this is a built-in constructor (SOME,
@@ -422,7 +429,7 @@ impl Code {
         // The built-in case here covers datatypes whose constructor
         // patterns are matched by *name* via `BindConstructor` /
         // `BindLiteral`; datatypes whose constructors use the
-        // ordinal-based `Val::Constructor(ord, _)` scheme
+        // tag-based `Val::Constructor(tag, _)` scheme
         // (weekday, month, exn, …) fall through to
         // `BindConstructor2` along with user-declared ones.
         let is_builtin = match type_ {
@@ -441,7 +448,7 @@ impl Code {
         if !is_builtin {
             // User-defined constructor: use BindConstructor2.
             return Code::BindConstructor2(
-                ordinal.expect("user-defined constructor must have ordinal"),
+                tag.expect("user-defined constructor must have a tag"),
                 t.clone().map(Box::new),
             );
         }
@@ -1095,14 +1102,14 @@ impl Code {
                 let ranges = ranges_code.eval_f0(r, f)?;
                 let merged = from_ranges(ranges.expect_list(), &*cmp.0, None);
                 Ok(Val::Constructor(
-                    val::CONTINUOUS_SET_ORDINAL,
+                    BuiltInFunction::RangeContinuousSet.runtime_tag(),
                     Box::new(Val::List(merged)),
                 ))
             }
             Code::RangeDsComplement(discrete, set_code) => {
                 let set = set_code.eval_f0(r, f)?;
                 let ranges = match &set {
-                    Val::Constructor(val::DISCRETE_SET_ORDINAL, inner) => {
+                    Val::Constructor(RANGE_DISCRETE_SET, inner) => {
                         inner.expect_list()
                     }
                     other => panic!(
@@ -1112,7 +1119,7 @@ impl Code {
                 };
                 let complemented = complement(ranges, Some(&*discrete.0));
                 Ok(Val::Constructor(
-                    val::DISCRETE_SET_ORDINAL,
+                    BuiltInFunction::RangeDiscreteSet.runtime_tag(),
                     Box::new(Val::List(complemented)),
                 ))
             }
@@ -1124,14 +1131,14 @@ impl Code {
                     Some(&*discrete.0),
                 );
                 Ok(Val::Constructor(
-                    val::DISCRETE_SET_ORDINAL,
+                    BuiltInFunction::RangeDiscreteSet.runtime_tag(),
                     Box::new(Val::List(merged)),
                 ))
             }
             Code::RangeEnumerate(cmp, discrete, set_code) => {
                 let set = set_code.eval_f0(r, f)?;
                 let ranges = match &set {
-                    Val::Constructor(val::DISCRETE_SET_ORDINAL, inner) => {
+                    Val::Constructor(RANGE_DISCRETE_SET, inner) => {
                         inner.expect_list()
                     }
                     other => panic!(
@@ -1366,12 +1373,11 @@ impl Code {
                     _ => Ok(Val::Bool(false)),
                 }
             }
-            Code::BindConstructor2(ordinal, pat_code) => {
-                // User-defined constructor pattern.
+            Code::BindConstructor2(tag, pat_code) => {
+                // Datatype constructor pattern; the tag identifies
+                // which constructor we expect.
                 match a0 {
-                    Val::Constructor(con_ordinal, inner)
-                        if con_ordinal == ordinal =>
-                    {
+                    Val::Constructor(val_tag, inner) if val_tag == tag => {
                         if let Some(pat) = pat_code {
                             pat.eval_f1(r, f, inner)
                         } else {
@@ -1420,8 +1426,8 @@ impl Code {
                 }))
             }
             Code::Constant(_, v) => Ok(v.clone()),
-            Code::ConstructorWrap(ordinal) => {
-                Ok(Val::Constructor(*ordinal, Box::new(a0.clone())))
+            Code::ConstructorWrap(tag) => {
+                Ok(Val::Constructor(*tag, Box::new(a0.clone())))
             }
             Code::CreateClosure(frame_def, matches, bind_codes, no_match) => {
                 // Build the closure's bound values from the current
@@ -1750,39 +1756,39 @@ pub(crate) fn range_contains(
         _ => panic!("Range.contains: not a range value: {:?}", range),
     };
     match ord {
-        val::RANGE_ALL_ORDINAL => true,
-        val::RANGE_POINT_ORDINAL => cmp.compare(value, inner).is_eq(),
-        val::RANGE_AT_LEAST_ORDINAL => cmp.compare(value, inner).is_ge(),
-        val::RANGE_GREATER_THAN_ORDINAL => cmp.compare(value, inner).is_gt(),
-        val::RANGE_AT_MOST_ORDINAL => cmp.compare(value, inner).is_le(),
-        val::RANGE_LESS_THAN_ORDINAL => cmp.compare(value, inner).is_lt(),
-        val::RANGE_CLOSED_ORDINAL => {
+        RANGE_ALL => true,
+        RANGE_POINT => cmp.compare(value, inner).is_eq(),
+        RANGE_AT_LEAST => cmp.compare(value, inner).is_ge(),
+        RANGE_GREATER_THAN => cmp.compare(value, inner).is_gt(),
+        RANGE_AT_MOST => cmp.compare(value, inner).is_le(),
+        RANGE_LESS_THAN => cmp.compare(value, inner).is_lt(),
+        RANGE_CLOSED => {
             let pair = inner.expect_list();
             cmp.compare(value, &pair[0]).is_ge()
                 && cmp.compare(value, &pair[1]).is_le()
         }
-        val::RANGE_OPEN_ORDINAL => {
+        RANGE_OPEN => {
             let pair = inner.expect_list();
             cmp.compare(value, &pair[0]).is_gt()
                 && cmp.compare(value, &pair[1]).is_lt()
         }
-        val::RANGE_CLOSED_OPEN_ORDINAL => {
+        RANGE_CLOSED_OPEN => {
             let pair = inner.expect_list();
             cmp.compare(value, &pair[0]).is_ge()
                 && cmp.compare(value, &pair[1]).is_lt()
         }
-        val::RANGE_OPEN_CLOSED_ORDINAL => {
+        RANGE_OPEN_CLOSED => {
             let pair = inner.expect_list();
             cmp.compare(value, &pair[0]).is_gt()
                 && cmp.compare(value, &pair[1]).is_le()
         }
-        val::CONTINUOUS_SET_ORDINAL | val::DISCRETE_SET_ORDINAL => {
+        RANGE_CONTINUOUS_SET | RANGE_DISCRETE_SET => {
             // The wrapper carries a normalized `Val::List` of ranges;
             // binary-search it.
             set_contains(inner.expect_list(), value, cmp)
         }
         _ => {
-            panic!("Range.contains: unknown range constructor ordinal {}", ord)
+            panic!("Range.contains: unknown range constructor tag {}", ord)
         }
     }
 }
@@ -1822,8 +1828,8 @@ impl Display for Code {
             Self::BindConstructor(name, inner) => {
                 write!(f, "bindCon({}, {})", name, inner)
             }
-            Self::BindConstructor2(ordinal, _) => {
-                write!(f, "bindCon2(#{})", ordinal)
+            Self::BindConstructor2(tag, _) => {
+                write!(f, "bindCon2(#{})", tag)
             }
             Self::BindLiteral(v) => write!(f, "{}", v),
             Self::BindSlot(_, slot) => write!(f, "bind({})", slot),
@@ -1841,8 +1847,8 @@ impl Display for Code {
                 Val::Unit => write!(f, "constant([NONE])"),
                 _ => write!(f, "constant({})", v),
             },
-            Self::ConstructorWrap(ordinal) => {
-                write!(f, "conWrap(#{})", ordinal)
+            Self::ConstructorWrap(tag) => {
+                write!(f, "conWrap(#{})", tag)
             }
             Self::CreateClosure(_, matches, bind_codes, _) => {
                 write!(f, "createClosure(captures(")?;
@@ -2411,9 +2417,16 @@ impl EagerF0 {
                     }
                 }
 
-                // Add constructors
+                // Add constructors. Skip synthetic
+                // continuous_set / discrete_set wrapper constructors,
+                // which aren't surface-level visible.
                 for f in BuiltInFunction::iter() {
-                    if f.is_constructor() {
+                    if f.is_constructor()
+                        && !matches!(
+                            f.datatype(),
+                            Some("continuous_set") | Some("discrete_set")
+                        )
+                    {
                         pairs.push((
                             f.name().to_string(),
                             format!("{}", f.get_type()),
@@ -2795,9 +2808,11 @@ pub enum Eager1 {
     RangeAtMost,
     RangeClosed,
     RangeClosedOpen,
+    RangeContinuousSet,
     RangeCsComplement,
     RangeCsOf,
     RangeCsRanges,
+    RangeDiscreteSet,
     RangeDsComplement,
     RangeDsOf,
     RangeDsRanges,
@@ -2958,7 +2973,10 @@ impl Eager1 {
                 let (n, o) = a0.expect_date();
                 date::year_day(n, o)
             }
-            DescendingDesc => Val::Constructor(val::DESC_ORDINAL, Box::new(a0)),
+            DescendingDesc => Val::Constructor(
+                BuiltInFunction::DescendingDesc.runtime_tag(),
+                Box::new(a0),
+            ),
             EitherAsLeft => Either::as_left(&a0),
             EitherAsRight => Either::as_right(&a0),
             EitherInl => Val::Inl(Box::new(a0)),
@@ -2968,7 +2986,7 @@ impl Eager1 {
             EitherPartition => Either::partition(a0.expect_list()),
             EitherProj => Either::proj(&a0),
             ExnFail => Val::Constructor(
-                BuiltInFunction::ExnFail.constructor_ordinal(),
+                BuiltInFunction::ExnFail.runtime_tag(),
                 Box::new(a0),
             ),
             FnId => a0,
@@ -3008,23 +3026,31 @@ impl Eager1 {
             OptionIsSome => Val::Bool(Opt::is_some(&a0)),
             OptionJoin => Opt::join(&a0),
             OptionSome => Val::Some(Box::new(a0)),
-            RangeAtLeast => {
-                Val::Constructor(val::RANGE_AT_LEAST_ORDINAL, Box::new(a0))
-            }
-            RangeAtMost => {
-                Val::Constructor(val::RANGE_AT_MOST_ORDINAL, Box::new(a0))
-            }
-            RangeClosed => {
-                Val::Constructor(val::RANGE_CLOSED_ORDINAL, Box::new(a0))
-            }
-            RangeClosedOpen => {
-                Val::Constructor(val::RANGE_CLOSED_OPEN_ORDINAL, Box::new(a0))
-            }
+            RangeAtLeast => Val::Constructor(
+                BuiltInFunction::RangeAtLeast.runtime_tag(),
+                Box::new(a0),
+            ),
+            RangeAtMost => Val::Constructor(
+                BuiltInFunction::RangeAtMost.runtime_tag(),
+                Box::new(a0),
+            ),
+            RangeClosed => Val::Constructor(
+                BuiltInFunction::RangeClosed.runtime_tag(),
+                Box::new(a0),
+            ),
+            RangeClosedOpen => Val::Constructor(
+                BuiltInFunction::RangeClosedOpen.runtime_tag(),
+                Box::new(a0),
+            ),
+            RangeContinuousSet => Val::Constructor(
+                BuiltInFunction::RangeContinuousSet.runtime_tag(),
+                Box::new(a0),
+            ),
             RangeCsComplement => {
                 // Continuous complement: no Discrete needed, so the
                 // Eager1 fallback handles every call directly.
                 let inner = match a0 {
-                    Val::Constructor(val::CONTINUOUS_SET_ORDINAL, inner) => {
+                    Val::Constructor(RANGE_CONTINUOUS_SET, inner) => {
                         inner.expect_list().to_vec()
                     }
                     other => panic!(
@@ -3034,7 +3060,7 @@ impl Eager1 {
                 };
                 let complemented = complement(&inner, None);
                 Val::Constructor(
-                    val::CONTINUOUS_SET_ORDINAL,
+                    BuiltInFunction::RangeContinuousSet.runtime_tag(),
                     Box::new(Val::List(complemented)),
                 )
             }
@@ -3047,7 +3073,7 @@ impl Eager1 {
                 let merged =
                     from_ranges(a0.expect_list(), &NaturalComparator, None);
                 Val::Constructor(
-                    val::CONTINUOUS_SET_ORDINAL,
+                    BuiltInFunction::RangeContinuousSet.runtime_tag(),
                     Box::new(Val::List(merged)),
                 )
             }
@@ -3055,15 +3081,17 @@ impl Eager1 {
                 // `ranges : 'a continuous_set -> 'a range list`. The
                 // wrapper stores a Val::List of ranges; just unwrap it.
                 match a0 {
-                    Val::Constructor(val::CONTINUOUS_SET_ORDINAL, inner) => {
-                        *inner
-                    }
+                    Val::Constructor(RANGE_CONTINUOUS_SET, inner) => *inner,
                     other => panic!(
                         "Range.ranges: expected continuous_set, got {:?}",
                         other
                     ),
                 }
             }
+            RangeDiscreteSet => Val::Constructor(
+                BuiltInFunction::RangeDiscreteSet.runtime_tag(),
+                Box::new(a0),
+            ),
             RangeDsComplement => {
                 // Fallback for partial application. Direct calls go
                 // through Code::RangeDsComplement which carries
@@ -3081,36 +3109,42 @@ impl Eager1 {
                 // discreteness or merge step-adjacent ranges; wrap the
                 // input as-is. The compile intercept is the correct
                 // path for all direct calls.
-                Val::Constructor(val::DISCRETE_SET_ORDINAL, Box::new(a0))
+                Val::Constructor(
+                    BuiltInFunction::RangeDiscreteSet.runtime_tag(),
+                    Box::new(a0),
+                )
             }
             RangeDsRanges => {
                 // `ranges : 'a discrete_set -> 'a range list`. The
                 // wrapper stores a Val::List of ranges; just unwrap it.
                 match a0 {
-                    Val::Constructor(val::DISCRETE_SET_ORDINAL, inner) => {
-                        *inner
-                    }
+                    Val::Constructor(RANGE_DISCRETE_SET, inner) => *inner,
                     other => panic!(
                         "Range.ranges: expected discrete_set, got {:?}",
                         other
                     ),
                 }
             }
-            RangeGreaterThan => {
-                Val::Constructor(val::RANGE_GREATER_THAN_ORDINAL, Box::new(a0))
-            }
-            RangeLessThan => {
-                Val::Constructor(val::RANGE_LESS_THAN_ORDINAL, Box::new(a0))
-            }
-            RangeOpen => {
-                Val::Constructor(val::RANGE_OPEN_ORDINAL, Box::new(a0))
-            }
-            RangeOpenClosed => {
-                Val::Constructor(val::RANGE_OPEN_CLOSED_ORDINAL, Box::new(a0))
-            }
-            RangePoint => {
-                Val::Constructor(val::RANGE_POINT_ORDINAL, Box::new(a0))
-            }
+            RangeGreaterThan => Val::Constructor(
+                BuiltInFunction::RangeGreaterThan.runtime_tag(),
+                Box::new(a0),
+            ),
+            RangeLessThan => Val::Constructor(
+                BuiltInFunction::RangeLessThan.runtime_tag(),
+                Box::new(a0),
+            ),
+            RangeOpen => Val::Constructor(
+                BuiltInFunction::RangeOpen.runtime_tag(),
+                Box::new(a0),
+            ),
+            RangeOpenClosed => Val::Constructor(
+                BuiltInFunction::RangeOpenClosed.runtime_tag(),
+                Box::new(a0),
+            ),
+            RangePoint => Val::Constructor(
+                BuiltInFunction::RangePoint.runtime_tag(),
+                Box::new(a0),
+            ),
             RangeToBag | RangeToList => {
                 // Fallback for partial application. Without type info
                 // we cannot build a `Discrete`; panic clearly. The
@@ -4603,10 +4637,12 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager1::RangeClosed.implements(&mut b, RangeClosed);
     Eager1::RangeClosedOpen.implements(&mut b, RangeClosedOpen);
     Eager2::RangeContains.implements(&mut b, RangeContains);
+    Eager1::RangeContinuousSet.implements(&mut b, RangeContinuousSet);
     Eager1::RangeCsComplement.implements(&mut b, RangeCsComplement);
     Eager2::RangeContains.implements(&mut b, RangeCsContains);
     Eager1::RangeCsOf.implements(&mut b, RangeCsOf);
     Eager1::RangeCsRanges.implements(&mut b, RangeCsRanges);
+    Eager1::RangeDiscreteSet.implements(&mut b, RangeDiscreteSet);
     Eager1::RangeDsComplement.implements(&mut b, RangeDsComplement);
     Eager2::RangeContains.implements(&mut b, RangeDsContains);
     Eager1::RangeDsOf.implements(&mut b, RangeDsOf);
@@ -4794,10 +4830,10 @@ fn is_datatype_constructor(f: BuiltInFunction, name: &str) -> bool {
 /// ML-level name is recovered via the `BuiltInDatatype::Exn` registry,
 /// then mapped to a [`BuiltInExn`] variant by name.
 fn exn_from_val(value: &Val) -> (BuiltInExn, Option<String>) {
-    if let Val::Constructor(ord, inner) = value {
+    if let Val::Constructor(tag, inner) = value {
         let name = library::BuiltInDatatype::Exn
-            .constructor_name_for_ordinal(*ord)
-            .unwrap_or_else(|| panic!("unknown exn ordinal: {}", ord));
+            .constructor_name_for_tag(*tag)
+            .unwrap_or_else(|| panic!("unknown exn tag: {}", tag));
         let exn = BuiltInExn::from_str(name)
             .unwrap_or_else(|_| panic!("unknown exn constructor: {}", name));
         let payload = if exn == BuiltInExn::Fail {
