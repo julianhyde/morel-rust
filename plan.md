@@ -21,6 +21,7 @@ falsify) each one.
 |---|---|---:|---:|
 | 2026-05-21 | baseline | 29.0 s | 2.95 s |
 | 2026-05-21 | H1a (cache base Env) | 26.4 s | 0.45 s |
+| 2026-05-21 | H3a (im → std HashMap) | 15.8 s | 0.45 s |
 
 H1a — `Session::base_env()` lazily builds the inliner `Env` populated
 with all built-ins once per session, then layers per-statement
@@ -30,6 +31,17 @@ the cached structural-sharing parent). Removes ~460 `Type::clone`s
 ~45 µs/stmt (was ~295 µs/stmt). Bench-built-in moves only 9 %
 because most of its statements are large enough that per-node
 unifier work (H3) dominates.
+
+H3a — `Work.result`, `Substitution.substitutions`, and the `active`
+working set in `act` switched from `im::HashMap` / `im::HashSet` to
+`std::HashMap` / `std::HashSet`. The unifier uses these as mutable
+accumulators, not as persistent maps. Bench-built-in dropped 40 %
+on release (26.4 → 15.8 s) and 9 % on debug (208 → 189 s). The
+size scan and small-stmt workloads are unmoved because their
+per-statement substitution maps are too small for HAMT vs flat
+hashmap constant factors to matter. We captured ~90 % of the
+unifier-HAMT headroom the original flamegraph identified
+(~41 % of pre-H1a runtime in HAMT iteration + teardown).
 
 ## Overall-progress benchmark (May 2026)
 

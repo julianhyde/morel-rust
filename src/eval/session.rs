@@ -160,8 +160,7 @@ impl Session {
     /// session-local bindings.
     pub fn base_env(&self) -> &Env {
         self.base_env.get_or_init(|| {
-            let mut map: BTreeMap<&str, (Type, Option<Val>)> =
-                BTreeMap::new();
+            let mut map: BTreeMap<&str, (Type, Option<Val>)> = BTreeMap::new();
             library::populate_env(&mut map);
             Env::empty().multi(&map)
         })
