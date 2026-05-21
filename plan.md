@@ -24,6 +24,12 @@ falsify) each one.
 | 2026-05-21 | H3a (im → std HashMap) | 15.8 s | 0.45 s |
 | 2026-05-21 | New-1 (one resolver pass) | 15.3 s | 0.45 s |
 
+Note: New-1 also moved size-200 (1000 × n-200) from 37.7 s to
+31.6 s (~16 %). The bench-built-in win is small because
+type-checking dominates there; size-K wins because the resolver
+is a larger fraction of per-stmt work for big, simply-typed
+expressions.
+
 H1a — `Session::base_env()` lazily builds the inliner `Env` populated
 with all built-ins once per session, then layers per-statement
 session bindings on top via `Env::child` (HAMT path-copy on top of
@@ -52,13 +58,12 @@ resolver pass once and eagerly extracts the pre-expander
 `fn p => body` bindings (a top-level-only walk, cheap) before
 moving the decl into the expander. The shell commits those
 extracted bindings into `rec_fn_bindings` after the statement
-succeeds. Bench-built-in: 15.8 → 15.3 s (~3 %). Smaller than the
-~11 % the flamegraph suggested — possibly because the flamegraph
-double-counted `resolve_decl` samples (it appeared under both
-parent functions, inflating each parent's reported %), or because
-the expander's portion of `resolve_with_session_fns_rec` is
-larger than the resolver's portion. Either way, the change is
-mechanically correct and removes the redundancy.
+succeeds. Bench-built-in: 15.8 → 15.3 s (~3 %). size-200: 37.7 → 31.6 s
+(~16 %). The win is bigger on size-200 because the resolver is a
+larger fraction of per-statement work for big, simply-typed
+expressions; bench-built-in's per-statement budget is dominated
+by type-checking, not AST → Core conversion. Initial measurement
+only sampled bench-built-in and undersold the change.
 
 ## Post-H1a+H3a flamegraphs (May 2026)
 
