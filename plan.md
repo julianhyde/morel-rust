@@ -43,6 +43,76 @@ hashmap constant factors to matter. We captured ~90 % of the
 unifier-HAMT headroom the original flamegraph identified
 (~41 % of pre-H1a runtime in HAMT iteration + teardown).
 
+## Post-H1a+H3a flamegraphs (May 2026)
+
+Captured with `cargo flamegraph --bin main -- …` on release with
+`[profile.release] debug = "line-tables-only"`. SVGs in
+`target/flame/` (gitignored).
+
+The two workloads now have very different shapes — the original
+"HAMT iteration is 36 %" hotspot is **gone in both**, and the
+remaining costs are workload-specific.
+
+### bench-built-in (15.8 s, many statements, complex types)
+
+| % | Category | Top entries |
+|---:|---|---|
+| 13.9 | type resolver | `deduce_decl_type` |
+| 13.6 | type resolver | `deduce_val_bind_type` |
+| 13.2 | type resolver | `deduce_expr_type` |
+| 12.1 | **source resolver, pass 1** | `resolve_with_session_fns_rec` |
+| 11.2 | **source resolver, pass 2** | `resolve_pre_expander` |
+| 8.4  | source resolver | `resolve_val_decl` |
+| 6.6  | unifier | `unify_with_constraints` |
+| 6.2  | unifier | `apply1` |
+| 4.9  | inliner Env | `drop_in_place<Env>` (HAMT teardown) |
+| 4.0  | inliner Env | `Env::child` |
+| 3.4  | inliner Env | `im::HashMap::update` |
+| 3.5  | type clone | `<Type as Clone>::clone` (deep tree) |
+| 3.2  | parser | `parse_statement` |
+| 2.9  | type resolver | `FunTypeEnv::get` (per-name lookups) |
+
+Biggest finding: **the source resolver runs twice per statement**
+(`resolve_pre_expander` + `resolve_with_session_fns_rec` =
+~23 %). The pre-expander pass exists so phase 2 of recursive
+predicate inversion (morel#217) can see the original conjuncts,
+but every statement pays for it whether it uses recursion or not.
+
+### size-200 (37 s, 1000 statements of depth-200 expression chains)
+
+| % | Category | Top entries |
+|---:|---|---|
+| ~12 | type resolver | `deduce_expr_type`, `deduce_call2_type`, `deduce_apply_type` |
+| ~13 | compiler | `compile_statement`, `compile_val_decl`, `compile_expr`, `compile_tail_expr` |
+| ~13 | parser | `expr_additive`, `spanned`, `parse_statement`, precedence-level rules |
+| ~10 | source resolver | `resolve_expr`, `call2` |
+| ~6  | **AST clone/drop** | `Expr::clone`, `Expr::drop_in_place`, `ExprKind::clone` |
+| 0.3 | **unifier** | virtually nothing |
+| 0.1 | inliner | virtually nothing |
+| 0.0 | im::HashMap | gone |
+
+The O(n²) shape for size-K **is not in the unifier**. The most
+suspect single chunk is the ~6 % spent in `Expr::clone` /
+`Expr::drop_in_place` / `ExprKind::clone` — deep AST cloning at
+each level of a traversal would produce exactly the observed
+"per-node cost doubles when n doubles" curve.
+
+### Implications for next steps
+
+* **H3b / H3c (skip clone in `act`, reverse-index `act2`)** —
+  diminished payoff. Unifier is now only 6–7 % of bench-built-in
+  and ~0 % of size-200. Even a complete win on the remaining
+  unifier hot spots would buy <10 % overall.
+* **Eliminate the resolver double-pass** — well-defined target,
+  ~11 % of bench-built-in. The pre-expander result might be
+  derivable from `decl` without a separate AST walk, or could
+  be lazily computed only for statements that actually use
+  recursive predicate inversion.
+* **Investigate AST clone-on-traverse** — could explain size-K's
+  O(n²). Likely affects every workload to some degree.
+* **H2 (Rc<Type>)** — modest payoff. Type clone is 3.5 % of
+  bench-built-in, 0.4 % of size-200. Refactor is large.
+
 ## Overall-progress benchmark (May 2026)
 
 `tests/script/bench-built-in-rust.smli` and
