@@ -33,7 +33,7 @@ use val::DESCENDING_DESC;
 ///
 /// This is used by OrderRowSink to sort rows based on order keys.
 /// Different implementations handle different types and sort orders.
-pub trait Comparator: Send + Sync {
+pub trait Comparator {
     /// Compares two values and returns their ordering.
     fn compare(&self, a: &Val, b: &Val) -> Ordering;
 }

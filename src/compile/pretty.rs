@@ -29,6 +29,7 @@ use std::collections::HashMap;
 use std::fmt::{self, Write};
 use std::iter::zip;
 use std::ptr;
+use std::rc::Rc;
 
 /// Prints values prettily.
 pub struct Pretty {
@@ -1274,7 +1275,7 @@ impl TypeVarRenumberer {
                 Box::new(self.visit(result_type)),
             ),
             Type::Forall(type_, size) => {
-                Type::Forall(Box::new(self.visit(type_)), *size)
+                Type::Forall(Rc::new(self.visit(type_)), *size)
             }
             Type::List(inner) => Type::List(Box::new(self.visit(inner))),
             Type::Named(types, name) => {

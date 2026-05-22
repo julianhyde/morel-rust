@@ -19,6 +19,7 @@ use crate::compile::library;
 use crate::compile::types::{PrimitiveType, Type, TypeVariable};
 use crate::syntax::ast::{Type as AstType, TypeKind, TypeScheme};
 use crate::syntax::parser;
+use std::rc::Rc;
 
 /// Converts a type string to a type. Panics on any parse or
 /// conversion failure; callers that need to recover from malformed
@@ -80,7 +81,7 @@ impl TypeBuilder {
         Ok(if type_scheme.var_count == 0 {
             type_
         } else {
-            Type::Forall(type_, type_scheme.var_count).into()
+            Type::Forall(Rc::from(type_), type_scheme.var_count).into()
         })
     }
 

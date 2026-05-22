@@ -1480,7 +1480,7 @@ impl TypeResolver {
                 // parameters. This makes the constructor
                 // polymorphic (e.g. `Empty : forall 1 'a tree`).
                 let scheme = if param_count > 0 {
-                    Type::Forall(Box::new(con_type), param_count)
+                    Type::Forall(Rc::new(con_type), param_count)
                 } else {
                     con_type
                 };
@@ -5690,7 +5690,7 @@ mod tests {
         //
         let tv = TypeVariable::new(0);
         let tuple_type = Type::Forall(
-            Box::new(Type::Tuple(vec![
+            Rc::new(Type::Tuple(vec![
                 Type::Primitive(PrimitiveType::Int),
                 Type::Fn(
                     Box::new(Type::Tuple(vec![

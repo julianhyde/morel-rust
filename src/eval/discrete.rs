@@ -40,7 +40,7 @@ use val::DESCENDING_DESC;
 
 /// Represents a discrete ordered type: each value (except the max) has
 /// a unique successor. Analogous to Guava's `DiscreteDomain`.
-pub trait Discrete: Send + Sync {
+pub trait Discrete {
     /// Returns the successor of `v`, or `None` if `v` is the maximum
     /// value of this type.
     fn next(&self, v: &Val) -> Option<Val>;

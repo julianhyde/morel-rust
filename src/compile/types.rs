@@ -18,6 +18,7 @@
 use crate::unify::unifier::Term;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Display, Formatter};
+use std::rc::Rc;
 
 /// Represents a resolved type in the system.
 #[derive(Clone, PartialEq, Debug)]
@@ -53,7 +54,7 @@ pub enum Type {
     /// `Forall(type_, parameter_count)` represents the type
     /// `forall tyVars ... type_`, where there are parameter_count
     /// type variables `'a`, `'b`, etc.
-    Forall(Box<Type>, usize),
+    Forall(Rc<Type>, usize),
 
     /// `Multi(types)` represents an overloaded type `type0 or ... typeN`.
     Multi(Vec<Type>),
