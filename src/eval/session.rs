@@ -96,13 +96,10 @@ pub struct Session {
     /// predicates are still visible as conjuncts of the inner
     /// `where`.
     pub rec_fn_bindings: HashMap<String, (CorePat, CoreExpr)>,
-    /// Inliner `Env` populated with all built-in functions and
-    /// structures. Built once on first access (the contents never
-    /// change) and reused across statements; each statement clones
-    /// it — a refcount bump on the underlying HAMT — and layers
-    /// session bindings on top. Avoids the per-statement
-    /// `populate_env` + `Env::multi` work that dominated the fixed
-    /// per-statement cost (see plan.md, H1a).
+    /// Cached inliner `Env` populated with all built-in functions
+    /// and structures. Built lazily on first access and reused
+    /// across statements; each statement clones it and layers
+    /// session bindings on top.
     base_env: OnceCell<Env>,
 }
 
@@ -158,9 +155,9 @@ impl Session {
     }
 
     /// Returns the cached inliner `Env` populated with all built-in
-    /// functions and structures. Built on first call and reused
-    /// thereafter; callers clone it (HAMT refcount bump) before
-    /// layering session-local bindings.
+    /// functions and structures. Built lazily on first call and
+    /// reused thereafter; callers clone it before layering
+    /// session-local bindings.
     pub fn base_env(&self) -> &Env {
         self.base_env.get_or_init(|| {
             let mut map: BTreeMap<&str, (Type, Option<Val>)> =
