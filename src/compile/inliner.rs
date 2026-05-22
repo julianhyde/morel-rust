@@ -1027,17 +1027,12 @@ impl ValBind {
 }
 /// Environment for inlining. Represented as a chain of `EnvFrame`s.
 ///
-/// Each frame holds two parallel small flat hash maps:
+/// Each frame holds two parallel hash maps:
 ///
 /// * `map`: scoped `(type, optional value)` for built-in constants and
 ///   atomic literals (used by `lookup_constant` / `lookup`).
 /// * `exprs`: scoped expressions to substitute for `ATOMIC` and
 ///   `ONCE_SAFE` let-bound variables (used by `lookup_expr`).
-///
-/// `Env::clone` is an `Rc` bump on the topmost frame; cheap. Adding a
-/// binding allocates one new frame whose parent points at the previous
-/// top, also cheap. Lookups walk the chain — typical chains are short
-/// (a handful of `from`/`let`/`fn` scopes plus the cached base env).
 ///
 /// Shadowing semantics: if an inner frame binds `name` in `map` but
 /// not in `exprs`, then `lookup_expr(name)` returns `None` — the
