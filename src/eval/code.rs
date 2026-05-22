@@ -4346,8 +4346,8 @@ fn camel_to_dotted(s: &str) -> String {
 }
 
 pub struct Lib {
-    pub fn_map: BTreeMap<BuiltInFunction, (Type, Impl)>,
-    pub structure_map: BTreeMap<BuiltInRecord, (Type, Val)>,
+    pub fn_map: BTreeMap<BuiltInFunction, (Rc<Type>, Impl)>,
+    pub structure_map: BTreeMap<BuiltInRecord, (Rc<Type>, Val)>,
     pub name_to_built_in: HashMap<String, BuiltIn>,
     /// Set of `EagerF1` variants whose corresponding `BuiltInFunction`
     /// has a `throws` strum prop; populated once at startup so
@@ -4355,6 +4355,33 @@ pub struct Lib {
     pub eager_f1_throws: HashSet<EagerF1>,
     pub eager_f2_throws: HashSet<EagerF2>,
     pub eager_f3_throws: HashSet<EagerF3>,
+}
+
+impl Lib {
+    /// Looks up a name (function or structure).
+    pub fn lookup(&self, name: &str) -> Option<BuiltIn> {
+        self.name_to_built_in.get(name).copied()
+    }
+
+    /// Returns the declared type of a built-in function.
+    pub fn fn_type(&self, f: BuiltInFunction) -> &Rc<Type> {
+        &self.fn_map.get(&f).expect("fn type").0
+    }
+
+    /// Returns the implementation of a built-in function.
+    pub fn fn_impl(&self, f: BuiltInFunction) -> Impl {
+        self.fn_map.get(&f).expect("fn impl").1
+    }
+
+    /// Returns the type of a built-in structure (record), if any.
+    pub fn structure_type(&self, r: BuiltInRecord) -> Option<&Rc<Type>> {
+        self.structure_map.get(&r).map(|(t, _)| t)
+    }
+
+    /// Returns the value of a built-in structure (record), if any.
+    pub fn structure_val(&self, r: BuiltInRecord) -> Option<&Val> {
+        self.structure_map.get(&r).map(|(_, v)| v)
+    }
 }
 
 #[derive(Default)]
@@ -4863,7 +4890,7 @@ impl LibBuilder {
         let mut name_to_built_in: HashMap<String, BuiltIn> = HashMap::new();
 
         // Populate a table of functions and their types.
-        let mut fn_map: BTreeMap<BuiltInFunction, (Type, Impl)> =
+        let mut fn_map: BTreeMap<BuiltInFunction, (Rc<Type>, Impl)> =
             BTreeMap::new();
 
         // Populate a table of structures and the functions that belong to them.
@@ -4878,7 +4905,7 @@ impl LibBuilder {
 
             let t = type_parser::string_to_type(type_code);
             if let Some(fn_impl) = self.fn_impls.remove(&f) {
-                fn_map.insert(f, ((*t).clone(), fn_impl));
+                fn_map.insert(f, (t, fn_impl));
             } else {
                 panic!("missing implementation for {:?}", f);
             }
@@ -4922,9 +4949,9 @@ impl LibBuilder {
                 } else {
                     panic!("missing implementation for {:?}", f);
                 }
-                name_types.insert(Label::String(n.clone()), Rc::new(t.clone()));
+                name_types.insert(Label::String(n.clone()), Rc::clone(t));
             }
-            let t = Type::Record(false, name_types.clone());
+            let t = Rc::new(Type::Record(false, name_types.clone()));
             structure_map.insert(*r, (t, Val::List(vals)));
         }
 
@@ -4932,7 +4959,8 @@ impl LibBuilder {
         // with fields `bonuses`, `depts`, `emps`, `salgrades`, each a
         // bag of records.
         let (scott_type, scott_val) = build_scott();
-        structure_map.insert(BuiltInRecord::Scott, (scott_type, scott_val));
+        structure_map
+            .insert(BuiltInRecord::Scott, (Rc::new(scott_type), scott_val));
 
         for r in BuiltInRecord::iter() {
             let name = r.get_str("name").expect("name");
