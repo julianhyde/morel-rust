@@ -88,6 +88,35 @@ showed `im::HashMap::update` + `im::HashMap::insert` +
 `Env::child` + HAMT drops summing to ~50 % on bench-relational.
 The dependency on the `im` crate has been removed entirely.
 
+## H2 progress log (May 2026)
+
+bench-built-in column = bench-built-in-rust.smli (50× concat),
+bench-relational column = bench-relational.smli (50× concat).
+Both run with `--idempotent`. Pre-H2 baseline below is the
+`chained-scopes Env` row above (8.1 s / 14.5 s).
+
+| Sub | What changed | bench-relational | bench-built-in |
+|---|---|---:|---:|
+| Phase 1 | thread-local `LIBRARY`, `bool_type()` fn | 8.05 s | 14.3 s |
+| 2a | `Type::Forall(Rc<Type>, usize)` | 7.95 s | 14.4 s |
+| 2b | `Type::{List, Bag}(Rc<Type>)` | 7.62 s | 14.4 s |
+| 2c | `Type::Fn(Rc<Type>, Rc<Type>)` | 7.20 s | 14.4 s |
+| 2d | `Type::{Tuple, Named, Data, Multi}` → `Vec<Rc<Type>>` | 7.18 s | 14.4 s |
+| 2e | `Type::Record(_, BTreeMap<Label, Rc<Type>>)` | 7.16 s | 14.4 s |
+| 2f | `Type::Alias(_, Rc<Type>, _)` | 7.03 s | 14.0 s |
+| 2g | `Expr`/`Pat`/`ValBind` annotation fields | 6.57 s | 14.0 s |
+
+Net H2 vs chained-scopes baseline:
+  bench-relational  8.1 → 6.6 s   (-19 %)
+  bench-built-in   14.5 → 14.0 s  (-3 %)
+
+The bench-relational win matches the expected ceiling (~13 % from
+the original analysis, exceeded slightly probably because of
+cascading Apply/Tuple savings in the from-step lowering).
+bench-built-in barely moves, as predicted — type-checking
+dominates there, and `Type::clone` is a small fraction of its
+budget.
+
 ## Post-H1a+H3a flamegraphs (May 2026)
 
 Captured with `cargo flamegraph --bin main -- …` on release with
