@@ -1269,7 +1269,7 @@ impl TypeVarRenumberer {
             // lint: sort until '#}' where '##Type::'
             Type::Alias(name, type_, args) => Type::Alias(
                 name.clone(),
-                Box::new(self.visit(type_)),
+                Rc::new(self.visit(type_)),
                 self.visit_list(args.as_slice()),
             ),
             Type::Bag(inner) => Type::Bag(Rc::new(self.visit(inner))),

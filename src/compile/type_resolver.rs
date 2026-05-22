@@ -154,7 +154,7 @@ impl TypeMap {
                 if let Some(alias_name) = self.var_alias_map.get(var) {
                     return Some(Box::new(Type::Alias(
                         alias_name.clone(),
-                        type_,
+                        type_.into(),
                         vec![],
                     )));
                 }
@@ -454,7 +454,7 @@ impl<'a> TermToTypeConverter<'a> {
                             .clone()
                     };
                 if let Some(name) = alias_name {
-                    Box::new(Type::Alias(name, inner, vec![]))
+                    Box::new(Type::Alias(name, inner.into(), vec![]))
                 } else {
                     inner
                 }
@@ -1099,7 +1099,7 @@ impl TypeResolver {
                         let resolved_type = if let Some(alias_name) = alias {
                             Box::new(Type::Alias(
                                 alias_name.to_string(),
-                                resolved_type,
+                                resolved_type.into(),
                                 vec![],
                             ))
                         } else {

@@ -48,7 +48,7 @@ pub enum Type {
     /// `Alias(name, type_, args)` represents the declaration
     /// `type name = args type_`; for example,
     /// `type int_pair_list = (int * int) list`.
-    Alias(String, Box<Type>, Vec<Rc<Type>>),
+    Alias(String, Rc<Type>, Vec<Rc<Type>>),
     Data(String, Vec<Rc<Type>>),
 
     /// `Forall(type_, parameter_count)` represents the type

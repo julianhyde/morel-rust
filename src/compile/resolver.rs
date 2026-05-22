@@ -1378,7 +1378,7 @@ impl<'a> Resolver<'a> {
                         let inner_type = resolved.type_().clone();
                         let alias_type = Box::new(Type::Alias(
                             name.clone(),
-                            inner_type,
+                            inner_type.into(),
                             vec![],
                         ));
                         return resolved.with_type(alias_type);
@@ -1477,7 +1477,7 @@ impl<'a> Resolver<'a> {
                     {
                         return Some(Type::List(Rc::new(Type::Alias(
                             name.clone(),
-                            Box::new((**elem_type).clone()),
+                            elem_type.clone(),
                             vec![],
                         ))));
                     }
