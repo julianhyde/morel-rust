@@ -1061,12 +1061,10 @@ impl Shell {
     fn evaluate_node(&mut self, resolved: &Resolved) -> ShellResult<String> {
         let session_fns = self.session.borrow().fn_bindings.clone();
         let rec_session_fns = self.session.borrow().rec_fn_bindings.clone();
-        // Resolve once. The pre-expander fn-bindings (for Phase 2 of
-        // recursive predicate inversion) are extracted eagerly from
-        // the pre-expander decl so we don't need to keep the whole
-        // pre-expander tree alive past the expander pass. The
-        // post-expander decl flows through the rest of the pipeline
-        // as before.
+        // `resolve_with_session_fns_rec` returns both the
+        // post-expander decl (which flows through the rest of the
+        // pipeline) and the pre-expander fn-bindings used by
+        // recursive predicate inversion (morel-rust #217).
         let (decl, pre_fn_env, resolve_errors) =
             resolver::resolve_with_session_fns_rec(
                 resolved,
@@ -1219,9 +1217,8 @@ impl Shell {
         // future statements' predicate inversion (#223). Save the
         // post-expander bodies into `fn_bindings` (used by
         // `inline_tuple_fn_calls_in_where`). The pre-expander
-        // bodies (used by Phase 2 of recursive predicate inversion,
-        // #217) were already captured into `pre_fn_env` before the
-        // expander ran; commit them here.
+        // bodies (used by recursive predicate inversion in #217)
+        // were already captured into `pre_fn_env`; commit them here.
         collect_session_fn_bindings(
             &decl,
             &mut self.session.borrow_mut().fn_bindings,
