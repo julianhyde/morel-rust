@@ -1622,7 +1622,7 @@ impl TypeResolver {
                 let e2 = self.deduce_expr_type(&*step_env.env, e, &v_e)?;
                 // f has type: collection(type_of_e) -> v.
                 // Determine the collection kind from the aggregate
-                // function's declared type (per morel#271, d751e565):
+                // function's declared type:
                 //  - list-only (e.g. count: 'a list -> int): list_term
                 //  - bag-only: bag_term
                 //  - overloaded: match input ordering
@@ -1970,8 +1970,8 @@ impl TypeResolver {
             ExprKind::Literal(lit) => {
                 if let LiteralKind::Fn(builtin) = &lit.kind {
                     // Built-in function literal (inserted by the
-                    // postfix-call rewrite, hydromatic/morel#346).
-                    // Its type is the built-in's declared type;
+                    // postfix-call rewrite). Its type is the
+                    // built-in's declared type;
                     // instantiate fresh unification variables for any
                     // Forall-quantified type variables.
                     let builtin_type = builtin.get_type();
@@ -3166,7 +3166,7 @@ impl TypeResolver {
         // The function must have type: collection -> result.
         // Use collectionKind to determine whether the function's
         // parameter should match the input or be independent.
-        // Per morel#271, `into` adapts collection kinds.
+        // `into` adapts collection kinds.
         let c_param = self.variable();
         let kind = self.aggregate_collection_kind(&*p.env, expr);
         match kind {
@@ -3359,7 +3359,7 @@ impl TypeResolver {
         arg: &Expr,
         v_result: &Var,
     ) -> Result<(Expr, Expr), Error> {
-        // Postfix method-call pattern (hydromatic/morel#346):
+        // Postfix method-call pattern:
         //   Apply(Apply(RecordSelector(name), recv), arg)
         // If the receiver's type resolves to a non-record for which a
         // postfix method `name` is defined, rewrite the call into a
@@ -3445,7 +3445,7 @@ impl TypeResolver {
         self.deduce_expr_type(env, fun, v_fun)
     }
 
-    /// Attempts the postfix method-call rewrite (hydromatic/morel#346).
+    /// Attempts the postfix method-call rewrite.
     /// Called from `deduce_apply_type` when the outer Apply has a
     /// `RecordSelector` in its inner-function slot.
     ///
@@ -4186,7 +4186,7 @@ impl TypeResolver {
     }
 
     /// Inspects the aggregate function's declared type to determine
-    /// its collection kind. Per morel#271 (d751e565):
+    /// its collection kind:
     /// - Identifier with list param → List
     /// - Identifier with bag param → Bag
     /// - Overloaded identifier → MatchInput
