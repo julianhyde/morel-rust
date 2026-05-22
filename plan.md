@@ -611,6 +611,84 @@ open('/tmp/bench_val.sml','w').write(
    measurement should be reproduced on current code (post `0fec908`
    split) so we have an external reference point.
 
+## H2 (Rc-Type) phased plan
+
+The original H2 hypothesis — wrap `Type` so clone is O(1) — was
+investigated in May 2026 and confirmed (~5 % bench-built-in, ~13 %
+bench-relational ceiling). A big-bang refactor was attempted and
+aborted: the change cascades through `Expr`, `Pat`, `ValBind`,
+LIBRARY statics, and every `Box::new(Type::…)` callsite (~150+
+sites). The work is real but needs to be staged so every commit
+compiles and passes `fullMake`.
+
+### Phase 1 — Thread-local `LIBRARY` and `bool_type()` helper
+
+Pre-work that *doesn't* change `Type`'s structure but removes the
+`Sync` constraint that statics like `LIBRARY` impose. Independent
+of all later phases.
+
+* Convert `pub static LIBRARY: LazyLock<Lib>` in `eval/code.rs`
+  into `thread_local! { pub static LIBRARY: Lib }`.
+* Update the 10 `LIBRARY.foo` callsites to
+  `LIBRARY.with(|lib| lib.foo …)`.
+* Replace `static BOOL: Type` in `pretty.rs` with
+  `fn bool_type() -> Type` and update its 10 callers.
+
+No perf change. Risk: low. Estimated effort: ~30 minutes.
+
+### Phase 2 — `Box<Type>` → `Rc<Type>` migration (no interning)
+
+Sub-phased by `Type` variant so each sub-commit compiles and the
+test suite passes. Order is "least-used variant first" so the
+mechanical edits get smaller as we go and the high-touch ones
+land with a tested skeleton in place.
+
+| Sub | Variant change | Approximate constructor sites |
+|---|---|---:|
+| 2a | `Type::Forall(Rc<Type>, usize)` | ~5 |
+| 2b | `Type::List(Rc<Type>)` + `Type::Bag(Rc<Type>)` | ~30 each |
+| 2c | `Type::Fn(Rc<Type>, Rc<Type>)` (heaviest) | ~80 |
+| 2d | `Type::Tuple` / `Named` / `Data` / `Multi` (all `Vec<Rc<Type>>`) | ~60 combined |
+| 2e | `Type::Record(bool, BTreeMap<Label, Rc<Type>>)` | ~15 |
+| 2f | `Type::Alias(String, Rc<Type>, Vec<Rc<Type>>)` | ~5 |
+| 2g | `Expr`/`Pat`/`ValBind` type-annotation fields `Box<Type>` → `Rc<Type>` | ~150 |
+
+Between 2a–2f, `Expr`/`Pat`/`ValBind` keep their `Box<Type>`
+annotation fields. When a constructor needs to bridge — e.g. a
+new `Rc<Type>` child being placed into a `Box<Type>` slot — wrap
+with `Box::new((*rc).clone())`. Ugly but compiles, and goes away
+in 2g.
+
+Also fold in (probably during 2g or as its own micro-phase):
+remove the `Send + Sync` bounds from `Comparator` and `Discrete`
+traits (they were defensive, never required at runtime; will
+become unsatisfiable once Type holds `Rc`).
+
+Total Phase 2 effort estimate: 4–6 hours. Each sub-commit should
+be followed by `cargo test --release` and ideally `fullMake`.
+
+Expected perf impact after Phase 2 lands fully (no interning):
+~50–70 % of the H2 ceiling, i.e. ~3 % bench-built-in and
+~7–9 % bench-relational. The remaining "interning" benefit (cat
+3 below) is largely memory and pointer-equality, not clone speed.
+
+### Phase 3 — *Future / optional* — Hash + `intern()` + apply
+
+Only if Phase 2's measured gain doesn't close the rust↔java gap
+enough.
+
+* Derive `Hash` + `Eq` on `PrimitiveType` and `Type`.
+* Add a thread-local `POOL: HashSet<Rc<Type>>` and
+  `intern(Type) -> Rc<Type>`.
+* Use `intern()` at LIBRARY init so library types are canonical,
+  then at `FunTypeEnv::get` so each name reference returns the
+  pre-interned `Rc<Type>` rather than cloning the LIBRARY entry's
+  subtree.
+* Optionally: pointer-equality shortcuts in unifier hot paths.
+
+Expected delta on top of Phase 2: small but non-zero (memory
+locality, occasional pointer-equality wins).
+
 ## Suggested execution order
 
 The four follow-ups from the prior comment, in dependency order:

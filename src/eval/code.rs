@@ -60,7 +60,7 @@ use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::iter::{repeat_n, zip};
 use std::ops::Deref;
 use std::str::FromStr;
-use std::sync::{Arc, LazyLock, Mutex, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use strum::{EnumProperty, IntoEnumIterator};
 use val::{
     RANGE_ALL, RANGE_AT_LEAST, RANGE_AT_MOST, RANGE_CLOSED, RANGE_CLOSED_OPEN,
@@ -2560,7 +2560,7 @@ impl EagerF1 {
     /// path can construct a `MorelError` without allocating on the
     /// happy path.
     fn is_throwing(&self) -> bool {
-        LIBRARY.eager_f1_throws.contains(self)
+        LIBRARY.with(|lib| lib.eager_f1_throws.contains(self))
     }
 
     // Passing Val by value is OK because it is small.
@@ -3628,7 +3628,7 @@ impl EagerF2 {
 
     /// See [`EagerF1::is_throwing`].
     fn is_throwing(&self) -> bool {
-        LIBRARY.eager_f2_throws.contains(self)
+        LIBRARY.with(|lib| lib.eager_f2_throws.contains(self))
     }
 
     // Passing Val by value is OK because it is small.
@@ -4359,7 +4359,16 @@ struct LibBuilder {
     fn_impls: BTreeMap<BuiltInFunction, Impl>,
 }
 
-pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
+thread_local! {
+    /// Thread-local rather than `static` so we don't constrain `Lib`
+    /// (or the `Type`s it transitively holds) to be `Sync`. The
+    /// initialiser runs lazily on first access per thread; in
+    /// practice morel-rust is single-threaded so there's one
+    /// instance per process.
+    pub static LIBRARY: Lib = build_library();
+}
+
+fn build_library() -> Lib {
     #[allow(clippy::enum_glob_use)]
     use crate::compile::library::BuiltInFunction::*;
 
@@ -4812,7 +4821,7 @@ pub static LIBRARY: LazyLock<Lib> = LazyLock::new(|| {
     Eager0::WeekdayWed.implements(&mut b, WeekdayWed);
 
     b.build()
-});
+}
 
 /// Returns true for functions that are ML-style datatype constructors
 /// (e.g. `DESC`, `POINT`, `NONE`, `SOME`) and should be omitted from the

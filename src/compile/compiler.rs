@@ -1444,11 +1444,14 @@ impl<'a> Compiler<'a> {
                         Code::new_constant(type_, val.clone())
                     }
                 } else if let Some(rec) = name_to_rec(name) {
-                    let (_, val) = code::LIBRARY
-                        .structure_map
-                        .get(&rec)
-                        .expect("structure not in library");
-                    Code::new_constant(type_, val.clone())
+                    let val = code::LIBRARY.with(|lib| {
+                        lib.structure_map
+                            .get(&rec)
+                            .expect("structure not in library")
+                            .1
+                            .clone()
+                    });
+                    Code::new_constant(type_, val)
                 } else {
                     cx.frame_def.var_index(name);
                     unreachable!()

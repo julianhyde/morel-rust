@@ -1504,11 +1504,13 @@ pub enum BuiltInFunction {
 
 impl BuiltInFunction {
     pub fn get_impl(&self) -> Impl {
-        LIBRARY.fn_map.get(self).expect("fn impl").1
+        LIBRARY.with(|lib| lib.fn_map.get(self).expect("fn impl").1)
     }
 
     pub fn get_type(&self) -> Box<Type> {
-        Box::new(LIBRARY.fn_map.get(self).expect("fn type").0.clone())
+        LIBRARY.with(|lib| {
+            Box::new(lib.fn_map.get(self).expect("fn type").0.clone())
+        })
     }
 
     pub(crate) fn name(&self) -> &'static str {
@@ -1681,11 +1683,7 @@ impl BuiltInRecord {
     }
 
     pub(crate) fn get_type(&self) -> Option<Type> {
-        if let Some((t, _v)) = LIBRARY.structure_map.get(self) {
-            Some(t.clone())
-        } else {
-            None
-        }
+        LIBRARY.with(|lib| lib.structure_map.get(self).map(|(t, _)| t.clone()))
     }
 }
 
@@ -2015,57 +2013,55 @@ static BY_NAME: LazyLock<BTreeMap<&str, BuiltIn>> = LazyLock::new(|| {
 });
 
 pub(crate) fn populate_env(map: &mut BTreeMap<&str, (Type, Option<Val>)>) {
-    // Add built-in records to the environment
-    map.extend(
-        LIBRARY.structure_map.iter().map(|(r, (type_, v))| {
+    LIBRARY.with(|lib| {
+        // Add built-in records to the environment
+        map.extend(lib.structure_map.iter().map(|(r, (type_, v))| {
             (r.name(), (type_.clone(), Some(v.clone())))
-        }),
-    );
+        }));
 
-    // Until we can deduce type for records, keep the old logic that provides
-    // the "set" function.
-    map.extend(
-        LIBRARY
-            .fn_map
-            .iter()
-            .filter(|(f, _)| f.get_bool("global").is_some_and(|b| b))
-            .map(|(f, (t, _))| (f.name(), (t.clone(), Some(Val::Fn(*f))))),
-    );
+        // Until we can deduce type for records, keep the old logic that
+        // provides the "set" function.
+        map.extend(
+            lib.fn_map
+                .iter()
+                .filter(|(f, _)| f.get_bool("global").is_some_and(|b| b))
+                .map(|(f, (t, _))| (f.name(), (t.clone(), Some(Val::Fn(*f))))),
+        );
 
-    // Add global built-in functions to the environment.
-    map.extend(
-        LIBRARY
-            .fn_map
-            .iter()
-            .map(|(f, (t, _))| {
-                (
-                    f.name(),
+        // Add global built-in functions to the environment.
+        map.extend(
+            lib.fn_map
+                .iter()
+                .map(|(f, (t, _))| {
                     (
-                        t.clone(),
-                        if !f.is_global() {
-                            None
-                        } else if let Type::Fn(_, _) = t {
-                            Some(Val::Fn(*f))
-                        } else if f == &BuiltInFunction::ListNil
-                            || f == &BuiltInFunction::BagNil
-                        {
-                            // Both List.nil and Bag.nil are empty Val::List
-                            Some(Val::List(Vec::new()))
-                        } else {
-                            None
-                        },
-                    ),
-                )
-            })
-            .filter(|(_name, (_t, v))| v.is_some()),
-    );
+                        f.name(),
+                        (
+                            t.clone(),
+                            if !f.is_global() {
+                                None
+                            } else if let Type::Fn(_, _) = t {
+                                Some(Val::Fn(*f))
+                            } else if f == &BuiltInFunction::ListNil
+                                || f == &BuiltInFunction::BagNil
+                            {
+                                // Both List.nil and Bag.nil are empty Val::List
+                                Some(Val::List(Vec::new()))
+                            } else {
+                                None
+                            },
+                        ),
+                    )
+                })
+                .filter(|(_name, (_t, v))| v.is_some()),
+        );
 
-    // Add operator names for functions with alias = "op <name>"
-    for (f, (t, _)) in &LIBRARY.fn_map {
-        if let Some(op_name) = f.get_str("global") {
-            map.insert(op_name, (t.clone(), Some(Val::Fn(*f))));
+        // Add operator names for functions with alias = "op <name>"
+        for (f, (t, _)) in &lib.fn_map {
+            if let Some(op_name) = f.get_str("global") {
+                map.insert(op_name, (t.clone(), Some(Val::Fn(*f))));
+            }
         }
-    }
+    });
 }
 
 /// Returns the constructor names of each built-in datatype. Derived
@@ -2089,7 +2085,7 @@ pub fn built_in_datatype_constructors() -> HashMap<String, Vec<String>> {
 
 /// Looks up a built-in (function or structure) by name.
 pub fn lookup(name: &str) -> Option<BuiltIn> {
-    LIBRARY.name_to_built_in.get(name).cloned()
+    LIBRARY.with(|lib| lib.name_to_built_in.get(name).cloned())
 }
 
 /// Looks up a structure field by `"Struct.field"` name.

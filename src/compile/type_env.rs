@@ -113,24 +113,23 @@ impl TypeEnv for SimpleTypeEnv {
 impl TypeEnv for FunTypeEnv {
     fn get(&self, name: &str, tr: &mut TypeResolver) -> Option<BindType> {
         if let Some(b) = library::lookup(name) {
-            match b {
-                BuiltIn::Fn(f) => {
-                    if let Some((t, _)) = LIBRARY.fn_map.get(&f) {
-                        let term = tr.type_to_term(t);
-                        return Some(if f.is_constructor() {
-                            BindType::Constructor(Term::Variable(term))
-                        } else {
-                            BindType::Val(Term::Variable(term))
-                        });
+            let result = LIBRARY.with(|lib| match b {
+                BuiltIn::Fn(f) => lib.fn_map.get(&f).map(|(t, _)| {
+                    let term = tr.type_to_term(t);
+                    if f.is_constructor() {
+                        BindType::Constructor(Term::Variable(term))
+                    } else {
+                        BindType::Val(Term::Variable(term))
                     }
-                }
+                }),
                 BuiltIn::Record(r) => {
-                    if let Some((t, _)) = LIBRARY.structure_map.get(&r) {
-                        return Some(BindType::Val(Term::Variable(
-                            tr.type_to_term(t),
-                        )));
-                    }
+                    lib.structure_map.get(&r).map(|(t, _)| {
+                        BindType::Val(Term::Variable(tr.type_to_term(t)))
+                    })
                 }
+            });
+            if result.is_some() {
+                return result;
             }
         }
         self.parent.get(name, tr)

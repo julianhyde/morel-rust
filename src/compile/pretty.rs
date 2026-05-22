@@ -145,7 +145,13 @@ impl Type {
 
 /// Boolean is used as a placeholder in several cases where we don't print the
 /// type but print (say) a raw string ":".
-static BOOL: Type = Type::Primitive(PrimitiveType::Bool);
+///
+/// A function rather than a `static` so the pretty printer doesn't
+/// constrain `Type` to be `Sync`. The value is cheap to construct
+/// (no allocation; a single inline enum variant).
+fn bool_type() -> Type {
+    Type::Primitive(PrimitiveType::Bool)
+}
 
 impl Pretty {
     pub fn new(
@@ -229,7 +235,7 @@ impl Pretty {
             indent,
             line_end,
             depth,
-            &BOOL,
+            &bool_type(),
             &Val::Raw(value.to_string()),
             0,
             0,
@@ -344,7 +350,7 @@ impl Pretty {
                     indent + 2,
                     line_end,
                     depth,
-                    &BOOL,
+                    &bool_type(),
                     &Val::new_type_with_suffix(
                         ": ",
                         &display_type,
@@ -997,12 +1003,24 @@ impl Pretty {
                 const OP: Op = Op::FN;
                 let v_param = Val::new_type("", param_type);
                 self.pretty1(
-                    buf, indent2, line_end, depth, &BOOL, &v_param, left,
+                    buf,
+                    indent2,
+                    line_end,
+                    depth,
+                    &bool_type(),
+                    &v_param,
+                    left,
                     OP.left,
                 )?;
                 let v_result = Val::new_type(" -> ", result_type);
                 self.pretty1(
-                    buf, indent2, line_end, depth, &BOOL, &v_result, OP.right,
+                    buf,
+                    indent2,
+                    line_end,
+                    depth,
+                    &bool_type(),
+                    &v_result,
+                    OP.right,
                     right,
                 )
             }
@@ -1024,7 +1042,13 @@ impl Pretty {
                     1 => {
                         let v_arg = Val::new_type("", &args[0]);
                         self.pretty1(
-                            buf, indent2, line_end, depth, &BOOL, &v_arg, left,
+                            buf,
+                            indent2,
+                            line_end,
+                            depth,
+                            &bool_type(),
+                            &v_arg,
+                            left,
                             OP.right,
                         )?;
                         buf.push(' ');
@@ -1037,8 +1061,14 @@ impl Pretty {
                             }
                             let v_arg = Val::new_type("", arg);
                             self.pretty1(
-                                buf, indent2, line_end, depth, &BOOL, &v_arg,
-                                0, 0,
+                                buf,
+                                indent2,
+                                line_end,
+                                depth,
+                                &bool_type(),
+                                &v_arg,
+                                0,
+                                0,
                             )?;
                         }
                         buf.push_str(") ");
@@ -1061,7 +1091,7 @@ impl Pretty {
                         indent2 + 1,
                         line_end,
                         depth,
-                        &BOOL,
+                        &bool_type(),
                         &Val::new_labeled(name, element_type),
                         0,
                         0,
@@ -1095,7 +1125,7 @@ impl Pretty {
                             indent2,
                             line_end,
                             depth,
-                            &BOOL,
+                            &bool_type(),
                             &Val::new_type("", arg_type),
                             0,
                             0,
@@ -1107,7 +1137,7 @@ impl Pretty {
                             indent2,
                             line_end,
                             depth,
-                            &BOOL,
+                            &bool_type(),
                             &Val::new_type("", arg_type),
                             if i == 0 { left } else { OP.right },
                             if i == arg_types.len() - 1 {
