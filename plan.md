@@ -117,6 +117,27 @@ bench-built-in barely moves, as predicted — type-checking
 dominates there, and `Type::clone` is a small fraction of its
 budget.
 
+## Post-H2 follow-ups (May 2026)
+
+| Change | bench-relational | bench-built-in |
+|---|---:|---:|
+| drop `bool_type` placeholder | 6.61 s | 13.95 s |
+| collapse `FunTypeEnv::get` TLS | 6.63 s | 13.92 s |
+| Phase A: `Lib: (Rc<Type>, Impl)` + instance methods | 6.50 s | 14.00 s |
+| Phase B (init): `Lib::intern`, applied at LIBRARY init | 6.60 s | 14.01 s |
+| intern at `TermToTypeConverter::term_type` | 6.67 s | 13.96 s |
+| **unifier: skip `Sequence::sub1` when var absent** | **6.37 s** | **12.95 s** |
+
+The dominant win in this round was the unifier `sub1` early-out
+(-7.2 % on built-in). The interning machinery is in place but the
+*time* benefit didn't materialise from pointer-equality fast paths
+(unifier doesn't carry `Rc<Type>` directly) — interning currently
+buys memory locality only.
+
+Net from chained-scopes baseline:
+  bench-relational  8.1 → 6.37 s   (-21 %)
+  bench-built-in   14.5 → 12.95 s  (-11 %)
+
 ## Post-H1a+H3a flamegraphs (May 2026)
 
 Captured with `cargo flamegraph --bin main -- …` on release with
