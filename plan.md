@@ -23,6 +23,7 @@ falsify) each one.
 | 2026-05-21 | H1a (cache base Env) | 26.4 s | 0.45 s |
 | 2026-05-21 | H3a (im → std HashMap) | 15.8 s | 0.45 s |
 | 2026-05-21 | New-1 (one resolver pass) | 15.3 s | 0.45 s |
+| 2026-05-21 | chained-scopes Env | 14.5 s | 0.40 s |
 
 Note: New-1 also moved size-200 (1000 × n-200) from 37.7 s to
 31.6 s (~16 %). The bench-built-in win is small because
@@ -64,6 +65,28 @@ larger fraction of per-statement work for big, simply-typed
 expressions; bench-built-in's per-statement budget is dominated
 by type-checking, not AST → Core conversion. Initial measurement
 only sampled bench-built-in and undersold the change.
+
+Chained-scopes Env — Replaced `im::HashMap` (HAMT) in
+`inliner::Env` with a chain of `Rc<EnvFrame>`s where each frame
+holds a small flat `HashMap`. `Env::clone` is still O(1) (Rc
+bump), `Env::child` allocates one new frame instead of HAMT
+path-copy, and lookups walk the chain (typical depth ≤ 15).
+Crucially the `Env` API (`child`, `child_none`, `child_expr`,
+`lookup`, `lookup_expr`) is unchanged, so no `&Env → &mut Env`
+plumbing was needed.
+
+Wall-clock impact (M-series macOS, release build):
+  bench-relational (50×)  10.5 s → 8.1 s   (-23 %)
+  bench-built-in          15.3 s → 14.5 s  (-5 %)
+  10 000 × `1+2;`          0.45 s → 0.40 s (-11 %)
+  size-200                 31.6 s → 32.1 s (noise)
+
+The relational workload is where this hits hardest because
+`from`-queries push a new scope at every step. The Mar-issue
+flamegraph put HAMT iteration at 36 %; the post-H3a-flamegraph
+showed `im::HashMap::update` + `im::HashMap::insert` +
+`Env::child` + HAMT drops summing to ~50 % on bench-relational.
+The dependency on the `im` crate has been removed entirely.
 
 ## Post-H1a+H3a flamegraphs (May 2026)
 
