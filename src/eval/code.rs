@@ -4356,10 +4356,8 @@ pub struct Lib {
     pub eager_f1_throws: HashSet<EagerF1>,
     pub eager_f2_throws: HashSet<EagerF2>,
     pub eager_f3_throws: HashSet<EagerF3>,
-    /// Interning pool. Every `Rc<Type>` produced by `intern` or
-    /// `intern_rc` is canonical: two `Rc<Type>`s for the same type
-    /// share the same allocation, so `Rc::ptr_eq` is a sound
-    /// equality test.
+    /// Pool of canonical interned `Rc<Type>` values; see `intern`
+    /// and `intern_rc`.
     pool: RefCell<HashSet<Rc<Type>>>,
 }
 
