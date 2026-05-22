@@ -2086,7 +2086,7 @@ pub fn built_in_datatype_constructors() -> HashMap<String, Vec<String>> {
 
 /// Looks up a built-in (function or structure) by name.
 pub fn lookup(name: &str) -> Option<BuiltIn> {
-    LIBRARY.with(|lib| lib.name_to_built_in.get(name).cloned())
+    LIBRARY.with(|lib| lib.name_to_built_in.get(name).copied())
 }
 
 /// Looks up a structure field by `"Struct.field"` name.

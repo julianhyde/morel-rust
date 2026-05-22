@@ -4363,11 +4363,6 @@ struct LibBuilder {
 }
 
 thread_local! {
-    /// Thread-local rather than `static` so we don't constrain `Lib`
-    /// (or the `Type`s it transitively holds) to be `Sync`. The
-    /// initialiser runs lazily on first access per thread; in
-    /// practice morel-rust is single-threaded so there's one
-    /// instance per process.
     pub static LIBRARY: Lib = build_library();
 }
 
