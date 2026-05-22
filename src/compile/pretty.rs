@@ -201,8 +201,8 @@ impl Pretty {
                 ts.iter().map(|t| Self::instantiate(t, args)).collect(),
             ),
             Type::Fn(a, b) => Type::Fn(
-                Box::new(Self::instantiate(a, args)),
-                Box::new(Self::instantiate(b, args)),
+                Rc::new(Self::instantiate(a, args)),
+                Rc::new(Self::instantiate(b, args)),
             ),
             Type::List(t) => Type::List(Rc::new(Self::instantiate(t, args))),
             Type::Record(p, fields) => Type::Record(
@@ -1271,8 +1271,8 @@ impl TypeVarRenumberer {
                 Type::Data(name.clone(), self.visit_list(args.as_slice()))
             }
             Type::Fn(param_type, result_type) => Type::Fn(
-                Box::new(self.visit(param_type)),
-                Box::new(self.visit(result_type)),
+                Rc::new(self.visit(param_type)),
+                Rc::new(self.visit(result_type)),
             ),
             Type::Forall(type_, size) => {
                 Type::Forall(Rc::new(self.visit(type_)), *size)

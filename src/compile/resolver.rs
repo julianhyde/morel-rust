@@ -976,8 +976,8 @@ impl<'a> Resolver<'a> {
                                 } else {
                                     // Project this field from the base.
                                     let selector_type = Box::new(Type::Fn(
-                                        base_type.clone(),
-                                        Box::new(field_type.clone()),
+                                        base_type.clone().into(),
+                                        Rc::new(field_type.clone()),
                                     ));
                                     let selector = CoreExpr::RecordSelector(
                                         selector_type,
@@ -1292,7 +1292,7 @@ impl<'a> Resolver<'a> {
                 let c_arg = self.resolve_expr(arg);
                 let arg_t = c_arg.type_();
                 let intermediate_t =
-                    Box::new(Type::Fn(arg_t.clone(), t.clone()));
+                    Box::new(Type::Fn(arg_t.clone().into(), t.clone().into()));
                 let inner = CoreExpr::Apply(
                     intermediate_t,
                     Box::new(fn_literal),
@@ -1314,7 +1314,7 @@ impl<'a> Resolver<'a> {
                 let c_arg = self.resolve_expr(arg);
                 let recv_t = c_recv.type_();
                 let intermediate_t =
-                    Box::new(Type::Fn(recv_t.clone(), t.clone()));
+                    Box::new(Type::Fn(recv_t.clone().into(), t.clone().into()));
                 let inner = CoreExpr::Apply(
                     intermediate_t,
                     Box::new(fn_literal),
@@ -2304,8 +2304,8 @@ fn substitute(t: &Type, subst: &HashMap<usize, Type>) -> Type {
         Type::List(inner) => Type::List(Rc::new(substitute(inner, subst))),
         Type::Bag(inner) => Type::Bag(Rc::new(substitute(inner, subst))),
         Type::Fn(a, r) => Type::Fn(
-            Box::new(substitute(a, subst)),
-            Box::new(substitute(r, subst)),
+            Rc::new(substitute(a, subst)),
+            Rc::new(substitute(r, subst)),
         ),
         Type::Data(n, args) => Type::Data(
             n.clone(),

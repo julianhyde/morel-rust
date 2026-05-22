@@ -1209,8 +1209,8 @@ fn build_iterate_for_recursive_v2(
         let pair_t =
             Box::new(Type::Tuple(vec![(**orig_t).clone(), (**orig_t).clone()]));
         let fn_t = Box::new(Type::Fn(
-            pair_t.clone(),
-            Box::new(Type::Primitive(PrimitiveType::Bool)),
+            pair_t.clone().into(),
+            Rc::new(Type::Primitive(PrimitiveType::Bool)),
         ));
         let eq_lit = Expr::Literal(fn_t, Val::Fn(eq_op));
         let lhs = Expr::Identifier(orig_t.clone(), orig_name.clone());
@@ -1298,8 +1298,8 @@ fn build_iterate_for_recursive_v2(
         ],
     );
     let fn_t = Box::new(Type::Fn(
-        Box::new(Type::Tuple(vec![coll_t.clone(), coll_t.clone()])),
-        Box::new(coll_t.clone()),
+        Rc::new(Type::Tuple(vec![coll_t.clone(), coll_t.clone()])),
+        Rc::new(coll_t.clone()),
     ));
     let update_fn = Expr::Fn(
         fn_t.clone(),
@@ -1311,17 +1311,17 @@ fn build_iterate_for_recursive_v2(
     );
     // Build `Relational.iterate seed updateFn`.
     let iter_t = Box::new(Type::Fn(
-        Box::new(coll_t.clone()),
-        Box::new(Type::Fn(
-            Box::new(fn_t.as_ref().clone()),
-            Box::new(coll_t.clone()),
+        Rc::new(coll_t.clone()),
+        Rc::new(Type::Fn(
+            Rc::new(fn_t.as_ref().clone()),
+            Rc::new(coll_t.clone()),
         )),
     ));
     let iter_lit =
         Expr::Literal(iter_t, Val::Fn(BuiltInFunction::RelationalIterate));
     let after_seed_t = Box::new(Type::Fn(
-        Box::new(fn_t.as_ref().clone()),
-        Box::new(coll_t.clone()),
+        Rc::new(fn_t.as_ref().clone()),
+        Rc::new(coll_t.clone()),
     ));
     let with_seed = Expr::Apply(
         after_seed_t,
@@ -1806,7 +1806,8 @@ fn remove_recursive_branches(body: &Expr, name: &str) -> Option<Expr> {
         let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
         let pair_t =
             Box::new(Type::Tuple(vec![(*bool_t).clone(), (*bool_t).clone()]));
-        let fn_t = Box::new(Type::Fn(pair_t.clone(), bool_t.clone()));
+        let fn_t =
+            Box::new(Type::Fn(pair_t.clone().into(), bool_t.clone().into()));
         let fn_lit = Expr::Literal(fn_t, Val::Fn(BuiltInFunction::BoolOrElse));
         Expr::Apply(
             bool_t,
@@ -1989,8 +1990,8 @@ fn build_iterate_ast(
                     _ => return Expr::List(Box::new(coll_t), Vec::new()),
                 };
                 let sel_t = Box::new(Type::Fn(
-                    Box::new(seed_elem_t.clone()),
-                    Box::new(field_t.clone()),
+                    Rc::new(seed_elem_t.clone()),
+                    Rc::new(field_t.clone()),
                 ));
                 let sel = Expr::RecordSelector(sel_t, i);
                 tuple_items.push(Expr::Apply(
@@ -2075,7 +2076,7 @@ fn build_iterate_ast(
         _ => BuiltInFunction::GEq,
     };
     let eq_fn_t =
-        Box::new(Type::Fn(pair_int_t.clone(), Box::new(bool_t.clone())));
+        Box::new(Type::Fn(pair_int_t.clone().into(), Rc::new(bool_t.clone())));
     let eq_lit = Expr::Literal(eq_fn_t, Val::Fn(eq_op));
     let pz_id = Expr::Identifier(Box::new(y_t.clone()), pz_name.into());
     let sz_id = Expr::Identifier(Box::new(x_t.clone()), sz_name.into());
@@ -2130,8 +2131,8 @@ fn build_iterate_ast(
     ];
     let inner_from = Expr::From(Box::new(coll_t.clone()), inner_steps);
     let update_fn_t = Box::new(Type::Fn(
-        Box::new(Type::Tuple(vec![coll_t.clone(), coll_t.clone()])),
-        Box::new(coll_t.clone()),
+        Rc::new(Type::Tuple(vec![coll_t.clone(), coll_t.clone()])),
+        Rc::new(coll_t.clone()),
     ));
     let update_fn = Expr::Fn(
         update_fn_t.clone(),
@@ -2143,17 +2144,17 @@ fn build_iterate_ast(
     );
     // Build `Relational.iterate seed updateFn`.
     let iter_t = Box::new(Type::Fn(
-        Box::new(coll_t.clone()),
-        Box::new(Type::Fn(
-            Box::new(update_fn_t.as_ref().clone()),
-            Box::new(coll_t.clone()),
+        Rc::new(coll_t.clone()),
+        Rc::new(Type::Fn(
+            Rc::new(update_fn_t.as_ref().clone()),
+            Rc::new(coll_t.clone()),
         )),
     ));
     let iter_lit =
         Expr::Literal(iter_t, Val::Fn(BuiltInFunction::RelationalIterate));
     let after_seed_t = Box::new(Type::Fn(
-        Box::new(update_fn_t.as_ref().clone()),
-        Box::new(coll_t.clone()),
+        Rc::new(update_fn_t.as_ref().clone()),
+        Rc::new(coll_t.clone()),
     ));
     let with_seed = Expr::Apply(
         after_seed_t,
@@ -2207,7 +2208,7 @@ fn wrap_diagonal_projection(
         _ => BuiltInFunction::GEq,
     };
     let eq_fn_t =
-        Box::new(Type::Fn(Box::new(pair_t.clone()), Box::new(bool_t.clone())));
+        Box::new(Type::Fn(Rc::new(pair_t.clone()), Rc::new(bool_t.clone())));
     // Build conjuncts: __dg_0 = __dg_1 andalso __dg_0 = __dg_2 ...
     let mk_eq = |a: &str, b: &str| -> Expr {
         let lhs = Expr::Identifier(Box::new(elem_t.clone()), a.to_string());
@@ -2660,7 +2661,7 @@ fn unground_outer_point_scan(
         Type::Primitive(PrimitiveType::Bool) => BuiltInFunction::BoolEq,
         _ => BuiltInFunction::GEq,
     };
-    let fn_t = Box::new(Type::Fn(pair_t.clone(), bool_t.clone()));
+    let fn_t = Box::new(Type::Fn(pair_t.clone().into(), bool_t.clone().into()));
     let fn_lit = Expr::Literal(fn_t, Val::Fn(eq_op));
     let arg = Expr::Tuple(
         pair_t,
@@ -3388,8 +3389,10 @@ fn decompose_tuple_elems_once(steps: Vec<Step>) -> Vec<Step> {
                         (**t).clone(),
                         (**t).clone(),
                     ]));
-                    let fn_t =
-                        Box::new(Type::Fn(pair_t.clone(), bool_t.clone()));
+                    let fn_t = Box::new(Type::Fn(
+                        pair_t.clone().into(),
+                        bool_t.clone().into(),
+                    ));
                     let eq_op = match t.as_ref() {
                         Type::Primitive(PrimitiveType::Int) => {
                             BuiltInFunction::IntEq
@@ -4011,7 +4014,8 @@ pub(crate) fn and_all(conjuncts: Vec<Expr>) -> Expr {
         let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
         let pair_t =
             Box::new(Type::Tuple(vec![(*bool_t).clone(), (*bool_t).clone()]));
-        let fn_t = Box::new(Type::Fn(pair_t.clone(), bool_t.clone()));
+        let fn_t =
+            Box::new(Type::Fn(pair_t.clone().into(), bool_t.clone().into()));
         let fn_expr =
             Expr::Literal(fn_t, Val::Fn(BuiltInFunction::BoolAndAlso));
         let arg = Expr::Tuple(pair_t, vec![lhs, rhs]);

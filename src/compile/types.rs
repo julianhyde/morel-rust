@@ -24,7 +24,7 @@ use std::rc::Rc;
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {
     Primitive(PrimitiveType),
-    Fn(Box<Type>, Box<Type>),
+    Fn(Rc<Type>, Rc<Type>),
 
     /// `Record(progressive, arg_name_types)` represents the type
     /// `{name0: arg0, ... nameN: argN}`. If `progressive`, the

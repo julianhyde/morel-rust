@@ -147,7 +147,7 @@ impl TypeBuilder {
             TypeKind::Fn(from_type, to_type) => {
                 let from = self.ast_to_type(from_type)?;
                 let to = self.ast_to_type(to_type)?;
-                Type::Fn(from, to)
+                Type::Fn(from.into(), to.into())
             }
             TypeKind::Id(name) => {
                 if let Some(primitive) = PrimitiveType::parse_name(name) {
@@ -223,8 +223,8 @@ mod tests {
         assert_eq!(
             *t,
             Type::Fn(
-                Box::new(Type::Primitive(PrimitiveType::Int)),
-                Box::new(Type::Primitive(PrimitiveType::Bool))
+                Rc::new(Type::Primitive(PrimitiveType::Int)),
+                Rc::new(Type::Primitive(PrimitiveType::Bool))
             )
         );
     }

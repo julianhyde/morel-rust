@@ -43,6 +43,7 @@ use crate::shell::prop::Prop;
 use library::BuiltInDatatype;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 
@@ -2275,7 +2276,7 @@ impl<'a> Compiler<'a> {
         let t2 = val_bind.t.clone();
         let param_type = UNIT_TYPE;
         let result_type = val_bind.expr.type_().clone();
-        let fn_type = Type::Fn(Box::new(param_type), result_type);
+        let fn_type = Type::Fn(Rc::new(param_type), result_type.into());
         let match_ = Match {
             pat: Pat::Literal(Box::new(UNIT_TYPE), Val::Unit),
             expr: val_bind.expr.clone(),

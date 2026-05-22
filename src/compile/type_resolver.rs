@@ -382,7 +382,10 @@ impl<'a> TermToTypeConverter<'a> {
                         assert_eq!(sequence.terms.len(), 2);
                         let param_type = self.term_type(&sequence.terms[0]);
                         let result_type = self.term_type(&sequence.terms[1]);
-                        Box::new(Type::Fn(param_type, result_type))
+                        Box::new(Type::Fn(
+                            param_type.into(),
+                            result_type.into(),
+                        ))
                     }
                     "list" => {
                         assert_eq!(sequence.terms.len(), 1);
@@ -1471,7 +1474,7 @@ impl TypeResolver {
                         &db.type_vars,
                     )
                     .unwrap_or(Type::Primitive(PrimitiveType::Unit));
-                    Type::Fn(Box::new(arg_core), Box::new(data_type.clone()))
+                    Type::Fn(Rc::new(arg_core), Rc::new(data_type.clone()))
                 } else {
                     data_type.clone()
                 };
@@ -5251,7 +5254,7 @@ pub(crate) fn ast_type_to_core_type_with_vars(
         TypeKind::Fn(t1, t2) => {
             let c1 = ast_type_to_core_type_with_vars(t1, type_vars)?;
             let c2 = ast_type_to_core_type_with_vars(t2, type_vars)?;
-            Some(Type::Fn(Box::new(c1), Box::new(c2)))
+            Some(Type::Fn(Rc::new(c1), Rc::new(c2)))
         }
         TypeKind::App(args, t) => {
             // Flatten Composite args (e.g. `('a, 'b) tree` is parsed
@@ -5317,7 +5320,7 @@ pub(crate) fn ast_type_to_core_type(ast_type: &AstType) -> Option<Type> {
         TypeKind::Fn(t1, t2) => {
             let c1 = ast_type_to_core_type(t1)?;
             let c2 = ast_type_to_core_type(t2)?;
-            Some(Type::Fn(Box::new(c1), Box::new(c2)))
+            Some(Type::Fn(Rc::new(c1), Rc::new(c2)))
         }
         TypeKind::App(args, t) => {
             // Recognise applications of the parameterised collection
@@ -5693,11 +5696,11 @@ mod tests {
             Rc::new(Type::Tuple(vec![
                 Type::Primitive(PrimitiveType::Int),
                 Type::Fn(
-                    Box::new(Type::Tuple(vec![
-                        Type::Variable(tv.clone()),
-                        Type::Variable(tv.clone()),
+                    Rc::new(Type::Tuple(vec![
+                        Type::Variable(tv.clone().into()),
+                        Type::Variable(tv.clone().into()),
                     ])),
-                    Box::new(Type::Primitive(PrimitiveType::Bool)),
+                    Rc::new(Type::Primitive(PrimitiveType::Bool)),
                 ),
             ])),
             1,

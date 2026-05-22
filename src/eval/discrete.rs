@@ -451,8 +451,8 @@ fn instantiate(type_: &Type, args: &[Type]) -> Type {
             ts.iter().map(|t| instantiate(t, args)).collect(),
         ),
         Type::Fn(a, b) => Type::Fn(
-            Box::new(instantiate(a, args)),
-            Box::new(instantiate(b, args)),
+            Rc::new(instantiate(a, args)),
+            Rc::new(instantiate(b, args)),
         ),
         Type::List(t) => Type::List(Rc::new(instantiate(t, args))),
         Type::Record(p, fields) => Type::Record(
