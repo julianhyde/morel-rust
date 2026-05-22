@@ -2006,11 +2006,11 @@ fn build_iterate_ast(
                 };
                 let sel_t = Box::new(Type::Fn(
                     Rc::new(seed_elem_t.clone()),
-                    Rc::new(field_t.clone()),
+                    field_t.clone(),
                 ));
                 let sel = Expr::RecordSelector(sel_t, i);
                 tuple_items.push(Expr::Apply(
-                    Box::new(field_t),
+                    Box::new((*field_t).clone()),
                     Box::new(sel),
                     Box::new(r_id.clone()),
                     Span::new(""),
@@ -2884,10 +2884,13 @@ fn lift_nested_exists_in_where(steps: Vec<Step>) -> Vec<Step> {
                 )
             } else {
                 use std::collections::BTreeMap;
-                let fields: BTreeMap<Label, Type> = outer_bindings
+                let fields: BTreeMap<Label, Rc<Type>> = outer_bindings
                     .iter()
                     .map(|b| {
-                        (Label::String(b.id.name.clone()), (*b.type_).clone())
+                        (
+                            Label::String(b.id.name.clone()),
+                            Rc::new((*b.type_).clone()),
+                        )
                     })
                     .collect();
                 let rec_t = Box::new(Type::Record(false, fields));

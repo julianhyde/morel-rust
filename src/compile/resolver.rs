@@ -977,14 +977,14 @@ impl<'a> Resolver<'a> {
                                     // Project this field from the base.
                                     let selector_type = Box::new(Type::Fn(
                                         base_type.clone().into(),
-                                        Rc::new(field_type.clone()),
+                                        field_type.clone(),
                                     ));
                                     let selector = CoreExpr::RecordSelector(
                                         selector_type,
                                         slot,
                                     );
                                     CoreExpr::Apply(
-                                        Box::new(field_type.clone()),
+                                        Box::new((**field_type).clone()),
                                         Box::new(selector),
                                         Box::new(resolved_base.clone()),
                                         span.clone(),

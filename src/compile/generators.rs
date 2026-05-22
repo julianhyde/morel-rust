@@ -1654,11 +1654,10 @@ fn maybe_record_elem_projection(
             let filter_exprs: Vec<Expr> = filters
                 .iter()
                 .map(|(label, value_expr)| {
-                    let field_t = match tuple_t.as_ref() {
-                        Type::Record(_, fields) => fields
-                            .get(&Label::String(label.clone()))
-                            .cloned()
-                            .map(Box::new),
+                    let field_t: Option<Rc<Type>> = match tuple_t.as_ref() {
+                        Type::Record(_, fields) => {
+                            fields.get(&Label::String(label.clone())).cloned()
+                        }
                         _ => None,
                     };
                     let Some(field_t) = field_t else {
@@ -1675,12 +1674,12 @@ fn maybe_record_elem_projection(
                     };
                     let sel_fn_t = Box::new(Type::Fn(
                         row_t.clone().into(),
-                        field_t.clone().into(),
+                        field_t.clone(),
                     ));
                     let sel = Expr::RecordSelector(sel_fn_t.clone(), slot);
                     let r_id = Expr::Identifier(row_t.clone(), row_var.clone());
                     let lhs_field = Expr::Apply(
-                        field_t.clone(),
+                        Box::new((*field_t).clone()),
                         Box::new(sel),
                         Box::new(r_id),
                         Span::new(""),
@@ -1695,10 +1694,10 @@ fn maybe_record_elem_projection(
             ));
         }
         // Build the projection: `#pat_field r` (a record selector).
-        let pat_field_t = match tuple_t.as_ref() {
+        let pat_field_t: Rc<Type> = match tuple_t.as_ref() {
             Type::Record(_, fields) => {
                 match fields.get(&Label::String(pat_field.clone())).cloned() {
-                    Some(t) => Box::new(t),
+                    Some(t) => t,
                     None => continue,
                 }
             }
@@ -1711,28 +1710,29 @@ fn maybe_record_elem_projection(
                 .unwrap(),
             _ => 0,
         };
-        let sel_fn_t = Box::new(Type::Fn(
-            row_t.clone().into(),
-            pat_field_t.clone().into(),
-        ));
+        let sel_fn_t =
+            Box::new(Type::Fn(row_t.clone().into(), pat_field_t.clone()));
         let sel = Expr::RecordSelector(sel_fn_t, pat_field_slot);
         let r_id = Expr::Identifier(row_t.clone(), row_var.clone());
         let yield_expr = Expr::Apply(
-            pat_field_t.clone(),
+            Box::new((*pat_field_t).clone()),
             Box::new(sel),
             Box::new(r_id),
             Span::new(""),
         );
         let yield_env = StepEnv::new(
-            vec![Binding::new(Id::new(pat_name, 0), pat_field_t.clone())],
+            vec![Binding::new(
+                Id::new(pat_name, 0),
+                Box::new((*pat_field_t).clone()),
+            )],
             true,
             ordered,
         );
         steps.push(Step::new(StepKind::Yield(Box::new(yield_expr)), yield_env));
         let coll_t = if ordered {
-            Box::new(Type::List(pat_field_t.clone().into()))
+            Box::new(Type::List(pat_field_t.clone()))
         } else {
-            Box::new(Type::Bag(pat_field_t.clone().into()))
+            Box::new(Type::Bag(pat_field_t.clone()))
         };
         let exp = Expr::From(coll_t, steps);
 

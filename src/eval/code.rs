@@ -1690,9 +1690,10 @@ fn wrap_record_pairs(inner_type: &Type, value: &Val) -> Option<Val> {
             .map(|((label, field_type), v)| {
                 let inner = match v {
                     Val::Variant(_) => v.clone(),
-                    _ => {
-                        Val::Variant(Box::new((field_type.clone(), v.clone())))
-                    }
+                    _ => Val::Variant(Box::new((
+                        (**field_type).clone(),
+                        v.clone(),
+                    ))),
                 };
                 Val::List(vec![Val::String(label.to_string()), inner])
             })
@@ -4915,7 +4916,7 @@ impl LibBuilder {
         let mut structure_map = BTreeMap::new();
         for (r, names_fns) in &mut structure_names_fns {
             let mut vals = Vec::new();
-            let mut name_types: BTreeMap<Label, Type> = BTreeMap::new();
+            let mut name_types: BTreeMap<Label, Rc<Type>> = BTreeMap::new();
             for (n, f) in names_fns {
                 let t = &fn_map.get(f).unwrap().0;
                 if matches!(t.unqualified_quick(), Type::Fn(_, _)) {
@@ -4926,7 +4927,7 @@ impl LibBuilder {
                 } else {
                     panic!("missing implementation for {:?}", f);
                 }
-                name_types.insert(Label::String(n.clone()), t.clone());
+                name_types.insert(Label::String(n.clone()), Rc::new(t.clone()));
             }
             let t = Type::Record(false, name_types.clone());
             structure_map.insert(*r, (t, Val::List(vals)));
@@ -4986,27 +4987,42 @@ fn build_scott() -> (Type, Val) {
 
     // Schema for one row of `bonuses`: {comm:real, ename:string, job:string,
     // sal:real}
-    let bonus_fields: BTreeMap<Label, Type> = [
-        (S("comm".to_string()), Type::Primitive(PrimitiveType::Real)),
+    let bonus_fields: BTreeMap<Label, Rc<Type>> = [
+        (
+            S("comm".to_string()),
+            Rc::new(Type::Primitive(PrimitiveType::Real)),
+        ),
         (
             S("ename".to_string()),
-            Type::Primitive(PrimitiveType::String),
+            Rc::new(Type::Primitive(PrimitiveType::String)),
         ),
-        (S("job".to_string()), Type::Primitive(PrimitiveType::String)),
-        (S("sal".to_string()), Type::Primitive(PrimitiveType::Real)),
+        (
+            S("job".to_string()),
+            Rc::new(Type::Primitive(PrimitiveType::String)),
+        ),
+        (
+            S("sal".to_string()),
+            Rc::new(Type::Primitive(PrimitiveType::Real)),
+        ),
     ]
     .into_iter()
     .collect();
     let bonus_row_type = Type::Record(false, bonus_fields);
 
     // Schema for one row of `depts`: {deptno:int, dname:string, loc:string}
-    let dept_fields: BTreeMap<Label, Type> = [
-        (S("deptno".to_string()), Type::Primitive(PrimitiveType::Int)),
+    let dept_fields: BTreeMap<Label, Rc<Type>> = [
+        (
+            S("deptno".to_string()),
+            Rc::new(Type::Primitive(PrimitiveType::Int)),
+        ),
         (
             S("dname".to_string()),
-            Type::Primitive(PrimitiveType::String),
+            Rc::new(Type::Primitive(PrimitiveType::String)),
         ),
-        (S("loc".to_string()), Type::Primitive(PrimitiveType::String)),
+        (
+            S("loc".to_string()),
+            Rc::new(Type::Primitive(PrimitiveType::String)),
+        ),
     ]
     .into_iter()
     .collect();
@@ -5029,21 +5045,39 @@ fn build_scott() -> (Type, Val) {
 
     // Schema for one row of `emps`: {comm:real, deptno:int, empno:int,
     // ename:string, hiredate:string, job:string, mgr:int, sal:real}
-    let emp_fields: BTreeMap<Label, Type> = [
-        (S("comm".to_string()), Type::Primitive(PrimitiveType::Real)),
-        (S("deptno".to_string()), Type::Primitive(PrimitiveType::Int)),
-        (S("empno".to_string()), Type::Primitive(PrimitiveType::Int)),
+    let emp_fields: BTreeMap<Label, Rc<Type>> = [
+        (
+            S("comm".to_string()),
+            Rc::new(Type::Primitive(PrimitiveType::Real)),
+        ),
+        (
+            S("deptno".to_string()),
+            Rc::new(Type::Primitive(PrimitiveType::Int)),
+        ),
+        (
+            S("empno".to_string()),
+            Rc::new(Type::Primitive(PrimitiveType::Int)),
+        ),
         (
             S("ename".to_string()),
-            Type::Primitive(PrimitiveType::String),
+            Rc::new(Type::Primitive(PrimitiveType::String)),
         ),
         (
             S("hiredate".to_string()),
-            Type::Primitive(PrimitiveType::String),
+            Rc::new(Type::Primitive(PrimitiveType::String)),
         ),
-        (S("job".to_string()), Type::Primitive(PrimitiveType::String)),
-        (S("mgr".to_string()), Type::Primitive(PrimitiveType::Int)),
-        (S("sal".to_string()), Type::Primitive(PrimitiveType::Real)),
+        (
+            S("job".to_string()),
+            Rc::new(Type::Primitive(PrimitiveType::String)),
+        ),
+        (
+            S("mgr".to_string()),
+            Rc::new(Type::Primitive(PrimitiveType::Int)),
+        ),
+        (
+            S("sal".to_string()),
+            Rc::new(Type::Primitive(PrimitiveType::Real)),
+        ),
     ]
     .into_iter()
     .collect();
@@ -5161,10 +5195,19 @@ fn build_scott() -> (Type, Val) {
     ]);
 
     // Schema for one row of `salgrades`: {grade:int, hisal:real, losal:real}
-    let salgrade_fields: BTreeMap<Label, Type> = [
-        (S("grade".to_string()), Type::Primitive(PrimitiveType::Int)),
-        (S("hisal".to_string()), Type::Primitive(PrimitiveType::Real)),
-        (S("losal".to_string()), Type::Primitive(PrimitiveType::Real)),
+    let salgrade_fields: BTreeMap<Label, Rc<Type>> = [
+        (
+            S("grade".to_string()),
+            Rc::new(Type::Primitive(PrimitiveType::Int)),
+        ),
+        (
+            S("hisal".to_string()),
+            Rc::new(Type::Primitive(PrimitiveType::Real)),
+        ),
+        (
+            S("losal".to_string()),
+            Rc::new(Type::Primitive(PrimitiveType::Real)),
+        ),
     ]
     .into_iter()
     .collect();
@@ -5182,13 +5225,22 @@ fn build_scott() -> (Type, Val) {
 
     // The outer record. Field order must be alphabetical: bonuses, depts,
     // emps, salgrades.
-    let scott_fields: BTreeMap<Label, Type> = [
-        (S("bonuses".to_string()), Type::Bag(Rc::new(bonus_row_type))),
-        (S("depts".to_string()), Type::Bag(Rc::new(dept_row_type))),
-        (S("emps".to_string()), Type::Bag(Rc::new(emp_row_type))),
+    let scott_fields: BTreeMap<Label, Rc<Type>> = [
+        (
+            S("bonuses".to_string()),
+            Rc::new(Type::Bag(Rc::new(bonus_row_type))),
+        ),
+        (
+            S("depts".to_string()),
+            Rc::new(Type::Bag(Rc::new(dept_row_type))),
+        ),
+        (
+            S("emps".to_string()),
+            Rc::new(Type::Bag(Rc::new(emp_row_type))),
+        ),
         (
             S("salgrades".to_string()),
-            Type::Bag(Rc::new(salgrade_row_type)),
+            Rc::new(Type::Bag(Rc::new(salgrade_row_type))),
         ),
     ]
     .into_iter()

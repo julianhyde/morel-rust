@@ -261,7 +261,7 @@ fn try_parse_tabular(value: &str, type_: &Type) -> Option<Parsed> {
         let idx = field_names.iter().position(|f| f == col)?;
         col_to_field_idx.push(idx);
     }
-    let field_types: Vec<&Type> = fields.values().collect();
+    let field_types: Vec<&Type> = fields.values().map(AsRef::as_ref).collect();
     // Parse data rows.
     let mut records: Vec<Parsed> = Vec::new();
     for line in &lines[2..] {
@@ -565,7 +565,7 @@ fn parse_tuple_elements(
 /// into the field-name order of the given type.
 fn parse_record_to_tuple(
     sc: &mut Scanner,
-    fields: &BTreeMap<Label, Type>,
+    fields: &BTreeMap<Label, Rc<Type>>,
 ) -> Option<Parsed> {
     sc.consume_str("{")?;
     let mut field_map: HashMap<String, Parsed> = HashMap::new();
@@ -678,8 +678,7 @@ fn values_equal(type_: &Type, a: &Parsed, b: &Parsed) -> bool {
         }
         Type::Tuple(elem_types) => tuple_equal(elem_types, a, b),
         Type::Record(_, fields) => {
-            let types: Vec<Rc<Type>> =
-                fields.values().cloned().map(Rc::new).collect();
+            let types: Vec<Rc<Type>> = fields.values().cloned().collect();
             tuple_equal(&types, a, b)
         }
         Type::Data(name, args) => datatype_equal(name, args, a, b),
@@ -982,8 +981,8 @@ mod tests {
     #[test]
     fn record_with_bag_field() {
         let mut fields = BTreeMap::new();
-        fields.insert(Label::from("name"), string());
-        fields.insert(Label::from("values"), int_bag());
+        fields.insert(Label::from("name"), Rc::new(string()));
+        fields.insert(Label::from("values"), Rc::new(int_bag()));
         let rec = Type::Record(false, fields);
         let a = "val r = {name=\"test\",values=[30,10,20]} \
                  : {name:string, values:int bag}";
@@ -1010,8 +1009,8 @@ mod tests {
         // matcher also treats hand-written `-N` as equivalent to the
         // printer's `~N`.
         let mut fields = BTreeMap::new();
-        fields.insert(Label::from("count"), int());
-        fields.insert(Label::from("y"), int());
+        fields.insert(Label::from("count"), Rc::new(int()));
+        fields.insert(Label::from("y"), Rc::new(int()));
         let row = Type::Record(false, fields);
         let t = Type::Bag(Rc::new(row));
         let actual = "count y\n----- --\n\
@@ -1026,8 +1025,8 @@ mod tests {
     #[test]
     fn tabular_bag_wrong_row_not_equivalent() {
         let mut fields = BTreeMap::new();
-        fields.insert(Label::from("count"), int());
-        fields.insert(Label::from("y"), int());
+        fields.insert(Label::from("count"), Rc::new(int()));
+        fields.insert(Label::from("y"), Rc::new(int()));
         let row = Type::Record(false, fields);
         let t = Type::Bag(Rc::new(row));
         let actual = "count y\n----- --\n1     ~1\n2     1\n\n\

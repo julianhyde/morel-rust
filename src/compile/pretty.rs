@@ -211,7 +211,9 @@ impl Pretty {
                 *p,
                 fields
                     .iter()
-                    .map(|(k, v)| (k.clone(), Self::instantiate(v, args)))
+                    .map(|(k, v)| {
+                        (k.clone(), Rc::new(Self::instantiate(v, args)))
+                    })
                     .collect(),
             ),
             Type::Tuple(ts) => Type::Tuple(
@@ -636,7 +638,7 @@ impl Pretty {
         if let Type::Record(_, arg_name_types) = type_ref {
             arg_name_types
                 .values()
-                .all(|t| matches!(t, Type::Primitive(_)))
+                .all(|t| matches!(&**t, Type::Primitive(_)))
         } else {
             false
         }
@@ -1294,7 +1296,7 @@ impl TypeVarRenumberer {
                 *progressive,
                 arg_name_types
                     .iter()
-                    .map(|(name, t)| (name.clone(), self.visit(t)))
+                    .map(|(name, t)| (name.clone(), Rc::new(self.visit(t))))
                     .collect(),
             ),
             Type::Tuple(arg_types) => Type::Tuple(

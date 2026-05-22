@@ -191,7 +191,7 @@ pub(crate) fn record(arg: Val) -> Val {
         // An empty record is `unit` — matching morel-java.
         return unit();
     }
-    let mut fields: BTreeMap<Label, Type> = BTreeMap::new();
+    let mut fields: BTreeMap<Label, Rc<Type>> = BTreeMap::new();
     let mut values: Vec<(Label, Val)> = Vec::with_capacity(pairs.len());
     for pair in pairs {
         let (label, variant_val) = match pair {
@@ -207,7 +207,7 @@ pub(crate) fn record(arg: Val) -> Val {
         };
         let label = Label::from(label_str);
         let (inner_type, inner_val) = expect_variant(&variant_val);
-        fields.insert(label.clone(), inner_type.clone());
+        fields.insert(label.clone(), Rc::new(inner_type.clone()));
         values.push((label, inner_val.clone()));
     }
     // Records are stored at runtime as a list of values in the order of
@@ -346,7 +346,7 @@ fn cons(payload: Val) -> Val {
     let head_type = match &payload_type {
         Type::Tuple(ts) if ts.len() == 2 => (*ts[0]).clone(),
         Type::Record(_, fields) if fields.len() == 2 => {
-            fields.values().next().unwrap().clone()
+            (**fields.values().next().unwrap()).clone()
         }
         _ => panic!(
             "CONS payload must be a 2-tuple or 2-field record, got {:?}",

@@ -240,7 +240,9 @@ impl<'a> CoverageChecker<'a> {
                     _ => return Formula::True,
                 };
                 let field_types: Vec<Type> = match type_ {
-                    Type::Record(_, fs) => fs.values().cloned().collect(),
+                    Type::Record(_, fs) => {
+                        fs.values().map(|t| (**t).clone()).collect()
+                    }
                     _ => return Formula::True,
                 };
                 let mut conjuncts: Vec<Formula> = Vec::new();

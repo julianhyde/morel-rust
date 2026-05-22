@@ -383,8 +383,8 @@ fn instantiate(type_: &Type, args: &[Rc<Type>]) -> Type {
             *p,
             fields
                 .iter()
-                .map(|(k, v): (&Label, &Type)| {
-                    (k.clone(), instantiate(v, args))
+                .map(|(k, v): (&Label, &Rc<Type>)| {
+                    (k.clone(), Rc::new(instantiate(v, args)))
                 })
                 .collect(),
         ),

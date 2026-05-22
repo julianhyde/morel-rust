@@ -459,8 +459,8 @@ fn instantiate(type_: &Type, args: &[Rc<Type>]) -> Type {
             *p,
             fields
                 .iter()
-                .map(|(k, v): (&Label, &Type)| {
-                    (k.clone(), instantiate(v, args))
+                .map(|(k, v): (&Label, &Rc<Type>)| {
+                    (k.clone(), Rc::new(instantiate(v, args)))
                 })
                 .collect(),
         ),
@@ -510,7 +510,7 @@ pub fn discrete_for_with(
         }
         Type::Record(_, fields) => {
             let components: Result<Vec<_>, _> =
-                fields.values().map(recurse).collect();
+                fields.values().map(|t| recurse(t)).collect();
             Ok(Arc::new(TupleDiscrete {
                 components: components?,
             }))

@@ -390,7 +390,7 @@ impl FromBuilder {
                         if let Label::String(name) = label {
                             Some(Binding::new(
                                 Id::new(name, 0),
-                                Box::new(t.clone()),
+                                Box::new((**t).clone()),
                             ))
                         } else {
                             None
@@ -515,7 +515,7 @@ impl FromBuilder {
                             if let Label::String(name) = label {
                                 new_bindings.push(Binding::new(
                                     Id::new(name, 0),
-                                    Box::new(t.clone()),
+                                    Box::new((**t).clone()),
                                 ));
                                 has_key_bindings = true;
                                 has_record_key = true;
@@ -544,7 +544,7 @@ impl FromBuilder {
                             if let Label::String(name) = label {
                                 new_bindings.push(Binding::new(
                                     Id::new(name, 0),
-                                    Box::new(t.clone()),
+                                    Box::new((**t).clone()),
                                 ));
                             }
                         }
@@ -704,10 +704,15 @@ impl FromBuilder {
         } else if env.bindings.len() == 1 && env.atom {
             *env.bindings[0].type_.clone()
         } else {
-            let fields: BTreeMap<Label, Type> = env
+            let fields: BTreeMap<Label, Rc<Type>> = env
                 .bindings
                 .iter()
-                .map(|b| (Label::String(b.id.name.clone()), *b.type_.clone()))
+                .map(|b| {
+                    (
+                        Label::String(b.id.name.clone()),
+                        Rc::new(*b.type_.clone()),
+                    )
+                })
                 .collect();
             Type::Record(false, fields)
         };
@@ -884,7 +889,7 @@ mod tests {
 
         // Yield {x=x, y=y} should be skipped as identity
         let initial_len = builder.steps.len();
-        let int_type = Type::Primitive(PrimitiveType::Int);
+        let int_type = Rc::new(Type::Primitive(PrimitiveType::Int));
         let record_type = Type::Record(
             false,
             BTreeMap::from([
@@ -895,8 +900,14 @@ mod tests {
         builder.yield_(Expr::Tuple(
             Box::new(record_type),
             vec![
-                Expr::Identifier(Box::new(int_type.clone()), "x".to_string()),
-                Expr::Identifier(Box::new(int_type.clone()), "y".to_string()),
+                Expr::Identifier(
+                    Box::new((*int_type).clone()),
+                    "x".to_string(),
+                ),
+                Expr::Identifier(
+                    Box::new((*int_type).clone()),
+                    "y".to_string(),
+                ),
             ],
         ));
 

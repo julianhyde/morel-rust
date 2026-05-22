@@ -406,12 +406,12 @@ impl<'a> TermToTypeConverter<'a> {
                             sequence,
                         )
                         .unwrap();
-                        let mut fields = BTreeMap::<Label, Type>::new();
+                        let mut fields = BTreeMap::<Label, Rc<Type>>::new();
                         for (label, term) in zip(labels, sequence.terms.iter())
                         {
                             fields.insert(
                                 Label::from(label),
-                                *self.term_type(term),
+                                Rc::new(*self.term_type(term)),
                             );
                         }
                         Box::new(Type::Record(false, fields))
@@ -4039,7 +4039,7 @@ impl TypeResolver {
                 .unwrap_or(0),
             Type::Record(_, fields) => fields
                 .values()
-                .map(Self::max_type_var_count)
+                .map(|t| Self::max_type_var_count(t))
                 .max()
                 .unwrap_or(0),
             Type::Alias(_, inner, args) => {
@@ -5347,9 +5347,9 @@ pub(crate) fn ast_type_to_core_type(ast_type: &AstType) -> Option<Type> {
             None
         }
         TypeKind::Record(fields) => {
-            let mut field_map = BTreeMap::new();
+            let mut field_map: BTreeMap<Label, Rc<Type>> = BTreeMap::new();
             for field in fields {
-                let field_type = ast_type_to_core_type(&field.type_)?;
+                let field_type = Rc::new(ast_type_to_core_type(&field.type_)?);
                 field_map
                     .insert(Label::from(field.label.name.clone()), field_type);
             }

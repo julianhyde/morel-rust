@@ -29,7 +29,7 @@ pub enum Type {
     /// `Record(progressive, arg_name_types)` represents the type
     /// `{name0: arg0, ... nameN: argN}`. If `progressive`, the
     /// arguments may grow over time.
-    Record(bool, BTreeMap<Label, Type>),
+    Record(bool, BTreeMap<Label, Rc<Type>>),
 
     /// `List(element_type)` represents the type `element_type list`.
     List(Rc<Type>),
@@ -71,7 +71,7 @@ impl Type {
 
     /// Returns the definition of a record type. Panics on any other type,
     /// including a tuple type.
-    pub fn expect_record(&self) -> (bool, &BTreeMap<Label, Type>) {
+    pub fn expect_record(&self) -> (bool, &BTreeMap<Label, Rc<Type>>) {
         match self {
             Type::Record(progressive, fields) => (*progressive, fields),
             _ => panic!("Expected record type"),
@@ -83,7 +83,7 @@ impl Type {
     pub fn field_types(&self) -> Vec<Type> {
         match self {
             Type::Record(_, fields) => {
-                fields.values().cloned().collect::<Vec<_>>()
+                fields.values().map(|t| (**t).clone()).collect()
             }
             Type::Tuple(field_types) => {
                 field_types.iter().map(|t| (**t).clone()).collect()

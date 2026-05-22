@@ -161,10 +161,10 @@ impl TypeBuilder {
                 use crate::compile::types::Label;
                 use std::collections::BTreeMap;
 
-                let mut field_map = BTreeMap::new();
+                let mut field_map: BTreeMap<Label, Rc<Type>> = BTreeMap::new();
                 for field in fields {
                     let label = Label::String(field.label.name.clone());
-                    let field_type = *self.ast_to_type(&field.type_)?;
+                    let field_type = Rc::new(*self.ast_to_type(&field.type_)?);
                     field_map.insert(label, field_type);
                 }
                 Type::Record(false, field_map)
@@ -233,14 +233,14 @@ mod tests {
     fn test_parse_record_type() {
         let t = string_to_type("{exp:int, man:real}");
 
-        let mut expected_fields = BTreeMap::new();
+        let mut expected_fields: BTreeMap<Label, Rc<Type>> = BTreeMap::new();
         expected_fields.insert(
             Label::String("exp".to_string()),
-            Type::Primitive(PrimitiveType::Int),
+            Rc::new(Type::Primitive(PrimitiveType::Int)),
         );
         expected_fields.insert(
             Label::String("man".to_string()),
-            Type::Primitive(PrimitiveType::Real),
+            Rc::new(Type::Primitive(PrimitiveType::Real)),
         );
 
         assert_eq!(*t, Type::Record(false, expected_fields));
