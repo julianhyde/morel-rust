@@ -38,6 +38,7 @@ use crate::compile::span::Span;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
 
 /// Map of let-bound function name → (parameter pattern, body
 /// expression). Populated as `expand_decl` walks down through
@@ -1113,7 +1114,7 @@ fn build_iterate_for_recursive_v2(
     // Result tuple type is (param_t1, ..., param_tN).
     let elem_t =
         Type::Tuple(params.iter().map(|(_, t)| (**t).clone()).collect());
-    let coll_t = Type::Bag(Box::new(elem_t.clone()));
+    let coll_t = Type::Bag(Rc::new(elem_t.clone()));
     let elem_t_box = Box::new(elem_t.clone());
     // Helper: build a step env containing the given bindings.
     let mk_env = |bs: Vec<Binding>| StepEnv::new(bs, false, false);
@@ -1949,7 +1950,7 @@ fn build_iterate_ast(
     // Result collection type: Bag(elem_t). (We don't preserve list
     // ordering in Phase 1; iterate's runtime uses Val::List as its
     // representation regardless.)
-    let coll_t = Type::Bag(Box::new(elem_t.clone()));
+    let coll_t = Type::Bag(Rc::new(elem_t.clone()));
     // Convert seed from records to tuples if needed.
     let typed_seed: Expr = match seed_label_order {
         None => {
@@ -2024,9 +2025,9 @@ fn build_iterate_ast(
                 Step::new(StepKind::Yield(Box::new(tuple_expr)), yield_env),
             ];
             let inner_t = if seed_t.is_list() {
-                Type::List(Box::new(elem_t.clone()))
+                Type::List(Rc::new(elem_t.clone()))
             } else {
-                Type::Bag(Box::new(elem_t.clone()))
+                Type::Bag(Rc::new(elem_t.clone()))
             };
             Expr::From(Box::new(inner_t), inner_steps)
         }
@@ -2185,7 +2186,7 @@ fn wrap_diagonal_projection(
     }
     // The iterate's type is Bag(Tuple([elem_t; arity])).
     let tuple_t = Type::Tuple(vec![elem_t.clone(); arity]);
-    let bag_t = Box::new(Type::Bag(Box::new(elem_t.clone())));
+    let bag_t = Box::new(Type::Bag(Rc::new(elem_t.clone())));
     // Fresh names for the tuple components.
     let names: Vec<String> =
         (0..arity).map(|i| format!("__dg_{}", i)).collect();

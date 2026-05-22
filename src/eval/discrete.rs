@@ -35,6 +35,7 @@ use crate::eval::val;
 use crate::eval::val::Val;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use val::DESCENDING_DESC;
 
@@ -444,7 +445,7 @@ impl Discrete for DataDiscrete {
 /// `comparator::instantiate`.
 fn instantiate(type_: &Type, args: &[Type]) -> Type {
     match type_ {
-        Type::Bag(t) => Type::Bag(Box::new(instantiate(t, args))),
+        Type::Bag(t) => Type::Bag(Rc::new(instantiate(t, args))),
         Type::Data(name, ts) => Type::Data(
             name.clone(),
             ts.iter().map(|t| instantiate(t, args)).collect(),
@@ -453,7 +454,7 @@ fn instantiate(type_: &Type, args: &[Type]) -> Type {
             Box::new(instantiate(a, args)),
             Box::new(instantiate(b, args)),
         ),
-        Type::List(t) => Type::List(Box::new(instantiate(t, args))),
+        Type::List(t) => Type::List(Rc::new(instantiate(t, args))),
         Type::Record(p, fields) => Type::Record(
             *p,
             fields

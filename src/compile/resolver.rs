@@ -43,6 +43,7 @@ use crate::syntax::parser;
 use crate::unify::unifier::Var;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 
 /// Converts an AST to a Core tree.
 pub fn resolve(resolved: &Resolved) -> (CoreDecl, Vec<(String, Span)>) {
@@ -1474,9 +1475,9 @@ impl<'a> Resolver<'a> {
                     if self.type_map.var_alias_map.contains_key(&var)
                         && let Type::List(elem_type) = &*pat.type_()
                     {
-                        return Some(Type::List(Box::new(Type::Alias(
+                        return Some(Type::List(Rc::new(Type::Alias(
                             name.clone(),
-                            elem_type.clone(),
+                            Box::new((**elem_type).clone()),
                             vec![],
                         ))));
                     }
@@ -1724,7 +1725,7 @@ impl<'a> Resolver<'a> {
                 let resolved_expr = self.resolve_expr(expr);
                 let elem_type = resolved_expr.type_();
                 let list_type =
-                    Box::new(Type::List(Box::new(elem_type.as_ref().clone())));
+                    Box::new(Type::List(Rc::new(elem_type.as_ref().clone())));
                 let singleton = CoreExpr::List(list_type, vec![resolved_expr]);
                 builder.scan_with_condition(resolved_pat, singleton, None);
             }
@@ -1745,7 +1746,7 @@ impl<'a> Resolver<'a> {
                 let resolved_pat = self.resolve_pat(pat);
                 let elem_type = resolved_pat.type_();
                 let extent_type =
-                    Box::new(Type::Bag(Box::new(elem_type.as_ref().clone())));
+                    Box::new(Type::Bag(Rc::new(elem_type.as_ref().clone())));
                 let span = Span::from_pest_span(
                     &pat.span.to_pest_span(),
                     self.base_line,
@@ -2300,8 +2301,8 @@ fn substitute(t: &Type, subst: &HashMap<usize, Type>) -> Type {
         Type::Variable(tv) => {
             subst.get(&tv.id).cloned().unwrap_or_else(|| t.clone())
         }
-        Type::List(inner) => Type::List(Box::new(substitute(inner, subst))),
-        Type::Bag(inner) => Type::Bag(Box::new(substitute(inner, subst))),
+        Type::List(inner) => Type::List(Rc::new(substitute(inner, subst))),
+        Type::Bag(inner) => Type::Bag(Rc::new(substitute(inner, subst))),
         Type::Fn(a, r) => Type::Fn(
             Box::new(substitute(a, subst)),
             Box::new(substitute(r, subst)),
@@ -2321,9 +2322,9 @@ fn substitute(t: &Type, subst: &HashMap<usize, Type>) -> Type {
             // other built-in named type (entries in `BuiltInDatatype`
             // and `BuiltInEqtype`) lowers to `Type::Data`.
             if n == "bag" && new_args.len() == 1 {
-                Type::Bag(Box::new(new_args.into_iter().next().unwrap()))
+                Type::Bag(Rc::new(new_args.into_iter().next().unwrap()))
             } else if n == "list" && new_args.len() == 1 {
-                Type::List(Box::new(new_args.into_iter().next().unwrap()))
+                Type::List(Rc::new(new_args.into_iter().next().unwrap()))
             } else if library::builtin_type_arity(n.as_str()).is_some() {
                 Type::Data(n.clone(), new_args)
             } else {

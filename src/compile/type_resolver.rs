@@ -371,7 +371,7 @@ impl<'a> TermToTypeConverter<'a> {
                     "bag" => {
                         assert_eq!(sequence.terms.len(), 1);
                         let type_ = self.term_type(&sequence.terms[0]);
-                        Box::new(Type::Bag(type_))
+                        Box::new(Type::Bag(type_.into()))
                     }
                     "bool" | "char" | "int" | "real" | "string" | "unit" => {
                         let primitive_type =
@@ -387,7 +387,7 @@ impl<'a> TermToTypeConverter<'a> {
                     "list" => {
                         assert_eq!(sequence.terms.len(), 1);
                         let type_ = self.term_type(&sequence.terms[0]);
-                        Box::new(Type::List(type_))
+                        Box::new(Type::List(type_.into()))
                     }
                     "tuple" => {
                         let types = sequence
@@ -3684,11 +3684,11 @@ impl TypeResolver {
             "list" => {
                 // 'a list; element type is unresolved here but
                 // postfix_dispatch only keys on the list constructor.
-                Some(Box::new(Type::List(Box::new(Type::Primitive(
+                Some(Box::new(Type::List(Rc::new(Type::Primitive(
                     PrimitiveType::Unit,
                 )))))
             }
-            "bag" => Some(Box::new(Type::Bag(Box::new(Type::Primitive(
+            "bag" => Some(Box::new(Type::Bag(Rc::new(Type::Primitive(
                 PrimitiveType::Unit,
             ))))),
             s if let Some(arity) = library::builtin_type_arity(s) => {
@@ -5264,8 +5264,8 @@ pub(crate) fn ast_type_to_core_type_with_vars(
                 let arg_core =
                     ast_type_to_core_type_with_vars(&flat_args[0], type_vars)?;
                 return Some(match name.as_str() {
-                    "list" => Type::List(Box::new(arg_core)),
-                    "bag" => Type::Bag(Box::new(arg_core)),
+                    "list" => Type::List(Rc::new(arg_core)),
+                    "bag" => Type::Bag(Rc::new(arg_core)),
                     _ => Type::Data(name.clone(), vec![arg_core]),
                 });
             }
@@ -5327,8 +5327,8 @@ pub(crate) fn ast_type_to_core_type(ast_type: &AstType) -> Option<Type> {
             {
                 let arg_core = ast_type_to_core_type(&args[0])?;
                 return Some(match name.as_str() {
-                    "list" => Type::List(Box::new(arg_core)),
-                    "bag" => Type::Bag(Box::new(arg_core)),
+                    "list" => Type::List(Rc::new(arg_core)),
+                    "bag" => Type::Bag(Rc::new(arg_core)),
                     _ => Type::Data(name.clone(), vec![arg_core]),
                 });
             }

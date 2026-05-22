@@ -26,6 +26,7 @@ use crate::eval::real::Real;
 use crate::eval::val::Val;
 use crate::syntax::parser::string_to_string_append;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 /// Wraps a value with its inner type into a `Val::Variant`.
 pub(crate) fn variant_of(inner_type: Type, value: Val) -> Val {
@@ -75,12 +76,12 @@ pub(crate) fn some(arg: Val) -> Val {
 /// `T list` where `T` is the common inner type if all elements share one,
 /// otherwise `variant`. The unwrapped element values become the contents.
 pub(crate) fn list(arg: Val) -> Val {
-    collection(arg, |t| Type::List(Box::new(t)))
+    collection(arg, |t| Type::List(Rc::new(t)))
 }
 
 /// `Variant.BAG xs`: like [`list`] but produces a bag.
 pub(crate) fn bag(arg: Val) -> Val {
-    collection(arg, |t| Type::Bag(Box::new(t)))
+    collection(arg, |t| Type::Bag(Rc::new(t)))
 }
 
 /// `Variant.VECTOR xs`: like [`list`] but produces a vector. (Vectors
@@ -158,10 +159,10 @@ fn unify_types(t1: &Type, t2: &Type) -> Option<Type> {
     }
     match (t1, t2) {
         (Type::List(a), Type::List(b)) => {
-            unify_types(a, b).map(|t| Type::List(Box::new(t)))
+            unify_types(a, b).map(|t| Type::List(Rc::new(t)))
         }
         (Type::Bag(a), Type::Bag(b)) => {
-            unify_types(a, b).map(|t| Type::Bag(Box::new(t)))
+            unify_types(a, b).map(|t| Type::Bag(Rc::new(t)))
         }
         (Type::Data(n1, a1), Type::Data(n2, a2))
             if n1 == n2 && a1.len() == a2.len() =>
@@ -250,7 +251,7 @@ pub(crate) fn constant(arg: Val) -> Val {
         // as the element type (matching `LIST []`) so a round-trip via
         // `Variant.print`/`parse` compares equal.
         "NIL" => variant_of(
-            Type::List(Box::new(Type::Data("variant".to_string(), vec![]))),
+            Type::List(Rc::new(Type::Data("variant".to_string(), vec![]))),
             Val::List(vec![]),
         ),
         // Unknown constructor: store the name in `Type::Named` and use
@@ -356,7 +357,7 @@ fn cons(payload: Val) -> Val {
     let mut new_items = Vec::with_capacity(tail_items.len() + 1);
     new_items.push(head);
     new_items.extend(tail_items);
-    variant_of(Type::List(Box::new(head_type)), Val::List(new_items))
+    variant_of(Type::List(Rc::new(head_type)), Val::List(new_items))
 }
 
 fn expect_variant(v: &Val) -> (&Type, &Val) {

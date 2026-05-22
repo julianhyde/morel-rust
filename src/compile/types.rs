@@ -32,10 +32,10 @@ pub enum Type {
     Record(bool, BTreeMap<Label, Type>),
 
     /// `List(element_type)` represents the type `element_type list`.
-    List(Box<Type>),
+    List(Rc<Type>),
 
     /// `Bag(element_type)` represents the type `element_type bag`.
-    Bag(Box<Type>),
+    Bag(Rc<Type>),
 
     /// `Tuple(args)` represents the type `arg0 * ... * argN`.
     Tuple(Vec<Type>),

@@ -34,6 +34,7 @@ use crate::compile::type_env::Id;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
 use std::collections::{BTreeSet, HashMap};
+use std::rc::Rc;
 
 /// Tries to derive a generator for `pat` from the conjuncts in
 /// `constraints`. Returns `true` if a generator was added to the
@@ -296,7 +297,7 @@ fn create_point_generator(
     source_constraint: &Expr,
 ) -> bool {
     let elem_t = value.type_();
-    let list_t = Box::new(Type::List(Box::new((*elem_t).clone())));
+    let list_t = Box::new(Type::List(Rc::new((*elem_t).clone())));
     let exp = Expr::List(list_t, vec![value.clone()]);
     let mut free = free_names_in(value);
     free.remove(pat_name);
@@ -386,9 +387,9 @@ fn create_range_generator(
         BuiltInFunction::BagTabulate
     };
     let coll_t = if ordered {
-        Box::new(Type::List(int_t.clone()))
+        Box::new(Type::List(int_t.clone().into()))
     } else {
-        Box::new(Type::Bag(int_t.clone()))
+        Box::new(Type::Bag(int_t.clone().into()))
     };
     let exp = call2(tabulate, count, fn_expr, coll_t);
 
@@ -578,7 +579,7 @@ fn create_tuple_range_generator(
 
     // Build a list literal of the enumerated tuples.
     let elem_t = Box::new(pat_type.clone());
-    let list_t = Box::new(Type::List(elem_t.clone()));
+    let list_t = Box::new(Type::List(elem_t.clone().into()));
     let items: Vec<Expr> = values
         .into_iter()
         .map(|tv| {
@@ -808,7 +809,7 @@ fn datatype_extent_list(
     constructors: &[String],
 ) -> Expr {
     let data_t_box = Box::new(data_t.clone());
-    let list_t = Box::new(Type::List(data_t_box.clone()));
+    let list_t = Box::new(Type::List(data_t_box.clone().into()));
     // Each constructor is a global `CoreExpr::Identifier` after
     // resolution — that's how the user-typed `BLUE` reaches Core.
     // It carries the datatype's `Type::Data` directly (constants
@@ -823,7 +824,7 @@ fn datatype_extent_list(
 
 fn bool_extent_list() -> Expr {
     let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
-    let list_t = Box::new(Type::List(bool_t.clone()));
+    let list_t = Box::new(Type::List(bool_t.clone().into()));
     // `false` first, `true` second — matches morel-java's
     // ordering for tuple enumeration over bool components, and
     // also matches `compare` semantics (false < true).
@@ -840,7 +841,7 @@ fn option_extent_list(inner_t: &Type, inner_extent: Expr) -> Expr {
     let inner_t_box = Box::new(inner_t.clone());
     let option_t =
         Box::new(Type::Data("option".to_string(), vec![inner_t.clone()]));
-    let list_t = Box::new(Type::List(option_t.clone()));
+    let list_t = Box::new(Type::List(option_t.clone().into()));
 
     // NONE: Expr::Literal carrying the OptionNone built-in value.
     // The compiler converts this to `Code::new_constant(t,
@@ -873,7 +874,7 @@ fn option_extent_list(inner_t: &Type, inner_extent: Expr) -> Expr {
 
 fn tuple_extent_cartesian(types: &[Type], extents: Vec<Expr>) -> Expr {
     let tuple_t = Box::new(Type::Tuple(types.to_vec()));
-    let list_t = Box::new(Type::List(tuple_t.clone()));
+    let list_t = Box::new(Type::List(tuple_t.clone().into()));
 
     // Each `extents[i]` is `Expr::List(_, values_i)`. Compute the
     // cartesian product of the value lists, then build a
@@ -965,9 +966,9 @@ fn create_string_prefix_generator(
         BuiltInFunction::BagTabulate
     };
     let coll_t = if ordered {
-        Box::new(Type::List(str_t.clone()))
+        Box::new(Type::List(str_t.clone().into()))
     } else {
-        Box::new(Type::Bag(str_t.clone()))
+        Box::new(Type::Bag(str_t.clone().into()))
     };
     let exp = call2(tabulate, count, fn_expr, coll_t);
 
@@ -1106,9 +1107,9 @@ fn maybe_exists(
         //        yield pat distinct`.
         let elem_t = pat.type_();
         let coll_t = if ordered {
-            Box::new(Type::List(elem_t.clone()))
+            Box::new(Type::List(elem_t.clone().into()))
         } else {
-            Box::new(Type::Bag(elem_t.clone()))
+            Box::new(Type::Bag(elem_t.clone().into()))
         };
         let mut new_steps: Vec<Step> = Vec::new();
         for s in &needed {
@@ -1713,9 +1714,9 @@ fn maybe_record_elem_projection(
         );
         steps.push(Step::new(StepKind::Yield(Box::new(yield_expr)), yield_env));
         let coll_t = if ordered {
-            Box::new(Type::List(pat_field_t.clone()))
+            Box::new(Type::List(pat_field_t.clone().into()))
         } else {
-            Box::new(Type::Bag(pat_field_t.clone()))
+            Box::new(Type::Bag(pat_field_t.clone().into()))
         };
         let exp = Expr::From(coll_t, steps);
 
@@ -1840,15 +1841,15 @@ fn maybe_case_constructor(
         // Build `Bag.concat [b1, b2, ...]` (or List.concat).
         let elem_t = pat.type_();
         let coll_t = if ordered {
-            Box::new(Type::List(elem_t.clone()))
+            Box::new(Type::List(elem_t.clone().into()))
         } else {
-            Box::new(Type::Bag(elem_t.clone()))
+            Box::new(Type::Bag(elem_t.clone().into()))
         };
         let combined = if branch_exps.len() == 1 {
             branch_exps.into_iter().next().unwrap()
         } else {
             let list_of_coll_t =
-                Box::new(Type::List(Box::new((*coll_t).clone())));
+                Box::new(Type::List(Rc::new((*coll_t).clone())));
             let arg_list = Expr::List(list_of_coll_t.clone(), branch_exps);
             let concat_fn = if ordered {
                 BuiltInFunction::ListConcat
@@ -1928,13 +1929,13 @@ fn derive_payload_generator(
             }
             let elem = Expr::Literal(lit_t.clone(), v.clone());
             let coll_t = if ordered {
-                Box::new(Type::List(lit_t.clone()))
+                Box::new(Type::List(lit_t.clone().into()))
             } else {
-                Box::new(Type::Bag(lit_t.clone()))
+                Box::new(Type::Bag(lit_t.clone().into()))
             };
             // `[lit]` as a List value; bags are formed at the
             // outer concat layer if needed.
-            let list_t = Box::new(Type::List(lit_t.clone()));
+            let list_t = Box::new(Type::List(lit_t.clone().into()));
             let list_lit = Expr::List(list_t.clone(), vec![elem]);
             // For bag scope, wrap with `Bag.fromList`-equivalent —
             // but our concat happily mixes lists into bags via
@@ -2002,9 +2003,9 @@ fn derive_payload_generator(
                 yield_env,
             ));
             let coll_t = if ordered {
-                Box::new(Type::List(tuple_t.clone()))
+                Box::new(Type::List(tuple_t.clone().into()))
             } else {
-                Box::new(Type::Bag(tuple_t.clone()))
+                Box::new(Type::Bag(tuple_t.clone().into()))
             };
             let from = Expr::From(coll_t, steps);
             let expanded = expand_from_with(from, fn_env, datatypes);
@@ -2053,14 +2054,14 @@ fn build_map_constructor(
     ordered: bool,
 ) -> Expr {
     let coll_t = if ordered {
-        Box::new(Type::List(elem_t.clone()))
+        Box::new(Type::List(elem_t.clone().into()))
     } else {
-        Box::new(Type::Bag(elem_t.clone()))
+        Box::new(Type::Bag(elem_t.clone().into()))
     };
     let inner_coll_t = if ordered {
-        Box::new(Type::List(payload_t.clone()))
+        Box::new(Type::List(payload_t.clone().into()))
     } else {
-        Box::new(Type::Bag(payload_t.clone()))
+        Box::new(Type::Bag(payload_t.clone().into()))
     };
     // `fn x => CTOR x`
     let ctor_fn_t = Box::new(Type::Fn(payload_t.clone(), elem_t.clone()));
@@ -2158,11 +2159,11 @@ fn maybe_union(
         // `List.concat …`).
         let elem_t = pat.type_();
         let coll_t = if ordered {
-            Box::new(Type::List(elem_t.clone()))
+            Box::new(Type::List(elem_t.clone().into()))
         } else {
-            Box::new(Type::Bag(elem_t.clone()))
+            Box::new(Type::Bag(elem_t.clone().into()))
         };
-        let list_of_coll_t = Box::new(Type::List(Box::new((*coll_t).clone())));
+        let list_of_coll_t = Box::new(Type::List(Rc::new((*coll_t).clone())));
         let exps: Vec<Expr> = sub_gens.iter().map(|g| g.exp.clone()).collect();
         let arg_list = Expr::List(list_of_coll_t.clone(), exps);
         let concat_fn = if ordered {

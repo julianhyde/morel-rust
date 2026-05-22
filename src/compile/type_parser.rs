@@ -120,13 +120,13 @@ impl TypeBuilder {
                             arg_types.into_iter().next().ok_or_else(|| {
                                 "list type application with no arg".to_string()
                             })?;
-                        Type::List(Box::new(arg))
+                        Type::List(Rc::new(arg))
                     } else if name == "bag" && arity == 1 {
                         let arg =
                             arg_types.into_iter().next().ok_or_else(|| {
                                 "bag type application with no arg".to_string()
                             })?;
-                        Type::Bag(Box::new(arg))
+                        Type::Bag(Rc::new(arg))
                     } else if let Some(expected) =
                         library::builtin_type_arity(name)
                         && expected == arity

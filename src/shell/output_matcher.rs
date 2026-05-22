@@ -899,6 +899,7 @@ impl<'a> Scanner<'a> {
 mod tests {
     use super::*;
     use crate::compile::types::PrimitiveType;
+    use std::rc::Rc;
 
     fn int() -> Type {
         Type::Primitive(PrimitiveType::Int)
@@ -907,10 +908,10 @@ mod tests {
         Type::Primitive(PrimitiveType::String)
     }
     fn int_bag() -> Type {
-        Type::Bag(Box::new(int()))
+        Type::Bag(Rc::new(int()))
     }
     fn int_list() -> Type {
-        Type::List(Box::new(int()))
+        Type::List(Rc::new(int()))
     }
 
     #[test]
@@ -1004,7 +1005,7 @@ mod tests {
         fields.insert(Label::from("count"), int());
         fields.insert(Label::from("y"), int());
         let row = Type::Record(false, fields);
-        let t = Type::Bag(Box::new(row));
+        let t = Type::Bag(Rc::new(row));
         let actual = "count y\n----- --\n\
                       1     ~1\n1     0\n2     1\n2     2\n\n\
                       val it : {count:int, y:int} bag";
@@ -1020,7 +1021,7 @@ mod tests {
         fields.insert(Label::from("count"), int());
         fields.insert(Label::from("y"), int());
         let row = Type::Record(false, fields);
-        let t = Type::Bag(Box::new(row));
+        let t = Type::Bag(Rc::new(row));
         let actual = "count y\n----- --\n1     ~1\n2     1\n\n\
                       val it : {count:int, y:int} bag";
         let expected = "count y\n----- --\n1     ~2\n2     1\n\n\
@@ -1030,7 +1031,7 @@ mod tests {
 
     #[test]
     fn bag_of_bags() {
-        let t = Type::Bag(Box::new(int_bag()));
+        let t = Type::Bag(Rc::new(int_bag()));
         let a = "val it = [[3],[1, 2]] : int bag bag";
         let b = "val it = [[2,1],[3]] : int bag bag";
         assert!(equivalent_with_type(&t, a, b));

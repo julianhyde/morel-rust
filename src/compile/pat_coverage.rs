@@ -190,7 +190,7 @@ impl<'a> CoverageChecker<'a> {
             PatKind::List(pats) => {
                 // [a, b, c] desugars to a :: b :: c :: [].
                 let elem_type = match type_ {
-                    Type::List(t) => *t.clone(),
+                    Type::List(t) => (**t).clone(),
                     _ => return Formula::True,
                 };
                 self.list_pats_formula(pats, 0, path, type_, &elem_type)
@@ -199,7 +199,7 @@ impl<'a> CoverageChecker<'a> {
             PatKind::Cons(head, tail) => {
                 // head :: tail
                 let elem_type = match type_ {
-                    Type::List(t) => *t.clone(),
+                    Type::List(t) => (**t).clone(),
                     _ => return Formula::True,
                 };
                 let cons_var =

@@ -195,7 +195,7 @@ impl Pretty {
     fn instantiate(type_: &Type, args: &[Type]) -> Type {
         match type_ {
             // lint: sort until '#}' where '##Type::'
-            Type::Bag(t) => Type::Bag(Box::new(Self::instantiate(t, args))),
+            Type::Bag(t) => Type::Bag(Rc::new(Self::instantiate(t, args))),
             Type::Data(name, ts) => Type::Data(
                 name.clone(),
                 ts.iter().map(|t| Self::instantiate(t, args)).collect(),
@@ -204,7 +204,7 @@ impl Pretty {
                 Box::new(Self::instantiate(a, args)),
                 Box::new(Self::instantiate(b, args)),
             ),
-            Type::List(t) => Type::List(Box::new(Self::instantiate(t, args))),
+            Type::List(t) => Type::List(Rc::new(Self::instantiate(t, args))),
             Type::Record(p, fields) => Type::Record(
                 *p,
                 fields
@@ -815,7 +815,7 @@ impl Pretty {
                     library::BuiltInDatatype::ContinuousSet
                     | library::BuiltInDatatype::DiscreteSet,
                     _,
-                ) => Type::List(Box::new(Type::Data(
+                ) => Type::List(Rc::new(Type::Data(
                     "range".to_string(),
                     vec![args[0].clone()],
                 ))),
@@ -1266,7 +1266,7 @@ impl TypeVarRenumberer {
                 Box::new(self.visit(type_)),
                 self.visit_list(args.as_slice()),
             ),
-            Type::Bag(inner) => Type::Bag(Box::new(self.visit(inner))),
+            Type::Bag(inner) => Type::Bag(Rc::new(self.visit(inner))),
             Type::Data(name, args) => {
                 Type::Data(name.clone(), self.visit_list(args.as_slice()))
             }
@@ -1277,7 +1277,7 @@ impl TypeVarRenumberer {
             Type::Forall(type_, size) => {
                 Type::Forall(Rc::new(self.visit(type_)), *size)
             }
-            Type::List(inner) => Type::List(Box::new(self.visit(inner))),
+            Type::List(inner) => Type::List(Rc::new(self.visit(inner))),
             Type::Named(types, name) => {
                 let types2 = self.visit_list(types.as_slice());
                 Type::Named(types2, name.clone())

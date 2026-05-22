@@ -59,6 +59,7 @@ use std::fmt;
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::iter::{repeat_n, zip};
 use std::ops::Deref;
+use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, Weak};
 use strum::{EnumProperty, IntoEnumIterator};
@@ -5181,15 +5182,12 @@ fn build_scott() -> (Type, Val) {
     // The outer record. Field order must be alphabetical: bonuses, depts,
     // emps, salgrades.
     let scott_fields: BTreeMap<Label, Type> = [
-        (
-            S("bonuses".to_string()),
-            Type::Bag(Box::new(bonus_row_type)),
-        ),
-        (S("depts".to_string()), Type::Bag(Box::new(dept_row_type))),
-        (S("emps".to_string()), Type::Bag(Box::new(emp_row_type))),
+        (S("bonuses".to_string()), Type::Bag(Rc::new(bonus_row_type))),
+        (S("depts".to_string()), Type::Bag(Rc::new(dept_row_type))),
+        (S("emps".to_string()), Type::Bag(Rc::new(emp_row_type))),
         (
             S("salgrades".to_string()),
-            Type::Bag(Box::new(salgrade_row_type)),
+            Type::Bag(Rc::new(salgrade_row_type)),
         ),
     ]
     .into_iter()

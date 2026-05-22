@@ -30,6 +30,7 @@ use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
 use crate::shell::error::Error;
 use std::fmt;
+use std::rc::Rc;
 
 /// Checks if the type is a list type.
 fn is_list_type(type_: &Type) -> bool {
@@ -714,9 +715,9 @@ impl FromBuilder {
         // Wrap in List or Bag based on ordering. Per morel#273,
         // output is ordered (list) iff all scan inputs are ordered.
         if env.ordered {
-            Ok(Type::List(Box::new(element_type)))
+            Ok(Type::List(Rc::new(element_type)))
         } else {
-            Ok(Type::Bag(Box::new(element_type)))
+            Ok(Type::Bag(Rc::new(element_type)))
         }
     }
 }
@@ -802,7 +803,7 @@ mod tests {
             "x".to_string(),
         );
         let exp = Expr::List(
-            Box::new(Type::List(Box::new(Type::Primitive(PrimitiveType::Int)))),
+            Box::new(Type::List(Rc::new(Type::Primitive(PrimitiveType::Int)))),
             vec![],
         );
         builder.scan(pat, exp);
@@ -850,7 +851,7 @@ mod tests {
             "x".to_string(),
         );
         let exp = Expr::List(
-            Box::new(Type::List(Box::new(Type::Primitive(PrimitiveType::Int)))),
+            Box::new(Type::List(Rc::new(Type::Primitive(PrimitiveType::Int)))),
             vec![],
         );
         builder.scan(pat, exp);
@@ -956,7 +957,7 @@ mod tests {
             "x".to_string(),
         );
         let exp = Expr::List(
-            Box::new(Type::List(Box::new(Type::Primitive(PrimitiveType::Int)))),
+            Box::new(Type::List(Rc::new(Type::Primitive(PrimitiveType::Int)))),
             vec![],
         );
         builder.scan(pat, exp);
@@ -979,7 +980,7 @@ mod tests {
             "x".to_string(),
         );
         let exp = Expr::List(
-            Box::new(Type::List(Box::new(Type::Primitive(PrimitiveType::Int)))),
+            Box::new(Type::List(Rc::new(Type::Primitive(PrimitiveType::Int)))),
             vec![],
         );
         let condition = Expr::Literal(

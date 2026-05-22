@@ -831,8 +831,7 @@ impl<'a> Compiler<'a> {
                             || *f == BuiltInFunction::RelationalMin
                         {
                             let elem_type = match a.type_().as_ref() {
-                                Type::List(e) => *e.clone(),
-                                Type::Bag(e) => *e.clone(),
+                                Type::List(e) | Type::Bag(e) => (**e).clone(),
                                 _ => *a.type_(),
                             };
                             let cmp = CmpRef(comparator::comparator_for_with(
@@ -1411,7 +1410,7 @@ impl<'a> Compiler<'a> {
 
                 // Extract element type from the collection type
                 // (Type::List(e) or Type::Bag(e)).
-                let element_type = match collection_type.as_ref() {
+                let element_type: &Type = match collection_type.as_ref() {
                     Type::List(e) | Type::Bag(e) => e,
                     _ => collection_type,
                 };
