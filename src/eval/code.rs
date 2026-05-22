@@ -53,6 +53,7 @@ use crate::eval::variant;
 use crate::eval::vector::Vector;
 use crate::shell::main::{MorelError, Shell};
 use crate::shell::prop::{Configurable, Prop};
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -4355,6 +4356,11 @@ pub struct Lib {
     pub eager_f1_throws: HashSet<EagerF1>,
     pub eager_f2_throws: HashSet<EagerF2>,
     pub eager_f3_throws: HashSet<EagerF3>,
+    /// Interning pool. Every `Rc<Type>` produced by `intern` or
+    /// `intern_rc` is canonical: two `Rc<Type>`s for the same type
+    /// share the same allocation, so `Rc::ptr_eq` is a sound
+    /// equality test.
+    pool: RefCell<HashSet<Rc<Type>>>,
 }
 
 impl Lib {
@@ -4381,6 +4387,30 @@ impl Lib {
     /// Returns the value of a built-in structure (record), if any.
     pub fn structure_val(&self, r: BuiltInRecord) -> Option<&Val> {
         self.structure_map.get(&r).map(|(_, v)| v)
+    }
+
+    /// Interns a `Type`, returning the canonical `Rc<Type>`.
+    pub fn intern(&self, t: Type) -> Rc<Type> {
+        let mut pool = self.pool.borrow_mut();
+        if let Some(existing) = pool.get(&t) {
+            return Rc::clone(existing);
+        }
+        let rc = Rc::new(t);
+        pool.insert(Rc::clone(&rc));
+        rc
+    }
+
+    /// Interns an `Rc<Type>`. Returns the existing canonical `Rc`
+    /// when one is already pooled; otherwise inserts and returns
+    /// the caller's `Rc` (so an already-canonical input is a no-op).
+    pub fn intern_rc(&self, rc: Rc<Type>) -> Rc<Type> {
+        let mut pool = self.pool.borrow_mut();
+        if let Some(existing) = pool.get(rc.as_ref()) {
+            return Rc::clone(existing);
+        }
+        let copy = Rc::clone(&rc);
+        pool.insert(rc);
+        copy
     }
 }
 
@@ -4885,6 +4915,26 @@ fn exn_from_val(value: &Val) -> (BuiltInExn, Option<String>) {
 
 impl LibBuilder {
     fn build(&mut self) -> Lib {
+        let pool: RefCell<HashSet<Rc<Type>>> = RefCell::new(HashSet::new());
+        let intern_rc = |rc: Rc<Type>| -> Rc<Type> {
+            let mut p = pool.borrow_mut();
+            if let Some(existing) = p.get(rc.as_ref()) {
+                return Rc::clone(existing);
+            }
+            let copy = Rc::clone(&rc);
+            p.insert(rc);
+            copy
+        };
+        let intern = |t: Type| -> Rc<Type> {
+            let mut p = pool.borrow_mut();
+            if let Some(existing) = p.get(&t) {
+                return Rc::clone(existing);
+            }
+            let rc = Rc::new(t);
+            p.insert(Rc::clone(&rc));
+            rc
+        };
+
         // Populate a table of functions and structures that are in the global
         // namespace.
         let mut name_to_built_in: HashMap<String, BuiltIn> = HashMap::new();
@@ -4903,7 +4953,7 @@ impl LibBuilder {
             let name = f.get_str("name").expect("name");
             let global = f.is_global();
 
-            let t = type_parser::string_to_type(type_code);
+            let t = intern_rc(type_parser::string_to_type(type_code));
             if let Some(fn_impl) = self.fn_impls.remove(&f) {
                 fn_map.insert(f, (t, fn_impl));
             } else {
@@ -4951,7 +5001,7 @@ impl LibBuilder {
                 }
                 name_types.insert(Label::String(n.clone()), Rc::clone(t));
             }
-            let t = Rc::new(Type::Record(false, name_types.clone()));
+            let t = intern(Type::Record(false, name_types.clone()));
             structure_map.insert(*r, (t, Val::List(vals)));
         }
 
@@ -4960,7 +5010,7 @@ impl LibBuilder {
         // bag of records.
         let (scott_type, scott_val) = build_scott();
         structure_map
-            .insert(BuiltInRecord::Scott, (Rc::new(scott_type), scott_val));
+            .insert(BuiltInRecord::Scott, (intern(scott_type), scott_val));
 
         for r in BuiltInRecord::iter() {
             let name = r.get_str("name").expect("name");
@@ -4996,6 +5046,7 @@ impl LibBuilder {
             eager_f1_throws,
             eager_f2_throws,
             eager_f3_throws,
+            pool,
         }
     }
 }
