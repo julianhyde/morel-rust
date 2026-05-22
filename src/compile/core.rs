@@ -22,6 +22,7 @@ use crate::compile::types::{Label, Type};
 use crate::eval::val::Val;
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::ops::Deref;
+use std::rc::Rc;
 
 /// Core tree of a statement (expression or declaration).
 #[derive(Clone, Debug)]
@@ -96,7 +97,8 @@ pub enum Expr {
 impl Expr {
     /// Creates a tuple expression.
     pub(crate) fn new_tuple(args: &[Expr]) -> Self {
-        let types = args.iter().map(|e| *e.type_()).collect::<Vec<_>>();
+        let types =
+            args.iter().map(|e| Rc::new(*e.type_())).collect::<Vec<_>>();
         let arg_type = Type::Tuple(types);
         Expr::Tuple(Box::new(arg_type), args.to_vec())
     }

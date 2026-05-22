@@ -1704,9 +1704,10 @@ fn wrap_record_pairs(inner_type: &Type, value: &Val) -> Option<Val> {
             .map(|(i, (field_type, v))| {
                 let inner = match v {
                     Val::Variant(_) => v.clone(),
-                    _ => {
-                        Val::Variant(Box::new((field_type.clone(), v.clone())))
-                    }
+                    _ => Val::Variant(Box::new((
+                        (**field_type).clone(),
+                        v.clone(),
+                    ))),
                 };
                 Val::List(vec![Val::String((i + 1).to_string()), inner])
             })

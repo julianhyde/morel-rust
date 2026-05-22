@@ -2020,7 +2020,7 @@ impl<'a> Resolver<'a> {
                     }
                     Type::Tuple(args) if args.len() == 2 => {
                         // Binary operator
-                        match &args[0] {
+                        match &*args[0] {
                             Type::Variable(_) => {
                                 self.multi_op_to_builtin(op_name)
                             }
@@ -2309,11 +2309,11 @@ fn substitute(t: &Type, subst: &HashMap<usize, Type>) -> Type {
         ),
         Type::Data(n, args) => Type::Data(
             n.clone(),
-            args.iter().map(|a| substitute(a, subst)).collect(),
+            args.iter().map(|a| Rc::new(substitute(a, subst))).collect(),
         ),
         Type::Named(args, n) => {
-            let new_args: Vec<Type> =
-                args.iter().map(|a| substitute(a, subst)).collect();
+            let new_args: Vec<Rc<Type>> =
+                args.iter().map(|a| Rc::new(substitute(a, subst))).collect();
             // The type parser produces `Type::Named([], name)` for
             // every datatype; normalise the ones the pretty printer
             // expects as `Type::Data` so that postfix call results
@@ -2322,18 +2322,18 @@ fn substitute(t: &Type, subst: &HashMap<usize, Type>) -> Type {
             // other built-in named type (entries in `BuiltInDatatype`
             // and `BuiltInEqtype`) lowers to `Type::Data`.
             if n == "bag" && new_args.len() == 1 {
-                Type::Bag(Rc::new(new_args.into_iter().next().unwrap()))
+                Type::Bag(new_args.into_iter().next().unwrap())
             } else if n == "list" && new_args.len() == 1 {
-                Type::List(Rc::new(new_args.into_iter().next().unwrap()))
+                Type::List(new_args.into_iter().next().unwrap())
             } else if library::builtin_type_arity(n.as_str()).is_some() {
                 Type::Data(n.clone(), new_args)
             } else {
                 Type::Named(new_args, n.clone())
             }
         }
-        Type::Tuple(fs) => {
-            Type::Tuple(fs.iter().map(|a| substitute(a, subst)).collect())
-        }
+        Type::Tuple(fs) => Type::Tuple(
+            fs.iter().map(|a| Rc::new(substitute(a, subst))).collect(),
+        ),
         _ => t.clone(),
     }
 }

@@ -1112,8 +1112,9 @@ fn build_iterate_for_recursive_v2(
         rec_arg_names.push((n.clone(), t.clone()));
     }
     // Result tuple type is (param_t1, ..., param_tN).
-    let elem_t =
-        Type::Tuple(params.iter().map(|(_, t)| (**t).clone()).collect());
+    let elem_t = Type::Tuple(
+        params.iter().map(|(_, t)| Rc::new((**t).clone())).collect(),
+    );
     let coll_t = Type::Bag(Rc::new(elem_t.clone()));
     let elem_t_box = Box::new(elem_t.clone());
     // Helper: build a step env containing the given bindings.
@@ -1206,8 +1207,10 @@ fn build_iterate_for_recursive_v2(
             Type::Primitive(PrimitiveType::Bool) => BuiltInFunction::BoolEq,
             _ => BuiltInFunction::GEq,
         };
-        let pair_t =
-            Box::new(Type::Tuple(vec![(**orig_t).clone(), (**orig_t).clone()]));
+        let pair_t = Box::new(Type::Tuple(vec![
+            Rc::new((**orig_t).clone()),
+            Rc::new((**orig_t).clone()),
+        ]));
         let fn_t = Box::new(Type::Fn(
             pair_t.clone().into(),
             Rc::new(Type::Primitive(PrimitiveType::Bool)),
@@ -1223,8 +1226,12 @@ fn build_iterate_for_recursive_v2(
             Span::new(""),
         ));
     }
-    let rec_args_t =
-        Type::Tuple(rec_arg_names.iter().map(|(_, t)| (**t).clone()).collect());
+    let rec_args_t = Type::Tuple(
+        rec_arg_names
+            .iter()
+            .map(|(_, t)| Rc::new((**t).clone()))
+            .collect(),
+    );
     let rec_args_pat = Pat::Tuple(Box::new(rec_args_t.clone()), fresh_pats);
     // Build update-body steps.
     let mut update_steps: Vec<Step> = Vec::new();
@@ -1291,14 +1298,20 @@ fn build_iterate_for_recursive_v2(
     let all_name = "__tc_all";
     let coll_t_box = Box::new(coll_t.clone());
     let pair_pat = Pat::Tuple(
-        Box::new(Type::Tuple(vec![coll_t.clone(), coll_t.clone()])),
+        Box::new(Type::Tuple(vec![
+            Rc::new(coll_t.clone()),
+            Rc::new(coll_t.clone()),
+        ])),
         vec![
             Pat::Identifier(coll_t_box.clone(), all_name.to_string()),
             Pat::Identifier(coll_t_box.clone(), new_name.to_string()),
         ],
     );
     let fn_t = Box::new(Type::Fn(
-        Rc::new(Type::Tuple(vec![coll_t.clone(), coll_t.clone()])),
+        Rc::new(Type::Tuple(vec![
+            Rc::new(coll_t.clone()),
+            Rc::new(coll_t.clone()),
+        ])),
         Rc::new(coll_t.clone()),
     ));
     let update_fn = Expr::Fn(
@@ -1547,12 +1560,12 @@ fn normalize_tuple_id_param(pat: &Pat, body: &Expr) -> (Pat, Expr) {
     let comp_pats: Vec<Pat> = elem_types
         .iter()
         .zip(comp_names.iter())
-        .map(|(et, cn)| Pat::Identifier(Box::new(et.clone()), cn.clone()))
+        .map(|(et, cn)| Pat::Identifier(Box::new((**et).clone()), cn.clone()))
         .collect();
     let comp_idents: Vec<Expr> = elem_types
         .iter()
         .zip(comp_names.iter())
-        .map(|(et, cn)| Expr::Identifier(Box::new(et.clone()), cn.clone()))
+        .map(|(et, cn)| Expr::Identifier(Box::new((**et).clone()), cn.clone()))
         .collect();
     let new_pat = Pat::Tuple(t.clone(), comp_pats);
     let tuple_replacement = Expr::Tuple(t.clone(), comp_idents);
@@ -1804,8 +1817,10 @@ fn remove_recursive_branches(body: &Expr, name: &str) -> Option<Expr> {
     let first = iter.next().unwrap();
     Some(iter.fold(first, |a, b| {
         let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
-        let pair_t =
-            Box::new(Type::Tuple(vec![(*bool_t).clone(), (*bool_t).clone()]));
+        let pair_t = Box::new(Type::Tuple(vec![
+            Rc::new((*bool_t).clone()),
+            Rc::new((*bool_t).clone()),
+        ]));
         let fn_t =
             Box::new(Type::Fn(pair_t.clone().into(), bool_t.clone().into()));
         let fn_lit = Expr::Literal(fn_t, Val::Fn(BuiltInFunction::BoolOrElse));
@@ -1946,7 +1961,7 @@ fn build_iterate_ast(
 ) -> Expr {
     use crate::compile::type_env::Id;
     // Result element type: (x_t, y_t).
-    let elem_t = Type::Tuple(vec![x_t.clone(), y_t.clone()]);
+    let elem_t = Type::Tuple(vec![Rc::new(x_t.clone()), Rc::new(y_t.clone())]);
     let bool_t = Type::Primitive(PrimitiveType::Bool);
     // Result collection type: Bag(elem_t). (We don't preserve list
     // ordering in Phase 1; iterate's runtime uses Val::List as its
@@ -2046,7 +2061,10 @@ fn build_iterate_ast(
     let all_pat = Pat::Identifier(coll_t_box.clone(), all_name.to_string());
     let new_pat = Pat::Identifier(coll_t_box.clone(), new_name.to_string());
     let pair_pat = Pat::Tuple(
-        Box::new(Type::Tuple(vec![coll_t.clone(), coll_t.clone()])),
+        Box::new(Type::Tuple(vec![
+            Rc::new(coll_t.clone()),
+            Rc::new(coll_t.clone()),
+        ])),
         vec![all_pat, new_pat.clone()],
     );
     let new_id = Expr::Identifier(coll_t_box.clone(), new_name.into());
@@ -2067,7 +2085,10 @@ fn build_iterate_ast(
         ],
     );
     // Where pz = sz
-    let pair_int_t = Box::new(Type::Tuple(vec![y_t.clone(), x_t.clone()]));
+    let pair_int_t = Box::new(Type::Tuple(vec![
+        Rc::new(y_t.clone()),
+        Rc::new(x_t.clone()),
+    ]));
     let eq_op = match y_t {
         Type::Primitive(PrimitiveType::Int) => BuiltInFunction::IntEq,
         Type::Primitive(PrimitiveType::String) => BuiltInFunction::StringEq,
@@ -2131,7 +2152,10 @@ fn build_iterate_ast(
     ];
     let inner_from = Expr::From(Box::new(coll_t.clone()), inner_steps);
     let update_fn_t = Box::new(Type::Fn(
-        Rc::new(Type::Tuple(vec![coll_t.clone(), coll_t.clone()])),
+        Rc::new(Type::Tuple(vec![
+            Rc::new(coll_t.clone()),
+            Rc::new(coll_t.clone()),
+        ])),
         Rc::new(coll_t.clone()),
     ));
     let update_fn = Expr::Fn(
@@ -2186,7 +2210,10 @@ fn wrap_diagonal_projection(
         return None;
     }
     // The iterate's type is Bag(Tuple([elem_t; arity])).
-    let tuple_t = Type::Tuple(vec![elem_t.clone(); arity]);
+    let tuple_t = {
+        let rc = Rc::new(elem_t.clone());
+        Type::Tuple((0..arity).map(|_| rc.clone()).collect())
+    };
     let bag_t = Box::new(Type::Bag(Rc::new(elem_t.clone())));
     // Fresh names for the tuple components.
     let names: Vec<String> =
@@ -2199,7 +2226,8 @@ fn wrap_diagonal_projection(
             .collect(),
     );
     let bool_t = Type::Primitive(PrimitiveType::Bool);
-    let pair_t = Type::Tuple(vec![elem_t.clone(), elem_t.clone()]);
+    let pair_t =
+        Type::Tuple(vec![Rc::new(elem_t.clone()), Rc::new(elem_t.clone())]);
     let eq_op = match elem_t {
         Type::Primitive(PrimitiveType::Int) => BuiltInFunction::IntEq,
         Type::Primitive(PrimitiveType::String) => BuiltInFunction::StringEq,
@@ -2402,7 +2430,7 @@ fn destructure_tuple_extents_for_fn_calls(
         return steps;
     }
     // Find tuple-typed scan-extent bindings.
-    let mut targets: Vec<(usize, String, Vec<Type>, Span)> = Vec::new();
+    let mut targets: Vec<(usize, String, Vec<Rc<Type>>, Span)> = Vec::new();
     for (i, s) in steps.iter().enumerate() {
         let StepKind::Scan(p, source, cond) = &s.kind else {
             continue;
@@ -2463,12 +2491,13 @@ fn destructure_tuple_extents_for_fn_calls(
         let mut new_bindings: Vec<Binding> = Vec::with_capacity(elems.len());
         for (i, t) in elems.iter().enumerate() {
             let fresh_name = format!("{}__{}", name, i + 1);
-            let pat = Pat::Identifier(Box::new(t.clone()), fresh_name.clone());
+            let pat =
+                Pat::Identifier(Box::new((**t).clone()), fresh_name.clone());
             // Carry the original `from p` span onto each
             // destructured component's Extent so a downstream
             // "pattern not grounded" error points at the user's
             // source location, not an empty span.
-            let source = Expr::Extent(Box::new(t.clone()), span.clone());
+            let source = Expr::Extent(Box::new((**t).clone()), span.clone());
             new_kinds.push(StepKind::Scan(
                 Box::new(pat),
                 Box::new(source),
@@ -2476,7 +2505,7 @@ fn destructure_tuple_extents_for_fn_calls(
             ));
             new_bindings.push(Binding::new(
                 Id::new(&fresh_name, 0),
-                Box::new(t.clone()),
+                Box::new((**t).clone()),
             ));
         }
         let tuple_t = Box::new(Type::Tuple(elems.clone()));
@@ -2485,7 +2514,7 @@ fn destructure_tuple_extents_for_fn_calls(
             .enumerate()
             .map(|(i, t)| {
                 Expr::Identifier(
-                    Box::new(t.clone()),
+                    Box::new((**t).clone()),
                     format!("{}__{}", name, i + 1),
                 )
             })
@@ -2651,8 +2680,10 @@ fn unground_outer_point_scan(
     let extent_step =
         StepKind::Scan(Box::new(pat.clone()), Box::new(extent), None);
     let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
-    let pair_t =
-        Box::new(Type::Tuple(vec![(**pat_t).clone(), (**pat_t).clone()]));
+    let pair_t = Box::new(Type::Tuple(vec![
+        Rc::new((**pat_t).clone()),
+        Rc::new((**pat_t).clone()),
+    ]));
     let eq_op = match pat_t.as_ref() {
         Type::Primitive(PrimitiveType::Int) => BuiltInFunction::IntEq,
         Type::Primitive(PrimitiveType::Real) => BuiltInFunction::RealEq,
@@ -3386,8 +3417,8 @@ fn decompose_tuple_elems_once(steps: Vec<Step>) -> Vec<Step> {
                 let mut conjuncts: Vec<Expr> = Vec::new();
                 for (fresh, t, orig) in &post_filters {
                     let pair_t = Box::new(Type::Tuple(vec![
-                        (**t).clone(),
-                        (**t).clone(),
+                        Rc::new((**t).clone()),
+                        Rc::new((**t).clone()),
                     ]));
                     let fn_t = Box::new(Type::Fn(
                         pair_t.clone().into(),
@@ -4012,8 +4043,10 @@ pub(crate) fn and_all(conjuncts: Vec<Expr>) -> Expr {
     let first = iter.next().expect("at least one conjunct");
     iter.fold(first, |lhs, rhs| {
         let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
-        let pair_t =
-            Box::new(Type::Tuple(vec![(*bool_t).clone(), (*bool_t).clone()]));
+        let pair_t = Box::new(Type::Tuple(vec![
+            Rc::new((*bool_t).clone()),
+            Rc::new((*bool_t).clone()),
+        ]));
         let fn_t =
             Box::new(Type::Fn(pair_t.clone().into(), bool_t.clone().into()));
         let fn_expr =

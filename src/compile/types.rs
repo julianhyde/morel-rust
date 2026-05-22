@@ -38,18 +38,18 @@ pub enum Type {
     Bag(Rc<Type>),
 
     /// `Tuple(args)` represents the type `arg0 * ... * argN`.
-    Tuple(Vec<Type>),
+    Tuple(Vec<Rc<Type>>),
     Variable(TypeVariable),
     /// `Named(types, name)` represents a reference to a built-in or named type
     /// if `types` are empty, or a specialization of a parameterized type.
     /// For example, `order` or `int option`.
-    Named(Vec<Type>, String),
+    Named(Vec<Rc<Type>>, String),
 
     /// `Alias(name, type_, args)` represents the declaration
     /// `type name = args type_`; for example,
     /// `type int_pair_list = (int * int) list`.
-    Alias(String, Box<Type>, Vec<Type>),
-    Data(String, Vec<Type>),
+    Alias(String, Box<Type>, Vec<Rc<Type>>),
+    Data(String, Vec<Rc<Type>>),
 
     /// `Forall(type_, parameter_count)` represents the type
     /// `forall tyVars ... type_`, where there are parameter_count
@@ -57,7 +57,7 @@ pub enum Type {
     Forall(Rc<Type>, usize),
 
     /// `Multi(types)` represents an overloaded type `type0 or ... typeN`.
-    Multi(Vec<Type>),
+    Multi(Vec<Rc<Type>>),
 }
 
 impl Type {
@@ -85,7 +85,9 @@ impl Type {
             Type::Record(_, fields) => {
                 fields.values().cloned().collect::<Vec<_>>()
             }
-            Type::Tuple(field_types) => field_types.to_vec(),
+            Type::Tuple(field_types) => {
+                field_types.iter().map(|t| (**t).clone()).collect()
+            }
             _ => panic!("Expected record type"),
         }
     }
@@ -131,7 +133,7 @@ impl Type {
     /// Describes a list of types, with given left and right precedence
     /// and given opening, separator, and closing strings.
     fn describe_list(
-        types: &[Type],
+        types: &[Rc<Type>],
         f: &mut Formatter,
         op: &Op,
         mut left: u8,
@@ -268,7 +270,7 @@ impl Type {
                     if i > 0 {
                         f.write_str(" * ")?;
                     }
-                    let wrap = matches!(t, Type::Tuple(_));
+                    let wrap = matches!(&**t, Type::Tuple(_));
                     if wrap {
                         f.write_str("(")?;
                         t.describe(f, 0, 0)?;

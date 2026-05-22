@@ -90,9 +90,9 @@ impl TypeBuilder {
             // lint: sort until '#}' where '##TypeKind::'
             TypeKind::App(args, base_type) => {
                 let flat_args = AstType::flatten(args);
-                let arg_types: Vec<Type> = flat_args
+                let arg_types: Vec<Rc<Type>> = flat_args
                     .iter()
-                    .map(|t| self.ast_to_type(t).map(|b| *b))
+                    .map(|t| self.ast_to_type(t).map(|b| Rc::new(*b)))
                     .collect::<Result<_, _>>()?;
                 let base = self.ast_to_type(base_type)?;
 
@@ -120,13 +120,13 @@ impl TypeBuilder {
                             arg_types.into_iter().next().ok_or_else(|| {
                                 "list type application with no arg".to_string()
                             })?;
-                        Type::List(Rc::new(arg))
+                        Type::List(arg)
                     } else if name == "bag" && arity == 1 {
                         let arg =
                             arg_types.into_iter().next().ok_or_else(|| {
                                 "bag type application with no arg".to_string()
                             })?;
-                        Type::Bag(Rc::new(arg))
+                        Type::Bag(arg)
                     } else if let Some(expected) =
                         library::builtin_type_arity(name)
                         && expected == arity
@@ -170,9 +170,9 @@ impl TypeBuilder {
                 Type::Record(false, field_map)
             }
             TypeKind::Tuple(types) => {
-                let type_args: Vec<Type> = types
+                let type_args: Vec<Rc<Type>> = types
                     .iter()
-                    .map(|t| self.ast_to_type(t).map(|b| *b))
+                    .map(|t| self.ast_to_type(t).map(|b| Rc::new(*b)))
                     .collect::<Result<_, _>>()?;
                 Type::Tuple(type_args)
             }

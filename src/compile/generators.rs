@@ -432,7 +432,7 @@ fn create_tuple_range_generator(
 ) -> bool {
     // Separate component types.
     let component_types: Vec<Type> = match pat_type {
-        Type::Tuple(ts) => ts.clone(),
+        Type::Tuple(ts) => ts.iter().map(|t| (**t).clone()).collect(),
         _ => return false,
     };
     // Collect lo and hi tuples from the constraints. Look for
@@ -839,8 +839,10 @@ fn bool_extent_list() -> Expr {
 
 fn option_extent_list(inner_t: &Type, inner_extent: Expr) -> Expr {
     let inner_t_box = Box::new(inner_t.clone());
-    let option_t =
-        Box::new(Type::Data("option".to_string(), vec![inner_t.clone()]));
+    let option_t = Box::new(Type::Data(
+        "option".to_string(),
+        vec![Rc::new(inner_t.clone())],
+    ));
     let list_t = Box::new(Type::List(option_t.clone().into()));
 
     // NONE: Expr::Literal carrying the OptionNone built-in value.
@@ -875,7 +877,7 @@ fn option_extent_list(inner_t: &Type, inner_extent: Expr) -> Expr {
     Expr::List(list_t, elems)
 }
 
-fn tuple_extent_cartesian(types: &[Type], extents: Vec<Expr>) -> Expr {
+fn tuple_extent_cartesian(types: &[Rc<Type>], extents: Vec<Expr>) -> Expr {
     let tuple_t = Box::new(Type::Tuple(types.to_vec()));
     let list_t = Box::new(Type::List(tuple_t.clone().into()));
 
@@ -938,9 +940,9 @@ fn create_string_prefix_generator(
     let i_pat = Pat::Identifier(int_t.clone(), "i".to_string());
     let i_id = Expr::Identifier(int_t.clone(), "i".to_string());
     let triple_t = Box::new(Type::Tuple(vec![
-        (*str_t).clone(),
-        (*int_t).clone(),
-        (*int_t).clone(),
+        Rc::new((*str_t).clone()),
+        Rc::new((*int_t).clone()),
+        Rc::new((*int_t).clone()),
     ]));
     let triple =
         Expr::Tuple(triple_t.clone(), vec![s.clone(), int_lit(0), i_id]);
@@ -1435,7 +1437,10 @@ fn arms_to_orelse(subject: &Expr, arms: &[Match]) -> Option<Expr> {
 
 fn make_eq_for_type(t: &Type, lhs: Expr, rhs: Expr) -> Expr {
     let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
-    let arg_t = Box::new(Type::Tuple(vec![(*t).clone(), (*t).clone()]));
+    let arg_t = Box::new(Type::Tuple(vec![
+        Rc::new((*t).clone()),
+        Rc::new((*t).clone()),
+    ]));
     let f = match t {
         Type::Primitive(PrimitiveType::Int) => BuiltInFunction::IntEq,
         Type::Primitive(PrimitiveType::Real) => BuiltInFunction::RealEq,
@@ -1452,8 +1457,10 @@ fn make_eq_for_type(t: &Type, lhs: Expr, rhs: Expr) -> Expr {
 
 fn make_orelse(lhs: Expr, rhs: Expr) -> Expr {
     let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
-    let pair_t =
-        Box::new(Type::Tuple(vec![(*bool_t).clone(), (*bool_t).clone()]));
+    let pair_t = Box::new(Type::Tuple(vec![
+        Rc::new((*bool_t).clone()),
+        Rc::new((*bool_t).clone()),
+    ]));
     let fn_t = Box::new(Type::Fn(pair_t.clone().into(), bool_t.clone().into()));
     let fn_lit = Expr::Literal(fn_t, Val::Fn(BuiltInFunction::BoolOrElse));
     let arg = Expr::Tuple(pair_t, vec![lhs, rhs]);
@@ -2501,8 +2508,10 @@ fn int_lit(n: i32) -> Expr {
 
 fn binop_int(f: BuiltInFunction, a: Expr, b: Expr) -> Expr {
     let int_t = Box::new(Type::Primitive(PrimitiveType::Int));
-    let pair_t =
-        Box::new(Type::Tuple(vec![(*int_t).clone(), (*int_t).clone()]));
+    let pair_t = Box::new(Type::Tuple(vec![
+        Rc::new((*int_t).clone()),
+        Rc::new((*int_t).clone()),
+    ]));
     let fn_t = Box::new(Type::Fn(pair_t.clone().into(), int_t.clone().into()));
     let fn_expr = Expr::Literal(fn_t.clone(), Val::Fn(f));
     let arg = Expr::Tuple(pair_t, vec![a, b]);
@@ -2518,8 +2527,8 @@ fn call1(f: BuiltInFunction, a: Expr, result_t: Box<Type>) -> Expr {
 
 fn call2(f: BuiltInFunction, a: Expr, b: Expr, result_t: Box<Type>) -> Expr {
     let arg_t = Box::new(Type::Tuple(vec![
-        (*a.type_()).clone(),
-        (*b.type_()).clone(),
+        Rc::new((*a.type_()).clone()),
+        Rc::new((*b.type_()).clone()),
     ]));
     let fn_t =
         Box::new(Type::Fn(arg_t.clone().into(), result_t.clone().into()));

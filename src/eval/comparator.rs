@@ -365,14 +365,14 @@ pub fn comparator_for_with(
 }
 
 /// Substitutes `Type::Variable(i)` with `args[i]`.
-fn instantiate(type_: &Type, args: &[Type]) -> Type {
+fn instantiate(type_: &Type, args: &[Rc<Type>]) -> Type {
     use crate::compile::types::Label;
     match type_ {
         // lint: sort until '#}' where '##Type::'
         Type::Bag(t) => Type::Bag(Rc::new(instantiate(t, args))),
         Type::Data(name, ts) => Type::Data(
             name.clone(),
-            ts.iter().map(|t| instantiate(t, args)).collect(),
+            ts.iter().map(|t| Rc::new(instantiate(t, args))).collect(),
         ),
         Type::Fn(a, b) => Type::Fn(
             Rc::new(instantiate(a, args)),
@@ -388,10 +388,10 @@ fn instantiate(type_: &Type, args: &[Type]) -> Type {
                 })
                 .collect(),
         ),
-        Type::Tuple(ts) => {
-            Type::Tuple(ts.iter().map(|t| instantiate(t, args)).collect())
-        }
-        Type::Variable(tv) if tv.id < args.len() => args[tv.id].clone(),
+        Type::Tuple(ts) => Type::Tuple(
+            ts.iter().map(|t| Rc::new(instantiate(t, args))).collect(),
+        ),
+        Type::Variable(tv) if tv.id < args.len() => (*args[tv.id]).clone(),
         // #}
         _ => type_.clone(),
     }
@@ -453,8 +453,8 @@ mod tests {
     #[test]
     fn test_comparator_for_tuple() {
         let cmp = comparator_for(&Type::Tuple(vec![
-            Type::Primitive(PrimitiveType::Int),
-            Type::Primitive(PrimitiveType::String),
+            Rc::new(Type::Primitive(PrimitiveType::Int)),
+            Rc::new(Type::Primitive(PrimitiveType::String)),
         ]));
 
         let tuple1 = Val::List(vec![Val::Int(1), Val::String("a".to_string())]);

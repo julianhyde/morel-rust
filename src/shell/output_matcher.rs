@@ -32,6 +32,7 @@
 use crate::compile::type_parser;
 use crate::compile::types::{Label, Type};
 use std::collections::{BTreeMap, HashMap};
+use std::rc::Rc;
 use std::str::from_utf8;
 
 /// Compares two output strings modulo whitespace and bag reordering.
@@ -542,7 +543,7 @@ fn parse_list_elements(sc: &mut Scanner, elem_type: &Type) -> Option<Parsed> {
 
 fn parse_tuple_elements(
     sc: &mut Scanner,
-    elem_types: &[Type],
+    elem_types: &[Rc<Type>],
 ) -> Option<Parsed> {
     sc.consume_str("(")?;
     if sc.peek() == Some(')') {
@@ -607,7 +608,7 @@ fn parse_record_to_tuple(
 fn parse_datatype_value(
     sc: &mut Scanner,
     name: &str,
-    args: &[Type],
+    args: &[Rc<Type>],
 ) -> Option<Parsed> {
     let constructor = sc.consume_word()?;
     let at_end = match sc.peek() {
@@ -629,15 +630,15 @@ fn parse_datatype_value(
 /// Returns the argument type for a datatype's constructor, if known.
 fn constructor_arg_type(
     name: &str,
-    args: &[Type],
+    args: &[Rc<Type>],
     constructor: &str,
 ) -> Option<Type> {
     match (name, constructor, args) {
-        ("option", "SOME", [t]) => Some(t.clone()),
+        ("option", "SOME", [t]) => Some((**t).clone()),
         ("option", "NONE", _) => None,
-        ("descending", "DESC", [t]) => Some(t.clone()),
-        ("either", "INL", [l, _]) => Some(l.clone()),
-        ("either", "INR", [_, r]) => Some(r.clone()),
+        ("descending", "DESC", [t]) => Some((**t).clone()),
+        ("either", "INL", [l, _]) => Some((**l).clone()),
+        ("either", "INR", [_, r]) => Some((**r).clone()),
         // User-defined datatypes are not handled yet; fall through
         // to atom parsing.
         _ => None,
@@ -677,7 +678,8 @@ fn values_equal(type_: &Type, a: &Parsed, b: &Parsed) -> bool {
         }
         Type::Tuple(elem_types) => tuple_equal(elem_types, a, b),
         Type::Record(_, fields) => {
-            let types: Vec<Type> = fields.values().cloned().collect();
+            let types: Vec<Rc<Type>> =
+                fields.values().cloned().map(Rc::new).collect();
             tuple_equal(&types, a, b)
         }
         Type::Data(name, args) => datatype_equal(name, args, a, b),
@@ -704,7 +706,7 @@ fn list_equal(elem_type: &Type, a: &Parsed, b: &Parsed) -> bool {
         .all(|(x, y)| values_equal(elem_type, x, y))
 }
 
-fn tuple_equal(field_types: &[Type], a: &Parsed, b: &Parsed) -> bool {
+fn tuple_equal(field_types: &[Rc<Type>], a: &Parsed, b: &Parsed) -> bool {
     let (ea, eb) = match (a, b) {
         (Parsed::Seq(ea), Parsed::Seq(eb)) => (ea, eb),
         _ => return a == b,
@@ -718,7 +720,12 @@ fn tuple_equal(field_types: &[Type], a: &Parsed, b: &Parsed) -> bool {
         .all(|((x, y), t)| values_equal(t, x, y))
 }
 
-fn datatype_equal(name: &str, args: &[Type], a: &Parsed, b: &Parsed) -> bool {
+fn datatype_equal(
+    name: &str,
+    args: &[Rc<Type>],
+    a: &Parsed,
+    b: &Parsed,
+) -> bool {
     let (ea, eb) = match (a, b) {
         (Parsed::Seq(ea), Parsed::Seq(eb)) => (ea, eb),
         _ => return a == b,
@@ -965,7 +972,8 @@ mod tests {
 
     #[test]
     fn tuple_containing_bag() {
-        let tuple_type = Type::Tuple(vec![int_bag(), string()]);
+        let tuple_type =
+            Type::Tuple(vec![Rc::new(int_bag()), Rc::new(string())]);
         let a = "val it = ([1,2],\"hello\") : int bag * string";
         let b = "val it = ([2,1],\"hello\") : int bag * string";
         assert!(equivalent_with_type(&tuple_type, a, b));
@@ -986,7 +994,7 @@ mod tests {
 
     #[test]
     fn option_of_bag() {
-        let t = Type::Data("option".into(), vec![int_bag()]);
+        let t = Type::Data("option".into(), vec![Rc::new(int_bag())]);
         let a = "val it = SOME [5,10] : int bag option";
         let b = "val it = SOME [10,5] : int bag option";
         assert!(equivalent_with_type(&t, a, b));

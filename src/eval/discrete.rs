@@ -443,12 +443,12 @@ impl Discrete for DataDiscrete {
 /// Substitutes type variables in `type_` using `args` (where
 /// `Type::Variable(i)` is replaced with `args[i]`). Mirrors
 /// `comparator::instantiate`.
-fn instantiate(type_: &Type, args: &[Type]) -> Type {
+fn instantiate(type_: &Type, args: &[Rc<Type>]) -> Type {
     match type_ {
         Type::Bag(t) => Type::Bag(Rc::new(instantiate(t, args))),
         Type::Data(name, ts) => Type::Data(
             name.clone(),
-            ts.iter().map(|t| instantiate(t, args)).collect(),
+            ts.iter().map(|t| Rc::new(instantiate(t, args))).collect(),
         ),
         Type::Fn(a, b) => Type::Fn(
             Rc::new(instantiate(a, args)),
@@ -464,10 +464,10 @@ fn instantiate(type_: &Type, args: &[Type]) -> Type {
                 })
                 .collect(),
         ),
-        Type::Tuple(ts) => {
-            Type::Tuple(ts.iter().map(|t| instantiate(t, args)).collect())
-        }
-        Type::Variable(tv) if tv.id < args.len() => args[tv.id].clone(),
+        Type::Tuple(ts) => Type::Tuple(
+            ts.iter().map(|t| Rc::new(instantiate(t, args))).collect(),
+        ),
+        Type::Variable(tv) if tv.id < args.len() => (*args[tv.id]).clone(),
         _ => type_.clone(),
     }
 }
@@ -503,7 +503,7 @@ pub fn discrete_for_with(
         },
         Type::Tuple(ts) => {
             let components: Result<Vec<_>, _> =
-                ts.iter().map(recurse).collect();
+                ts.iter().map(|t| recurse(t)).collect();
             Ok(Arc::new(TupleDiscrete {
                 components: components?,
             }))

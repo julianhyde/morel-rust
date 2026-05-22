@@ -858,7 +858,7 @@ impl<'a> Compiler<'a> {
                                     if name == "discrete_set"
                                         && !args.is_empty() =>
                                 {
-                                    args[0].clone()
+                                    (*args[0]).clone()
                                 }
                                 _ => *a.type_(),
                             };
@@ -921,7 +921,7 @@ impl<'a> Compiler<'a> {
                                         if name == "range"
                                             && !args.is_empty() =>
                                     {
-                                        args[0].clone()
+                                        (*args[0]).clone()
                                     }
                                     _ => *a.type_(),
                                 },
@@ -1082,7 +1082,9 @@ impl<'a> Compiler<'a> {
                     if *f == BuiltInFunction::RelationalCompare {
                         let args = self.compile_args_boxed(cx, a);
                         let elem_type = match a.type_().as_ref() {
-                            Type::Tuple(ts) if !ts.is_empty() => ts[0].clone(),
+                            Type::Tuple(ts) if !ts.is_empty() => {
+                                (*ts[0]).clone()
+                            }
                             _ => *a.type_(),
                         };
                         let cmp = CmpRef(comparator::comparator_for_with(

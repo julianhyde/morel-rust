@@ -69,7 +69,7 @@ impl Type {
         match self {
             Type::List(inner) if index == 0 => Some(inner),
             Type::Bag(inner) if index == 0 => Some(inner),
-            Type::Data(_name, args) => args.get(index),
+            Type::Data(_name, args) => args.get(index).map(AsRef::as_ref),
             _ => None,
         }
     }
@@ -192,13 +192,15 @@ impl Pretty {
     }
 
     /// Substitutes `Type::Variable(i)` with `args[i]` throughout a type.
-    fn instantiate(type_: &Type, args: &[Type]) -> Type {
+    fn instantiate(type_: &Type, args: &[Rc<Type>]) -> Type {
         match type_ {
             // lint: sort until '#}' where '##Type::'
             Type::Bag(t) => Type::Bag(Rc::new(Self::instantiate(t, args))),
             Type::Data(name, ts) => Type::Data(
                 name.clone(),
-                ts.iter().map(|t| Self::instantiate(t, args)).collect(),
+                ts.iter()
+                    .map(|t| Rc::new(Self::instantiate(t, args)))
+                    .collect(),
             ),
             Type::Fn(a, b) => Type::Fn(
                 Rc::new(Self::instantiate(a, args)),
@@ -213,9 +215,11 @@ impl Pretty {
                     .collect(),
             ),
             Type::Tuple(ts) => Type::Tuple(
-                ts.iter().map(|t| Self::instantiate(t, args)).collect(),
+                ts.iter()
+                    .map(|t| Rc::new(Self::instantiate(t, args)))
+                    .collect(),
             ),
-            Type::Variable(tv) if tv.id < args.len() => args[tv.id].clone(),
+            Type::Variable(tv) if tv.id < args.len() => (*args[tv.id]).clone(),
             // #}
             _ => type_.clone(),
         }
@@ -757,7 +761,7 @@ impl Pretty {
         line_end: &mut [i32],
         depth: i32,
         name: &str,
-        args: &[Type],
+        args: &[Rc<Type>],
         value: &Val,
     ) -> Result<(), fmt::Error> {
         if name == "descending" {
@@ -819,7 +823,7 @@ impl Pretty {
                     "range".to_string(),
                     vec![args[0].clone()],
                 ))),
-                _ => args[0].clone(),
+                _ => (*args[0]).clone(),
             };
             return self.pretty1(
                 buf,
@@ -1118,7 +1122,7 @@ impl Pretty {
                     if buf.len() > start {
                         self.pretty_raw(buf, indent2, line_end, depth, " * ")?;
                     }
-                    let wrap = matches!(arg_type, Type::Tuple(_));
+                    let wrap = matches!(&**arg_type, Type::Tuple(_));
                     if wrap {
                         self.pretty_raw(buf, indent2, line_end, depth, "(")?;
                         self.pretty1(
@@ -1254,8 +1258,8 @@ impl TypeVarRenumberer {
         }
     }
 
-    fn visit_list(&mut self, types: &[Type]) -> Vec<Type> {
-        types.iter().map(|t| self.visit(t)).collect()
+    fn visit_list(&mut self, types: &[Rc<Type>]) -> Vec<Rc<Type>> {
+        types.iter().map(|t| Rc::new(self.visit(t))).collect()
     }
 
     fn visit(&mut self, type_ref: &Type) -> Type {
@@ -1293,9 +1297,9 @@ impl TypeVarRenumberer {
                     .map(|(name, t)| (name.clone(), self.visit(t)))
                     .collect(),
             ),
-            Type::Tuple(arg_types) => {
-                Type::Tuple(self.visit_list(arg_types.as_slice()))
-            }
+            Type::Tuple(arg_types) => Type::Tuple(
+                arg_types.iter().map(|t| Rc::new(self.visit(t))).collect(),
+            ),
             Type::Variable(type_var) => {
                 // Get or create a renumbered type variable
                 let i = self.var_map.len();

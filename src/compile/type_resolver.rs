@@ -393,10 +393,10 @@ impl<'a> TermToTypeConverter<'a> {
                         Box::new(Type::List(type_.into()))
                     }
                     "tuple" => {
-                        let types = sequence
+                        let types: Vec<Rc<Type>> = sequence
                             .terms
                             .iter()
-                            .map(|t| *(self.term_type(t)))
+                            .map(|t| Rc::new(*(self.term_type(t))))
                             .collect();
                         Box::new(Type::Tuple(types))
                     }
@@ -423,10 +423,10 @@ impl<'a> TermToTypeConverter<'a> {
                         // `Type::Data`. Arity is enforced by the
                         // unifier; assertions here would be
                         // redundant.
-                        let args: Vec<Type> = sequence
+                        let args: Vec<Rc<Type>> = sequence
                             .terms
                             .iter()
-                            .map(|t| *self.term_type(t))
+                            .map(|t| Rc::new(*self.term_type(t)))
                             .collect();
                         Box::new(Type::Data(op_name.to_string(), args))
                     }
@@ -1443,8 +1443,8 @@ impl TypeResolver {
         // later annotation is arity-checked. A redeclaration with a
         // new arity overwrites the previous entry.
         for db in datatype_binds {
-            let type_var_types: Vec<Type> = (0..db.type_vars.len())
-                .map(|i| Type::Variable(TypeVariable::new(i)))
+            let type_var_types: Vec<Rc<Type>> = (0..db.type_vars.len())
+                .map(|i| Rc::new(Type::Variable(TypeVariable::new(i))))
                 .collect();
             let data_type = Type::Data(db.name.clone(), type_var_types);
             self.type_aliases.insert(db.name.clone(), data_type);
@@ -1456,8 +1456,8 @@ impl TypeResolver {
         // register them in term_map.
         for db in datatype_binds {
             let param_count = db.type_vars.len();
-            let type_var_types: Vec<Type> = (0..param_count)
-                .map(|i| Type::Variable(TypeVariable::new(i)))
+            let type_var_types: Vec<Rc<Type>> = (0..param_count)
+                .map(|i| Rc::new(Type::Variable(TypeVariable::new(i))))
                 .collect();
             let data_type = Type::Data(db.name.clone(), type_var_types);
 
@@ -3700,7 +3700,7 @@ impl TypeResolver {
                 // on the data-type name, so the element-type slots
                 // are filled with placeholders.
                 let args = (0..arity)
-                    .map(|_| Type::Primitive(PrimitiveType::Unit))
+                    .map(|_| Rc::new(Type::Primitive(PrimitiveType::Unit)))
                     .collect();
                 Some(Box::new(Type::Data(op_name.to_string(), args)))
             }
@@ -4032,9 +4032,11 @@ impl TypeResolver {
                 Self::max_type_var_count(a).max(Self::max_type_var_count(b))
             }
             Type::List(t) | Type::Bag(t) => Self::max_type_var_count(t),
-            Type::Tuple(ts) | Type::Data(_, ts) | Type::Named(ts, _) => {
-                ts.iter().map(Self::max_type_var_count).max().unwrap_or(0)
-            }
+            Type::Tuple(ts) | Type::Data(_, ts) | Type::Named(ts, _) => ts
+                .iter()
+                .map(|t| Self::max_type_var_count(t))
+                .max()
+                .unwrap_or(0),
             Type::Record(_, fields) => fields
                 .values()
                 .map(Self::max_type_var_count)
@@ -4044,15 +4046,17 @@ impl TypeResolver {
                 let inner_count = Self::max_type_var_count(inner);
                 let args_count = args
                     .iter()
-                    .map(Self::max_type_var_count)
+                    .map(|t| Self::max_type_var_count(t))
                     .max()
                     .unwrap_or(0);
                 inner_count.max(args_count)
             }
             Type::Forall(inner, _) => Self::max_type_var_count(inner),
-            Type::Multi(ts) => {
-                ts.iter().map(Self::max_type_var_count).max().unwrap_or(0)
-            }
+            Type::Multi(ts) => ts
+                .iter()
+                .map(|t| Self::max_type_var_count(t))
+                .max()
+                .unwrap_or(0),
             Type::Primitive(_) => 0,
         }
     }
@@ -5241,9 +5245,10 @@ pub(crate) fn ast_type_to_core_type_with_vars(
             Some(Type::Variable(TypeVariable::new(index)))
         }
         TypeKind::Tuple(types) => {
-            let cores: Vec<Type> = types
+            let cores: Vec<Rc<Type>> = types
                 .iter()
                 .filter_map(|t| ast_type_to_core_type_with_vars(t, type_vars))
+                .map(Rc::new)
                 .collect();
             if cores.len() == types.len() {
                 Some(Type::Tuple(cores))
@@ -5269,15 +5274,16 @@ pub(crate) fn ast_type_to_core_type_with_vars(
                 return Some(match name.as_str() {
                     "list" => Type::List(Rc::new(arg_core)),
                     "bag" => Type::Bag(Rc::new(arg_core)),
-                    _ => Type::Data(name.clone(), vec![arg_core]),
+                    _ => Type::Data(name.clone(), vec![Rc::new(arg_core)]),
                 });
             }
             if let TypeKind::Id(name) = &t.kind {
-                let arg_cores: Vec<Type> = flat_args
+                let arg_cores: Vec<Rc<Type>> = flat_args
                     .iter()
                     .filter_map(|a| {
                         ast_type_to_core_type_with_vars(a, type_vars)
                     })
+                    .map(Rc::new)
                     .collect();
                 if arg_cores.len() == flat_args.len() {
                     return Some(Type::Data(name.clone(), arg_cores));
@@ -5309,8 +5315,11 @@ pub(crate) fn ast_type_to_core_type(ast_type: &AstType) -> Option<Type> {
                     .map(|_| Type::Data(name.clone(), vec![]))
             }),
         TypeKind::Tuple(types) => {
-            let cores: Vec<Type> =
-                types.iter().filter_map(ast_type_to_core_type).collect();
+            let cores: Vec<Rc<Type>> = types
+                .iter()
+                .filter_map(ast_type_to_core_type)
+                .map(Rc::new)
+                .collect();
             if cores.len() == types.len() {
                 Some(Type::Tuple(cores))
             } else {
@@ -5332,7 +5341,7 @@ pub(crate) fn ast_type_to_core_type(ast_type: &AstType) -> Option<Type> {
                 return Some(match name.as_str() {
                     "list" => Type::List(Rc::new(arg_core)),
                     "bag" => Type::Bag(Rc::new(arg_core)),
-                    _ => Type::Data(name.clone(), vec![arg_core]),
+                    _ => Type::Data(name.clone(), vec![Rc::new(arg_core)]),
                 });
             }
             None
@@ -5694,14 +5703,14 @@ mod tests {
         let tv = TypeVariable::new(0);
         let tuple_type = Type::Forall(
             Rc::new(Type::Tuple(vec![
-                Type::Primitive(PrimitiveType::Int),
-                Type::Fn(
+                Rc::new(Type::Primitive(PrimitiveType::Int)),
+                Rc::new(Type::Fn(
                     Rc::new(Type::Tuple(vec![
-                        Type::Variable(tv.clone().into()),
-                        Type::Variable(tv.clone().into()),
+                        Rc::new(Type::Variable(tv.clone())),
+                        Rc::new(Type::Variable(tv.clone())),
                     ])),
                     Rc::new(Type::Primitive(PrimitiveType::Bool)),
-                ),
+                )),
             ])),
             1,
         );

@@ -176,15 +176,15 @@ fn type_contains_var(t: &Type) -> bool {
         Type::Primitive(_) => false,
         Type::Fn(p, r) => type_contains_var(p) || type_contains_var(r),
         Type::Record(_, fs) => fs.values().any(type_contains_var),
-        Type::Tuple(ts) => ts.iter().any(type_contains_var),
+        Type::Tuple(ts) => ts.iter().any(|t| type_contains_var(t)),
         Type::List(t) | Type::Bag(t) => type_contains_var(t),
         Type::Named(args, _) | Type::Data(_, args) => {
-            args.iter().any(type_contains_var)
+            args.iter().any(|t| type_contains_var(t))
         }
         Type::Alias(_, t, args) => {
-            type_contains_var(t) || args.iter().any(type_contains_var)
+            type_contains_var(t) || args.iter().any(|t| type_contains_var(t))
         }
-        Type::Multi(ts) => ts.iter().any(type_contains_var),
+        Type::Multi(ts) => ts.iter().any(|t| type_contains_var(t)),
     }
 }
 

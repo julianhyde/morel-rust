@@ -52,7 +52,7 @@ pub(crate) fn none() -> Val {
     variant_of(
         Type::Data(
             "option".to_string(),
-            vec![Type::Data("variant".to_string(), vec![])],
+            vec![Rc::new(Type::Data("variant".to_string(), vec![]))],
         ),
         Val::Unit,
     )
@@ -67,7 +67,7 @@ pub(crate) fn some(arg: Val) -> Val {
         _ => panic!("Expected variant, got {:?}", arg),
     };
     variant_of(
-        Type::Data("option".to_string(), vec![inner_type]),
+        Type::Data("option".to_string(), vec![Rc::new(inner_type)]),
         Val::Some(Box::new(inner_val)),
     )
 }
@@ -89,7 +89,7 @@ pub(crate) fn bag(arg: Val) -> Val {
 pub(crate) fn vector(arg: Val) -> Val {
     // Vectors use Type::Data("vector", [elem]) since there is no
     // dedicated Type::Vector variant.
-    collection(arg, |t| Type::Data("vector".to_string(), vec![t]))
+    collection(arg, |t| Type::Data("vector".to_string(), vec![Rc::new(t)]))
 }
 
 fn collection(arg: Val, wrap_type: impl FnOnce(Type) -> Type) -> Val {
@@ -167,10 +167,10 @@ fn unify_types(t1: &Type, t2: &Type) -> Option<Type> {
         (Type::Data(n1, a1), Type::Data(n2, a2))
             if n1 == n2 && a1.len() == a2.len() =>
         {
-            let unified: Option<Vec<Type>> = a1
+            let unified: Option<Vec<Rc<Type>>> = a1
                 .iter()
                 .zip(a2.iter())
-                .map(|(x, y)| unify_types(x, y))
+                .map(|(x, y)| unify_types(x, y).map(Rc::new))
                 .collect();
             unified.map(|args| Type::Data(n1.clone(), args))
         }
@@ -287,25 +287,28 @@ pub(crate) fn construct(arg: Val) -> Val {
             };
             match name.as_str() {
                 "SOME" => variant_of(
-                    Type::Data("option".to_string(), vec![inner_type]),
+                    Type::Data("option".to_string(), vec![Rc::new(inner_type)]),
                     Val::Some(Box::new(inner_val)),
                 ),
                 "INL" => variant_of(
                     Type::Data(
                         "either".to_string(),
-                        vec![inner_type, fresh_var()],
+                        vec![Rc::new(inner_type), Rc::new(fresh_var())],
                     ),
                     Val::Inl(Box::new(inner_val)),
                 ),
                 "INR" => variant_of(
                     Type::Data(
                         "either".to_string(),
-                        vec![fresh_var(), inner_type],
+                        vec![Rc::new(fresh_var()), Rc::new(inner_type)],
                     ),
                     Val::Inr(Box::new(inner_val)),
                 ),
                 "DESC" => variant_of(
-                    Type::Data("descending".to_string(), vec![inner_type]),
+                    Type::Data(
+                        "descending".to_string(),
+                        vec![Rc::new(inner_type)],
+                    ),
                     Val::Constructor(
                         BuiltInFunction::DescendingDesc.runtime_tag(),
                         Box::new(inner_val),
@@ -341,7 +344,7 @@ fn cons(payload: Val) -> Val {
     let head = iter.next().unwrap();
     let tail = iter.next().unwrap();
     let head_type = match &payload_type {
-        Type::Tuple(ts) if ts.len() == 2 => ts[0].clone(),
+        Type::Tuple(ts) if ts.len() == 2 => (*ts[0]).clone(),
         Type::Record(_, fields) if fields.len() == 2 => {
             fields.values().next().unwrap().clone()
         }
