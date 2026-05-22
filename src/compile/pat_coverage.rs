@@ -105,7 +105,7 @@ impl<'a> CoverageChecker<'a> {
     /// the input value matches the pattern.
     fn pat_formula(&mut self, pat: &Pat, path: &mut Vec<usize>) -> Formula {
         let type_ = match pat.id.and_then(|id| self.type_map.get_type(id)) {
-            Some(t) => *t,
+            Some(t) => (*t).clone(),
             None => return Formula::True,
         };
         self.pat_formula_typed(pat, path, &type_)
@@ -142,7 +142,7 @@ impl<'a> CoverageChecker<'a> {
                             .id
                             .and_then(|id| self.type_map.get_type(id))
                         {
-                            Some(t) => *t,
+                            Some(t) => (*t).clone(),
                             None => return Formula::Var(var),
                         };
                         path.push(0);
@@ -632,7 +632,7 @@ fn check_matches(
     // Determine the argument type from the first pattern's type.
     let arg_type = match matches[0].pat.id.and_then(|id| type_map.get_type(id))
     {
-        Some(t) => *t,
+        Some(t) => (*t).clone(),
         None => return Ok(()), // Unknown type; skip.
     };
 

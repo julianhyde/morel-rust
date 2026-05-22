@@ -221,7 +221,7 @@ pub enum Code {
 
     /// `Constant(type, val)` returns the value `val`. The type lets us display
     /// the value more intelligently.
-    Constant(Box<Type>, Val),
+    Constant(Rc<Type>, Val),
 
     /// `ConstructorWrap(tag)` is a function that, when applied to a
     /// value via `eval_f1`, wraps it in
@@ -316,7 +316,7 @@ pub enum Code {
     ),
     /// `Nth(Type, slot)` returns the `slot`th element of a record.
     /// The type must be a record type.
-    Nth(Box<Type>, usize),
+    Nth(Rc<Type>, usize),
     /// `Raise(exp_code, span)` — evaluates `exp_code` to a value of
     /// type `exn`, then throws it as a runtime error. The span
     /// points at the `raise` keyword's source location, used to
@@ -508,7 +508,7 @@ impl Code {
     }
 
     pub(crate) fn new_constant(type_: &Type, v: Val) -> Code {
-        Code::Constant(Box::new(type_.clone()), v)
+        Code::Constant(Rc::new(type_.clone()), v)
     }
 
     pub(crate) fn new_create_closure(
@@ -657,7 +657,7 @@ impl Code {
 
     pub fn new_nth(type_: &Type, slot: usize) -> Code {
         assert!(slot < type_.field_types().len());
-        Code::Nth(Box::new(type_.clone()), slot)
+        Code::Nth(Rc::new(type_.clone()), slot)
     }
 
     pub fn new_tuple(codes: &[Code]) -> Code {
@@ -4883,7 +4883,7 @@ impl LibBuilder {
 
             let t = type_parser::string_to_type(type_code);
             if let Some(fn_impl) = self.fn_impls.remove(&f) {
-                fn_map.insert(f, (*t, fn_impl));
+                fn_map.insert(f, ((*t).clone(), fn_impl));
             } else {
                 panic!("missing implementation for {:?}", f);
             }

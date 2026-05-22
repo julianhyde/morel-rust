@@ -833,7 +833,7 @@ impl<'a> Compiler<'a> {
                         {
                             let elem_type = match a.type_().as_ref() {
                                 Type::List(e) | Type::Bag(e) => (**e).clone(),
-                                _ => *a.type_(),
+                                _ => (*a.type_()).clone(),
                             };
                             let cmp = CmpRef(comparator::comparator_for_with(
                                 &elem_type,
@@ -860,7 +860,7 @@ impl<'a> Compiler<'a> {
                                 {
                                     (*args[0]).clone()
                                 }
-                                _ => *a.type_(),
+                                _ => (*a.type_()).clone(),
                             };
                             let cmp = CmpRef(comparator::comparator_for_with(
                                 &elem_type,
@@ -923,9 +923,9 @@ impl<'a> Compiler<'a> {
                                     {
                                         (*args[0]).clone()
                                     }
-                                    _ => *a.type_(),
+                                    _ => (*a.type_()).clone(),
                                 },
-                                _ => *a.type_(),
+                                _ => (*a.type_()).clone(),
                             };
                             let cmp = CmpRef(comparator::comparator_for_with(
                                 &elem_type,
@@ -1085,7 +1085,7 @@ impl<'a> Compiler<'a> {
                             Type::Tuple(ts) if !ts.is_empty() => {
                                 (*ts[0]).clone()
                             }
-                            _ => *a.type_(),
+                            _ => (*a.type_()).clone(),
                         };
                         let cmp = CmpRef(comparator::comparator_for_with(
                             &elem_type,
@@ -1189,7 +1189,7 @@ impl<'a> Compiler<'a> {
                                 | BuiltInFunction::RangeDsContains
                         )
                     {
-                        let elem_type = *a.type_();
+                        let elem_type = (*a.type_()).clone();
                         let cmp = CmpRef(comparator::comparator_for_with(
                             &elem_type,
                             &self.type_map.datatype_constructors,
@@ -1377,7 +1377,7 @@ impl<'a> Compiler<'a> {
                         // closure. We use pcx because it needs to execute in
                         // the caller's environment.
                         // Use a dummy type (until binding has a type).
-                        let type_ = Box::new(UNIT_TYPE);
+                        let type_ = Rc::new(UNIT_TYPE);
                         let id = Expr::Identifier(
                             type_,
                             binding.id.name.to_string(),
@@ -2278,9 +2278,9 @@ impl<'a> Compiler<'a> {
         let t2 = val_bind.t.clone();
         let param_type = UNIT_TYPE;
         let result_type = val_bind.expr.type_().clone();
-        let fn_type = Type::Fn(Rc::new(param_type), result_type.into());
+        let fn_type = Type::Fn(Rc::new(param_type), result_type);
         let match_ = Match {
-            pat: Pat::Literal(Box::new(UNIT_TYPE), Val::Unit),
+            pat: Pat::Literal(Rc::new(UNIT_TYPE), Val::Unit),
             expr: val_bind.expr.clone(),
         };
         // The lift wraps the original expression as 'fn () => expr'.
@@ -2289,7 +2289,7 @@ impl<'a> Compiler<'a> {
         // user's source.
         let synth_span =
             val_bind.span.clone().unwrap_or_else(|| Span::new("stdIn"));
-        let expr2 = Expr::Fn(Box::new(fn_type), vec![match_], synth_span);
+        let expr2 = Expr::Fn(Rc::new(fn_type), vec![match_], synth_span);
         ValBind {
             pat: pat2,
             t: t2,

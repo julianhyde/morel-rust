@@ -241,7 +241,7 @@ impl TypeEnvBuilder {
 pub struct Id {
     pub name: String,
     pub ordinal: usize,
-    // pub type_: Box<Type>,
+    // pub type_: Rc<Type>,
 }
 
 impl Id {
@@ -267,7 +267,7 @@ pub struct Binding {
 impl Binding {}
 
 impl Binding {
-    pub(crate) fn get_type(&self) -> Box<Type> {
+    pub(crate) fn get_type(&self) -> Rc<Type> {
         todo!()
     }
 

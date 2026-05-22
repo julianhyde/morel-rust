@@ -19,6 +19,7 @@ use crate::compile::types::{PrimitiveType, Type};
 use crate::eval::code::{Impl, LIBRARY};
 use crate::eval::val::Val;
 use std::collections::{BTreeMap, HashMap};
+use std::rc::Rc;
 use std::sync::LazyLock;
 use strum::{EnumCount, EnumProperty, IntoEnumIterator};
 use strum_macros::{EnumCount, EnumIter, EnumProperty, EnumString, FromRepr};
@@ -27,7 +28,7 @@ use strum_macros::{EnumCount, EnumIter, EnumProperty, EnumString, FromRepr};
 pub fn name_to_type(id: &str) -> Option<Type> {
     if let Some(b) = BY_NAME.get(id) {
         match b {
-            BuiltIn::Fn(f) => Some(*f.get_type()),
+            BuiltIn::Fn(f) => Some((*f.get_type()).clone()),
             BuiltIn::Record(r) => r.get_type(),
         }
     } else {
@@ -1507,9 +1508,9 @@ impl BuiltInFunction {
         LIBRARY.with(|lib| lib.fn_map.get(self).expect("fn impl").1)
     }
 
-    pub fn get_type(&self) -> Box<Type> {
+    pub fn get_type(&self) -> Rc<Type> {
         LIBRARY.with(|lib| {
-            Box::new(lib.fn_map.get(self).expect("fn type").0.clone())
+            Rc::new(lib.fn_map.get(self).expect("fn type").0.clone())
         })
     }
 

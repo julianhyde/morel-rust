@@ -24,7 +24,7 @@ use std::rc::Rc;
 /// Converts a type string to a type. Panics on any parse or
 /// conversion failure; callers that need to recover from malformed
 /// input should use [`try_string_to_type`] instead.
-pub fn string_to_type(code: &str) -> Box<Type> {
+pub fn string_to_type(code: &str) -> Rc<Type> {
     try_string_to_type(code)
         .unwrap_or_else(|e| panic!("failed to parse type {:?}: {}", code, e))
 }
@@ -32,7 +32,7 @@ pub fn string_to_type(code: &str) -> Box<Type> {
 /// Like [`string_to_type`] but returns the parse/conversion error
 /// instead of panicking. The error string is human-readable and not
 /// stable.
-pub fn try_string_to_type(code: &str) -> Result<Box<Type>, String> {
+pub fn try_string_to_type(code: &str) -> Result<Rc<Type>, String> {
     let type_scheme = parser::parse_type_scheme(code)
         .map_err(|e| format!("parse error: {}", e))?;
     let mut type_builder = TypeBuilder::new();
@@ -45,7 +45,7 @@ pub fn try_string_to_type(code: &str) -> Result<Box<Type>, String> {
 /// `('a, bool * int) either bag` whose `'a` has no enclosing
 /// `forall` quantifier — `try_string_to_type` would reject such
 /// inputs.
-pub fn try_string_to_type_permissive(code: &str) -> Result<Box<Type>, String> {
+pub fn try_string_to_type_permissive(code: &str) -> Result<Rc<Type>, String> {
     let type_scheme = parser::parse_type_scheme(code)
         .map_err(|e| format!("parse error: {}", e))?;
     let mut type_builder = TypeBuilder::new();
@@ -73,7 +73,7 @@ impl TypeBuilder {
     fn ast_to_type_scheme(
         &mut self,
         type_scheme: &TypeScheme,
-    ) -> Result<Box<Type>, String> {
+    ) -> Result<Rc<Type>, String> {
         for i in 0..type_scheme.var_count {
             self.ty_vars.push(TypeVariable::new(i));
         }
@@ -81,18 +81,18 @@ impl TypeBuilder {
         Ok(if type_scheme.var_count == 0 {
             type_
         } else {
-            Type::Forall(Rc::from(type_), type_scheme.var_count).into()
+            Rc::new(Type::Forall(type_, type_scheme.var_count))
         })
     }
 
-    fn ast_to_type(&mut self, t: &AstType) -> Result<Box<Type>, String> {
-        Ok(Box::new(match &t.kind {
+    fn ast_to_type(&mut self, t: &AstType) -> Result<Rc<Type>, String> {
+        Ok(Rc::new(match &t.kind {
             // lint: sort until '#}' where '##TypeKind::'
             TypeKind::App(args, base_type) => {
                 let flat_args = AstType::flatten(args);
                 let arg_types: Vec<Rc<Type>> = flat_args
                     .iter()
-                    .map(|t| self.ast_to_type(t).map(|b| Rc::new(*b)))
+                    .map(|t| self.ast_to_type(t))
                     .collect::<Result<_, _>>()?;
                 let base = self.ast_to_type(base_type)?;
 
@@ -147,7 +147,7 @@ impl TypeBuilder {
             TypeKind::Fn(from_type, to_type) => {
                 let from = self.ast_to_type(from_type)?;
                 let to = self.ast_to_type(to_type)?;
-                Type::Fn(from.into(), to.into())
+                Type::Fn(from, to)
             }
             TypeKind::Id(name) => {
                 if let Some(primitive) = PrimitiveType::parse_name(name) {
@@ -164,7 +164,7 @@ impl TypeBuilder {
                 let mut field_map: BTreeMap<Label, Rc<Type>> = BTreeMap::new();
                 for field in fields {
                     let label = Label::String(field.label.name.clone());
-                    let field_type = Rc::new(*self.ast_to_type(&field.type_)?);
+                    let field_type = self.ast_to_type(&field.type_)?;
                     field_map.insert(label, field_type);
                 }
                 Type::Record(false, field_map)
@@ -172,7 +172,7 @@ impl TypeBuilder {
             TypeKind::Tuple(types) => {
                 let type_args: Vec<Rc<Type>> = types
                     .iter()
-                    .map(|t| self.ast_to_type(t).map(|b| Rc::new(*b)))
+                    .map(|t| self.ast_to_type(t))
                     .collect::<Result<_, _>>()?;
                 Type::Tuple(type_args)
             }

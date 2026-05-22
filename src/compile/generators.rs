@@ -297,7 +297,7 @@ fn create_point_generator(
     source_constraint: &Expr,
 ) -> bool {
     let elem_t = value.type_();
-    let list_t = Box::new(Type::List(Rc::new((*elem_t).clone())));
+    let list_t = Rc::new(Type::List(Rc::new((*elem_t).clone())));
     let exp = Expr::List(list_t, vec![value.clone()]);
     let mut free = free_names_in(value);
     free.remove(pat_name);
@@ -340,7 +340,7 @@ fn create_range_generator(
     // Build:
     //   List.tabulate (upper - lower + 1, fn k => lower + k)
     // (for ordered; Bag.tabulate otherwise.)
-    let int_t = Box::new(Type::Primitive(PrimitiveType::Int));
+    let int_t = Rc::new(Type::Primitive(PrimitiveType::Int));
 
     let lower_expr = if lower.strict {
         // x > lower  ⇒  use `lower + 1` as the inclusive low.
@@ -371,7 +371,7 @@ fn create_range_generator(
         lower_expr.clone(),
         Expr::Identifier(int_t.clone(), "k".to_string()),
     );
-    let fn_t = Box::new(Type::Fn(int_t.clone().into(), int_t.clone().into()));
+    let fn_t = Rc::new(Type::Fn(int_t.clone(), int_t.clone()));
     let fn_expr = Expr::Fn(
         fn_t.clone(),
         vec![Match {
@@ -387,9 +387,9 @@ fn create_range_generator(
         BuiltInFunction::BagTabulate
     };
     let coll_t = if ordered {
-        Box::new(Type::List(int_t.clone().into()))
+        Rc::new(Type::List(int_t.clone()))
     } else {
-        Box::new(Type::Bag(int_t.clone().into()))
+        Rc::new(Type::Bag(int_t.clone()))
     };
     let exp = call2(tabulate, count, fn_expr, coll_t);
 
@@ -578,8 +578,8 @@ fn create_tuple_range_generator(
     };
 
     // Build a list literal of the enumerated tuples.
-    let elem_t = Box::new(pat_type.clone());
-    let list_t = Box::new(Type::List(elem_t.clone().into()));
+    let elem_t: Rc<Type> = Rc::new(pat_type.clone());
+    let list_t = Rc::new(Type::List(elem_t.clone()));
     let items: Vec<Expr> = values
         .into_iter()
         .map(|tv| {
@@ -587,7 +587,7 @@ fn create_tuple_range_generator(
                 elem_t.clone(),
                 tv.into_iter()
                     .zip(component_types.iter())
-                    .map(|(v, t)| Expr::Literal(Box::new(t.clone()), v))
+                    .map(|(v, t)| Expr::Literal(Rc::new(t.clone()), v))
                     .collect(),
             )
         })
@@ -808,8 +808,8 @@ fn datatype_extent_list(
     _name: &str,
     constructors: &[String],
 ) -> Expr {
-    let data_t_box = Box::new(data_t.clone());
-    let list_t = Box::new(Type::List(data_t_box.clone().into()));
+    let data_t_box: Rc<Type> = Rc::new(data_t.clone());
+    let list_t = Rc::new(Type::List(data_t_box.clone()));
     // Each constructor is a global `CoreExpr::Identifier` after
     // resolution — that's how the user-typed `BLUE` reaches Core.
     // It carries the datatype's `Type::Data` directly (constants
@@ -823,8 +823,8 @@ fn datatype_extent_list(
 }
 
 fn bool_extent_list() -> Expr {
-    let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
-    let list_t = Box::new(Type::List(bool_t.clone().into()));
+    let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
+    let list_t = Rc::new(Type::List(bool_t.clone()));
     // `false` first, `true` second — matches morel-java's
     // ordering for tuple enumeration over bool components, and
     // also matches `compare` semantics (false < true).
@@ -839,11 +839,11 @@ fn bool_extent_list() -> Expr {
 
 fn option_extent_list(inner_t: &Type, inner_extent: Expr) -> Expr {
     let inner_t_box = Box::new(inner_t.clone());
-    let option_t = Box::new(Type::Data(
+    let option_t = Rc::new(Type::Data(
         "option".to_string(),
         vec![Rc::new(inner_t.clone())],
     ));
-    let list_t = Box::new(Type::List(option_t.clone().into()));
+    let list_t = Rc::new(Type::List(option_t.clone()));
 
     // NONE: Expr::Literal carrying the OptionNone built-in value.
     // The compiler converts this to `Code::new_constant(t,
@@ -852,10 +852,8 @@ fn option_extent_list(inner_t: &Type, inner_extent: Expr) -> Expr {
         Expr::Literal(option_t.clone(), Val::Fn(BuiltInFunction::OptionNone));
 
     // SOME : 'a -> 'a option
-    let some_fn_t = Box::new(Type::Fn(
-        inner_t_box.clone().into(),
-        option_t.clone().into(),
-    ));
+    let some_fn_t =
+        Rc::new(Type::Fn(inner_t_box.clone().into(), option_t.clone()));
     let some_fn_expr =
         Expr::Literal(some_fn_t, Val::Fn(BuiltInFunction::OptionSome));
 
@@ -878,8 +876,8 @@ fn option_extent_list(inner_t: &Type, inner_extent: Expr) -> Expr {
 }
 
 fn tuple_extent_cartesian(types: &[Rc<Type>], extents: Vec<Expr>) -> Expr {
-    let tuple_t = Box::new(Type::Tuple(types.to_vec()));
-    let list_t = Box::new(Type::List(tuple_t.clone().into()));
+    let tuple_t = Rc::new(Type::Tuple(types.to_vec()));
+    let list_t = Rc::new(Type::List(tuple_t.clone()));
 
     // Each `extents[i]` is `Expr::List(_, values_i)`. Compute the
     // cartesian product of the value lists, then build a
@@ -928,8 +926,8 @@ fn create_string_prefix_generator(
     s: &Expr,
     source_constraint: &Expr,
 ) -> bool {
-    let int_t = Box::new(Type::Primitive(PrimitiveType::Int));
-    let str_t = Box::new(Type::Primitive(PrimitiveType::String));
+    let int_t = Rc::new(Type::Primitive(PrimitiveType::Int));
+    let str_t = Rc::new(Type::Primitive(PrimitiveType::String));
 
     // String.size s
     let size_s = call1(BuiltInFunction::StringSize, s.clone(), int_t.clone());
@@ -939,15 +937,14 @@ fn create_string_prefix_generator(
     // fn i => String.substring (s, 0, i)
     let i_pat = Pat::Identifier(int_t.clone(), "i".to_string());
     let i_id = Expr::Identifier(int_t.clone(), "i".to_string());
-    let triple_t = Box::new(Type::Tuple(vec![
+    let triple_t = Rc::new(Type::Tuple(vec![
         Rc::new((*str_t).clone()),
         Rc::new((*int_t).clone()),
         Rc::new((*int_t).clone()),
     ]));
     let triple =
         Expr::Tuple(triple_t.clone(), vec![s.clone(), int_lit(0), i_id]);
-    let fn_substr_t =
-        Box::new(Type::Fn(triple_t.clone().into(), str_t.clone().into()));
+    let fn_substr_t = Rc::new(Type::Fn(triple_t.clone(), str_t.clone()));
     let fn_substr_lit =
         Expr::Literal(fn_substr_t, Val::Fn(BuiltInFunction::StringSubstring));
     let body = Expr::Apply(
@@ -956,7 +953,7 @@ fn create_string_prefix_generator(
         Box::new(triple),
         Span::new(""),
     );
-    let fn_t = Box::new(Type::Fn(int_t.clone().into(), str_t.clone().into()));
+    let fn_t = Rc::new(Type::Fn(int_t.clone(), str_t.clone()));
     let fn_expr = Expr::Fn(
         fn_t,
         vec![Match {
@@ -972,9 +969,9 @@ fn create_string_prefix_generator(
         BuiltInFunction::BagTabulate
     };
     let coll_t = if ordered {
-        Box::new(Type::List(str_t.clone().into()))
+        Rc::new(Type::List(str_t.clone()))
     } else {
-        Box::new(Type::Bag(str_t.clone().into()))
+        Rc::new(Type::Bag(str_t.clone()))
     };
     let exp = call2(tabulate, count, fn_expr, coll_t);
 
@@ -1113,9 +1110,9 @@ fn maybe_exists(
         //        yield pat distinct`.
         let elem_t = pat.type_();
         let coll_t = if ordered {
-            Box::new(Type::List(elem_t.clone().into()))
+            Rc::new(Type::List(elem_t.clone()))
         } else {
-            Box::new(Type::Bag(elem_t.clone().into()))
+            Rc::new(Type::Bag(elem_t.clone()))
         };
         let mut new_steps: Vec<Step> = Vec::new();
         for s in &needed {
@@ -1436,8 +1433,8 @@ fn arms_to_orelse(subject: &Expr, arms: &[Match]) -> Option<Expr> {
 }
 
 fn make_eq_for_type(t: &Type, lhs: Expr, rhs: Expr) -> Expr {
-    let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
-    let arg_t = Box::new(Type::Tuple(vec![
+    let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
+    let arg_t = Rc::new(Type::Tuple(vec![
         Rc::new((*t).clone()),
         Rc::new((*t).clone()),
     ]));
@@ -1449,19 +1446,19 @@ fn make_eq_for_type(t: &Type, lhs: Expr, rhs: Expr) -> Expr {
         Type::Primitive(PrimitiveType::Bool) => BuiltInFunction::BoolEq,
         _ => BuiltInFunction::GEq,
     };
-    let fn_t = Box::new(Type::Fn(arg_t.clone().into(), bool_t.clone().into()));
+    let fn_t = Rc::new(Type::Fn(arg_t.clone(), bool_t.clone()));
     let fn_lit = Expr::Literal(fn_t, Val::Fn(f));
     let arg = Expr::Tuple(arg_t, vec![lhs, rhs]);
     Expr::Apply(bool_t, Box::new(fn_lit), Box::new(arg), Span::new(""))
 }
 
 fn make_orelse(lhs: Expr, rhs: Expr) -> Expr {
-    let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
-    let pair_t = Box::new(Type::Tuple(vec![
+    let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
+    let pair_t = Rc::new(Type::Tuple(vec![
         Rc::new((*bool_t).clone()),
         Rc::new((*bool_t).clone()),
     ]));
-    let fn_t = Box::new(Type::Fn(pair_t.clone().into(), bool_t.clone().into()));
+    let fn_t = Rc::new(Type::Fn(pair_t.clone(), bool_t.clone()));
     let fn_lit = Expr::Literal(fn_t, Val::Fn(BuiltInFunction::BoolOrElse));
     let arg = Expr::Tuple(pair_t, vec![lhs, rhs]);
     Expr::Apply(bool_t, Box::new(fn_lit), Box::new(arg), Span::new(""))
@@ -1629,11 +1626,11 @@ fn maybe_record_elem_projection(
 
         let row_t = match tuple_t.as_ref() {
             Type::Record(prog, fields) => {
-                Box::new(Type::Record(*prog, fields.clone()))
+                Rc::new(Type::Record(*prog, fields.clone()))
             }
             _ => continue,
         };
-        let bool_t = Box::new(Type::Primitive(PrimitiveType::Bool));
+        let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
         let row_var = "__rep$".to_string();
         let scan_env = StepEnv::new(
             vec![Binding::new(Id::new(&row_var, 0), row_t.clone())],
@@ -1672,14 +1669,12 @@ fn maybe_record_elem_projection(
                             .unwrap(),
                         _ => 0,
                     };
-                    let sel_fn_t = Box::new(Type::Fn(
-                        row_t.clone().into(),
-                        field_t.clone(),
-                    ));
+                    let sel_fn_t =
+                        Rc::new(Type::Fn(row_t.clone(), field_t.clone()));
                     let sel = Expr::RecordSelector(sel_fn_t.clone(), slot);
                     let r_id = Expr::Identifier(row_t.clone(), row_var.clone());
                     let lhs_field = Expr::Apply(
-                        Box::new((*field_t).clone()),
+                        field_t.clone(),
                         Box::new(sel),
                         Box::new(r_id),
                         Span::new(""),
@@ -1710,29 +1705,25 @@ fn maybe_record_elem_projection(
                 .unwrap(),
             _ => 0,
         };
-        let sel_fn_t =
-            Box::new(Type::Fn(row_t.clone().into(), pat_field_t.clone()));
+        let sel_fn_t = Rc::new(Type::Fn(row_t.clone(), pat_field_t.clone()));
         let sel = Expr::RecordSelector(sel_fn_t, pat_field_slot);
         let r_id = Expr::Identifier(row_t.clone(), row_var.clone());
         let yield_expr = Expr::Apply(
-            Box::new((*pat_field_t).clone()),
+            pat_field_t.clone(),
             Box::new(sel),
             Box::new(r_id),
             Span::new(""),
         );
         let yield_env = StepEnv::new(
-            vec![Binding::new(
-                Id::new(pat_name, 0),
-                Box::new((*pat_field_t).clone()),
-            )],
+            vec![Binding::new(Id::new(pat_name, 0), pat_field_t.clone())],
             true,
             ordered,
         );
         steps.push(Step::new(StepKind::Yield(Box::new(yield_expr)), yield_env));
         let coll_t = if ordered {
-            Box::new(Type::List(pat_field_t.clone()))
+            Rc::new(Type::List(pat_field_t.clone()))
         } else {
-            Box::new(Type::Bag(pat_field_t.clone()))
+            Rc::new(Type::Bag(pat_field_t.clone()))
         };
         let exp = Expr::From(coll_t, steps);
 
@@ -1857,25 +1848,22 @@ fn maybe_case_constructor(
         // Build `Bag.concat [b1, b2, ...]` (or List.concat).
         let elem_t = pat.type_();
         let coll_t = if ordered {
-            Box::new(Type::List(elem_t.clone().into()))
+            Rc::new(Type::List(elem_t.clone()))
         } else {
-            Box::new(Type::Bag(elem_t.clone().into()))
+            Rc::new(Type::Bag(elem_t.clone()))
         };
         let combined = if branch_exps.len() == 1 {
             branch_exps.into_iter().next().unwrap()
         } else {
             let list_of_coll_t =
-                Box::new(Type::List(Rc::new((*coll_t).clone())));
+                Rc::new(Type::List(Rc::new((*coll_t).clone())));
             let arg_list = Expr::List(list_of_coll_t.clone(), branch_exps);
             let concat_fn = if ordered {
                 BuiltInFunction::ListConcat
             } else {
                 BuiltInFunction::BagConcat
             };
-            let fn_t = Box::new(Type::Fn(
-                list_of_coll_t.into(),
-                coll_t.clone().into(),
-            ));
+            let fn_t = Rc::new(Type::Fn(list_of_coll_t, coll_t.clone()));
             let fn_lit = Expr::Literal(fn_t, Val::Fn(concat_fn));
             Expr::Apply(
                 coll_t,
@@ -1948,13 +1936,13 @@ fn derive_payload_generator(
             }
             let elem = Expr::Literal(lit_t.clone(), v.clone());
             let coll_t = if ordered {
-                Box::new(Type::List(lit_t.clone().into()))
+                Rc::new(Type::List(lit_t.clone()))
             } else {
-                Box::new(Type::Bag(lit_t.clone().into()))
+                Rc::new(Type::Bag(lit_t.clone()))
             };
             // `[lit]` as a List value; bags are formed at the
             // outer concat layer if needed.
-            let list_t = Box::new(Type::List(lit_t.clone().into()));
+            let list_t = Rc::new(Type::List(lit_t.clone()));
             let list_lit = Expr::List(list_t.clone(), vec![elem]);
             // For bag scope, wrap with `Bag.fromList`-equivalent —
             // but our concat happily mixes lists into bags via
@@ -1971,7 +1959,7 @@ fn derive_payload_generator(
             use crate::compile::type_env::Id;
 
             let mut steps: Vec<Step> = Vec::new();
-            let mut leaves: Vec<(String, Box<Type>)> = Vec::new();
+            let mut leaves: Vec<(String, Rc<Type>)> = Vec::new();
             for sp in sub_pats {
                 let (n, t) = match sp {
                     Pat::Identifier(t, n) => (n.clone(), t.clone()),
@@ -2022,9 +2010,9 @@ fn derive_payload_generator(
                 yield_env,
             ));
             let coll_t = if ordered {
-                Box::new(Type::List(tuple_t.clone().into()))
+                Rc::new(Type::List(tuple_t.clone()))
             } else {
-                Box::new(Type::Bag(tuple_t.clone().into()))
+                Rc::new(Type::Bag(tuple_t.clone()))
             };
             let from = Expr::From(coll_t, steps);
             let expanded = expand_from_with(from, fn_env, datatypes);
@@ -2066,25 +2054,24 @@ fn constructor_to_builtin(name: &str) -> Option<BuiltInFunction> {
 #[allow(clippy::needless_pass_by_value)]
 fn build_map_constructor(
     ctor_fn: BuiltInFunction,
-    payload_t: Box<Type>,
-    elem_t: Box<Type>,
+    payload_t: Rc<Type>,
+    elem_t: Rc<Type>,
     sub_pat_name: String,
     inner: Expr,
     ordered: bool,
 ) -> Expr {
     let coll_t = if ordered {
-        Box::new(Type::List(elem_t.clone().into()))
+        Rc::new(Type::List(elem_t.clone()))
     } else {
-        Box::new(Type::Bag(elem_t.clone().into()))
+        Rc::new(Type::Bag(elem_t.clone()))
     };
     let inner_coll_t = if ordered {
-        Box::new(Type::List(payload_t.clone().into()))
+        Rc::new(Type::List(payload_t.clone()))
     } else {
-        Box::new(Type::Bag(payload_t.clone().into()))
+        Rc::new(Type::Bag(payload_t.clone()))
     };
     // `fn x => CTOR x`
-    let ctor_fn_t =
-        Box::new(Type::Fn(payload_t.clone().into(), elem_t.clone().into()));
+    let ctor_fn_t = Rc::new(Type::Fn(payload_t.clone(), elem_t.clone()));
     let ctor_lit = Expr::Literal(ctor_fn_t.clone(), Val::Fn(ctor_fn));
     let body = Expr::Apply(
         elem_t.clone(),
@@ -2093,8 +2080,7 @@ fn build_map_constructor(
         Span::new(""),
     );
     let fn_pat = Pat::Identifier(payload_t.clone(), sub_pat_name);
-    let map_arg_fn_t =
-        Box::new(Type::Fn(payload_t.clone().into(), elem_t.clone().into()));
+    let map_arg_fn_t = Rc::new(Type::Fn(payload_t.clone(), elem_t.clone()));
     let map_arg = Expr::Fn(
         map_arg_fn_t.clone(),
         vec![Match {
@@ -2109,13 +2095,12 @@ fn build_map_constructor(
     } else {
         BuiltInFunction::BagMap
     };
-    let map_t = Box::new(Type::Fn(
-        map_arg_fn_t.into(),
-        Rc::new(Type::Fn(inner_coll_t.clone().into(), coll_t.clone().into())),
+    let map_t = Rc::new(Type::Fn(
+        map_arg_fn_t,
+        Rc::new(Type::Fn(inner_coll_t.clone(), coll_t.clone())),
     ));
     let map_lit = Expr::Literal(map_t, Val::Fn(map_builtin));
-    let map_partial_t =
-        Box::new(Type::Fn(inner_coll_t.into(), coll_t.clone().into()));
+    let map_partial_t = Rc::new(Type::Fn(inner_coll_t, coll_t.clone()));
     let map_partial = Expr::Apply(
         map_partial_t,
         Box::new(map_lit),
@@ -2181,11 +2166,11 @@ fn maybe_union(
         // `List.concat …`).
         let elem_t = pat.type_();
         let coll_t = if ordered {
-            Box::new(Type::List(elem_t.clone().into()))
+            Rc::new(Type::List(elem_t.clone()))
         } else {
-            Box::new(Type::Bag(elem_t.clone().into()))
+            Rc::new(Type::Bag(elem_t.clone()))
         };
-        let list_of_coll_t = Box::new(Type::List(Rc::new((*coll_t).clone())));
+        let list_of_coll_t = Rc::new(Type::List(Rc::new((*coll_t).clone())));
         let exps: Vec<Expr> = sub_gens.iter().map(|g| g.exp.clone()).collect();
         let arg_list = Expr::List(list_of_coll_t.clone(), exps);
         let concat_fn = if ordered {
@@ -2193,8 +2178,7 @@ fn maybe_union(
         } else {
             BuiltInFunction::BagConcat
         };
-        let fn_t =
-            Box::new(Type::Fn(list_of_coll_t.into(), coll_t.clone().into()));
+        let fn_t = Rc::new(Type::Fn(list_of_coll_t, coll_t.clone()));
         let fn_lit = Expr::Literal(fn_t, Val::Fn(concat_fn));
         let exp = Expr::Apply(
             coll_t,
@@ -2503,35 +2487,34 @@ fn push_conjuncts(expr: &Expr, out: &mut Vec<Expr>) {
 // ---------------------------------------------------------------------------
 
 fn int_lit(n: i32) -> Expr {
-    Expr::Literal(Box::new(Type::Primitive(PrimitiveType::Int)), Val::Int(n))
+    Expr::Literal(Rc::new(Type::Primitive(PrimitiveType::Int)), Val::Int(n))
 }
 
 fn binop_int(f: BuiltInFunction, a: Expr, b: Expr) -> Expr {
-    let int_t = Box::new(Type::Primitive(PrimitiveType::Int));
-    let pair_t = Box::new(Type::Tuple(vec![
+    let int_t = Rc::new(Type::Primitive(PrimitiveType::Int));
+    let pair_t = Rc::new(Type::Tuple(vec![
         Rc::new((*int_t).clone()),
         Rc::new((*int_t).clone()),
     ]));
-    let fn_t = Box::new(Type::Fn(pair_t.clone().into(), int_t.clone().into()));
+    let fn_t = Rc::new(Type::Fn(pair_t.clone(), int_t.clone()));
     let fn_expr = Expr::Literal(fn_t.clone(), Val::Fn(f));
     let arg = Expr::Tuple(pair_t, vec![a, b]);
     Expr::Apply(int_t, Box::new(fn_expr), Box::new(arg), Span::new(""))
 }
 
-fn call1(f: BuiltInFunction, a: Expr, result_t: Box<Type>) -> Expr {
+fn call1(f: BuiltInFunction, a: Expr, result_t: Rc<Type>) -> Expr {
     let arg_t = a.type_();
-    let fn_t = Box::new(Type::Fn(arg_t.into(), result_t.clone().into()));
+    let fn_t = Rc::new(Type::Fn(arg_t, result_t.clone()));
     let fn_expr = Expr::Literal(fn_t, Val::Fn(f));
     Expr::Apply(result_t, Box::new(fn_expr), Box::new(a), Span::new(""))
 }
 
-fn call2(f: BuiltInFunction, a: Expr, b: Expr, result_t: Box<Type>) -> Expr {
-    let arg_t = Box::new(Type::Tuple(vec![
+fn call2(f: BuiltInFunction, a: Expr, b: Expr, result_t: Rc<Type>) -> Expr {
+    let arg_t = Rc::new(Type::Tuple(vec![
         Rc::new((*a.type_()).clone()),
         Rc::new((*b.type_()).clone()),
     ]));
-    let fn_t =
-        Box::new(Type::Fn(arg_t.clone().into(), result_t.clone().into()));
+    let fn_t = Rc::new(Type::Fn(arg_t.clone(), result_t.clone()));
     let fn_expr = Expr::Literal(fn_t, Val::Fn(f));
     let arg = Expr::Tuple(arg_t, vec![a, b]);
     Expr::Apply(result_t, Box::new(fn_expr), Box::new(arg), Span::new(""))
