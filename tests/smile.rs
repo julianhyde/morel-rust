@@ -27,6 +27,11 @@ fn run_script(file_name: &str) {
 // lint: sort until 'End smile.rs' where '^fn '
 
 #[test]
+fn attribute() {
+    run_script("tests/script/attribute.smli");
+}
+
+#[test]
 fn bag() {
     run_script("tests/script/bag.smli");
 }

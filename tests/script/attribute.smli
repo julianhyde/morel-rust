@@ -1,0 +1,55 @@
+(*
+ * Licensed to Julian Hyde under one or more contributor license
+ * agreements.  See the NOTICE file distributed with this work
+ * for additional information regarding copyright ownership.
+ * Julian Hyde licenses this file to you under the Apache
+ * License, Version 2.0 (the "License"); you may not use this
+ * file except in compliance with the License.  You may obtain a
+ * copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+ * either express or implied.  See the License for the specific
+ * language governing permissions and limitations under the
+ * License.
+ *
+ * Tests for OCaml-style attributes:
+ *   [@a]    expression-level   (attaches to an atomic expression)
+ *   [@@a]   declaration-level  (attaches to a declaration)
+ *   [@@@a]  floating           (stands alone as a structure item)
+ *   (** *)  doc-comment sugar  (immediately above a decl)
+ *
+ * Of these scopes, only floating attributes are currently parsed.
+ * Attributes are parsed but are (for now, at least) otherwise inert;
+ * tests inspect the parser output via Sys.parseTree.
+ *)
+Sys.set ("lineWidth", 78);
+> val it = () : unit
+Sys.set ("printLength", 999);
+> val it = () : unit
+Sys.set ("stringDepth", ~1);
+> val it = () : unit
+
+(* --- Floating [@@@id] (stands alone) ---------------------------- *)
+Sys.parseTree "[@@@a]";
+> val it = "(floatingAttrDecl (attribute @@@a))" : string
+
+(*) With an expression payload.
+Sys.parseTree "[@@@warning 32]";
+> val it = "(floatingAttrDecl (attribute @@@warning (int_literal 32)))"
+>   : string
+
+(*) Dotted attribute name.
+Sys.parseTree "[@@@a.b.c]";
+> val it = "(floatingAttrDecl (attribute @@@a.b.c))" : string
+
+(*) Type payload: introduced by `:`, mirrors OCaml's PTyp form.
+Sys.parseTree "[@@@a: int -> string]";
+> val it =
+>   "(floatingAttrDecl (attribute @@@a : (fnType (named int) (named string))))"
+>   : string
+
+(*) End attribute.smli

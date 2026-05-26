@@ -586,6 +586,44 @@ impl Display for LiteralKind {
     }
 }
 
+/// Kind of attribute, distinguished by the number of `@` after the
+/// opening `[`. Only `Floating` is currently constructed; expression-
+/// and declaration-level attributes (`[@id]`, `[@@id]`) are reserved
+/// for follow-up work.
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub enum AttributeKind {
+    /// `[@@@id]` — standalone (floating) declaration.
+    Floating,
+}
+
+impl AttributeKind {
+    /// Returns the `@`-string prefix used when rendering the attribute.
+    pub fn prefix(&self) -> &'static str {
+        match self {
+            AttributeKind::Floating => "@@@",
+        }
+    }
+}
+
+/// Payload of an attribute. After `:`, the payload is a type; otherwise
+/// it is an expression.
+#[derive(Clone, Debug)]
+pub enum AttributePayload {
+    Expr(Box<Expr>),
+    Type(Box<Type>),
+}
+
+/// OCaml-style attribute, e.g. `[@@@warning "-32"]`. For now the parser
+/// only constructs floating attributes; expression- and
+/// declaration-level forms are reserved for follow-up commits.
+#[derive(Clone, Debug)]
+pub struct Attribute {
+    pub kind: AttributeKind,
+    /// Possibly dotted name, e.g. `"warning"`, `"foo.bar"`.
+    pub name: String,
+    pub payload: Option<AttributePayload>,
+}
+
 /// Label within a record expression or record pattern.
 #[derive(Clone, Debug)]
 pub struct Label {
@@ -1018,6 +1056,9 @@ pub enum DeclKind {
     Type(Vec<TypeBind>),
     Datatype(Vec<DatatypeBind>),
     Signature(Vec<SigBind>),
+    /// Floating attribute declaration `[@@@id payload?]`. Stands alone
+    /// as a structure or file item; carries no runtime semantics.
+    FloatingAttr(Attribute),
 }
 
 impl DeclKind {
@@ -1037,6 +1078,16 @@ impl Display for DeclKind {
             DeclKind::Datatype(datatypes) => {
                 write!(f, "datatype ")?;
                 fmt_list(f, datatypes, "; ")
+            }
+            DeclKind::FloatingAttr(attr) => {
+                write!(f, "[{}{}", attr.kind.prefix(), attr.name)?;
+                if let Some(p) = &attr.payload {
+                    match p {
+                        AttributePayload::Expr(e) => write!(f, " {}", e)?,
+                        AttributePayload::Type(t) => write!(f, " : {}", t)?,
+                    }
+                }
+                write!(f, "]")
             }
             DeclKind::Fun(funs) => {
                 write!(f, "fun ")?;

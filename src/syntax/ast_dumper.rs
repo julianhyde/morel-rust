@@ -27,8 +27,9 @@
 //! (literals, identifiers, type variables) are rendered atomically.
 
 use crate::syntax::ast::{
-    Decl, DeclKind, Expr, ExprKind, LabeledExpr, Literal, LiteralKind, Match,
-    Pat, PatField, PatKind, Statement, StatementKind, Type, TypeKind, ValBind,
+    Attribute, AttributePayload, Decl, DeclKind, Expr, ExprKind, LabeledExpr,
+    Literal, LiteralKind, Match, Pat, PatField, PatKind, Statement,
+    StatementKind, Type, TypeKind, ValBind,
 };
 
 /// Returns an S-expression dump of the statement.
@@ -359,10 +360,34 @@ fn dump_decl(b: &mut String, d: &Decl) {
     dump_decl_kind(b, &d.kind);
 }
 
+fn dump_attribute(b: &mut String, attr: &Attribute) {
+    b.push_str("(attribute ");
+    b.push_str(attr.kind.prefix());
+    b.push_str(&attr.name);
+    if let Some(payload) = &attr.payload {
+        match payload {
+            AttributePayload::Expr(e) => {
+                b.push(' ');
+                dump_expr(b, e);
+            }
+            AttributePayload::Type(t) => {
+                b.push_str(" : ");
+                dump_type(b, t);
+            }
+        }
+    }
+    b.push(')');
+}
+
 fn dump_decl_kind(b: &mut String, d: &DeclKind) {
     match d {
         // lint: sort until '#}' where '##DeclKind::'
         DeclKind::Datatype(_) => dump_decl_source(b, "datatype", d),
+        DeclKind::FloatingAttr(attr) => {
+            b.push_str("(floatingAttrDecl ");
+            dump_attribute(b, attr);
+            b.push(')');
+        }
         DeclKind::Fun(funs) => {
             b.push_str("(fun");
             for fb in funs {

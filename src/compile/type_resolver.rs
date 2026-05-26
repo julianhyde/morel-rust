@@ -1225,6 +1225,10 @@ impl TypeResolver {
                 self.deduce_datatype_decl_type(env, datatype_binds, term_map)?;
                 Ok(decl.clone())
             }
+            DeclKind::FloatingAttr(_) => {
+                // Floating attributes carry no type; pass through unchanged.
+                Ok(decl.clone())
+            }
             DeclKind::Fun(fun_binds) => {
                 let val_decl = self.convert_fun_to_val(env, fun_binds);
                 self.deduce_decl_type(env, &val_decl, term_map)

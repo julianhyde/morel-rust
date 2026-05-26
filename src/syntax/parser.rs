@@ -18,11 +18,12 @@
 #![allow(clippy::result_large_err)]
 
 use crate::syntax::ast::{
-    ConBind, ConDesc, DatatypeBind, DatatypeDesc, Decl, DeclKind, ExnDesc,
-    Expr, ExprKind, FunBind, FunMatch, Label, LabeledExpr, Literal,
-    LiteralKind, Match, Pat, PatField, PatKind, SigBind, Span, Spec, SpecKind,
-    Statement, StatementKind, Step, StepKind, Type, TypeBind, TypeDesc,
-    TypeField, TypeKind, TypeScheme, ValBind, ValDesc,
+    Attribute, AttributeKind, AttributePayload, ConBind, ConDesc, DatatypeBind,
+    DatatypeDesc, Decl, DeclKind, ExnDesc, Expr, ExprKind, FunBind, FunMatch,
+    Label, LabeledExpr, Literal, LiteralKind, Match, Pat, PatField, PatKind,
+    SigBind, Span, Spec, SpecKind, Statement, StatementKind, Step, StepKind,
+    Type, TypeBind, TypeDesc, TypeField, TypeKind, TypeScheme, ValBind,
+    ValDesc,
 };
 use pest_consume::Parser;
 use pest_consume::match_nodes;
@@ -1110,12 +1111,41 @@ impl MorelParser {
 
     fn decl(input: ParseInput) -> ParseResult<Decl> {
         Ok(match_nodes!(input.children();
+            [floating_attr_decl(d)] => d.wrap(input),
             [val_decl(d)] => d.wrap(input),
             [fun_decl(d)] => d.wrap(input),
             [over_decl(d)] => d.wrap(input),
             [type_decl(d)] => d.wrap(input),
             [datatype_decl(d)] => d.wrap(input),
             [sig_decl(d)] => d.wrap(input),
+        ))
+    }
+
+    fn floating_attr_decl(input: ParseInput) -> ParseResult<DeclKind> {
+        Ok(match_nodes!(input.children();
+            [attr_name(name)] => DeclKind::FloatingAttr(Attribute {
+                kind: AttributeKind::Floating,
+                name,
+                payload: None,
+            }),
+            [attr_name(name), attr_payload(payload)] => {
+                DeclKind::FloatingAttr(Attribute {
+                    kind: AttributeKind::Floating,
+                    name,
+                    payload: Some(payload),
+                })
+            },
+        ))
+    }
+
+    fn attr_name(input: ParseInput) -> ParseResult<String> {
+        Ok(input.as_str().to_string())
+    }
+
+    fn attr_payload(input: ParseInput) -> ParseResult<AttributePayload> {
+        Ok(match_nodes!(input.children();
+            [type_(t)] => AttributePayload::Type(Box::new(t)),
+            [expr(e)] => AttributePayload::Expr(Box::new(e)),
         ))
     }
 

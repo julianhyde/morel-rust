@@ -422,13 +422,29 @@ ellipsis = { "..." }
 // -- Declarations ----------------------------------------
 
 decl = {
-    val_decl
+    floating_attr_decl
+  | val_decl
   | fun_decl
   | type_decl
   | over_decl
   | datatype_decl
   | sig_decl
 }
+
+// === Attributes (OCaml-style metadata on declarations) ===
+
+// Possibly dotted attribute name: `a`, `foo.bar`, `a.b.c`.
+// Atomic: no whitespace between name segments and the dots.
+attr_name = ${ unquoted_identifier ~ ("." ~ unquoted_identifier)* }
+
+// An attribute payload is either an expression (after a space) or, after
+// `:`, a type. The closing `]` terminates the payload.
+attr_payload = { (":" ~ type_) | expr }
+
+// `[@@@id payload?]` — a floating attribute standing alone as a
+// declaration. The `@`-count distinguishes scope; only the floating form
+// is currently parsed.
+floating_attr_decl = { "[@@@" ~ attr_name ~ attr_payload? ~ "]" }
 
 val_decl = { _val ~ _inst? ~ _rec? ~ val_bind ~ and_val_bind* }
 and_val_bind = { _and ~ val_bind }
