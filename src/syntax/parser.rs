@@ -1515,9 +1515,20 @@ impl MorelParser {
     }
 
     fn val_name(input: ParseInput) -> ParseResult<String> {
-        // `val_name = op_name`; the op_name rule already covers
-        // identifiers, operator symbols, and keyword-operators.
-        // Use the matched text directly.
+        // `val_name = op_name`. For identifier alternatives we drill
+        // through to strip backticks from quoted identifiers (e.g.
+        // `` `take` `` becomes `"take"`). For operator alternatives we
+        // use the raw matched text directly.
+        for child in input.children() {
+            if child.as_rule() == Rule::op_name {
+                for grand in child.children() {
+                    if grand.as_rule() == Rule::identifier {
+                        return Self::identifier(grand).map(|s| s.to_string());
+                    }
+                }
+                return Ok(child.as_str().to_string());
+            }
+        }
         Ok(input.as_str().to_string())
     }
 
