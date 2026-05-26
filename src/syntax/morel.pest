@@ -19,7 +19,26 @@
 WHITESPACE = _{ " " | NEWLINE }
 COMMENT = _{ line_comment | block_comment }
 line_comment = _{ "(*)" ~ (!NEWLINE ~ ANY)* ~ (NEWLINE | EOI) }
-block_comment = _{ "(*" ~ (line_comment | block_comment | (!"*)" ~ ANY))* ~ "*)" }
+// A block comment that is NOT a doc comment:
+//   - `(**)`, `(***)`, `(****)` etc. — `(*` followed by stars then `)`
+//   - `(* ... *)` whose body starts with anything other than `*`
+// The first arm intentionally precedes the second so that `(**)` is
+// recognized as the empty form rather than as the start of a doc.
+block_comment = _{
+    "(*" ~ "*"+ ~ ")"
+  | "(*" ~ !"*" ~ block_body ~ "*)"
+}
+block_body = _{ (line_comment | nested_block_comment | (!"*)" ~ ANY))* }
+nested_block_comment = _{ "(*" ~ block_body ~ "*)" }
+
+// Doc comment, captured as a non-silent rule so its body survives
+// parsing. Matches `(**` followed by content that is not just stars
+// and a closing `)` (those forms remain plain block comments). The
+// body allows nested block comments and the `(*)` line-comment
+// triplet as inert text.
+doc_comment = ${ "(**" ~ doc_body ~ "*)" }
+doc_body = @{ ( "(*)" | doc_nested_block | (!"*)" ~ ANY) )* }
+doc_nested_block = _{ "(*" ~ ( "(*)" | doc_nested_block | (!"*)" ~ ANY) )* ~ "*)" }
 
 // Keywords
 // lint: sort until '}' where '\|'
@@ -456,8 +475,9 @@ expr_attr = { "[@" ~ !"@" ~ attr_name ~ attr_payload? ~ "]" }
 
 // A declaration optionally preceded or followed by one or more
 // `[@@id]` attributes. Leading and trailing attrs are merged in source
-// order on the resulting `Statement`.
-attributed_decl = { decl_attr* ~ decl ~ decl_attr* }
+// order on the resulting `Statement`. A leading `(** ... *)` doc
+// comment is also accepted and desugared to `[@@doc "..."]`.
+attributed_decl = { (doc_comment | decl_attr)* ~ decl ~ decl_attr* }
 
 val_decl = { _val ~ _inst? ~ _rec? ~ val_bind ~ and_val_bind* }
 and_val_bind = { _and ~ val_bind }

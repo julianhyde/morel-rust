@@ -164,6 +164,9 @@ impl MorelParser {
         let mut decl_kind: Option<DeclKind> = None;
         for child in input.children() {
             match child.as_rule() {
+                Rule::doc_comment => {
+                    attributes.push(Self::doc_comment(child)?);
+                }
                 Rule::decl_attr => {
                     attributes.push(Self::decl_attr(child)?);
                 }
@@ -195,6 +198,41 @@ impl MorelParser {
                 payload: Some(payload),
             },
         ))
+    }
+
+    /// `(** body *)` desugars to `[@@doc "body"]`. The body's source
+    /// text becomes a string-literal payload, preserving any embedded
+    /// newlines and nested-comment characters verbatim.
+    fn doc_comment(input: ParseInput) -> ParseResult<Attribute> {
+        let span = input_to_span(&input);
+        let body_text = match_nodes!(input.children(); [doc_body(s)] => s);
+        // Quote the body so the embedded `\n` and `"` chars survive
+        // as string-literal source form (matches the test expectations).
+        let mut quoted = String::with_capacity(body_text.len() + 2);
+        quoted.push('"');
+        for c in body_text.chars() {
+            match c {
+                '\n' => quoted.push_str("\\n"),
+                '"' => quoted.push_str("\\\""),
+                '\\' => quoted.push_str("\\\\"),
+                _ => quoted.push(c),
+            }
+        }
+        quoted.push('"');
+        let literal = Literal {
+            kind: LiteralKind::String(quoted),
+            span: span.clone(),
+        };
+        let expr = ExprKind::Literal(literal).spanned(&span);
+        Ok(Attribute {
+            kind: AttributeKind::Decl,
+            name: "doc".to_string(),
+            payload: Some(AttributePayload::Expr(Box::new(expr))),
+        })
+    }
+
+    fn doc_body(input: ParseInput) -> ParseResult<String> {
+        Ok(input.as_str().to_string())
     }
 
     fn expr(input: ParseInput) -> ParseResult<Expr> {

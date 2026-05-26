@@ -22,9 +22,9 @@
  *   [@@@a]  floating           (stands alone as a structure item)
  *   (** *)  doc-comment sugar  (immediately above a decl)
  *
- * Expression-, type-, declaration-, and floating-level attributes are
- * parsed; doc-comment sugar is deferred. Attributes are otherwise
- * inert; tests inspect the parser output via Sys.parseTree.
+ * All four attribute scopes plus the doc-comment sugar are parsed.
+ * Attributes are otherwise inert; tests inspect the parser output via
+ * Sys.parseTree.
  *)
 Sys.set ("lineWidth", 78);
 > val it = () : unit
@@ -165,6 +165,41 @@ Sys.parseTree "[@@@a: int -> string]";
 Sys.parseTree "val x = 1 [@@a: int list]";
 > val it =
 >   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@a : (appType (named list) (named int))))"
+>   : string
+
+(* --- Doc-comment sugar: (** text *) ==> [@@doc "text"] ---------- *)
+Sys.parseTree "(** Hello world. *) val x = 1";
+> val it =
+>   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@doc (string_literal \" Hello world. \")))"
+>   : string
+
+(*) Doc + explicit [@@a] combine in source order.
+Sys.parseTree "(** doc *) val x = 1 [@@a]";
+> val it =
+>   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@doc (string_literal \" doc \")) (attribute @@a))"
+>   : string
+
+(*) Doc comment on a fun decl.
+Sys.parseTree "(** Returns x. *) fun id x = x";
+> val it =
+>   "(attributedDecl (fun (funBind id (funMatch (idPat x) (id x)))) (attribute @@doc (string_literal \" Returns x. \")))"
+>   : string
+
+(*) Empty/single-star comments remain ordinary and do NOT desugar.
+Sys.parseTree "(**) val x = 1";
+> val it = "(val (valBind (idPat x) (int_literal 1)))" : string
+Sys.parseTree "(***) val x = 1";
+> val it = "(val (valBind (idPat x) (int_literal 1)))" : string
+
+(*) A doc comment may contain nested block comments, even multiple
+(*) levels deep; they are captured verbatim as part of the doc text.
+Sys.parseTree "(** outer (* nested *) end *) val x = 1";
+> val it =
+>   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@doc (string_literal \" outer (* nested *) end \")))"
+>   : string
+Sys.parseTree "(** outer (* one (* two *) *) end *) val x = 1";
+> val it =
+>   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@doc (string_literal \" outer (* one (* two *) *) end \")))"
 >   : string
 
 (* --- Attributes are inert: code evaluates normally -------------- *)
