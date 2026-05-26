@@ -22,10 +22,9 @@
  *   [@@@a]  floating           (stands alone as a structure item)
  *   (** *)  doc-comment sugar  (immediately above a decl)
  *
- * Declaration- and floating-level attributes are parsed; the
- * expression-level form and doc-comment sugar are deferred.
- * Attributes are otherwise inert; tests inspect the parser output via
- * Sys.parseTree.
+ * Expression-, declaration-, and floating-level attributes are parsed;
+ * doc-comment sugar is deferred. Attributes are otherwise inert; tests
+ * inspect the parser output via Sys.parseTree.
  *)
 Sys.set ("lineWidth", 78);
 > val it = () : unit
@@ -33,6 +32,56 @@ Sys.set ("printLength", 999);
 > val it = () : unit
 Sys.set ("stringDepth", ~1);
 > val it = () : unit
+
+(* --- Expression-level [@id] (attaches to an atom) --------------- *)
+Sys.parseTree "1 [@a]";
+> val it = "(attributedExp (int_literal 1) (attribute @a))" : string
+
+(*) Multiple attributes stack on the same atom.
+Sys.parseTree "1 [@a] [@b]";
+> val it = "(attributedExp (int_literal 1) (attribute @a) (attribute @b))"
+>   : string
+
+(*) Attribute carries an optional payload.
+Sys.parseTree "1 [@since 42]";
+> val it =
+>   "(attributedExp (int_literal 1) (attribute @since (int_literal 42)))"
+>   : string
+
+(* --- Precedence: [@id] binds at atom level ---------------------- *)
+Sys.parseTree "1 + 2 [@a]";
+> val it =
+>   "(plus (int_literal 1) (attributedExp (int_literal 2) (attribute @a)))"
+>   : string
+
+(*) Parens widen the attribute scope.
+Sys.parseTree "(1 + 2) [@a]";
+> val it =
+>   "(attributedExp (plus (int_literal 1) (int_literal 2)) (attribute @a))"
+>   : string
+
+(*) Application: the attribute attaches to the argument, not the call.
+Sys.parseTree "f x [@a]";
+> val it = "(apply (id f) (attributedExp (id x) (attribute @a)))" : string
+
+(*) Parenthesize the call to attach to it as a whole.
+Sys.parseTree "(f x) [@a]";
+> val it = "(attributedExp (apply (id f) (id x)) (attribute @a))" : string
+
+(*) List literal as the atom.
+Sys.parseTree "[1, 2] [@a]";
+> val it =
+>   "(attributedExp (list (int_literal 1) (int_literal 2)) (attribute @a))"
+>   : string
+
+(*) Dotted attribute name on an expression.
+Sys.parseTree "1 [@foo.bar]";
+> val it = "(attributedExp (int_literal 1) (attribute @foo.bar))" : string
+
+(*) Type payload on an expression attribute.
+Sys.parseTree "1 [@a: int]";
+> val it = "(attributedExp (int_literal 1) (attribute @a : (named int)))"
+>   : string
 
 (* --- Declaration-level [@@id] ----------------------------------- *)
 Sys.parseTree "val x = 1 [@@a]";

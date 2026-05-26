@@ -3119,6 +3119,7 @@ impl TypeResolver {
                 kind: ExprKind::Record(None, labeled_exprs2),
                 span: compute_expr.span.clone(),
                 id: compute_expr.id,
+                attributes: Vec::new(),
             };
         } else {
             // Single compute expression - return the value directly.
@@ -3522,6 +3523,7 @@ impl TypeResolver {
                     kind: ExprKind::Identifier(method_name.to_string()),
                     span: recv.span.clone(),
                     id: None,
+                    attributes: Vec::new(),
                 };
                 // Calling convention mirrors
                 // `resolver::build_user_postfix_call`:
@@ -3541,12 +3543,14 @@ impl TypeResolver {
                             kind: ExprKind::Tuple(parts),
                             span: span.clone(),
                             id: None,
+                            attributes: Vec::new(),
                         }
                     }
                     _ => Expr {
                         kind: ExprKind::Tuple(vec![recv.clone(), arg.clone()]),
                         span: span.clone(),
                         id: None,
+                        attributes: Vec::new(),
                     },
                 };
                 let (fun2, arg2) =
@@ -3566,6 +3570,7 @@ impl TypeResolver {
             kind: ExprKind::Literal(fn_literal),
             span: span.clone(),
             id: None,
+            attributes: Vec::new(),
         };
 
         // Curried2 nests two Applies: `Apply(Apply(fn, recv), arg)`.
@@ -3578,6 +3583,7 @@ impl TypeResolver {
                 kind: ExprKind::Apply(Box::new(fun_inner), Box::new(arg_inner)),
                 span,
                 id: None,
+                attributes: Vec::new(),
             };
             let (fun2, arg2) =
                 self.deduce_apply_type(env, &inner_apply, arg, v_result)?;
@@ -3612,6 +3618,7 @@ impl TypeResolver {
                 kind: ExprKind::Tuple(vec![recv.clone(), arg.clone()]),
                 span,
                 id: None,
+                attributes: Vec::new(),
             },
             PostfixKind::Tupled3 => {
                 // If the user wrote `r.m (a, b)`, `arg` is already a
@@ -3627,6 +3634,7 @@ impl TypeResolver {
                     kind: ExprKind::Tuple(parts),
                     span,
                     id: None,
+                    attributes: Vec::new(),
                 }
             }
             PostfixKind::Curried2 | PostfixKind::Curried2Rev => {
@@ -4774,6 +4782,7 @@ impl TypeResolver {
             kind: kind.clone(),
             span: span.clone(),
             id: Some(id2),
+            attributes: Vec::new(),
         }
     }
 
@@ -5185,6 +5194,7 @@ impl TypeResolver {
                     kind: ExprKind::Record(ty.clone(), new_labeled_exprs),
                     span: expr.span.clone(),
                     id: expr.id,
+                    attributes: expr.attributes.clone(),
                 }
             }
             ExprKind::Tuple(exprs) => {
@@ -5194,6 +5204,7 @@ impl TypeResolver {
                     kind: ExprKind::Tuple(new_exprs),
                     span: expr.span.clone(),
                     id: expr.id,
+                    attributes: expr.attributes.clone(),
                 }
             }
             _ => expr.clone(),
@@ -5378,6 +5389,7 @@ fn ensure_decl(statement: &Statement) -> Decl {
                         kind: e.clone(),
                         span: statement.span.clone(),
                         id: statement.id,
+                        attributes: Vec::new(),
                     },
                 )],
             ),

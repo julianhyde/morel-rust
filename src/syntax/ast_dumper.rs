@@ -32,14 +32,25 @@ use crate::syntax::ast::{
     StatementKind, Type, TypeKind, ValBind,
 };
 
-/// Returns an S-expression dump of the statement. Wraps the inner kind
-/// with `(attributedDecl ...)` when the statement carries declaration
-/// attributes (`[@@id]`); attribute-less statements dump as before.
+/// Returns an S-expression dump of the statement. Wraps with
+/// `(attributedExp ...)` when the outer expression has `[@id]`
+/// attributes, or `(attributedDecl ...)` when the outer declaration
+/// has `[@@id]` attributes; attribute-less statements dump as before.
 pub fn dump(stmt: &Statement) -> String {
     let mut b = String::new();
     let has_attrs = !stmt.attributes.is_empty();
+    let wrapper = if has_attrs {
+        match &stmt.kind {
+            StatementKind::Expr(_) => "attributedExp",
+            StatementKind::Decl(_) => "attributedDecl",
+        }
+    } else {
+        ""
+    };
     if has_attrs {
-        b.push_str("(attributedDecl ");
+        b.push('(');
+        b.push_str(wrapper);
+        b.push(' ');
     }
     match &stmt.kind {
         StatementKind::Expr(e) => dump_expr_kind(&mut b, e),
@@ -56,7 +67,17 @@ pub fn dump(stmt: &Statement) -> String {
 }
 
 fn dump_expr(b: &mut String, e: &Expr) {
-    dump_expr_kind(b, &e.kind);
+    if e.attributes.is_empty() {
+        dump_expr_kind(b, &e.kind);
+    } else {
+        b.push_str("(attributedExp ");
+        dump_expr_kind(b, &e.kind);
+        for attr in &e.attributes {
+            b.push(' ');
+            dump_attribute(b, attr);
+        }
+        b.push(')');
+    }
 }
 
 fn dump_expr_kind(b: &mut String, e: &ExprKind<Expr>) {

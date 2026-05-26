@@ -93,16 +93,6 @@ impl LiteralKind {
 
 impl ExprKind<Expr> {
     #[allow(clippy::needless_pass_by_value)]
-    pub fn as_statement(&self, input: ParseInput) -> Statement {
-        Statement {
-            kind: StatementKind::Expr(self.clone()),
-            span: input_to_span(&input),
-            id: None,
-            attributes: Vec::new(),
-        }
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
     pub fn wrap(&self, input: ParseInput) -> Expr {
         self.spanned(&input_to_span(&input))
     }
@@ -152,8 +142,14 @@ impl MorelParser {
     }
 
     fn statement(input: ParseInput) -> ParseResult<Statement> {
+        let span = input_to_span(&input);
         Ok(match_nodes!(input.children();
-            [expr(e)] => e.kind.as_statement(input),
+            [expr(e)] => Statement {
+                kind: StatementKind::Expr(e.kind.clone()),
+                span,
+                id: None,
+                attributes: e.attributes,
+            },
             [attributed_decl(s)] => s,
         ))
     }
@@ -465,10 +461,30 @@ impl MorelParser {
     }
 
     fn expr_postfix_arg(input: ParseInput) -> ParseResult<Expr> {
-        Ok(match_nodes!(input.children();
-            [id_postfix_chain(e)] => e,
-            [atom(e)] => e,
-        ))
+        // Allow optional trailing `[@id]` attributes after the inner
+        // atom or id_postfix_chain so that `f x [@a]` parses as
+        // `f` applied to `(x [@a])`.
+        let mut e: Option<Expr> = None;
+        let mut attrs: Vec<Attribute> = Vec::new();
+        for child in input.children() {
+            match child.as_rule() {
+                Rule::id_postfix_chain => {
+                    e = Some(Self::id_postfix_chain(child)?);
+                }
+                Rule::atom => {
+                    e = Some(Self::atom(child)?);
+                }
+                Rule::expr_attr => {
+                    attrs.push(Self::expr_attr(child)?);
+                }
+                _ => {}
+            }
+        }
+        let mut e = e.expect("expr_postfix_arg missing inner");
+        if !attrs.is_empty() {
+            e.attributes.extend(attrs);
+        }
+        Ok(e)
     }
 
     fn id_postfix_chain(input: ParseInput) -> ParseResult<Expr> {
@@ -503,16 +519,51 @@ impl MorelParser {
     }
 
     fn expr_postfix(input: ParseInput) -> ParseResult<Expr> {
+        // `expr_postfix = atom postfix_tail* expr_attr*`. The grammar
+        // can't mix a rest pattern with another rest pattern of a
+        // different rule in match_nodes, so we walk children manually.
+        let mut atom_expr: Option<Expr> = None;
+        let mut tails: Vec<Label> = Vec::new();
+        let mut attrs: Vec<Attribute> = Vec::new();
+        for child in input.children() {
+            match child.as_rule() {
+                Rule::atom => {
+                    atom_expr = Some(Self::atom(child)?);
+                }
+                Rule::postfix_tail => {
+                    tails.push(Self::postfix_tail(child)?);
+                }
+                Rule::expr_attr => {
+                    attrs.push(Self::expr_attr(child)?);
+                }
+                _ => {}
+            }
+        }
+        let mut e = atom_expr.expect("expr_postfix missing atom");
+        for label in tails {
+            let selector = ExprKind::RecordSelector(label.name.to_string())
+                .spanned(&label.span);
+            let sel_span = e.span.union(&label.span);
+            e = ExprKind::Apply(Box::new(selector), Box::new(e))
+                .spanned(&sel_span);
+        }
+        if !attrs.is_empty() {
+            e.attributes.extend(attrs);
+        }
+        Ok(e)
+    }
+
+    fn expr_attr(input: ParseInput) -> ParseResult<Attribute> {
         Ok(match_nodes!(input.children();
-            [atom(e), postfix_tail(labels)..] => {
-                labels.fold(e, |acc, label| {
-                    let selector =
-                        ExprKind::RecordSelector(label.name.to_string())
-                            .spanned(&label.span);
-                    let sel_span = acc.span.union(&label.span);
-                    ExprKind::Apply(Box::new(selector), Box::new(acc))
-                        .spanned(&sel_span)
-                })
+            [attr_name(name)] => Attribute {
+                kind: AttributeKind::Exp,
+                name,
+                payload: None,
+            },
+            [attr_name(name), attr_payload(payload)] => Attribute {
+                kind: AttributeKind::Exp,
+                name,
+                payload: Some(payload),
             },
         ))
     }

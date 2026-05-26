@@ -143,6 +143,9 @@ pub struct Expr {
     pub kind: ExprKind<Expr>,
     pub span: Span,
     pub id: Option<i32>,
+    /// Expression-level `[@id]` attributes attached to this atom in
+    /// source order. Empty for expressions without annotations.
+    pub attributes: Vec<Attribute>,
 }
 
 impl Expr {
@@ -153,6 +156,7 @@ impl Expr {
                 kind: e.clone(),
                 span: statement.span.clone(),
                 id: statement.id,
+                attributes: statement.attributes.clone(),
             },
             _ => panic!("expected expression"),
         }
@@ -277,6 +281,7 @@ impl ExprKind<Expr> {
             kind: self.clone(),
             span: span.clone(),
             id: None,
+            attributes: Vec::new(),
         }
     }
 
@@ -591,10 +596,11 @@ impl Display for LiteralKind {
 }
 
 /// Kind of attribute, distinguished by the number of `@` after the
-/// opening `[`. Expression-level attributes (`[@id]`) are reserved for
-/// follow-up work.
+/// opening `[`.
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub enum AttributeKind {
+    /// `[@id]` — attaches to an atomic expression (or type).
+    Exp,
     /// `[@@id]` — attaches to a declaration.
     Decl,
     /// `[@@@id]` — standalone (floating) declaration.
@@ -606,6 +612,7 @@ impl AttributeKind {
     pub fn prefix(&self) -> &'static str {
         match self {
             AttributeKind::Decl => "@@",
+            AttributeKind::Exp => "@",
             AttributeKind::Floating => "@@@",
         }
     }
