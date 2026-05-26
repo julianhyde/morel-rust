@@ -109,6 +109,10 @@ pub struct Statement {
     pub kind: StatementKind,
     pub span: Span,
     pub id: Option<i32>,
+    /// Declaration-level attributes (e.g. `[@@inline]`) attached to the
+    /// outer declaration in source order. Empty for non-decl statements
+    /// and for decls without any `[@@id]` annotations.
+    pub attributes: Vec<Attribute>,
 }
 
 impl MorelNode for Statement {
@@ -587,11 +591,12 @@ impl Display for LiteralKind {
 }
 
 /// Kind of attribute, distinguished by the number of `@` after the
-/// opening `[`. Only `Floating` is currently constructed; expression-
-/// and declaration-level attributes (`[@id]`, `[@@id]`) are reserved
-/// for follow-up work.
+/// opening `[`. Expression-level attributes (`[@id]`) are reserved for
+/// follow-up work.
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub enum AttributeKind {
+    /// `[@@id]` — attaches to a declaration.
+    Decl,
     /// `[@@@id]` — standalone (floating) declaration.
     Floating,
 }
@@ -600,6 +605,7 @@ impl AttributeKind {
     /// Returns the `@`-string prefix used when rendering the attribute.
     pub fn prefix(&self) -> &'static str {
         match self {
+            AttributeKind::Decl => "@@",
             AttributeKind::Floating => "@@@",
         }
     }

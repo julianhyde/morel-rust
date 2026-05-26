@@ -22,9 +22,10 @@
  *   [@@@a]  floating           (stands alone as a structure item)
  *   (** *)  doc-comment sugar  (immediately above a decl)
  *
- * Of these scopes, only floating attributes are currently parsed.
- * Attributes are parsed but are (for now, at least) otherwise inert;
- * tests inspect the parser output via Sys.parseTree.
+ * Declaration- and floating-level attributes are parsed; the
+ * expression-level form and doc-comment sugar are deferred.
+ * Attributes are otherwise inert; tests inspect the parser output via
+ * Sys.parseTree.
  *)
 Sys.set ("lineWidth", 78);
 > val it = () : unit
@@ -32,6 +33,49 @@ Sys.set ("printLength", 999);
 > val it = () : unit
 Sys.set ("stringDepth", ~1);
 > val it = () : unit
+
+(* --- Declaration-level [@@id] ----------------------------------- *)
+Sys.parseTree "val x = 1 [@@a]";
+> val it =
+>   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@a))"
+>   : string
+
+(*) Multiple declaration attributes.
+Sys.parseTree "val x = 1 [@@a] [@@b]";
+> val it =
+>   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@a) (attribute @@b))"
+>   : string
+
+(*) On a function declaration.
+Sys.parseTree "fun f x = x [@@inline]";
+> val it =
+>   "(attributedDecl (fun (funBind f (funMatch (idPat x) (id x)))) (attribute @@inline))"
+>   : string
+
+(*) Declaration attribute with payload.
+Sys.parseTree "val x = 1 [@@deprecated \"use y instead\"]";
+> val it =
+>   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@deprecated (string_literal \"use y instead\")))"
+>   : string
+
+(*) Leading [@@id] before a decl (matches OCaml; both before and
+(*) after positions are accepted and merged).
+Sys.parseTree "[@@a] val x = 1";
+> val it =
+>   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@a))"
+>   : string
+
+(*) Leading and trailing combined; order preserved.
+Sys.parseTree "[@@a] val x = 1 [@@b]";
+> val it =
+>   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@a) (attribute @@b))"
+>   : string
+
+(*) Dotted attribute name on a declaration.
+Sys.parseTree "val x = 1 [@@deriving.show]";
+> val it =
+>   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@deriving.show))"
+>   : string
 
 (* --- Floating [@@@id] (stands alone) ---------------------------- *)
 Sys.parseTree "[@@@a]";
@@ -51,5 +95,19 @@ Sys.parseTree "[@@@a: int -> string]";
 > val it =
 >   "(floatingAttrDecl (attribute @@@a : (fnType (named int) (named string))))"
 >   : string
+
+(*) Type payload on a declaration attribute.
+Sys.parseTree "val x = 1 [@@a: int list]";
+> val it =
+>   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@a : (appType (named list) (named int))))"
+>   : string
+
+(* --- Attributes are inert: code evaluates normally -------------- *)
+val x = 1 [@@deprecated];
+> val x = 1 : int
+fun double n = n * 2 [@@inline];
+> val double = fn : int -> int
+double 7;
+> val it = 14 : int
 
 (*) End attribute.smli

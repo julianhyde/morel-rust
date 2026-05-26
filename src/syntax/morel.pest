@@ -144,7 +144,7 @@ _yield = @{ "yield" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 program = { SOI ~ (WHITE_SPACE | COMMENT)* ~ statement_semicolon+ ~ EOI }
 statement_plus = { (WHITESPACE | COMMENT)* ~ statement ~ EOI }
 statement_semicolon = { statement ~ ";" }
-statement = { decl | expr }
+statement = { attributed_decl | expr }
 
 // -- Expressions -----------------------------------------
 
@@ -442,9 +442,17 @@ attr_name = ${ unquoted_identifier ~ ("." ~ unquoted_identifier)* }
 attr_payload = { (":" ~ type_) | expr }
 
 // `[@@@id payload?]` — a floating attribute standing alone as a
-// declaration. The `@`-count distinguishes scope; only the floating form
-// is currently parsed.
+// declaration.
 floating_attr_decl = { "[@@@" ~ attr_name ~ attr_payload? ~ "]" }
+
+// `[@@id payload?]` — a declaration-level attribute. The `!"@"`
+// lookahead keeps `[@@@` reserved for the floating form.
+decl_attr = { "[@@" ~ !"@" ~ attr_name ~ attr_payload? ~ "]" }
+
+// A declaration optionally preceded or followed by one or more
+// `[@@id]` attributes. Leading and trailing attrs are merged in source
+// order on the resulting `Statement`.
+attributed_decl = { decl_attr* ~ decl ~ decl_attr* }
 
 val_decl = { _val ~ _inst? ~ _rec? ~ val_bind ~ and_val_bind* }
 and_val_bind = { _and ~ val_bind }

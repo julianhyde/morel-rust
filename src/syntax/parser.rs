@@ -98,6 +98,7 @@ impl ExprKind<Expr> {
             kind: StatementKind::Expr(self.clone()),
             span: input_to_span(&input),
             id: None,
+            attributes: Vec::new(),
         }
     }
 
@@ -108,15 +109,6 @@ impl ExprKind<Expr> {
 }
 
 impl DeclKind {
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn as_statement(&self, input: ParseInput) -> Statement {
-        Statement {
-            kind: StatementKind::Decl(self.clone()),
-            span: input_to_span(&input),
-            id: None,
-        }
-    }
-
     #[allow(clippy::needless_pass_by_value)]
     pub fn wrap(&self, input: ParseInput) -> Decl {
         self.spanned(&input_to_span(&input))
@@ -162,7 +154,50 @@ impl MorelParser {
     fn statement(input: ParseInput) -> ParseResult<Statement> {
         Ok(match_nodes!(input.children();
             [expr(e)] => e.kind.as_statement(input),
-            [decl(d)] => d.kind.as_statement(input),
+            [attributed_decl(s)] => s,
+        ))
+    }
+
+    fn attributed_decl(input: ParseInput) -> ParseResult<Statement> {
+        // Collect leading and trailing `[@@id]` attributes (in source
+        // order) and the wrapped decl. pest_consume's match_nodes can't
+        // mix a rest pattern around a named middle element here, so walk
+        // children manually.
+        let span = input_to_span(&input);
+        let mut attributes = Vec::new();
+        let mut decl_kind: Option<DeclKind> = None;
+        for child in input.children() {
+            match child.as_rule() {
+                Rule::decl_attr => {
+                    attributes.push(Self::decl_attr(child)?);
+                }
+                Rule::decl => {
+                    decl_kind = Some(Self::decl(child)?.kind);
+                }
+                _ => {}
+            }
+        }
+        let kind = decl_kind.expect("attributed_decl missing inner decl");
+        Ok(Statement {
+            kind: StatementKind::Decl(kind),
+            span,
+            id: None,
+            attributes,
+        })
+    }
+
+    fn decl_attr(input: ParseInput) -> ParseResult<Attribute> {
+        Ok(match_nodes!(input.children();
+            [attr_name(name)] => Attribute {
+                kind: AttributeKind::Decl,
+                name,
+                payload: None,
+            },
+            [attr_name(name), attr_payload(payload)] => Attribute {
+                kind: AttributeKind::Decl,
+                name,
+                payload: Some(payload),
+            },
         ))
     }
 

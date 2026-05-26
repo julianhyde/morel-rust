@@ -32,12 +32,25 @@ use crate::syntax::ast::{
     StatementKind, Type, TypeKind, ValBind,
 };
 
-/// Returns an S-expression dump of the statement.
+/// Returns an S-expression dump of the statement. Wraps the inner kind
+/// with `(attributedDecl ...)` when the statement carries declaration
+/// attributes (`[@@id]`); attribute-less statements dump as before.
 pub fn dump(stmt: &Statement) -> String {
     let mut b = String::new();
+    let has_attrs = !stmt.attributes.is_empty();
+    if has_attrs {
+        b.push_str("(attributedDecl ");
+    }
     match &stmt.kind {
         StatementKind::Expr(e) => dump_expr_kind(&mut b, e),
         StatementKind::Decl(d) => dump_decl_kind(&mut b, d),
+    }
+    if has_attrs {
+        for attr in &stmt.attributes {
+            b.push(' ');
+            dump_attribute(&mut b, attr);
+        }
+        b.push(')');
     }
     b
 }
