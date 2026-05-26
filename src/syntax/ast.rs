@@ -1212,7 +1212,7 @@ pub struct TypeBind {
 
 impl Display for TypeBind {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}: {}", self.name, self.type_)
+        write!(f, "{} = {}", self.name, self.type_)
     }
 }
 
@@ -1432,60 +1432,44 @@ impl Display for ExnDesc {
 }
 
 /// Abstract syntax tree (AST) of a type.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, Debug)]
 pub struct Type {
     pub kind: TypeKind,
     pub span: Span,
     pub id: Option<i32>,
+    /// Type-level `[@id]` attributes attached to this atom. Empty for
+    /// types without annotations.
+    pub attributes: Vec<Attribute>,
 }
+
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool {
+        // Equality follows the manually-defined `TypeKind` semantics
+        // (matching by structural shape, ignoring span/id/attributes).
+        self.kind == other.kind
+    }
+}
+
+impl Eq for Type {}
 
 impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        match &self.kind {
-            // lint: sort until '#}' where '##TypeKind::'
-            TypeKind::App(args, t) => {
-                let args_str = args
-                    .iter()
-                    .map(|a| format!("{}", a))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "{}<{}>", t, args_str)
-            }
-            TypeKind::Composite(types) => {
-                write!(f, "(")?;
-                for (i, t) in types.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", t)?;
+        // Render the inner kind. If attributes are present, append them
+        // as `[@a]` after the kind. Surrounding contexts (`->`, `*`,
+        // type-app) add parens around an attributed RHS when required;
+        // see `display_fn_rhs`.
+        self.kind_display(f)?;
+        for attr in &self.attributes {
+            write!(f, " [{}{}", attr.kind.prefix(), attr.name)?;
+            if let Some(p) = &attr.payload {
+                match p {
+                    AttributePayload::Expr(e) => write!(f, " {}", e)?,
+                    AttributePayload::Type(t) => write!(f, " : {}", t)?,
                 }
-                write!(f, ")")
             }
-            TypeKind::Con(name) => write!(f, "{}", name),
-            TypeKind::Expression(expr) => write!(f, "<expr:{}>", expr),
-            TypeKind::Fn(t1, t2) => write!(f, "({} -> {})", t1, t2),
-            TypeKind::Id(name) => write!(f, "{}", name),
-            TypeKind::Record(fields) => {
-                let fields_str = fields
-                    .iter()
-                    .map(|field| {
-                        format!("{}: {}", field.label.name, field.type_)
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "{{{}}}", fields_str)
-            }
-            TypeKind::Tuple(types) => {
-                let types_str = types
-                    .iter()
-                    .map(|t| format!("{}", t))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "({})", types_str)
-            }
-            TypeKind::Unit => write!(f, "()"),
-            TypeKind::Var(name) => write!(f, "{}", name),
+            write!(f, "]")?;
         }
+        Ok(())
     }
 }
 
@@ -1515,6 +1499,7 @@ impl TypeKind {
             kind: self.clone(),
             span: span.clone(),
             id: None,
+            attributes: Vec::new(),
         }
     }
 }
@@ -1581,6 +1566,68 @@ impl MorelNode for Pat {
 }
 
 impl Type {
+    /// Render this type with parens around it if it carries attributes,
+    /// so `int [@a]` renders as `(int [@a])` when used as the RHS of an
+    /// arrow / star / type-app.
+    fn display_paren_if_attributed(&self, f: &mut Formatter<'_>) -> FmtResult {
+        if self.attributes.is_empty() {
+            write!(f, "{}", self)
+        } else {
+            write!(f, "({})", self)
+        }
+    }
+
+    fn kind_display(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match &self.kind {
+            // lint: sort until '#}' where '##TypeKind::'
+            TypeKind::App(args, t) => {
+                let args_str = args
+                    .iter()
+                    .map(|a| format!("{}", a))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "{}<{}>", t, args_str)
+            }
+            TypeKind::Composite(types) => {
+                write!(f, "(")?;
+                for (i, t) in types.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", t)?;
+                }
+                write!(f, ")")
+            }
+            TypeKind::Con(name) => write!(f, "{}", name),
+            TypeKind::Expression(expr) => write!(f, "<expr:{}>", expr),
+            TypeKind::Fn(t1, t2) => {
+                write!(f, "{} -> ", t1)?;
+                t2.display_paren_if_attributed(f)
+            }
+            TypeKind::Id(name) => write!(f, "{}", name),
+            TypeKind::Record(fields) => {
+                let fields_str = fields
+                    .iter()
+                    .map(|field| {
+                        format!("{}: {}", field.label.name, field.type_)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "{{{}}}", fields_str)
+            }
+            TypeKind::Tuple(types) => {
+                let types_str = types
+                    .iter()
+                    .map(|t| format!("{}", t))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "({})", types_str)
+            }
+            TypeKind::Unit => write!(f, "()"),
+            TypeKind::Var(name) => write!(f, "{}", name),
+        }
+    }
+
     /// Returns a copy of this type with a new span.
     pub fn with_span(&self, span: &Span) -> Type {
         if span.eq(&self.span) {

@@ -22,9 +22,9 @@
  *   [@@@a]  floating           (stands alone as a structure item)
  *   (** *)  doc-comment sugar  (immediately above a decl)
  *
- * Expression-, declaration-, and floating-level attributes are parsed;
- * doc-comment sugar is deferred. Attributes are otherwise inert; tests
- * inspect the parser output via Sys.parseTree.
+ * Expression-, type-, declaration-, and floating-level attributes are
+ * parsed; doc-comment sugar is deferred. Attributes are otherwise
+ * inert; tests inspect the parser output via Sys.parseTree.
  *)
 Sys.set ("lineWidth", 78);
 > val it = () : unit
@@ -124,6 +124,22 @@ Sys.parseTree "[@@a] val x = 1 [@@b]";
 Sys.parseTree "val x = 1 [@@deriving.show]";
 > val it =
 >   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@deriving.show))"
+>   : string
+
+(* --- Attributes on types ---------------------------------------- *)
+(*) The attribute attaches at the atom level (after any type-application
+(*) chain), so it binds tighter than `*` or `->`.
+Sys.parseTree "type distance = real [@unit]";
+> val it = "(type_decl type distance = real [@unit])" : string
+
+(*) On a function type, the attribute attaches to the result type's atom.
+Sys.parseTree "type t = int -> int [@a]";
+> val it = "(type_decl type t = int -> (int [@a]))" : string
+
+(*) Inside a value annotation.
+Sys.parseTree "val x : int [@a] = 1";
+> val it =
+>   "(val (valBind (annotatedPat (idPat x) (attributedType (named int) (attribute @a))) (int_literal 1)))"
 >   : string
 
 (* --- Floating [@@@id] (stands alone) ---------------------------- *)

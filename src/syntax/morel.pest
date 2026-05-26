@@ -509,7 +509,7 @@ exn_desc = { identifier ~ (_of ~ type_)? }
 type_ = { fn_type }
 fn_type = { tuple_type ~ ("->" ~ fn_type)? }
 tuple_type = { apply_type ~ ("*" ~ apply_type)* }
-apply_type = { atomic_type ~ named_type* }
+apply_type = { atomic_type ~ named_type* ~ expr_attr* }
 atomic_type = {
     named_type
   | type_var

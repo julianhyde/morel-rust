@@ -4824,6 +4824,7 @@ impl TypeResolver {
             kind: kind.clone(),
             span: span.clone(),
             id: Some(v.id),
+            attributes: Vec::new(),
         }
     }
 

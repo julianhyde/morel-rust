@@ -1579,23 +1579,40 @@ impl MorelParser {
     }
 
     fn apply_type(input: ParseInput) -> ParseResult<Type> {
-        Ok(match_nodes!(input.children();
-            [atomic_type(t), named_type(types)..] => {
-                let type_vec: Vec<_> = types.collect();
-                if type_vec.is_empty() {
-                    t.with_span(&input_to_span(&input))
-                } else {
-                    type_vec.iter().fold(
-                        t,
-                        |acc, t2| {
-                            let span = acc.span.union(&t2.span);
-                            let type_args = vec![acc.clone()];
-                        TypeKind::App(type_args, Box::new(t2.clone()))
-                            .spanned(&span)
-                    }
-                )}
-            },
-        ))
+        // `apply_type = atomic_type named_type* expr_attr*`.
+        // pest_consume can't mix two `..` rest patterns of different
+        // rules, so walk children manually.
+        let mut base: Option<Type> = None;
+        let mut named_types: Vec<Type> = Vec::new();
+        let mut attrs: Vec<Attribute> = Vec::new();
+        for child in input.children() {
+            match child.as_rule() {
+                Rule::atomic_type => {
+                    base = Some(Self::atomic_type(child)?);
+                }
+                Rule::named_type => {
+                    named_types.push(Self::named_type(child)?);
+                }
+                Rule::expr_attr => {
+                    attrs.push(Self::expr_attr(child)?);
+                }
+                _ => {}
+            }
+        }
+        let mut t = base.expect("apply_type missing atomic_type");
+        if named_types.is_empty() {
+            t = t.with_span(&input_to_span(&input));
+        } else {
+            t = named_types.into_iter().fold(t, |acc, t2| {
+                let span = acc.span.union(&t2.span);
+                let type_args = vec![acc];
+                TypeKind::App(type_args, Box::new(t2)).spanned(&span)
+            });
+        }
+        if !attrs.is_empty() {
+            t.attributes.extend(attrs);
+        }
+        Ok(t)
     }
 
     fn atomic_type(input: ParseInput) -> ParseResult<Type> {

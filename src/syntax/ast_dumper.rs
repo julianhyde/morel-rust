@@ -334,6 +334,20 @@ fn dump_pat(b: &mut String, p: &Pat) {
 }
 
 fn dump_type(b: &mut String, t: &Type) {
+    if !t.attributes.is_empty() {
+        b.push_str("(attributedType ");
+        dump_type_kind(b, t);
+        for attr in &t.attributes {
+            b.push(' ');
+            dump_attribute(b, attr);
+        }
+        b.push(')');
+        return;
+    }
+    dump_type_kind(b, t);
+}
+
+fn dump_type_kind(b: &mut String, t: &Type) {
     match &t.kind {
         // lint: sort until '#}' where '##TypeKind::'
         TypeKind::App(args, head) => {
@@ -453,7 +467,7 @@ fn dump_decl_kind(b: &mut String, d: &DeclKind) {
             b.push(')');
         }
         DeclKind::Signature(_) => dump_decl_source(b, "signature", d),
-        DeclKind::Type(_) => dump_decl_source(b, "type", d),
+        DeclKind::Type(_) => dump_decl_source(b, "type_decl", d),
         DeclKind::Val(rec, inst, binds) => {
             b.push_str("(val");
             if *rec {
