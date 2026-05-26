@@ -126,13 +126,6 @@ impl StepKind {
     }
 }
 
-impl SpecKind {
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn wrap(&self, input: ParseInput) -> Spec {
-        self.spanned(&input_to_span(&input))
-    }
-}
-
 #[pest_consume::parser(parser = MorelParser)]
 impl MorelParser {
     fn statement_plus(input: ParseInput) -> ParseResult<Statement> {
@@ -1451,11 +1444,55 @@ impl MorelParser {
     }
 
     fn spec(input: ParseInput) -> ParseResult<Spec> {
+        // `spec = floating_spec | (doc_comment | decl_attr)* inner_spec
+        //         decl_attr*`. pest_consume can't mix the various rule
+        // types in one match_nodes arm, so we walk children manually.
+        let mut attributes = Vec::new();
+        let mut spec_kind: Option<SpecKind> = None;
+        for child in input.children() {
+            match child.as_rule() {
+                Rule::doc_comment => {
+                    attributes.push(Self::doc_comment(child)?);
+                }
+                Rule::decl_attr => {
+                    attributes.push(Self::decl_attr(child)?);
+                }
+                Rule::floating_spec => {
+                    spec_kind = Some(Self::floating_spec(child)?);
+                }
+                Rule::inner_spec => {
+                    spec_kind = Some(Self::inner_spec(child)?);
+                }
+                _ => {}
+            }
+        }
+        let kind = spec_kind.expect("spec missing inner");
+        Ok(Spec { kind, attributes })
+    }
+
+    fn inner_spec(input: ParseInput) -> ParseResult<SpecKind> {
         Ok(match_nodes!(input.children();
-            [val_spec(s)] => s.wrap(input),
-            [type_spec(s)] => s.wrap(input),
-            [datatype_spec(s)] => s.wrap(input),
-            [exception_spec(s)] => s.wrap(input),
+            [val_spec(s)] => s,
+            [type_spec(s)] => s,
+            [datatype_spec(s)] => s,
+            [exception_spec(s)] => s,
+        ))
+    }
+
+    fn floating_spec(input: ParseInput) -> ParseResult<SpecKind> {
+        Ok(match_nodes!(input.children();
+            [attr_name(name)] => SpecKind::FloatingAttr(Attribute {
+                kind: AttributeKind::Floating,
+                name,
+                payload: None,
+            }),
+            [attr_name(name), attr_payload(payload)] => {
+                SpecKind::FloatingAttr(Attribute {
+                    kind: AttributeKind::Floating,
+                    name,
+                    payload: Some(payload),
+                })
+            },
         ))
     }
 
@@ -2644,7 +2681,7 @@ mod test {
 
         // Test signature with value spec
         ml("signature STACK = sig val empty : 'a stack end").assert_statement(
-            is("signature STACK = sig val empty : stack<'a>; end"),
+            is("signature STACK = sig val empty : stack<'a> end"),
         );
 
         // Test the full STACK signature from the example
@@ -2673,11 +2710,11 @@ mod test {
 
         // Test signature with type spec
         ml("signature S = sig type t end")
-            .assert_statement(is("signature S = sig type t; end"));
+            .assert_statement(is("signature S = sig type t end"));
         ml("signature S = sig type t = int end")
-            .assert_statement(is("signature S = sig type t = int; end"));
+            .assert_statement(is("signature S = sig type t = int end"));
         ml("signature S = sig type 'a t end")
-            .assert_statement(is("signature S = sig type 'a t; end"));
+            .assert_statement(is("signature S = sig type 'a t end"));
 
         // Test signature with datatype spec
         ml("signature S = sig datatype t = A | B end").assert_statement(|s| {
@@ -2692,7 +2729,7 @@ mod test {
 
         // Test signature with exception spec
         ml("signature S = sig exception Empty end")
-            .assert_statement(is("signature S = sig exception Empty; end"));
+            .assert_statement(is("signature S = sig exception Empty end"));
         ml("signature S = sig exception Error of string end").assert_statement(
             |s| {
                 assert!(s.contains("exception Error of"));
@@ -2711,12 +2748,12 @@ mod test {
         // Test that we can parse a complete signature as a statement
         // Note: Type applications are printed as 'stack<'a>' not ''a stack'
         ml("signature STACK = sig val empty : 'a stack end").assert_statement(
-            is("signature STACK = sig val empty : stack<'a>; end"),
+            is("signature STACK = sig val empty : stack<'a> end"),
         );
 
         // Test signature with multiple specs
         ml("signature S = sig type t val x : t end")
-            .assert_statement(is("signature S = sig type t; val x : t; end"));
+            .assert_statement(is("signature S = sig type t val x : t end"));
     }
 
     #[test]

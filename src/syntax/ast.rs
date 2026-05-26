@@ -1269,7 +1269,7 @@ impl Display for SigBind {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "signature {} = sig ", self.name)?;
         for spec in &self.specs {
-            write!(f, "{}; ", spec)?;
+            write!(f, "{} ", spec)?;
         }
         write!(f, "end")
     }
@@ -1279,11 +1279,26 @@ impl Display for SigBind {
 #[derive(Clone, Debug)]
 pub struct Spec {
     pub kind: SpecKind,
+    /// Spec-level attributes: leading `(** doc *)` desugars to
+    /// `[@@doc "..."]`, plus any explicit `[@@id]` annotations placed
+    /// before or after the spec.
+    pub attributes: Vec<Attribute>,
 }
 
 impl Display for Spec {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        Display::fmt(&self.kind, f)
+        Display::fmt(&self.kind, f)?;
+        for attr in &self.attributes {
+            write!(f, " [{}{}", attr.kind.prefix(), attr.name)?;
+            if let Some(p) = &attr.payload {
+                match p {
+                    AttributePayload::Expr(e) => write!(f, " {}", e)?,
+                    AttributePayload::Type(t) => write!(f, " : {}", t)?,
+                }
+            }
+            write!(f, "]")?;
+        }
+        Ok(())
     }
 }
 
@@ -1298,31 +1313,39 @@ pub enum SpecKind {
     Datatype(Vec<DatatypeDesc>),
     /// Exception specification: `exception name [of type] [and ...]*`
     Exception(Vec<ExnDesc>),
-}
-
-impl SpecKind {
-    pub fn spanned(&self, _span: &Span) -> Spec {
-        Spec { kind: self.clone() }
-    }
+    /// Floating attribute `[@@@id]` standing alone inside a signature
+    /// body. Carries structure-level metadata.
+    FloatingAttr(Attribute),
 }
 
 impl Display for SpecKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         match self {
-            SpecKind::Val(descs) => {
-                write!(f, "val ")?;
-                fmt_list(f, descs, " and ")
-            }
-            SpecKind::Type(descs) => {
-                write!(f, "type ")?;
-                fmt_list(f, descs, " and ")
-            }
+            // lint: sort until '#}' where '##SpecKind::'
             SpecKind::Datatype(descs) => {
                 write!(f, "datatype ")?;
                 fmt_list(f, descs, " and ")
             }
             SpecKind::Exception(descs) => {
                 write!(f, "exception ")?;
+                fmt_list(f, descs, " and ")
+            }
+            SpecKind::FloatingAttr(attr) => {
+                write!(f, "[{}{}", attr.kind.prefix(), attr.name)?;
+                if let Some(p) = &attr.payload {
+                    match p {
+                        AttributePayload::Expr(e) => write!(f, " {}", e)?,
+                        AttributePayload::Type(t) => write!(f, " : {}", t)?,
+                    }
+                }
+                write!(f, "]")
+            }
+            SpecKind::Type(descs) => {
+                write!(f, "type ")?;
+                fmt_list(f, descs, " and ")
+            }
+            SpecKind::Val(descs) => {
+                write!(f, "val ")?;
                 fmt_list(f, descs, " and ")
             }
         }

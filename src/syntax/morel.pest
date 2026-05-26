@@ -504,7 +504,17 @@ con_bind = { identifier ~ (_of ~ type_)? }
 sig_decl = { _signature ~ sig_bind ~ (_and ~ sig_bind)* }
 sig_bind = { identifier ~ "=" ~ _sig ~ spec* ~ _end }
 
+// A spec inside `sig ... end`. May carry leading `(** doc *)` doc
+// comments and leading/trailing `[@@id]` attributes (same machinery
+// as `attributed_decl`). A bare `[@@@id]` is a floating spec.
 spec = {
+    floating_spec
+  | (doc_comment | decl_attr)* ~ inner_spec ~ decl_attr*
+}
+
+floating_spec = { "[@@@" ~ attr_name ~ attr_payload? ~ "]" }
+
+inner_spec = {
     val_spec
   | type_spec
   | datatype_spec
