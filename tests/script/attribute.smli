@@ -68,6 +68,12 @@ Sys.parseTree "f x [@a]";
 Sys.parseTree "(f x) [@a]";
 > val it = "(attributedExp (apply (id f) (id x)) (attribute @a))" : string
 
+(*) Inside an arithmetic expression: only the immediate atom is wrapped.
+Sys.parseTree "1 * 2 + 3 [@a]";
+> val it =
+>   "(plus (times (int_literal 1) (int_literal 2)) (attributedExp (int_literal 3) (attribute @a)))"
+>   : string
+
 (*) List literal as the atom.
 Sys.parseTree "[1, 2] [@a]";
 > val it =
@@ -98,7 +104,7 @@ Sys.parseTree "val x = 1 [@@a] [@@b]";
 (*) On a function declaration.
 Sys.parseTree "fun f x = x [@@inline]";
 > val it =
->   "(attributedDecl (fun (funBind f (funMatch (idPat x) (id x)))) (attribute @@inline))"
+>   "(attributedDecl (fun (funBind (funMatch f (idPat x) (id x)))) (attribute @@inline))"
 >   : string
 
 (*) Declaration attribute with payload.
@@ -182,7 +188,7 @@ Sys.parseTree "(** doc *) val x = 1 [@@a]";
 (*) Doc comment on a fun decl.
 Sys.parseTree "(** Returns x. *) fun id x = x";
 > val it =
->   "(attributedDecl (fun (funBind id (funMatch (idPat x) (id x)))) (attribute @@doc (string_literal \" Returns x. \")))"
+>   "(attributedDecl (fun (funBind (funMatch id (idPat x) (id x)))) (attribute @@doc (string_literal \" Returns x. \")))"
 >   : string
 
 (*) Empty/single-star comments remain ordinary and do NOT desugar.
@@ -202,6 +208,13 @@ Sys.parseTree "(** outer (* one (* two *) *) end *) val x = 1";
 >   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@doc (string_literal \" outer (* one (* two *) *) end \")))"
 >   : string
 
+(*) Line comments nested inside a doc comment are also captured;
+(*) the embedded newline becomes part of the doc text.
+Sys.parseTree "(** outer (*) line\n  rest *) val x = 1";
+> val it =
+>   "(attributedDecl (val (valBind (idPat x) (int_literal 1))) (attribute @@doc (string_literal \" outer (*) line\n  rest \")))"
+>   : string
+
 (* --- Attributes are inert: code evaluates normally -------------- *)
 val x = 1 [@@deprecated];
 > val x = 1 : int
@@ -209,5 +222,24 @@ fun double n = n * 2 [@@inline];
 > val double = fn : int -> int
 double 7;
 > val it = 14 : int
+
+(** A documented function. *)
+fun triple n = n * 3;
+> val triple = fn : int -> int
+triple 7;
+> val it = 21 : int
+
+(*) Floating attributes are no-ops.
+[@@@warning "unused"];
+
+(*) Expression-level attribute is invisible to evaluation.
+1 + 2 [@unit];
+> val it = 3 : int
+
+(*) Existing empty / single-star comments are unaffected.
+"a" ^ (**) "b";
+> val it = "ab" : string
+"a" ^ (***) "b";
+> val it = "ab" : string
 
 (*) End attribute.smli

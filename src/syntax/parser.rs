@@ -206,13 +206,15 @@ impl MorelParser {
     fn doc_comment(input: ParseInput) -> ParseResult<Attribute> {
         let span = input_to_span(&input);
         let body_text = match_nodes!(input.children(); [doc_body(s)] => s);
-        // Quote the body so the embedded `\n` and `"` chars survive
-        // as string-literal source form (matches the test expectations).
+        // Wrap the body in quotes to form a Morel string-literal source.
+        // Newlines stay as raw newlines so the resulting Val::String,
+        // when shell-displayed, escapes them back to `\n` for multi-line
+        // doc bodies. Embedded `"` and `\` characters are escape-sanitized
+        // so the source stays a valid string literal.
         let mut quoted = String::with_capacity(body_text.len() + 2);
         quoted.push('"');
         for c in body_text.chars() {
             match c {
-                '\n' => quoted.push_str("\\n"),
                 '"' => quoted.push_str("\\\""),
                 '\\' => quoted.push_str("\\\\"),
                 _ => quoted.push(c),

@@ -437,14 +437,17 @@ fn dump_decl_kind(b: &mut String, d: &DeclKind) {
             b.push(')');
         }
         DeclKind::Fun(funs) => {
+            // Render as `(funBind (funMatch name ...))`: the name lives
+            // on `FunBind` in the AST (every match in a funBind shares
+            // it), but the dump form attaches it to each `funMatch`.
             b.push_str("(fun");
             for fb in funs {
                 b.push(' ');
-                b.push_str("(funBind ");
-                b.push_str(&fb.name);
+                b.push_str("(funBind");
                 for fm in &fb.matches {
                     b.push(' ');
-                    b.push_str("(funMatch");
+                    b.push_str("(funMatch ");
+                    b.push_str(&fb.name);
                     for p in &fm.pats {
                         b.push(' ');
                         dump_pat(b, p);
