@@ -1474,6 +1474,7 @@ impl MorelParser {
         Ok(match_nodes!(input.children();
             [val_spec(s)] => s,
             [type_spec(s)] => s,
+            [eqtype_spec(s)] => s,
             [datatype_spec(s)] => s,
             [exception_spec(s)] => s,
         ))
@@ -1509,11 +1510,15 @@ impl MorelParser {
 
     fn val_desc(input: ParseInput) -> ParseResult<ValDesc> {
         Ok(match_nodes!(input.children();
-            [identifier(i), type_(t)] => {
-                let name = i.to_string();
-                ValDesc {name, type_: t}
-            },
+            [val_name(name), type_(t)] => ValDesc { name, type_: t },
         ))
+    }
+
+    fn val_name(input: ParseInput) -> ParseResult<String> {
+        // `val_name = op_name`; the op_name rule already covers
+        // identifiers, operator symbols, and keyword-operators.
+        // Use the matched text directly.
+        Ok(input.as_str().to_string())
     }
 
     fn type_spec(input: ParseInput) -> ParseResult<SpecKind> {
@@ -1544,6 +1549,32 @@ impl MorelParser {
             [type_vars(vars), identifier(i), type_(t)] => {
                 let name = i.to_string();
                 TypeDesc {type_vars: vars, name, type_: Some(t)}
+            },
+        ))
+    }
+
+    fn eqtype_spec(input: ParseInput) -> ParseResult<SpecKind> {
+        Ok(match_nodes!(input.children();
+            [_eqtype(_), eqtype_desc(desc), _and(_), eqtype_desc(rest)..] => {
+                let mut descs = vec![desc];
+                descs.extend(rest.collect::<Vec<_>>());
+                SpecKind::Eqtype(descs)
+            },
+            [_eqtype(_), eqtype_desc(desc)] => {
+                SpecKind::Eqtype(vec![desc])
+            },
+        ))
+    }
+
+    fn eqtype_desc(input: ParseInput) -> ParseResult<TypeDesc> {
+        Ok(match_nodes!(input.children();
+            [identifier(i)] => {
+                let name = i.to_string();
+                TypeDesc {type_vars: vec![], name, type_: None}
+            },
+            [type_vars(vars), identifier(i)] => {
+                let name = i.to_string();
+                TypeDesc {type_vars: vars, name, type_: None}
             },
         ))
     }
@@ -1906,6 +1937,10 @@ impl MorelParser {
     }
 
     fn _end(input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _eqtype(input: ParseInput) -> ParseResult<()> {
         Ok(())
     }
 

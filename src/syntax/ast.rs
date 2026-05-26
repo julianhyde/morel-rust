@@ -1309,6 +1309,10 @@ pub enum SpecKind {
     Val(Vec<ValDesc>),
     /// Type specification: `type ['a] name [= type] [and ...]*`
     Type(Vec<TypeDesc>),
+    /// Equality-type specification: `eqtype ['a] name [and ...]*`. Like
+    /// `Type` but the desc carries no `= ...` body — the spec just
+    /// declares that the type admits structural equality.
+    Eqtype(Vec<TypeDesc>),
     /// Datatype specification: `datatype ['a] name = con [| con]* [and ...]*`
     Datatype(Vec<DatatypeDesc>),
     /// Exception specification: `exception name [of type] [and ...]*`
@@ -1324,6 +1328,10 @@ impl Display for SpecKind {
             // lint: sort until '#}' where '##SpecKind::'
             SpecKind::Datatype(descs) => {
                 write!(f, "datatype ")?;
+                fmt_list(f, descs, " and ")
+            }
+            SpecKind::Eqtype(descs) => {
+                write!(f, "eqtype ")?;
                 fmt_list(f, descs, " and ")
             }
             SpecKind::Exception(descs) => {

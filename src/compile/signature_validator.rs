@@ -26,6 +26,7 @@
 //!
 //! This is the Rust equivalent of Java's `SignatureChecker` class.
 
+use crate::syntax::parser::{ParseError, parse_statement};
 use std::error;
 use std::fmt;
 use std::fs;
@@ -115,26 +116,22 @@ impl SignatureValidator {
 
     /// Validates a single signature file.
     ///
-    /// Currently validates that:
-    /// - The file can be read
-    /// - The file has proper formatting
+    /// Reads the file, then parses it as a Morel statement to confirm
+    /// the source is syntactically well-formed (including any attribute
+    /// or doc-comment annotations on the contained specs).
     ///
-    /// Future enhancements could include:
-    /// - Parsing the signature as AST
-    /// - Comparing declarations against BuiltInFunction/BuiltInRecord enums
-    /// - Validating type signatures match
+    /// Future enhancements:
+    /// - Walk the parse tree to compare each val/exception/datatype
+    ///   spec against the strum-tagged `BuiltInFunction` /
+    ///   `BuiltInExn` / `BuiltInDatatype` enums.
+    /// - Validate that the type signatures match.
     fn validate_file(&self, path: &Path) -> Result<(), ValidationError> {
-        // Verify that the file can be read
-        let _contents = fs::read_to_string(path).map_err(|e| {
+        let contents = fs::read_to_string(path).map_err(|e| {
             ValidationError::FileReadError(path.to_path_buf(), e)
         })?;
-
-        // Additional validation could be added here:
-        // - Parse as signature declaration
-        // - Check that values match BuiltInFunction entries
-        // - Check that exceptions match BuiltInExn entries
-        // - Check that datatypes match BuiltIn types
-
+        parse_statement(&contents).map_err(|e| {
+            ValidationError::ParseError(path.to_path_buf(), Box::new(e))
+        })?;
         Ok(())
     }
 }
@@ -142,29 +139,27 @@ impl SignatureValidator {
 /// Errors that can occur during signature validation.
 #[derive(Debug)]
 pub enum ValidationError {
+    // lint: sort until '#}' where '##[A-Z]'
     /// The library directory was not found.
     DirectoryNotFound(PathBuf),
-    /// The path exists but is not a directory.
-    NotADirectory(PathBuf),
-    /// No signature files were found in the directory.
-    NoSignatureFiles(PathBuf),
     /// Failed to read the directory.
     DirectoryReadError(PathBuf, io::Error),
     /// Failed to read a signature file.
     FileReadError(PathBuf, io::Error),
+    /// No signature files were found in the directory.
+    NoSignatureFiles(PathBuf),
+    /// The path exists but is not a directory.
+    NotADirectory(PathBuf),
+    /// A signature file did not parse as a Morel statement.
+    ParseError(PathBuf, Box<ParseError>),
 }
 
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            // lint: sort until '#}' where '##ValidationError::'
             ValidationError::DirectoryNotFound(path) => {
                 write!(f, "Library directory not found: {}", path.display())
-            }
-            ValidationError::NotADirectory(path) => {
-                write!(f, "Path is not a directory: {}", path.display())
-            }
-            ValidationError::NoSignatureFiles(path) => {
-                write!(f, "No signature files found in: {}", path.display())
             }
             ValidationError::DirectoryReadError(path, err) => {
                 write!(
@@ -182,6 +177,20 @@ impl fmt::Display for ValidationError {
                     err
                 )
             }
+            ValidationError::NoSignatureFiles(path) => {
+                write!(f, "No signature files found in: {}", path.display())
+            }
+            ValidationError::NotADirectory(path) => {
+                write!(f, "Path is not a directory: {}", path.display())
+            }
+            ValidationError::ParseError(path, err) => {
+                write!(
+                    f,
+                    "Failed to parse signature file {}: {}",
+                    path.display(),
+                    err
+                )
+            }
         }
     }
 }
@@ -191,6 +200,7 @@ impl error::Error for ValidationError {
         match self {
             ValidationError::DirectoryReadError(_, err)
             | ValidationError::FileReadError(_, err) => Some(err),
+            ValidationError::ParseError(_, err) => Some(err.as_ref()),
             _ => None,
         }
     }
