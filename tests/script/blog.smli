@@ -2054,10 +2054,10 @@ from e in scott.emps
     compute {count over (), sumSal = sum over e.sal}
   order deptno unorder;
 > count deptno sumSal
-> ----- ------ -------
-> 3     10     8750.0
-> 5     20     10875.0
-> 6     30     9400.0
+> ----- ------ ------
+> 3     10     8750
+> 5     20     10875
+> 6     30     9400
 >
 > val it : {count:int, deptno:int, sumSal:real} bag
 set("mode", "evaluate");
