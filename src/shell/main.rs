@@ -26,6 +26,7 @@ use crate::compile::expander::collect_session_fn_bindings;
 use crate::compile::library::{
     BuiltInExn, BuiltInFunction, name_to_fn, name_to_rec,
 };
+use crate::compile::progressive_widen;
 use crate::compile::resolver;
 use crate::compile::span::Span;
 use crate::compile::type_env::{Binding, EmptyTypeEnv, FunTypeEnv, TypeEnv};
@@ -1075,6 +1076,21 @@ impl Shell {
                 span, msg, span
             ));
         }
+
+        // Post-resolution progressive-record widening: walks the
+        // core decl and refines any field-selector whose receiver
+        // value resolves (through `valueOf`) to a `Val::File`. This
+        // catches paths the unifier-time `TypedValue` map does not
+        // — record literals, tuple destructuring, let-bindings —
+        // by reaching through runtime values rather than type
+        // variables.
+        let mut decl = decl;
+        let file_root = self.session.borrow().file();
+        progressive_widen::widen(
+            &mut decl,
+            &self.environment.bindings,
+            &file_root,
+        );
 
         let mut env2 = self.session.borrow().base_env().clone();
         for (k, v) in &self.environment.bindings {

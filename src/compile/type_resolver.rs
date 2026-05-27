@@ -3921,6 +3921,20 @@ impl TypeResolver {
                             ) {
                                 return;
                             }
+                            // If the record is progressive, suppress
+                            // the error. The post-resolution
+                            // widening pass walks the core decl and
+                            // can discover the field via a `valueOf`
+                            // walk that reaches Files through record
+                            // literals, tuple destructuring, etc.
+                            // — paths the unifier-time
+                            // [`TypedValue`] map does not cover.
+                            // `v_field` is left unconstrained; the
+                            // post-pass refines it.
+                            if field_list.iter().any(|f| f == PROGRESSIVE_LABEL)
+                            {
+                                return;
+                            }
                             self.errors.borrow_mut().push((
                                 format!(
                                     "no field '{}' in type '{}'",

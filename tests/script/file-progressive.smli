@@ -52,21 +52,17 @@ val (s2, w2) = (file.scott, file.wordle);
 from d in s2.depts where d.dname = "SALES";
 > val it = [{deptno=30,dname="SALES",loc="CHICAGO"}] : {deptno:int, dname:string, loc:string} list
 
-(* S3. Record-wrap + project (currently expected to fail because the
- * env-lookup path doesn't recursively project into record literals;
- * see the `valueOf`-walker follow-up note in the design discussion). *)
-set("mode", "validate");
-> val it = () : unit
-(*
+(* S3. Record-wrap + project.
+ * Reaches the underlying File through a record literal: the
+ * post-resolution widening pass walks the value tree
+ * (record-selector chain rooted at `r`, an identifier in the env)
+ * to find the File, then discovers `depts`. *)
 val r = {x = file.scott};
 > val r =
->   {x=
->    {bonuses=<relation>,depts=<relation>,emps=<relation>,salgrades=<relation>}}
->   : {x:{bonuses:{...} list,
->         depts:{deptno:int, dname:string, loc:string} list,
->         emps:
->              {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
->               job:string, mgrno:int, sal:real} list, salgrades:{...} list, ...}}
+>   {x={bonuses=<relation>,depts=<relation>,emps=<relation>,salgrades=<relation>}}
+>   : {
+>      x:{bonuses:{...} list, depts:{deptno:int, dname:string, loc:string} list,
+>         emps:{...} list, salgrades:{...} list, ...}}
 from d in r.x.depts;
 > val it =
 >   [{deptno=10,dname="ACCOUNTING",loc="NEW YORK"},
@@ -74,9 +70,6 @@ from d in r.x.depts;
 >    {deptno=30,dname="SALES",loc="CHICAGO"},
 >    {deptno=40,dname="OPERATIONS",loc="BOSTON"}]
 >   : {deptno:int, dname:string, loc:string} list
-*)
-set("mode", "evaluate");
-> val it = () : unit
 
 (* S4. Shadow with a different type.
  * `s4` is first bound to `file.scott` (a directory); the next binding
