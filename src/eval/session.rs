@@ -181,9 +181,14 @@ impl Session {
     }
 
     /// Deduces a statement's type. The statement is represented by an AST node.
+    /// `runtime_bindings` is the map of top-level user val bindings from prior
+    /// statements (`Shell::environment.bindings`). The wrapper env uses it to
+    /// project runtime [`Val::File`] values into [`TypedValue`] registrations
+    /// for the resolver's progressive-widening hook.
     pub fn deduce_type_inner(
         &mut self,
         node: &Statement,
+        runtime_bindings: &HashMap<String, Val>,
     ) -> Result<Resolved, Error> {
         let mut type_resolver = TypeResolver::new();
         type_resolver.match_coverage_enabled =
@@ -204,10 +209,14 @@ impl Session {
 
         // Use the accumulated type environment from previous statements,
         // wrapped in a session-aware layer that resolves the `file`
-        // identifier against the session's progressive root file.
+        // identifier against the session's progressive root file and
+        // promotes any prior `Val::File` runtime binding to a
+        // `TypedValue` registration for the resolver's progressive
+        // widening hook.
         let env = SessionAwareEnv {
             parent: Rc::clone(&self.type_env),
             file: self.file(),
+            runtime_bindings: runtime_bindings.clone(),
         };
         let resolved = type_resolver.deduce_type(&env, node)?;
         let new_overloads = std::mem::take(&mut type_resolver.new_overloads);
@@ -479,6 +488,12 @@ impl Clone for ResolvedTypeEnv {
 pub struct SessionAwareEnv {
     pub parent: Rc<dyn TypeEnv>,
     pub file: Rc<File>,
+    /// Snapshot of [`crate::shell::main::Environment::bindings`] at
+    /// the moment this env was built. Used to discover that a name
+    /// from a previous statement is bound to a `Val::File`, which we
+    /// then re-register as a [`TypedValue`] for the field-selector
+    /// action's widening hook.
+    pub runtime_bindings: HashMap<String, Val>,
 }
 
 impl TypeEnv for SessionAwareEnv {
@@ -494,6 +509,20 @@ impl TypeEnv for SessionAwareEnv {
             tr.typed_values
                 .borrow_mut()
                 .insert(v, Rc::clone(&self.file) as Rc<dyn file::TypedValue>);
+            return Some(BindType::Val(Term::Variable(v)));
+        }
+        // If a prior statement's val binding evaluated to a
+        // `Val::File`, use the file's *current* type (which reflects
+        // any expansion that's happened since the binding was
+        // resolved) rather than the type that was frozen at binding
+        // time. Also register the file as a [`TypedValue`] for the
+        // field-selector action's progressive widening hook.
+        if let Some(Val::File(f)) = self.runtime_bindings.get(name) {
+            f.expand();
+            let v = tr.type_to_term(&f.type_());
+            tr.typed_values
+                .borrow_mut()
+                .insert(v, Rc::clone(f) as Rc<dyn file::TypedValue>);
             return Some(BindType::Val(Term::Variable(v)));
         }
         self.parent.get(name, tr)
@@ -526,6 +555,7 @@ impl Clone for SessionAwareEnv {
         SessionAwareEnv {
             parent: self.parent.clone(),
             file: Rc::clone(&self.file),
+            runtime_bindings: self.runtime_bindings.clone(),
         }
     }
 }

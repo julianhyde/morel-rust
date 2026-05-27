@@ -84,33 +84,21 @@ file.scott;
 >           {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
 >            job:string, mgrno:int, sal:real} list, salgrades:{...} list, ...}
 
-set("mode", "validate");
-> val it = () : unit
-(* TODO: when `val s = file.scott;` binds `s`, the resolver loses the
- * TypedValue that drives progressive widening, so later `s.depts`
- * access can't expand. Re-enable when binding propagation lands. *)
-(*
+(*) A variable bound to a directory carries the TypedValue forward
+(*) so field access on the variable still triggers progressive widening.
 val s = file.scott;
 > val s =
 >   {bonuses=<relation>,depts=<relation>,emps=<relation>,salgrades=<relation>}
->   : {bonuses:{...} list, depts:{...} list, emps:{...} list,
->      salgrades:{...} list, ...}
+>   : {bonuses:{...} list,
+>      depts:{deptno:int, dname:string, loc:string} list,
+>      emps:
+>           {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
+>            job:string, mgrno:int, sal:real} list, salgrades:{...} list, ...}
 from d in s.depts
   join e in s.emps on d.deptno = e.deptno
   group e.deptno compute count over ()
   order deptno;
 > val it = [{count=3,deptno=10},{count=5,deptno=20},{count=6,deptno=30}]
 >   : {count:int, deptno:int} list
-
-val scott = file.scott;
-> val scott =
->   {bonuses=<relation>,depts=<relation>,emps=<relation>,salgrades=<relation>}
->   : {bonuses:{...} list, depts:{deptno:int, dname:string, loc:string} list,
->      emps:
->           {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
->            job:string, mgrno:int, sal:real} list, salgrades:{...} list, ...}
-from b in scott.bonuses;
-> val it = [] : {bonus:real, ename:string, job:string, sal:real} list
-*)
 
 (*) End file.smli

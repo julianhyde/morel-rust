@@ -399,7 +399,7 @@ pub struct Shell {
 /// Simple environment for storing bindings.
 #[derive(Clone, Debug)]
 pub struct Environment {
-    bindings: HashMap<String, Val>,
+    pub bindings: HashMap<String, Val>,
     /// Original expressions of let-bound vals from previous statements,
     /// kept for cross-compile-unit inlining. Only populated for
     /// bindings the inliner has determined are safe to substitute
@@ -939,22 +939,26 @@ impl Shell {
         }
 
         // Successfully parsed, now validate.
-        let resolved =
-            match self.session.borrow_mut().deduce_type_inner(&statement) {
-                Ok(resolved) => resolved,
-                Err(Error::Compile(message, span)) => {
-                    let pest_span = span.to_pest_span();
-                    let span2 = Span::from_pest_span(&pest_span, base_line);
-                    let s = format!(
-                        "{} Error: {}\n  raised at: {}\n",
-                        span2.to_string(),
-                        message,
-                        span2.to_string()
-                    );
-                    return Ok(s);
-                }
-                Err(e) => return Err(e),
-            };
+        let runtime_bindings = self.environment.bindings.clone();
+        let resolved = match self
+            .session
+            .borrow_mut()
+            .deduce_type_inner(&statement, &runtime_bindings)
+        {
+            Ok(resolved) => resolved,
+            Err(Error::Compile(message, span)) => {
+                let pest_span = span.to_pest_span();
+                let span2 = Span::from_pest_span(&pest_span, base_line);
+                let s = format!(
+                    "{} Error: {}\n  raised at: {}\n",
+                    span2.to_string(),
+                    message,
+                    span2.to_string()
+                );
+                return Ok(s);
+            }
+            Err(e) => return Err(e),
+        };
 
         // Collect any type-checker warnings (e.g. non-alphabetical record
         // field order in 'order' expressions).
@@ -1013,7 +1017,11 @@ impl Shell {
     }
 
     fn deduce_type(&mut self, node: &Statement) -> ShellResult<String> {
-        let resolved = self.session.borrow_mut().deduce_type_inner(node)?;
+        let runtime_bindings = self.environment.bindings.clone();
+        let resolved = self
+            .session
+            .borrow_mut()
+            .deduce_type_inner(node, &runtime_bindings)?;
 
         // For now, just unparse the node back to a string. In a full
         // implementation, this would actually evaluate the expression.
