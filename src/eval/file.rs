@@ -40,6 +40,7 @@
 
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::session::Session;
+use crate::eval::val::Val;
 use crate::shell::prop::{Configurable, Prop};
 use flate2::read::GzDecoder;
 use std::cell::RefCell;
@@ -197,6 +198,64 @@ pub enum ParsedField {
     String(String),
 }
 
+/// A value that knows its own (potentially progressive) type. Used
+/// by the type-resolver to widen progressive record types on
+/// demand. The Rust analog of morel-java's `TypedValue`.
+pub trait TypedValue {
+    /// Current type of this value. May widen over the lifetime of the
+    /// value as `discover_field` succeeds.
+    fn type_(&self) -> Rc<Type>;
+
+    /// Tries to widen the type to include `field_name`. Returns
+    /// `true` if the type widened (so the caller should re-resolve
+    /// the field access), `false` if the field is unknown.
+    fn discover_field(&self, field_name: &str) -> bool {
+        let _ = field_name;
+        false
+    }
+}
+
+impl TypedValue for File {
+    fn type_(&self) -> Rc<Type> {
+        match &*self.state.borrow() {
+            FileState::Unexpanded => {
+                Rc::new(Type::Record(true, BTreeMap::new()))
+            }
+            FileState::Directory { entries } => {
+                let mut fields: BTreeMap<Label, Rc<Type>> = BTreeMap::new();
+                for (label, child) in entries {
+                    fields.insert(label.clone(), child.type_());
+                }
+                Rc::new(Type::Record(true, fields))
+            }
+            FileState::Data { row_type, .. } => {
+                Rc::new(Type::List(Rc::clone(row_type)))
+            }
+        }
+    }
+
+    fn discover_field(&self, field_name: &str) -> bool {
+        // Make sure top-level is expanded so we know our children.
+        self.expand();
+        // Look up the child by name and expand it. If we're not a
+        // directory (or the child doesn't exist), no widening.
+        let child = match &*self.state.borrow() {
+            FileState::Directory { entries } => {
+                entries.get(&Label::from(field_name)).cloned()
+            }
+            _ => None,
+        };
+        match child {
+            Some(c) => {
+                let before = matches!(*c.state.borrow(), FileState::Unexpanded);
+                c.expand();
+                before
+            }
+            None => false,
+        }
+    }
+}
+
 impl File {
     /// Constructs an [`Rc<File>`] for the given path. The file's
     /// [`FileType`] is determined from `path`; the state starts
@@ -277,13 +336,57 @@ impl File {
 /// across multiple `file` references must hold onto the `Rc` they
 /// receive. (Caching the value per session is Stage 3b's job.)
 pub fn session_file(session: &Session) -> Rc<File> {
-    let path = session.config.get(Prop::Directory).as_path_buf();
+    use crate::shell::prop::PropVal;
+    let val = session.config.get(Prop::Directory);
+    let path = match val {
+        PropVal::PathBuf(p) => (*p).clone(),
+        PropVal::String(s) => PathBuf::from(s.as_str()),
+        _ => PathBuf::new(),
+    };
     let path = if path.as_os_str().is_empty() {
         PathBuf::from(".")
     } else {
         path
     };
     File::create(&path)
+}
+
+/// Converts a [`File`] to its Morel runtime value: a directory becomes
+/// a `Val::File`, a data file becomes `Val::List` of record values
+/// (one per CSV row), and an unexpanded / plain file becomes
+/// `Val::Unit`. Used when projecting a directory entry through field
+/// access.
+pub fn file_as_val(file: &Rc<File>) -> Val {
+    file.expand();
+    match &*file.state.borrow() {
+        FileState::Directory { .. } | FileState::Unexpanded => {
+            Val::File(Rc::clone(file))
+        }
+        FileState::Data {
+            field_parsers,
+            row_type,
+        } => {
+            let rows = file.read_rows().unwrap_or_default();
+            let field_count = field_parsers.len();
+            let mut vals = Vec::with_capacity(rows.len());
+            for row in rows {
+                let mut fields = Vec::with_capacity(field_count);
+                for v in row {
+                    fields.push(match v {
+                        ParsedField::Int(n) => Val::Int(n),
+                        ParsedField::Real(x) => Val::Real(x),
+                        ParsedField::Bool(b) => Val::Bool(b),
+                        ParsedField::String(s) => Val::String(s),
+                    });
+                }
+                vals.push(Val::List(fields));
+            }
+            // `row_type` is unused at runtime — kept only to placate
+            // the type-resolver. Silence the unused-binding warning.
+            let _ = row_type;
+            Val::List(vals)
+        }
+    }
 }
 
 /// Formats a [`File`] for the runtime printer. Directories show

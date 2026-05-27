@@ -31,6 +31,7 @@ use crate::compile::types;
 use crate::compile::types::Label;
 use crate::compile::types::{PrimitiveType, Subst, Type, TypeVariable};
 use crate::eval::code::{LIBRARY, Lib};
+use crate::eval::file::TypedValue;
 use crate::shell::error::Error;
 use crate::syntax::ast::{
     DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunBind, LabeledExpr,
@@ -414,14 +415,23 @@ impl<'a> TermToTypeConverter<'a> {
                         )
                         .unwrap();
                         let mut fields = BTreeMap::<Label, Rc<Type>>::new();
+                        let mut progressive = false;
                         for (label, term) in zip(labels, sequence.terms.iter())
                         {
+                            // The synthetic `z$dummy` label flags a
+                            // progressive record; strip it here so the
+                            // returned `Type::Record` carries the flag
+                            // instead of leaking the dummy field.
+                            if label == PROGRESSIVE_LABEL {
+                                progressive = true;
+                                continue;
+                            }
                             fields.insert(
                                 Label::from(label),
                                 self.term_type(term),
                             );
                         }
-                        self.lib.intern(Type::Record(false, fields))
+                        self.lib.intern(Type::Record(progressive, fields))
                     }
                     _ => {
                         // Every other named type — built-in
@@ -641,6 +651,15 @@ pub struct TypeResolver {
     /// Errors from record selector actions, populated during unification.
     field_errors: Rc<RefCell<Vec<(String, Span)>>>,
 
+    /// Type variables whose value is a [`TypedValue`] (currently the
+    /// `Sys.file` global). The field-selector action consults this
+    /// map when a field is missing from a progressive record: it
+    /// calls `discover_field` on the underlying value to widen the
+    /// type, and rebinds the field's type variable from the value's
+    /// fresh type. Populated by the session's env wrapper at lookup
+    /// time.
+    pub typed_values: Rc<RefCell<HashMap<Var, Rc<dyn TypedValue>>>>,
+
     /// Record selectors to validate after unification.
     /// Each entry is (record_var, field_name, span).
     field_selectors: Vec<(Var, String, Span)>,
@@ -785,6 +804,7 @@ impl TypeResolver {
             var_alias_map: HashMap::new(),
             field_errors: Rc::new(RefCell::new(Vec::new())),
             field_selectors: Vec::new(),
+            typed_values: Rc::new(RefCell::new(HashMap::new())),
             overloads: HashMap::new(),
             new_overloads: HashMap::new(),
             seed_overloads: HashMap::new(),

@@ -18,13 +18,15 @@
  *
  * Tests for the file system ("file").
  *)
-set("mode", "validate");
-> val it = () : unit
 
 (*) The "file" value represents the file system, starting in the current
 (*) directory.
 file;
-> val it = {scott={},wordle={}} : {scott:{...}, wordle:{...}, ...}
+> val it = {datalog={},map={},scott={},wordle={}}
+>   : {datalog:{...}, map:{...}, scott:{...}, wordle:{...}, ...}
+
+set("mode", "validate");
+> val it = () : unit
 
 (*) A subdirectory.
 file.wordle;

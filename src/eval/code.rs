@@ -40,6 +40,7 @@ use crate::eval::comparator::{Comparator, NaturalComparator};
 use crate::eval::date;
 use crate::eval::discrete::Discrete;
 use crate::eval::either::Either;
+use crate::eval::file::file_as_val;
 use crate::eval::frame::FrameDef;
 use crate::eval::int::Int;
 use crate::eval::list::List;
@@ -1452,7 +1453,43 @@ impl Code {
                 });
                 val.apply_f1(r, f, a0)
             }
-            Code::Nth(_, slot) => Ok(a0.expect_list()[*slot].clone()),
+            Code::Nth(type_, slot) => {
+                // For `Val::File`, the slots are the file's directory
+                // entries — looked up by name (from the field's
+                // `Label` in the static type, which the type-resolver
+                // populated from the file's current state) and
+                // returned as a child `Val::File`. Missing entries
+                // surface as `Val::Unit`, matching morel-java's
+                // behavior for an unknown / not-yet-expanded child.
+                if let Val::File(file) = &a0 {
+                    let field_name = match type_.as_ref() {
+                        Type::Record(_, fields) => {
+                            fields.keys().nth(*slot).map(Label::to_string)
+                        }
+                        _ => None,
+                    };
+                    if let Some(name) = field_name {
+                        use crate::eval::file::FileState;
+                        let child = match &*file.state.borrow() {
+                            FileState::Directory { entries } => {
+                                entries.get(&Label::from(name.clone())).cloned()
+                            }
+                            _ => None,
+                        };
+                        if let Some(c) = child {
+                            // Expand on access so successive field
+                            // accesses see the widened type.
+                            c.expand();
+                            // A data file (CSV / CSV.gz) materialises
+                            // as a `Val::List` of records here; a
+                            // sub-directory stays a `Val::File`.
+                            return Ok(file_as_val(&c));
+                        }
+                        return Ok(Val::Unit);
+                    }
+                }
+                Ok(a0.expect_list()[*slot].clone())
+            }
             _ => {
                 todo!("eval: {:?}", self)
             }
