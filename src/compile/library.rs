@@ -1611,12 +1611,19 @@ impl BuiltInFunction {
         self as u16 as usize
     }
 
-    /// Convenience for nullary constructors: returns
-    /// `Val::Constructor(self.runtime_tag(), Val::Unit)`. Panics
-    /// if this isn't a constructor.
-    pub(crate) fn nullary_constructor_val(&self) -> Val {
+    /// Builds a constructor value `Val::Constructor(self.runtime_tag(),
+    /// Box::new(inner))`. For nullary constructors, pass `Val::Unit`
+    /// (or use [`Self::nullary_constructor_val`]). Panics if this is not a
+    /// constructor.
+    pub(crate) fn constructor_val(&self, inner: Val) -> Val {
         assert!(self.is_constructor(), "not a constructor: {:?}", self);
-        Val::Constructor(self.runtime_tag(), Box::new(Val::Unit))
+        Val::Constructor(self.runtime_tag(), Box::new(inner))
+    }
+
+    /// Convenience for nullary constructors: returns
+    /// `Val::Constructor(self.runtime_tag(), Val::Unit)`.
+    pub(crate) fn nullary_constructor_val(&self) -> Val {
+        self.constructor_val(Val::Unit)
     }
 
     /// Returns the name of the datatype this constructor belongs to

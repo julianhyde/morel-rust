@@ -1077,10 +1077,8 @@ impl Code {
             Code::RangeCsOf(cmp, ranges_code) => {
                 let ranges = ranges_code.eval_f0(r, f)?;
                 let merged = from_ranges(ranges.expect_list(), &*cmp.0, None);
-                Ok(Val::Constructor(
-                    BuiltInFunction::RangeContinuousSet.runtime_tag(),
-                    Box::new(Val::List(merged)),
-                ))
+                Ok(BuiltInFunction::RangeContinuousSet
+                    .constructor_val(Val::List(merged)))
             }
             Code::RangeDsComplement(discrete, set_code) => {
                 let set = set_code.eval_f0(r, f)?;
@@ -1094,10 +1092,8 @@ impl Code {
                     ),
                 };
                 let complemented = complement(ranges, Some(&*discrete.0));
-                Ok(Val::Constructor(
-                    BuiltInFunction::RangeDiscreteSet.runtime_tag(),
-                    Box::new(Val::List(complemented)),
-                ))
+                Ok(BuiltInFunction::RangeDiscreteSet
+                    .constructor_val(Val::List(complemented)))
             }
             Code::RangeDsOf(cmp, discrete, ranges_code) => {
                 let ranges = ranges_code.eval_f0(r, f)?;
@@ -1106,10 +1102,8 @@ impl Code {
                     &*cmp.0,
                     Some(&*discrete.0),
                 );
-                Ok(Val::Constructor(
-                    BuiltInFunction::RangeDiscreteSet.runtime_tag(),
-                    Box::new(Val::List(merged)),
-                ))
+                Ok(BuiltInFunction::RangeDiscreteSet
+                    .constructor_val(Val::List(merged)))
             }
             Code::RangeEnumerate(cmp, discrete, set_code) => {
                 let set = set_code.eval_f0(r, f)?;
@@ -2855,10 +2849,9 @@ impl Eager1 {
                 let (n, o) = a0.expect_date();
                 date::year_day(n, o)
             }
-            DescendingDesc => Val::Constructor(
-                BuiltInFunction::DescendingDesc.runtime_tag(),
-                Box::new(a0),
-            ),
+            DescendingDesc => {
+                BuiltInFunction::DescendingDesc.constructor_val(a0)
+            }
             EitherAsLeft => Either::as_left(&a0),
             EitherAsRight => Either::as_right(&a0),
             EitherInl => Val::Inl(Box::new(a0)),
@@ -2867,10 +2860,7 @@ impl Eager1 {
             EitherIsRight => Val::Bool(Either::is_right(&a0)),
             EitherPartition => Either::partition(a0.expect_list()),
             EitherProj => Either::proj(&a0),
-            ExnFail => Val::Constructor(
-                BuiltInFunction::ExnFail.runtime_tag(),
-                Box::new(a0),
-            ),
+            ExnFail => BuiltInFunction::ExnFail.constructor_val(a0),
             FnId => a0,
             GeneralIgnore => Val::Unit,
             IntFromInt => a0,
@@ -2908,26 +2898,15 @@ impl Eager1 {
             OptionIsSome => Val::Bool(Opt::is_some(&a0)),
             OptionJoin => Opt::join(&a0),
             OptionSome => Val::Some(Box::new(a0)),
-            RangeAtLeast => Val::Constructor(
-                BuiltInFunction::RangeAtLeast.runtime_tag(),
-                Box::new(a0),
-            ),
-            RangeAtMost => Val::Constructor(
-                BuiltInFunction::RangeAtMost.runtime_tag(),
-                Box::new(a0),
-            ),
-            RangeClosed => Val::Constructor(
-                BuiltInFunction::RangeClosed.runtime_tag(),
-                Box::new(a0),
-            ),
-            RangeClosedOpen => Val::Constructor(
-                BuiltInFunction::RangeClosedOpen.runtime_tag(),
-                Box::new(a0),
-            ),
-            RangeContinuousSet => Val::Constructor(
-                BuiltInFunction::RangeContinuousSet.runtime_tag(),
-                Box::new(a0),
-            ),
+            RangeAtLeast => BuiltInFunction::RangeAtLeast.constructor_val(a0),
+            RangeAtMost => BuiltInFunction::RangeAtMost.constructor_val(a0),
+            RangeClosed => BuiltInFunction::RangeClosed.constructor_val(a0),
+            RangeClosedOpen => {
+                BuiltInFunction::RangeClosedOpen.constructor_val(a0)
+            }
+            RangeContinuousSet => {
+                BuiltInFunction::RangeContinuousSet.constructor_val(a0)
+            }
             RangeCsComplement => {
                 // Continuous complement: no Discrete needed, so the
                 // Eager1 fallback handles every call directly.
@@ -2941,10 +2920,8 @@ impl Eager1 {
                     ),
                 };
                 let complemented = complement(&inner, None);
-                Val::Constructor(
-                    BuiltInFunction::RangeContinuousSet.runtime_tag(),
-                    Box::new(Val::List(complemented)),
-                )
+                BuiltInFunction::RangeContinuousSet
+                    .constructor_val(Val::List(complemented))
             }
             RangeCsOf => {
                 // Fallback when the compiler did not intercept the
@@ -2954,10 +2931,8 @@ impl Eager1 {
                 // non-natural orderings.
                 let merged =
                     from_ranges(a0.expect_list(), &NaturalComparator, None);
-                Val::Constructor(
-                    BuiltInFunction::RangeContinuousSet.runtime_tag(),
-                    Box::new(Val::List(merged)),
-                )
+                BuiltInFunction::RangeContinuousSet
+                    .constructor_val(Val::List(merged))
             }
             RangeCsRanges => {
                 // `ranges : 'a continuous_set -> 'a range list`. The
@@ -2970,10 +2945,9 @@ impl Eager1 {
                     ),
                 }
             }
-            RangeDiscreteSet => Val::Constructor(
-                BuiltInFunction::RangeDiscreteSet.runtime_tag(),
-                Box::new(a0),
-            ),
+            RangeDiscreteSet => {
+                BuiltInFunction::RangeDiscreteSet.constructor_val(a0)
+            }
             RangeDsComplement => {
                 // Fallback for partial application. Direct calls go
                 // through Code::RangeDsComplement which carries
@@ -2991,10 +2965,7 @@ impl Eager1 {
                 // discreteness or merge step-adjacent ranges; wrap the
                 // input as-is. The compile intercept is the correct
                 // path for all direct calls.
-                Val::Constructor(
-                    BuiltInFunction::RangeDiscreteSet.runtime_tag(),
-                    Box::new(a0),
-                )
+                BuiltInFunction::RangeDiscreteSet.constructor_val(a0)
             }
             RangeDsRanges => {
                 // `ranges : 'a discrete_set -> 'a range list`. The
@@ -3007,26 +2978,15 @@ impl Eager1 {
                     ),
                 }
             }
-            RangeGreaterThan => Val::Constructor(
-                BuiltInFunction::RangeGreaterThan.runtime_tag(),
-                Box::new(a0),
-            ),
-            RangeLessThan => Val::Constructor(
-                BuiltInFunction::RangeLessThan.runtime_tag(),
-                Box::new(a0),
-            ),
-            RangeOpen => Val::Constructor(
-                BuiltInFunction::RangeOpen.runtime_tag(),
-                Box::new(a0),
-            ),
-            RangeOpenClosed => Val::Constructor(
-                BuiltInFunction::RangeOpenClosed.runtime_tag(),
-                Box::new(a0),
-            ),
-            RangePoint => Val::Constructor(
-                BuiltInFunction::RangePoint.runtime_tag(),
-                Box::new(a0),
-            ),
+            RangeGreaterThan => {
+                BuiltInFunction::RangeGreaterThan.constructor_val(a0)
+            }
+            RangeLessThan => BuiltInFunction::RangeLessThan.constructor_val(a0),
+            RangeOpen => BuiltInFunction::RangeOpen.constructor_val(a0),
+            RangeOpenClosed => {
+                BuiltInFunction::RangeOpenClosed.constructor_val(a0)
+            }
+            RangePoint => BuiltInFunction::RangePoint.constructor_val(a0),
             RangeToBag | RangeToList => {
                 // Fallback for partial application. Without type info
                 // we cannot build a `Discrete`; panic clearly. The
@@ -3062,18 +3022,15 @@ impl Eager1 {
                 let strings = a0.expect_list();
                 Val::String(Str::concat(strings))
             }
-            StringCvtRealfmtFix => Val::Constructor(
-                BuiltInFunction::StringCvtRealfmtFix.runtime_tag(),
-                Box::new(a0),
-            ),
-            StringCvtRealfmtGen => Val::Constructor(
-                BuiltInFunction::StringCvtRealfmtGen.runtime_tag(),
-                Box::new(a0),
-            ),
-            StringCvtRealfmtSci => Val::Constructor(
-                BuiltInFunction::StringCvtRealfmtSci.runtime_tag(),
-                Box::new(a0),
-            ),
+            StringCvtRealfmtFix => {
+                BuiltInFunction::StringCvtRealfmtFix.constructor_val(a0)
+            }
+            StringCvtRealfmtGen => {
+                BuiltInFunction::StringCvtRealfmtGen.constructor_val(a0)
+            }
+            StringCvtRealfmtSci => {
+                BuiltInFunction::StringCvtRealfmtSci.constructor_val(a0)
+            }
             StringExplode => {
                 let s = a0.expect_string();
                 Val::List(Str::explode(&s))

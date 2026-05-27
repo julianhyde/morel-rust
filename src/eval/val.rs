@@ -46,14 +46,16 @@ use std::sync::{Arc, Mutex, Weak};
 // matching is type-bounded: the type at the match site decides
 // which set of constructors a tag refers to.
 
-// lint: sort until '^$' where '##pub const ' erase 'pub const '
 /// Runtime tag of the sole `descending` constructor.
+// lint: sort until 'pub enum' where '##pub const '
 pub const DESCENDING_DESC: usize = BuiltInFunction::DescendingDesc as usize;
+
 /// Runtime tags of the four `StringCvt.radix` constructors.
 pub const RADIX_BIN: usize = BuiltInFunction::StringCvtRadixBin as usize;
 pub const RADIX_DEC: usize = BuiltInFunction::StringCvtRadixDec as usize;
 pub const RADIX_HEX: usize = BuiltInFunction::StringCvtRadixHex as usize;
 pub const RADIX_OCT: usize = BuiltInFunction::StringCvtRadixOct as usize;
+
 /// Runtime tags of the ten `range` constructors, interleaved with the
 /// synthetic single-constructor wrappers for `continuous_set` and
 /// `discrete_set`.
@@ -72,6 +74,7 @@ pub const RANGE_LESS_THAN: usize = BuiltInFunction::RangeLessThan as usize;
 pub const RANGE_OPEN: usize = BuiltInFunction::RangeOpen as usize;
 pub const RANGE_OPEN_CLOSED: usize = BuiltInFunction::RangeOpenClosed as usize;
 pub const RANGE_POINT: usize = BuiltInFunction::RangePoint as usize;
+
 /// Runtime tags of the four `StringCvt.realfmt` constructors.
 pub const REALFMT_EXACT: usize =
     BuiltInFunction::StringCvtRealfmtExact as usize;
