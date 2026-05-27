@@ -43,6 +43,7 @@ use crate::eval::session::Session;
 use crate::eval::val::Val;
 use crate::shell::prop::{Configurable, Prop};
 use flate2::read::GzDecoder;
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fs;
@@ -213,13 +214,30 @@ pub trait TypedValue {
         let _ = field_name;
         false
     }
+
+    /// Cast to `Any` so resolver hooks that only know they have a
+    /// `Rc<dyn TypedValue>` can downcast to specific implementors
+    /// (currently only [`File`]) to extract child values.
+    fn as_any(&self) -> &dyn Any;
 }
 
 impl TypedValue for File {
     fn type_(&self) -> Rc<Type> {
         match &*self.state.borrow() {
             FileState::Unexpanded => {
-                Rc::new(Type::Record(true, BTreeMap::new()))
+                // We know the file's `FileType` (from its suffix)
+                // even before we've parsed its contents: a CSV /
+                // CSV.gz is a `_ list` (with `_` itself progressive
+                // and empty until the header is parsed); anything
+                // else acts as a progressive empty record.
+                if self.file_type.is_list() {
+                    Rc::new(Type::List(Rc::new(Type::Record(
+                        true,
+                        BTreeMap::new(),
+                    ))))
+                } else {
+                    Rc::new(Type::Record(true, BTreeMap::new()))
+                }
             }
             FileState::Directory { entries } => {
                 let mut fields: BTreeMap<Label, Rc<Type>> = BTreeMap::new();
@@ -253,6 +271,10 @@ impl TypedValue for File {
             }
             None => false,
         }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

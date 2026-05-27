@@ -660,6 +660,14 @@ pub struct TypeResolver {
     /// time.
     pub typed_values: Rc<RefCell<HashMap<Var, Rc<dyn TypedValue>>>>,
 
+    /// Set by the field-selector action when it widens a
+    /// progressive record by calling [`TypedValue::discover_field`].
+    /// [`Self::deduce_type`] checks this after each unification
+    /// round; if true, it resets the per-round state and re-runs
+    /// against the now-wider record type. Cleared at the start of
+    /// each round.
+    pub retry_requested: Rc<RefCell<bool>>,
+
     /// Record selectors to validate after unification.
     /// Each entry is (record_var, field_name, span).
     field_selectors: Vec<(Var, String, Span)>,
@@ -805,6 +813,7 @@ impl TypeResolver {
             field_errors: Rc::new(RefCell::new(Vec::new())),
             field_selectors: Vec::new(),
             typed_values: Rc::new(RefCell::new(HashMap::new())),
+            retry_requested: Rc::new(RefCell::new(false)),
             overloads: HashMap::new(),
             new_overloads: HashMap::new(),
             seed_overloads: HashMap::new(),
@@ -866,12 +875,77 @@ impl TypeResolver {
         env: &dyn TypeEnv,
         statement: &Statement,
     ) -> Result<Resolved, Error> {
+        // A progressive-record receiver may trigger
+        // [`TypedValue::discover_field`] mid-unification (via the
+        // field-selector action). When that happens the resolver
+        // sets `retry_requested`; we restart from a clean slate so
+        // the next pass sees the widened type. Bounded to a few
+        // iterations — each successful discovery strictly widens the
+        // underlying File, so the loop terminates either with full
+        // resolution or with a genuine missing-field error.
+        const MAX_PROGRESSIVE_RETRIES: usize = 16;
+        let seed_overloads_save = std::mem::take(&mut self.seed_overloads);
+        let mut retry_count = 0;
+        loop {
+            *self.retry_requested.borrow_mut() = false;
+            let attempt = self.deduce_type_inner(
+                env,
+                statement,
+                seed_overloads_save.clone(),
+            );
+            if !*self.retry_requested.borrow()
+                || retry_count >= MAX_PROGRESSIVE_RETRIES
+            {
+                return attempt;
+            }
+            retry_count += 1;
+            self.reset_for_progressive_retry();
+        }
+    }
+
+    /// Resets the per-statement mutable state so [`Self::deduce_type`]
+    /// can run another pass against a widened progressive type.
+    /// Shared cross-round state (the typed-values map, the
+    /// retry-requested flag, the accumulated overloads/aliases) is
+    /// preserved.
+    fn reset_for_progressive_retry(&mut self) {
+        self.terms.clear();
+        self.actions.clear();
+        self.field_errors.borrow_mut().clear();
+        self.field_selectors.clear();
+        self.typed_values.borrow_mut().clear();
+        self.node_var_map.clear();
+        self.overload_constraints.clear();
+        self.preferred_vars.clear();
+        self.var_alias_map.clear();
+        self.datatype_bindings.clear();
+        self.decl_type_vars.clear();
+        // Fresh unifier — keep the cached op references in sync.
+        self.unifier = Unifier::new(true);
+        self.list_op = self.unifier.op("list", Some(1));
+        self.bag_op = self.unifier.op("bag", Some(1));
+        self.tuple_op = self.unifier.op("tuple", None);
+        self.arg_op = self.unifier.op("$arg", None);
+        self.overload_op = self.unifier.op("overload", None);
+        self.record_op = self.unifier.op("record", None);
+        self.fn_op = self.unifier.op("fn", Some(2));
+        self.int_op = self.unifier.op("int", Some(0));
+        self.overloads.clear();
+        self.new_overloads.clear();
+        self.next_id = 0;
+    }
+
+    fn deduce_type_inner(
+        &mut self,
+        env: &dyn TypeEnv,
+        statement: &Statement,
+        seed: HashMap<String, Vec<Type>>,
+    ) -> Result<Resolved, Error> {
         self.terms.clear();
 
         // Seed overloads from previous statements: convert each
         // accumulated instance Type to a fresh Term in the
         // current unifier.
-        let seed = std::mem::take(&mut self.seed_overloads);
         for (name, types) in seed {
             for t in types {
                 let v = self.type_to_term(&t);
@@ -3778,11 +3852,13 @@ impl TypeResolver {
             errors: Rc<RefCell<Vec<(String, Span)>>>,
             span: Span,
             found: RefCell<bool>,
+            typed_values: Rc<RefCell<HashMap<Var, Rc<dyn TypedValue>>>>,
+            retry_requested: Rc<RefCell<bool>>,
         }
         impl Action for ActionImpl {
             fn accept(
                 &self,
-                _variable: &Var,
+                variable: &Var,
                 term: &Term,
                 substitution: &Substitution,
                 op_defs: &[OpDef],
@@ -3820,7 +3896,31 @@ impl TypeResolver {
                             self.errors
                                 .borrow_mut()
                                 .retain(|(_, s)| s != &self.span);
+                            // Propagate the [`TypedValue`] from the
+                            // parent record to the field's variable
+                            // so later field-access on this field
+                            // can trigger expansion too. (E.g.,
+                            // `file.scott` makes `scott` a typed
+                            // value, so `file.scott.depts` can
+                            // discover `depts`.)
+                            self.propagate_typed_value(
+                                *variable,
+                                self.v_field,
+                                substitution,
+                            );
                         } else if !*self.found.borrow() {
+                            // Field is missing from the record type.
+                            // If the receiver has a [`TypedValue`]
+                            // and the record is progressive, try to
+                            // widen by calling `discover_field` on
+                            // the value and request a retry.
+                            if self.try_discover(
+                                *variable,
+                                substitution,
+                                &field_list,
+                            ) {
+                                return;
+                            }
                             self.errors.borrow_mut().push((
                                 format!(
                                     "no field '{}' in type '{}'",
@@ -3838,6 +3938,103 @@ impl TypeResolver {
                 }
             }
         }
+        impl ActionImpl {
+            /// Tries to widen the receiver's [`TypedValue`] to include
+            /// `field_name`. Returns true if discovery happened (and
+            /// caller should suppress the error so the resolver
+            /// retries with the widened type).
+            fn try_discover(
+                &self,
+                receiver: Var,
+                substitution: &Substitution,
+                field_list: &[String],
+            ) -> bool {
+                if !field_list.iter().any(|f| f == PROGRESSIVE_LABEL) {
+                    return false;
+                }
+                let typed_values = self.typed_values.borrow();
+                let receiver_root =
+                    substitution.resolve_term(&Term::Variable(receiver));
+                for (var, tv) in typed_values.iter() {
+                    let var_root =
+                        substitution.resolve_term(&Term::Variable(*var));
+                    if var_root == receiver_root
+                        && tv.discover_field(&self.field_name)
+                    {
+                        *self.retry_requested.borrow_mut() = true;
+                        return true;
+                    }
+                }
+                false
+            }
+
+            /// When a field of a progressive record is successfully
+            /// resolved on a receiver that has a [`TypedValue`],
+            /// register the corresponding child value under the
+            /// field's variable. This lets the resolver discover
+            /// fields one level deeper on subsequent accesses. If
+            /// the child is `Unexpanded`, expand it and request a
+            /// retry — the field's recorded type in the parent
+            /// record was built from the still-unexpanded child and
+            /// needs to be rebuilt against the expanded child.
+            fn propagate_typed_value(
+                &self,
+                receiver: Var,
+                v_field: Var,
+                substitution: &Substitution,
+            ) {
+                use crate::eval::file::{File, FileState};
+                let typed_values = self.typed_values.borrow();
+                let receiver_root =
+                    substitution.resolve_term(&Term::Variable(receiver));
+                // Find the receiver's TypedValue.
+                let receiver_tv: Option<Rc<dyn TypedValue>> = typed_values
+                    .iter()
+                    .find(|(var, _)| {
+                        substitution.resolve_term(&Term::Variable(**var))
+                            == receiver_root
+                    })
+                    .map(|(_, tv)| Rc::clone(tv));
+                drop(typed_values);
+                let Some(tv) = receiver_tv else { return };
+                // Currently only `File` carries discoverable
+                // children; if we add other `TypedValue`
+                // implementors we'll need a more general way to
+                // project a child value.
+                let file = tv.as_any().downcast_ref::<File>();
+                let Some(file) = file else { return };
+                let child = match &*file.state.borrow() {
+                    FileState::Directory { entries } => entries
+                        .get(&Label::from(self.field_name.clone()))
+                        .cloned(),
+                    _ => None,
+                };
+                if let Some(c) = child {
+                    // Expand the child one level so its type widens
+                    // from `{...}` to e.g. `{answers:_ list, ...}`
+                    // for a directory or `_ list` for a data file.
+                    // If expansion changes the child's state, the
+                    // recorded field type in the parent is stale —
+                    // request a retry so the resolver rebuilds
+                    // against the now-widened child.
+                    let needed =
+                        matches!(*c.state.borrow(), FileState::Unexpanded);
+                    if needed {
+                        c.expand();
+                        *self.retry_requested.borrow_mut() = true;
+                    }
+                    let v_field_root = match substitution
+                        .resolve_term(&Term::Variable(v_field))
+                    {
+                        Term::Variable(v) => v,
+                        _ => v_field,
+                    };
+                    self.typed_values
+                        .borrow_mut()
+                        .insert(v_field_root, c as Rc<dyn TypedValue>);
+                }
+            }
+        }
         self.actions.push((
             *v_rec,
             Rc::new(ActionImpl {
@@ -3846,6 +4043,8 @@ impl TypeResolver {
                 errors: self.field_errors.clone(),
                 span: span.clone(),
                 found: RefCell::new(false),
+                typed_values: Rc::clone(&self.typed_values),
+                retry_requested: Rc::clone(&self.retry_requested),
             }),
         ));
 
