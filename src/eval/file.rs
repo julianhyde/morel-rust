@@ -39,6 +39,8 @@
 #![allow(dead_code)]
 
 use crate::compile::types::{Label, PrimitiveType, Type};
+use crate::eval::session::Session;
+use crate::shell::prop::{Configurable, Prop};
 use flate2::read::GzDecoder;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -50,6 +52,7 @@ use std::rc::Rc;
 /// A file-system entry: a directory, a parseable data file, or
 /// something we haven't yet decided about (an unexpanded entry whose
 /// type was determined only from its file-name suffix).
+#[derive(Debug)]
 pub struct File {
     /// Absolute or relative path to this file on disk.
     pub path: PathBuf,
@@ -66,6 +69,7 @@ pub struct File {
 }
 
 /// Discovered structure of a [`File`].
+#[derive(Debug)]
 pub enum FileState {
     /// Not yet expanded. [`File::expand`] decides what it is.
     Unexpanded,
@@ -85,7 +89,7 @@ pub enum FileState {
 }
 
 /// File category derived from the suffix of the file name.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FileType {
     /// A directory; expands into a record of its entries.
     Directory,
@@ -141,7 +145,7 @@ impl FileType {
 
 /// Per-column parser, one per non-string scalar primitive we
 /// recognise in a CSV header (`name:type` syntax).
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FieldParser {
     Int,
     Real,
@@ -185,7 +189,7 @@ impl FieldParser {
 
 /// Result of parsing one CSV cell. Lives in this module so the
 /// runtime conversion to `Val` happens at a higher layer (Stage 3).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum ParsedField {
     Int(i32),
     Real(f32),
@@ -264,6 +268,45 @@ impl File {
             rows.push(values);
         }
         Some(rows)
+    }
+}
+
+/// Returns the [`File`] for this session — the directory configured by
+/// the `directory` property, or `"."` if unset. Each call produces a
+/// fresh unexpanded file; callers that need expansion to persist
+/// across multiple `file` references must hold onto the `Rc` they
+/// receive. (Caching the value per session is Stage 3b's job.)
+pub fn session_file(session: &Session) -> Rc<File> {
+    let path = session.config.get(Prop::Directory).as_path_buf();
+    let path = if path.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        path
+    };
+    File::create(&path)
+}
+
+/// Formats a [`File`] for the runtime printer. Directories show
+/// as `{name1=...,name2=...}` (mirroring morel-java); data files
+/// show as `<relation>`; unexpanded files show as `{}` (a stub).
+pub fn display_file(file: &File) -> String {
+    match &*file.state.borrow() {
+        FileState::Unexpanded => "{}".to_string(),
+        FileState::Directory { entries } => {
+            let mut s = String::from("{");
+            let mut first = true;
+            for (label, child) in entries {
+                if !first {
+                    s.push(',');
+                }
+                first = false;
+                s.push_str(&format!("{}=", label));
+                s.push_str(&display_file(child));
+            }
+            s.push('}');
+            s
+        }
+        FileState::Data { .. } => "<relation>".to_string(),
     }
 }
 

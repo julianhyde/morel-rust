@@ -40,6 +40,7 @@ use crate::eval::comparator::{Comparator, NaturalComparator};
 use crate::eval::date;
 use crate::eval::discrete::Discrete;
 use crate::eval::either::Either;
+use crate::eval::file;
 use crate::eval::frame::FrameDef;
 use crate::eval::int::Int;
 use crate::eval::list::List;
@@ -67,6 +68,7 @@ use std::fmt;
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::iter::{repeat_n, zip};
 use std::ops::Deref;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, Weak};
@@ -2114,6 +2116,7 @@ pub enum Eager0 {
     StringCvtRadixOct,
     StringCvtRealfmtExact,
     StringMaxSize,
+    SysFile,
     TimeZeroTime,
     VariantNone,
     VariantUnit,
@@ -2206,6 +2209,10 @@ impl Eager0 {
                 BuiltInFunction::StringCvtRealfmtExact.nullary_constructor_val()
             }
             StringMaxSize => Val::Int(i32::MAX),
+            // `Sys.file` placeholder. Returns a fresh unexpanded File
+            // rooted at ".", a stand-in until Stage 3b wires it through
+            // the session's `directory` property and across calls.
+            SysFile => Val::File(file::File::create(&PathBuf::from("."))),
             TimeZeroTime => time::zero_time(),
             VariantNone => variant::none(),
             VariantUnit => variant::unit(),
@@ -4669,6 +4676,7 @@ fn build_library() -> Lib {
     EagerF2::StringTranslate.implements(&mut b, StringTranslate);
     EagerF0::SysClearEnv.implements(&mut b, SysClearEnv);
     EagerF0::SysEnv.implements(&mut b, SysEnv);
+    Eager0::SysFile.implements(&mut b, SysFile);
     EagerF1::SysParseTree.implements(&mut b, SysParseTree);
     EagerF0::SysPlan.implements(&mut b, SysPlan);
     EagerF1::SysPlanEx.implements(&mut b, SysPlanEx);
