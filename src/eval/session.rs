@@ -28,12 +28,13 @@ use crate::compile::type_env::{
 use crate::compile::type_resolver::{BindingKind, Resolved, TypeResolver};
 use crate::compile::types::Type;
 use crate::eval::code::Code;
+use crate::eval::file::{self, File};
 use crate::eval::val::Val;
 use crate::shell::error::Error;
 use crate::shell::prop::{Configurable, Output, Prop, PropVal};
 use crate::syntax::ast::Statement;
 use crate::unify::unifier::Term;
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -94,6 +95,13 @@ pub struct Session {
     /// across statements; each statement clones it and layers
     /// session bindings on top.
     base_env: OnceCell<Env>,
+    /// Per-session root [`File`] for the `Sys.file` built-in. Lazily
+    /// initialised on first access from the `directory` property so
+    /// every reference to `file` within a session shares the same
+    /// `Rc<File>` and any progressive expansion accumulates there.
+    /// Reset when the `directory` property is set (so a script can
+    /// repoint the file root mid-session).
+    file_root: RefCell<Option<Rc<File>>>,
 }
 
 // static SESSION_COUNTER: std::sync::atomic::AtomicUsize =
@@ -143,7 +151,21 @@ impl Session {
             fn_bindings: HashMap::new(),
             rec_fn_bindings: HashMap::new(),
             base_env: OnceCell::new(),
+            file_root: RefCell::new(None),
         }
+    }
+
+    /// Returns the session's root [`File`], creating it on first
+    /// access from the `directory` property (or `.` when unset).
+    /// Cached so subsequent calls return the same `Rc<File>`,
+    /// preserving any expansion that has happened so far.
+    pub fn file(&self) -> Rc<File> {
+        if let Some(rc) = self.file_root.borrow().as_ref() {
+            return Rc::clone(rc);
+        }
+        let rc = file::session_file(self);
+        *self.file_root.borrow_mut() = Some(Rc::clone(&rc));
+        rc
     }
 
     /// Returns the cached inliner `Env` populated with all built-in

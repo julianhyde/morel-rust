@@ -40,7 +40,6 @@ use crate::eval::comparator::{Comparator, NaturalComparator};
 use crate::eval::date;
 use crate::eval::discrete::Discrete;
 use crate::eval::either::Either;
-use crate::eval::file;
 use crate::eval::frame::FrameDef;
 use crate::eval::int::Int;
 use crate::eval::list::List;
@@ -68,7 +67,6 @@ use std::fmt;
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::iter::{repeat_n, zip};
 use std::ops::Deref;
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, Weak};
@@ -2116,7 +2114,6 @@ pub enum Eager0 {
     StringCvtRadixOct,
     StringCvtRealfmtExact,
     StringMaxSize,
-    SysFile,
     TimeZeroTime,
     VariantNone,
     VariantUnit,
@@ -2209,10 +2206,6 @@ impl Eager0 {
                 BuiltInFunction::StringCvtRealfmtExact.nullary_constructor_val()
             }
             StringMaxSize => Val::Int(i32::MAX),
-            // `Sys.file` placeholder. Returns a fresh unexpanded File
-            // rooted at ".", a stand-in until Stage 3b wires it through
-            // the session's `directory` property and across calls.
-            SysFile => Val::File(file::File::create(&PathBuf::from("."))),
             TimeZeroTime => time::zero_time(),
             VariantNone => variant::none(),
             VariantUnit => variant::unit(),
@@ -2243,6 +2236,7 @@ pub enum EagerF0 {
     DateLocalOffset,
     SysClearEnv,
     SysEnv,
+    SysFile,
     SysPlan,
     SysShowAll,
     TimeNow,
@@ -2313,6 +2307,10 @@ impl EagerF0 {
                     .collect();
                 Val::List(vals)
             }
+            // Returns the session's progressive root `File`, cached
+            // so successive references share state and accumulated
+            // expansion.
+            SysFile => Val::File(r.session.file()),
             SysPlan => {
                 let s = if let Some(c) = r.session.code.as_ref() {
                     if let Code::Fn(_, matches, _) = c.deref()
@@ -4676,7 +4674,7 @@ fn build_library() -> Lib {
     EagerF2::StringTranslate.implements(&mut b, StringTranslate);
     EagerF0::SysClearEnv.implements(&mut b, SysClearEnv);
     EagerF0::SysEnv.implements(&mut b, SysEnv);
-    Eager0::SysFile.implements(&mut b, SysFile);
+    EagerF0::SysFile.implements(&mut b, SysFile);
     EagerF1::SysParseTree.implements(&mut b, SysParseTree);
     EagerF0::SysPlan.implements(&mut b, SysPlan);
     EagerF1::SysPlanEx.implements(&mut b, SysPlanEx);
@@ -4899,6 +4897,18 @@ impl LibBuilder {
                 } else if let Some((_t, Impl::E0(eager0))) = fn_map.get(f) {
                     // Built-in is a constant such as Int.maxInt.
                     vals.push(eager0.apply());
+                } else if let Some((_t, Impl::EF0(_))) = fn_map.get(f) {
+                    // Built-in is a session-bound value (e.g.
+                    // `Sys.file`). The actual value cannot be
+                    // computed here without an `EvalEnv`; store a
+                    // placeholder so the `Sys` structure record
+                    // builds cleanly. Direct identifier references
+                    // (the global `file`) take the
+                    // `Code::NativeF0` fast path; explicit
+                    // `Sys.file` selection retrieves this placeholder
+                    // and would need further plumbing to dispatch
+                    // through the session.
+                    vals.push(Val::Fn(*f));
                 } else {
                     panic!("missing implementation for {:?}", f);
                 }
