@@ -3910,29 +3910,20 @@ impl TypeResolver {
                             );
                         } else if !*self.found.borrow() {
                             // Field is missing from the record type.
-                            // If the receiver has a [`TypedValue`]
-                            // and the record is progressive, try to
-                            // widen by calling `discover_field` on
-                            // the value and request a retry.
-                            if self.try_discover(
-                                *variable,
-                                substitution,
-                                &field_list,
-                            ) {
-                                return;
-                            }
-                            // If the record is progressive, suppress
-                            // the error. The post-resolution
-                            // widening pass walks the core decl and
-                            // can discover the field via a `valueOf`
-                            // walk that reaches Files through record
-                            // literals, tuple destructuring, etc.
-                            // — paths the unifier-time
-                            // [`TypedValue`] map does not cover.
-                            // `v_field` is left unconstrained; the
-                            // post-pass refines it.
+                            // If the record is progressive, try to
+                            // widen via the receiver's `TypedValue`
+                            // (which triggers a retry) and suppress
+                            // the error either way: the
+                            // post-resolution widening pass walks
+                            // the core decl and can discover the
+                            // field via a `valueOf` walk that
+                            // reaches Files through record literals,
+                            // tuple destructuring, etc. — paths the
+                            // unifier-time `TypedValue` map does not
+                            // cover.
                             if field_list.iter().any(|f| f == PROGRESSIVE_LABEL)
                             {
+                                self.try_discover(*variable, substitution);
                                 return;
                             }
                             self.errors.borrow_mut().push((
@@ -3953,19 +3944,13 @@ impl TypeResolver {
             }
         }
         impl ActionImpl {
-            /// Tries to widen the receiver's [`TypedValue`] to include
-            /// `field_name`. Returns true if discovery happened (and
-            /// caller should suppress the error so the resolver
-            /// retries with the widened type).
-            fn try_discover(
-                &self,
-                receiver: Var,
-                substitution: &Substitution,
-                field_list: &[String],
-            ) -> bool {
-                if !field_list.iter().any(|f| f == PROGRESSIVE_LABEL) {
-                    return false;
-                }
+            /// Tries to widen the receiver's [`TypedValue`] to
+            /// include `field_name`. Sets `retry_requested` if the
+            /// widening succeeded, so [`TypeResolver::deduce_type`]
+            /// re-runs against the now-wider record. Caller has
+            /// already verified the record carries
+            /// [`PROGRESSIVE_LABEL`].
+            fn try_discover(&self, receiver: Var, substitution: &Substitution) {
                 let typed_values = self.typed_values.borrow();
                 let receiver_root =
                     substitution.resolve_term(&Term::Variable(receiver));
@@ -3976,10 +3961,9 @@ impl TypeResolver {
                         && tv.discover_field(&self.field_name)
                     {
                         *self.retry_requested.borrow_mut() = true;
-                        return true;
+                        return;
                     }
                 }
-                false
             }
 
             /// When a field of a progressive record is successfully

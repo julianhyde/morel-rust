@@ -17,11 +17,6 @@
 
 //! File-system reader for the progressive `file` built-in.
 //!
-//! Stage 2 of #209 propagation: the runtime data structures and
-//! parsers exist here, but nothing yet calls them from outside this
-//! module. The `#![allow(dead_code)]` is removed in Stage 3 when the
-//! type-system / `Sys.file` plumbing wires these up.
-//!
 //! Port of morel-java's `Files.java`. Each [`File`] knows its
 //! filesystem path and a [`FileType`] (directory, plain file, or a
 //! known data format such as CSV). [`File::expand`] mutates the file's
@@ -35,8 +30,6 @@
 //! directory. Children are held as `Rc<File>`, so expanding a child
 //! is automatically visible to anyone holding a reference to it,
 //! including the parent's `entries` map.
-
-#![allow(dead_code)]
 
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::session::Session;
