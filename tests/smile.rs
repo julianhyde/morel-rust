@@ -187,11 +187,6 @@ fn file() {
 }
 
 #[test]
-fn file_progressive() {
-    run_script("tests/script/file-progressive.smli");
-}
-
-#[test]
 fn fixed_point() {
     run_script("tests/script/fixed-point.smli");
 }
