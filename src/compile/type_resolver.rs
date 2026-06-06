@@ -826,6 +826,40 @@ fn join_source_walk(
     Ok(())
 }
 
+/// Collects the names bound by a pattern. Unlike
+/// [`Pat::for_each_id_pat`](crate::syntax::ast::Pat::for_each_id_pat), it does
+/// not need frame-slot ids (which are not assigned during type resolution).
+fn join_source_pat_names(pat: &Pat, out: &mut Vec<String>) {
+    match &pat.kind {
+        PatKind::Identifier(name) => out.push(name.clone()),
+        PatKind::As(name, p) => {
+            out.push(name.clone());
+            join_source_pat_names(p, out);
+        }
+        PatKind::Annotated(p, _) => join_source_pat_names(p, out),
+        PatKind::Constructor(_, Some(p)) => join_source_pat_names(p, out),
+        PatKind::Cons(h, t) => {
+            join_source_pat_names(h, out);
+            join_source_pat_names(t, out);
+        }
+        PatKind::Tuple(pats) | PatKind::List(pats) => {
+            for p in pats {
+                join_source_pat_names(p, out);
+            }
+        }
+        PatKind::Record(fields, _) => {
+            for field in fields {
+                match field {
+                    PatField::Labeled(_, _, p) | PatField::Anonymous(_, p) => {
+                        join_source_pat_names(p, out)
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Walks a `fn`/`case` match arm with the pattern's bound names shadowed.
 fn join_source_walk_match(
     pat: &Pat,
@@ -833,12 +867,14 @@ fn join_source_walk_match(
     input: &HashSet<String>,
     shadowed: &mut HashSet<String>,
 ) -> Result<(), Error> {
+    let mut names: Vec<String> = Vec::new();
+    join_source_pat_names(pat, &mut names);
     let mut added: Vec<String> = Vec::new();
-    pat.for_each_id_pat(&mut |_, name| {
-        if shadowed.insert(name.to_string()) {
-            added.push(name.to_string());
+    for name in names {
+        if shadowed.insert(name.clone()) {
+            added.push(name);
         }
-    });
+    }
     let result = join_source_walk(body, input, shadowed);
     for n in &added {
         shadowed.remove(n);
@@ -857,11 +893,13 @@ fn join_source_shadow_decls(
         match &d.kind {
             DeclKind::Val(_, _, binds) => {
                 for b in binds {
-                    b.pat.for_each_id_pat(&mut |_, name| {
-                        if shadowed.insert(name.to_string()) {
-                            added.push(name.to_string());
+                    let mut names: Vec<String> = Vec::new();
+                    join_source_pat_names(&b.pat, &mut names);
+                    for name in names {
+                        if shadowed.insert(name.clone()) {
+                            added.push(name);
                         }
-                    });
+                    }
                 }
             }
             DeclKind::Fun(funs) => {
