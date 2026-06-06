@@ -708,6 +708,175 @@ impl Default for TypeResolver {
     }
 }
 
+/// Checks that a `right join`/`full join` source expression does not reference
+/// the query's input. Such a source may have rows that match no input row, so
+/// it must not depend on earlier-step variables, nor on `current`/`ordinal`.
+///
+/// Best-effort: it catches the common direct references with a precise span
+/// (the offending reference). References it misses — inside a nested query or
+/// a shadowing scope — are tolerated, matching morel-java's
+/// `TypeResolver.checkJoinSourceIndependent`.
+fn check_join_source_independent(
+    expr: &Expr,
+    input_names: &HashSet<String>,
+) -> Result<(), Error> {
+    let mut shadowed: HashSet<String> = HashSet::new();
+    join_source_walk(expr, input_names, &mut shadowed)
+}
+
+fn join_source_ref_error(name: &str, span: &Span) -> Error {
+    Error::Compile(
+        format!(
+            "join source must not reference '{}' (right and full joins must \
+             be independent)",
+            name
+        ),
+        span.clone(),
+    )
+}
+
+fn join_source_walk(
+    e: &Expr,
+    input: &HashSet<String>,
+    shadowed: &mut HashSet<String>,
+) -> Result<(), Error> {
+    use ExprKind as E;
+    match &e.kind {
+        E::Identifier(name)
+            if input.contains(name) && !shadowed.contains(name) =>
+        {
+            return Err(join_source_ref_error(name, &e.span));
+        }
+        E::Current => {
+            return Err(join_source_ref_error("current", &e.span));
+        }
+        E::Ordinal => {
+            return Err(join_source_ref_error("ordinal", &e.span));
+        }
+        E::Plus(a, b)
+        | E::Minus(a, b)
+        | E::Times(a, b)
+        | E::Divide(a, b)
+        | E::Div(a, b)
+        | E::Mod(a, b)
+        | E::Caret(a, b)
+        | E::Compose(a, b)
+        | E::Equal(a, b)
+        | E::NotEqual(a, b)
+        | E::LessThan(a, b)
+        | E::LessThanOrEqual(a, b)
+        | E::GreaterThan(a, b)
+        | E::GreaterThanOrEqual(a, b)
+        | E::Elem(a, b)
+        | E::NotElem(a, b)
+        | E::AndAlso(a, b)
+        | E::OrElse(a, b)
+        | E::Implies(a, b)
+        | E::Aggregate(a, b)
+        | E::Cons(a, b)
+        | E::Append(a, b)
+        | E::Apply(a, b) => {
+            join_source_walk(a, input, shadowed)?;
+            join_source_walk(b, input, shadowed)?;
+        }
+        E::Negate(a) | E::Raise(a) | E::Annotated(a, _) => {
+            join_source_walk(a, input, shadowed)?;
+        }
+        E::If(a, b, c) => {
+            join_source_walk(a, input, shadowed)?;
+            join_source_walk(b, input, shadowed)?;
+            join_source_walk(c, input, shadowed)?;
+        }
+        E::Tuple(xs) | E::List(xs) => {
+            for x in xs {
+                join_source_walk(x, input, shadowed)?;
+            }
+        }
+        E::Record(base, fields) => {
+            if let Some(b) = base {
+                join_source_walk(b, input, shadowed)?;
+            }
+            for le in fields {
+                join_source_walk(&le.expr, input, shadowed)?;
+            }
+        }
+        E::Case(exp, matches) => {
+            join_source_walk(exp, input, shadowed)?;
+            for m in matches {
+                join_source_walk_match(&m.pat, &m.expr, input, shadowed)?;
+            }
+        }
+        E::Fn(matches) => {
+            for m in matches {
+                join_source_walk_match(&m.pat, &m.expr, input, shadowed)?;
+            }
+        }
+        E::Let(decls, body) => {
+            let added = join_source_shadow_decls(decls, shadowed);
+            let result = join_source_walk(body, input, shadowed);
+            for n in &added {
+                shadowed.remove(n);
+            }
+            result?;
+        }
+        // Nested queries refer to their own input, not ours; do not descend
+        // (mirrors morel-java's query-depth guard).
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Walks a `fn`/`case` match arm with the pattern's bound names shadowed.
+fn join_source_walk_match(
+    pat: &Pat,
+    body: &Expr,
+    input: &HashSet<String>,
+    shadowed: &mut HashSet<String>,
+) -> Result<(), Error> {
+    let mut added: Vec<String> = Vec::new();
+    pat.for_each_id_pat(&mut |_, name| {
+        if shadowed.insert(name.to_string()) {
+            added.push(name.to_string());
+        }
+    });
+    let result = join_source_walk(body, input, shadowed);
+    for n in &added {
+        shadowed.remove(n);
+    }
+    result
+}
+
+/// Adds the names bound by `let` declarations to `shadowed`, returning the
+/// names actually added (so the caller can remove exactly those).
+fn join_source_shadow_decls(
+    decls: &[Decl],
+    shadowed: &mut HashSet<String>,
+) -> Vec<String> {
+    let mut added: Vec<String> = Vec::new();
+    for d in decls {
+        match &d.kind {
+            DeclKind::Val(_, _, binds) => {
+                for b in binds {
+                    b.pat.for_each_id_pat(&mut |_, name| {
+                        if shadowed.insert(name.to_string()) {
+                            added.push(name.to_string());
+                        }
+                    });
+                }
+            }
+            DeclKind::Fun(funs) => {
+                for fb in funs {
+                    if shadowed.insert(fb.name.clone()) {
+                        added.push(fb.name.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    added
+}
+
 impl TypeResolver {
     /// Returns the declared parameter count (arity) of a type
     /// constructor by name, or `None` if it isn't a known one.
@@ -2659,6 +2828,17 @@ impl TypeResolver {
         field_vars: &mut Vec<(String, Var)>,
         steps: &mut Vec<Step>,
     ) -> Result<Triple, Error> {
+        // A `right`/`full join` source must be independent of the input (it may
+        // produce rows that match no input row). `field_vars` at this point
+        // holds only the input (earlier-step) fields.
+        if matches!(join_type, JoinType::Right | JoinType::Full) {
+            if let Some(e) = expr {
+                let input_names: HashSet<String> =
+                    field_vars.iter().map(|(n, _)| n.clone()).collect();
+                check_join_source_independent(e, &input_names)?;
+            }
+        }
+
         // Deduce the type of the expression being iterated over
         let v0 = self.variable();
         let c0 = self.variable();
@@ -2710,22 +2890,33 @@ impl TypeResolver {
             None
         };
 
-        // For a `left join`, the newly scanned fields are optional
-        // downstream: re-bind this scan's variables to `option`-wrapped
-        // types and rebuild the output record and environment.
-        let (v, env4) = if join_type == JoinType::Left && !eq {
+        // An outer join wraps one or both sides in `option` downstream:
+        // `left join` wraps this scan's (right) fields, `right join` wraps the
+        // input's (left) fields, and `full join` wraps both. Re-bind the
+        // affected variables to `option`-wrapped types and rebuild the output
+        // record and environment. (The condition above saw the raw types.)
+        let wrap_left = matches!(join_type, JoinType::Right | JoinType::Full);
+        let wrap_right = matches!(join_type, JoinType::Left | JoinType::Full);
+        let (v, env4) = if (wrap_left || wrap_right) && !eq {
             let option_op = self.unifier.op("option", Some(1));
-            let n = term_map.len();
-            let start = field_vars.len() - n;
-            let mut wrapped = p.env.builder();
-            for entry in field_vars.iter_mut().skip(start) {
+            let start = field_vars.len() - term_map.len();
+            // Rebuild from the root env (the input/left vars may now be
+            // wrapped, so we cannot start from `p.env`).
+            let mut wrapped = p.root_env.builder();
+            for (i, entry) in field_vars.iter_mut().enumerate() {
+                let wrap = if i >= start { wrap_right } else { wrap_left };
                 let (name, raw_var) = entry.clone();
-                let wrapped_var = self.variable();
-                let seq =
-                    self.unifier.apply1(option_op, Term::Variable(raw_var));
-                self.equiv(&Term::Sequence(seq), &wrapped_var);
-                *entry = (name.clone(), wrapped_var);
-                wrapped.push(name, Term::Variable(wrapped_var));
+                let var = if wrap {
+                    let wrapped_var = self.variable();
+                    let seq =
+                        self.unifier.apply1(option_op, Term::Variable(raw_var));
+                    self.equiv(&Term::Sequence(seq), &wrapped_var);
+                    *entry = (name.clone(), wrapped_var);
+                    wrapped_var
+                } else {
+                    raw_var
+                };
+                wrapped.push(name, Term::Variable(var));
             }
             let v_wrapped = self.field_var(field_vars, true);
             wrapped.push("current".to_string(), Term::Variable(v_wrapped));

@@ -645,16 +645,25 @@ impl FromBuilder {
         // For tuple patterns like `(i,j)`, this collects multiple bindings.
         let prev_len = self.bindings.len();
         Binding::collect_bindings(&pat, &mut self.bindings);
-        if join_type == JoinType::Left {
-            // The newly scanned fields are optional downstream (`SOME` on a
-            // match, `NONE` when an input row matches nothing), so the result
-            // record sees them wrapped in `option`.
-            for b in &mut self.bindings[prev_len..] {
-                b.type_ = Rc::new(Type::Data(
-                    "option".to_string(),
-                    vec![b.type_.clone()],
-                ));
+        // An outer join wraps one or both sides in `option` downstream, so the
+        // result record sees the affected fields wrapped: `left join` the new
+        // (right) fields, `right join` the input (left) fields, `full join`
+        // both.
+        let wrap = |b: &mut Binding| {
+            b.type_ = Rc::new(Type::Data(
+                "option".to_string(),
+                vec![b.type_.clone()],
+            ));
+        };
+        match join_type {
+            JoinType::Left => {
+                self.bindings[prev_len..].iter_mut().for_each(wrap);
             }
+            JoinType::Right => {
+                self.bindings[..prev_len].iter_mut().for_each(wrap);
+            }
+            JoinType::Full => self.bindings.iter_mut().for_each(wrap),
+            JoinType::Inner => {}
         }
         self.atom = self.bindings.len() == 1;
 

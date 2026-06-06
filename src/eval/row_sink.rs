@@ -224,6 +224,158 @@ impl RowSink for ScanRowSink {
     }
 }
 
+/// Implementation of RowSink for a `right join` or `full join` step.
+///
+/// Unlike [ScanRowSink] (a dependent, nested-loop join), the source collection
+/// of a `right`/`full` join must be independent of the input row, so it is
+/// materialized once in [RowSink::start]. Each input row probes the
+/// materialized source: matching source rows are emitted with the input
+/// (left) fields wrapped in `SOME`; source rows that no input row matches are
+/// emitted in [RowSink::result] with the left fields set to `NONE`.
+///
+/// For a `full join` the source fields are themselves optional, so they are
+/// wrapped in `SOME` on a match, and an input row that matches no source row
+/// is emitted with the source fields set to `NONE`.
+pub struct BuildJoinRowSink {
+    pat_code: Code,
+    collection_code: Code,
+    condition_code: Code,
+    row_sink: Box<dyn RowSink>,
+    /// Frame slots bound by upstream (the "left" / input fields). Wrapped in
+    /// `SOME` for emitted matches and set to `NONE` for unmatched source rows.
+    left_slots: Vec<usize>,
+    /// Frame slots bound by this scan's pattern (the "right" / source fields).
+    source_slots: Vec<usize>,
+    /// `true` for a `full join`: the source fields are optional too.
+    optional_source: bool,
+    /// `true` for a `full join`: emit input rows that match no source row.
+    full_join: bool,
+    /// The materialized source collection (filled in `start`).
+    source_items: Vec<Val>,
+    /// Per source row: whether some input row matched it.
+    matched: Vec<bool>,
+}
+
+impl BuildJoinRowSink {
+    pub fn new(
+        pat_code: Code,
+        collection_code: Code,
+        condition_code: Code,
+        row_sink: Box<dyn RowSink>,
+        left_slots: Vec<usize>,
+        source_slots: Vec<usize>,
+        optional_source: bool,
+        full_join: bool,
+    ) -> Self {
+        Self {
+            pat_code,
+            collection_code,
+            condition_code,
+            row_sink,
+            left_slots,
+            source_slots,
+            optional_source,
+            full_join,
+            source_items: Vec::new(),
+            matched: Vec::new(),
+        }
+    }
+
+    /// Wraps the given frame slots in `SOME`.
+    fn wrap_some(f: &mut Frame, slots: &[usize]) {
+        for &slot in slots {
+            let v = std::mem::replace(&mut f.vals[slot], Val::Unit);
+            f.vals[slot] = Val::Some(Box::new(v));
+        }
+    }
+}
+
+impl RowSink for BuildJoinRowSink {
+    fn start(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        // The source is independent of the input row, so materialize it once.
+        let collection = self.collection_code.eval_f0(r, f)?;
+        self.source_items = collection.expect_list().to_vec();
+        self.matched = vec![false; self.source_items.len()];
+        self.row_sink.start(r, f)
+    }
+
+    fn accept(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        // Probe the materialized source with the raw (unwrapped) input and
+        // source values, collecting the source rows this input row matches.
+        let mut matches: Vec<usize> = Vec::new();
+        for idx in 0..self.source_items.len() {
+            if self
+                .pat_code
+                .eval_f1(r, f, &self.source_items[idx])?
+                .expect_bool()
+                && self.condition_code.eval_f0(r, f)?.expect_bool()
+            {
+                matches.push(idx);
+                self.matched[idx] = true;
+            }
+        }
+
+        // The input (left) fields are optional in the result, so wrap them in
+        // `SOME` while emitting this input row's matches.
+        let raw_left: Vec<Val> =
+            self.left_slots.iter().map(|&s| f.vals[s].clone()).collect();
+        Self::wrap_some(f, &self.left_slots);
+
+        for &idx in &matches {
+            self.pat_code.eval_f1(r, f, &self.source_items[idx])?;
+            if self.optional_source {
+                Self::wrap_some(f, &self.source_slots);
+            }
+            self.row_sink.accept(r, f)?;
+        }
+
+        // `full join`: an input row matching no source row is emitted once with
+        // the source fields set to `NONE`.
+        if self.full_join && matches.is_empty() {
+            for &slot in &self.source_slots {
+                f.vals[slot] = Val::Unit;
+            }
+            self.row_sink.accept(r, f)?;
+        }
+
+        // Restore the raw input values for the next input row.
+        for (i, &slot) in self.left_slots.iter().enumerate() {
+            f.vals[slot] = raw_left[i].clone();
+        }
+        Ok(())
+    }
+
+    fn result(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<Val, MorelError> {
+        // Emit source rows that no input row matched, with the input (left)
+        // fields set to `NONE`.
+        for idx in 0..self.source_items.len() {
+            if !self.matched[idx] {
+                for &slot in &self.left_slots {
+                    f.vals[slot] = Val::Unit;
+                }
+                self.pat_code.eval_f1(r, f, &self.source_items[idx])?;
+                if self.optional_source {
+                    Self::wrap_some(f, &self.source_slots);
+                }
+                self.row_sink.accept(r, f)?;
+            }
+        }
+        self.row_sink.result(r, f)
+    }
+}
+
 /// Implementation of RowSink for a `where` step.
 ///
 /// Evaluates a boolean condition and only passes rows downstream if true.

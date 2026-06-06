@@ -1554,10 +1554,11 @@ impl<'a> Compiler<'a> {
         element_type: &Type,
     ) -> RowSinkFactory {
         use crate::eval::row_sink::{
-            CollectRowSink, ComputeRowSink, ExceptRowSink, ExistsRowSink,
-            GroupRowSink, IntersectRowSink, OrderRowSink, OrdinalFilterRowSink,
-            OrdinalRowSink, ScanRowSink, SkipRowSink, TakeRowSink,
-            UnionRowSink, UnorderRowSink, WhereRowSink, YieldRowSink,
+            BuildJoinRowSink, CollectRowSink, ComputeRowSink, ExceptRowSink,
+            ExistsRowSink, GroupRowSink, IntersectRowSink, OrderRowSink,
+            OrdinalFilterRowSink, OrdinalRowSink, ScanRowSink, SkipRowSink,
+            TakeRowSink, UnionRowSink, UnorderRowSink, WhereRowSink,
+            YieldRowSink,
         };
 
         if steps.is_empty() {
@@ -1956,19 +1957,50 @@ impl<'a> Compiler<'a> {
                     None
                 };
 
-                // For a `left join`, collect the frame slots this scan's
-                // pattern binds; the sink wraps them in `SOME` on a match and
-                // sets them to `NONE` when an input row matches nothing.
-                let optional_slots: Vec<usize> = if first_step.join_type
-                    == JoinType::Left
-                {
-                    let mut slots = Vec::new();
-                    pat.for_each_id_pat(&mut |(_, name)| {
-                        if let Some(slot) = cx.frame_def.try_var_index(name) {
-                            slots.push(slot);
-                        }
+                // The frame slots and names this scan's pattern binds (the
+                // "source" or "right" fields of a join).
+                let mut source_slots: Vec<usize> = Vec::new();
+                let mut source_names: HashSet<String> = HashSet::new();
+                pat.for_each_id_pat(&mut |(_, name)| {
+                    source_names.insert(name.to_string());
+                    if let Some(slot) = cx.frame_def.try_var_index(name) {
+                        source_slots.push(slot);
+                    }
+                });
+
+                let join_type = first_step.join_type;
+                if join_type == JoinType::Right || join_type == JoinType::Full {
+                    // `right`/`full join`: the source is independent of the
+                    // input row and is materialized once. The "left" (input)
+                    // fields are every binding in scope except this scan's own.
+                    let left_slots: Vec<usize> = first_step
+                        .env
+                        .bindings
+                        .iter()
+                        .filter(|b| !source_names.contains(&b.id.name))
+                        .filter_map(|b| cx.frame_def.try_var_index(&b.id.name))
+                        .collect();
+                    let optional_source = join_type == JoinType::Full;
+                    let full_join = join_type == JoinType::Full;
+                    return RowSinkFactory::new(move || {
+                        Box::new(BuildJoinRowSink::new(
+                            pat_code.clone(),
+                            expr_code.clone(),
+                            condition_code.clone(),
+                            next_factory.create(),
+                            left_slots.clone(),
+                            source_slots.clone(),
+                            optional_source,
+                            full_join,
+                        ))
                     });
-                    slots
+                }
+
+                // For a `left join`, the source fields are wrapped in `SOME` on
+                // a match and set to `NONE` when an input row matches nothing.
+                let optional_slots: Vec<usize> = if join_type == JoinType::Left
+                {
+                    source_slots
                 } else {
                     Vec::new()
                 };
