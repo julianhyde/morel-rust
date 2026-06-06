@@ -34,10 +34,10 @@ use crate::eval::code::{LIBRARY, Lib};
 use crate::eval::file::TypedValue;
 use crate::shell::error::Error;
 use crate::syntax::ast::{
-    DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunBind, LabeledExpr,
-    Literal, LiteralKind, Match, MorelNode, Pat, PatField, PatKind, RangeItem,
-    Span, Statement, StatementKind, Step, StepKind, Type as AstType, TypeField,
-    TypeKind, TypeScheme, ValBind,
+    DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunBind, JoinType,
+    LabeledExpr, Literal, LiteralKind, Match, MorelNode, Pat, PatField,
+    PatKind, RangeItem, Span, Statement, StatementKind, Step, StepKind,
+    Type as AstType, TypeField, TypeKind, TypeScheme, ValBind,
 };
 use crate::unify::unifier::{
     Action, Constraint, NullTracer, Op, OpDef, Sequence, Substitution, Term,
@@ -2568,18 +2568,21 @@ impl TypeResolver {
                 steps2.push(step2.spanned(&step.span));
                 Ok(p.clone())
             }
-            StepKind::Scan(pat, expr, condition) => self.deduce_scan_step_type(
-                p,
-                pat,
-                false,
-                Some(&**expr),
-                condition,
-                &step.span,
-                field_vars,
-                steps2,
-            ),
+            StepKind::Scan(join_type, pat, expr, condition) => self
+                .deduce_scan_step_type(
+                    p,
+                    *join_type,
+                    pat,
+                    false,
+                    Some(&**expr),
+                    condition,
+                    &step.span,
+                    field_vars,
+                    steps2,
+                ),
             StepKind::ScanEq(pat, expr) => self.deduce_scan_step_type(
                 p,
+                JoinType::Inner,
                 pat,
                 true,
                 Some(&**expr),
@@ -2647,6 +2650,7 @@ impl TypeResolver {
     fn deduce_scan_step_type(
         &mut self,
         p: &Triple,
+        join_type: JoinType,
         pat: &Pat,
         eq: bool,
         expr: Option<&Expr>,
@@ -2719,7 +2723,12 @@ impl TypeResolver {
         let step = if eq {
             StepKind::ScanEq(Box::new(pat2), Box::new(expr2))
         } else {
-            StepKind::Scan(Box::new(pat2), Box::new(expr2), condition2)
+            StepKind::Scan(
+                join_type,
+                Box::new(pat2),
+                Box::new(expr2),
+                condition2,
+            )
         };
         steps.push(step.spanned(span));
 

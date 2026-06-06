@@ -1808,7 +1808,10 @@ impl<'a> Resolver<'a> {
                 );
                 builder.where_(negated);
             }
-            AstStepKind::Scan(pat, expr, condition) => {
+            // Stage 1: the join type (inner/left/right/full) is carried on
+            // the AST but not yet consumed; outer joins resolve and evaluate
+            // as inner joins until Stage 2 threads the type into Core.
+            AstStepKind::Scan(_, pat, expr, condition) => {
                 // Resolve the pattern and expression.
                 let resolved_pat = self.resolve_pat(pat);
                 let resolved_expr = self.resolve_expr(expr);
