@@ -115,20 +115,29 @@ pub struct ScanRowSink {
     collection_code: Code,
     condition_code: Code,
     row_sink: Box<dyn RowSink>,
+    /// For a `left join`: the frame slots bound by this scan's pattern, whose
+    /// values are wrapped in `SOME` on a match (and set to `NONE` when an
+    /// input row matches nothing). Empty for an inner scan/join.
+    optional_slots: Vec<usize>,
 }
 
 impl ScanRowSink {
-    pub fn new(
+    /// Creates a scan sink. `optional_slots` non-empty makes it a `left join`:
+    /// matched rows wrap those slots in `SOME`, and an input row with no match
+    /// is emitted once with those slots set to `NONE`.
+    pub fn new_with_join(
         pat_code: Code,
         collection_code: Code,
         condition_code: Code,
         row_sink: Box<dyn RowSink>,
+        optional_slots: Vec<usize>,
     ) -> Self {
         Self {
             pat_code,
             collection_code,
             condition_code,
             row_sink,
+            optional_slots,
         }
     }
 }
@@ -166,14 +175,27 @@ impl RowSink for ScanRowSink {
         // 1. Bind it to the pattern (updates frame slots in place).
         // 2. Evaluate the condition.
         // 3. If true, pass the current frame state downstream.
+        let left_join = !self.optional_slots.is_empty();
+        let mut any_match = false;
         for item in items {
             // Try to bind the pattern to this item.
             // BindSlot will write to f.vals[slot] = item.
             let matched = self.pat_code.eval_f1(r, f, item)?;
             if matched.expect_bool() {
-                // Evaluate the condition in the extended environment.
+                // Evaluate the condition in the extended environment. For a
+                // `left join` the condition sees the raw, unwrapped values.
                 let condition = self.condition_code.eval_f0(r, f)?;
                 if condition.expect_bool() {
+                    if left_join {
+                        // Wrap the newly scanned fields in `SOME` — they are
+                        // optional downstream.
+                        for &slot in &self.optional_slots {
+                            let v =
+                                std::mem::replace(&mut f.vals[slot], Val::Unit);
+                            f.vals[slot] = Val::Some(Box::new(v));
+                        }
+                        any_match = true;
+                    }
                     // Pass this row downstream. The downstream sink will see
                     // all bindings from upstream plus our new binding. One
                     // possible 'error' code is EarlyReturn, which indicates
@@ -181,6 +203,14 @@ impl RowSink for ScanRowSink {
                     self.row_sink.accept(r, f)?;
                 }
             }
+        }
+        if left_join && !any_match {
+            // `left join` with no matching right row: emit the input row once
+            // with `NONE` for the newly scanned fields.
+            for &slot in &self.optional_slots {
+                f.vals[slot] = Val::Unit;
+            }
+            self.row_sink.accept(r, f)?;
         }
         Ok(())
     }

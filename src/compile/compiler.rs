@@ -40,6 +40,7 @@ use crate::shell::Shell;
 use crate::shell::config::Config as ShellConfig;
 use crate::shell::main::{Environment, MorelError};
 use crate::shell::prop::Prop;
+use crate::syntax::ast::JoinType;
 use library::BuiltInDatatype;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -1955,13 +1956,32 @@ impl<'a> Compiler<'a> {
                     None
                 };
 
+                // For a `left join`, collect the frame slots this scan's
+                // pattern binds; the sink wraps them in `SOME` on a match and
+                // sets them to `NONE` when an input row matches nothing.
+                let optional_slots: Vec<usize> = if first_step.join_type
+                    == JoinType::Left
+                {
+                    let mut slots = Vec::new();
+                    pat.for_each_id_pat(&mut |(_, name)| {
+                        if let Some(slot) = cx.frame_def.try_var_index(name) {
+                            slots.push(slot);
+                        }
+                    });
+                    slots
+                } else {
+                    Vec::new()
+                };
+
                 RowSinkFactory::new(move || {
-                    let scan: Box<dyn RowSink> = Box::new(ScanRowSink::new(
-                        pat_code.clone(),
-                        expr_code.clone(),
-                        condition_code.clone(),
-                        next_factory.create(),
-                    ));
+                    let scan: Box<dyn RowSink> =
+                        Box::new(ScanRowSink::new_with_join(
+                            pat_code.clone(),
+                            expr_code.clone(),
+                            condition_code.clone(),
+                            next_factory.create(),
+                            optional_slots.clone(),
+                        ));
                     if let Some(slot) = ordinal_slot {
                         Box::new(OrdinalRowSink::new(slot, scan))
                     } else {

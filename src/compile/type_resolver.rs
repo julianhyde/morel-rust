@@ -2698,16 +2698,9 @@ impl TypeResolver {
         let v_current = if is_first_scan { v0 } else { v };
         env_builder.push("current".to_string(), Term::Variable(v_current));
         let env4 = env_builder.build();
-        let c = self.unifier.variable();
-        if eq {
-            // ScanEq (= expr): output inherits the preceding collection type.
-            self.is_list_or_bag_matching_input(&p.c.unwrap(), &p.v, &c, &v);
-        } else {
-            // Normal scan: output collection kind matches this scan's input.
-            self.is_list_or_bag_matching_input(&c0, &v0, &c, &v);
-        }
 
-        // Handle the condition, if present.
+        // Handle the condition, if present. (For an outer join the condition
+        // sees the raw, unwrapped types, so deduce it before wrapping.)
         let condition2 = if let Some(cond) = condition {
             let v5 = self.variable();
             let condition2 = self.deduce_expr_type(&*env4, cond, &v5)?;
@@ -2716,6 +2709,40 @@ impl TypeResolver {
         } else {
             None
         };
+
+        // For a `left join`, the newly scanned fields are optional
+        // downstream: re-bind this scan's variables to `option`-wrapped
+        // types and rebuild the output record and environment.
+        let (v, env4) = if join_type == JoinType::Left && !eq {
+            let option_op = self.unifier.op("option", Some(1));
+            let n = term_map.len();
+            let start = field_vars.len() - n;
+            let mut wrapped = p.env.builder();
+            for entry in field_vars.iter_mut().skip(start) {
+                let (name, raw_var) = entry.clone();
+                let wrapped_var = self.variable();
+                let seq =
+                    self.unifier.apply1(option_op, Term::Variable(raw_var));
+                self.equiv(&Term::Sequence(seq), &wrapped_var);
+                *entry = (name.clone(), wrapped_var);
+                wrapped.push(name, Term::Variable(wrapped_var));
+            }
+            let v_wrapped = self.field_var(field_vars, true);
+            wrapped.push("current".to_string(), Term::Variable(v_wrapped));
+            (v_wrapped, wrapped.build())
+        } else {
+            (v, env4)
+        };
+
+        // The output collection's element type is the (possibly wrapped)
+        // record `v`, and its list/bag kind matches the scan's input.
+        let c = self.unifier.variable();
+        if eq {
+            // ScanEq (= expr): output inherits the preceding collection type.
+            self.is_list_or_bag_matching_input(&p.c.unwrap(), &p.v, &c, &v);
+        } else {
+            self.is_list_or_bag_matching_input(&c0, &v0, &c, &v);
+        }
 
         // ScanEq steps must stay as ScanEq in the output so that the
         // resolver can wrap the element expression in a singleton list.

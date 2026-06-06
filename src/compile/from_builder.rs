@@ -29,6 +29,7 @@ use crate::compile::type_env::Id;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
 use crate::shell::error::Error;
+use crate::syntax::ast::JoinType;
 use std::fmt;
 use std::rc::Rc;
 
@@ -618,9 +619,21 @@ impl FromBuilder {
         self.scan_with_condition(pat, exp, None)
     }
 
-    /// Adds a scan step "from pat in exp where condition".
+    /// Adds an inner scan step "from pat in exp where condition".
     pub fn scan_with_condition(
         &mut self,
+        pat: Pat,
+        exp: Expr,
+        condition: Option<Expr>,
+    ) -> &mut Self {
+        self.scan_with_join(JoinType::Inner, pat, exp, condition)
+    }
+
+    /// Adds a scan step with an explicit [`JoinType`] (`left`/`right`/`full`
+    /// for an outer join).
+    pub fn scan_with_join(
+        &mut self,
+        join_type: JoinType,
         pat: Pat,
         exp: Expr,
         condition: Option<Expr>,
@@ -630,14 +643,27 @@ impl FromBuilder {
 
         // Update bindings based on the pattern.
         // For tuple patterns like `(i,j)`, this collects multiple bindings.
+        let prev_len = self.bindings.len();
         Binding::collect_bindings(&pat, &mut self.bindings);
+        if join_type == JoinType::Left {
+            // The newly scanned fields are optional downstream (`SOME` on a
+            // match, `NONE` when an input row matches nothing), so the result
+            // record sees them wrapped in `option`.
+            for b in &mut self.bindings[prev_len..] {
+                b.type_ = Rc::new(Type::Data(
+                    "option".to_string(),
+                    vec![b.type_.clone()],
+                ));
+            }
+        }
         self.atom = self.bindings.len() == 1;
 
         // Output is ordered only if the previous state is ordered AND
         // this scan's input is a list (not bag).
         let mut env = self.step_env();
         env.ordered = env.ordered && exp.type_().is_list();
-        let step = Step::new(
+        let step = Step::with_join(
+            join_type,
             StepKind::Scan(
                 Box::new(pat),
                 Box::new(exp),
