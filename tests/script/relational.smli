@@ -1228,14 +1228,10 @@ from i in [1,2]
   group i compute {three = 1 + 2};
 > val it = [{i=1,three=3},{i=2,three=3}] : {i:int, three:int} list
 
-set("mode", "validate");
-> val it = () : unit
 from i in [2,3,1,2]
   group i compute {elements};
-> val it = [{elements=[1,1],i=1},{elements=[2,2],i=2},{elements=[3],i=3}] : {elements:int list, i:int} list
-
-set("mode", "evaluate");
-> val it = () : unit
+> val it = [{`elements`=[2,2],i=2},{`elements`=[3],i=3},{`elements`=[1],i=1}]
+>   : {`elements`:int list, i:int} list
 
 from i in [1,2]
   compute 1 + 2;
