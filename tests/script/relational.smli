@@ -2701,37 +2701,34 @@ from e in emps,
 > val it = ["Scooby","Shaggy","Velma","Fred"] : string list
 
 
-set("mode", "validate");
-> val it = () : unit
-
-(*) Only (scalar sub-query)
-(*) These use 'only' as a regular function with a list subquery.
-(*) When list-to-bag adaptation for regular function calls is implemented,
-(*) these can move to evaluate mode.
+(*) Only (scalar sub-query). These use 'only' as a regular function with a
+(*) list sub-query; morel-rust adapts the list to the bag that 'only' expects,
+(*) so they evaluate (raising 'Empty'/'Size' at run time if the sub-query is
+(*) not a singleton).
 from e in emps
   yield only (from d in depts
               where d.deptno = e.deptno
               yield d.name);
-> stdIn:1.1-4.28 Error: Cannot deduce type: conflict: bag(T51) vs list(T42)
->   raised at: stdIn:1.1-4.28
+> val it = ["Sales","HR","Engineering","Engineering"] : string list
 
 from e in emps
   yield {ename = e.name,
          dname = only (from d in depts
                        where d.deptno = e.deptno
                        yield d.name)};
-> stdIn:1.1-5.38 Error: Cannot deduce type: conflict: bag(T52) vs list(T43)
->   raised at: stdIn:1.1-5.38
+> val it =
+>   [{dname="Sales",ename="Fred"},{dname="HR",ename="Velma"},
+>    {dname="Engineering",ename="Shaggy"},{dname="Engineering",ename="Scooby"}]
+>   : {dname:string, ename:string} list
 
 from e in emps
   yield {ename = e.name,
          dname = (only (from d in depts
                         where d.deptno = e.deptno)).name};
-> stdIn:1.1-4.58 Error: Cannot deduce type: conflict: list(record:deptno:name(int, string)) vs bag(T49)
->   raised at: stdIn:1.1-4.58
-
-set("mode", "evaluate");
-> val it = () : unit
+> val it =
+>   [{dname="Sales",ename="Fred"},{dname="HR",ename="Velma"},
+>    {dname="Engineering",ename="Shaggy"},{dname="Engineering",ename="Scooby"}]
+>   : {dname:string, ename:string} list
 
 (*) Single-row aggregates using 'only' function and 'compute' clause
 from e in emps
