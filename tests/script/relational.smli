@@ -1436,8 +1436,6 @@ from i in [2, 1, 2]
   compute sum over i;
 > val it = 5 : int
 
-set("mode", "validate");
-> val it = () : unit
 from i in [2, 1, 2]
   compute {s = sum over i, t = 1 + sum over i * 3};
 > val it = {s=5,t=16} : {s:int, t:int}
@@ -1452,8 +1450,6 @@ from (i, j) in [(2, 5), (1, 1), (2, 7)]
   group i compute {mid = ((min over j) + (max over j)) div 2};
 > val it = [{i=2,mid=6},{i=1,mid=1}] : {i:int, mid:int} list
 
-set("mode", "evaluate");
-> val it = () : unit
 
 from i in [2, 1, 2]
   compute 1;
@@ -2102,8 +2098,6 @@ from i in [1,2,3,4,5,1,5,1,2] except [2,4];
 (*) Hybrid union/intersect/except (list and bag) yields bag
 from d in scott.depts yield d.deptno;
 > val it = [10,20,30,40] : int bag
-set("mode", "validate");
-> val it = () : unit
 from i in [10, 15, 20] union (from d in scott.depts yield d.deptno);
 > val it = [10,15,20,10,20,30,40] : int bag
 from i in [10, 15, 20] intersect (from d in scott.depts yield d.deptno);
@@ -2118,8 +2112,6 @@ from d in scott.depts yield d.deptno except [10, 15, 20];
 > val it = [30,40] : int bag
 
 
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) Set operators are not "lateral". They can't see the "current row".
 val orders = [{id=1, items=["beer"]}, {id=2, items=[]}];
@@ -2177,13 +2169,9 @@ fun factorize n =
   end;
 > val factorize = fn : int -> int list
 
-set("mode", "validate");
-> val it = () : unit
 factorize 12;
 > val it = [2,2,3] : int list
 
-set("mode", "evaluate");
-> val it = () : unit
 
 fun product [] = 1
   | product (hd :: tl) = hd * (product tl);
@@ -2260,8 +2248,6 @@ order deptno;
 >   [{count=1,deptno=10,sum=100},{count=1,deptno=20,sum=101},
 >    {count=2,deptno=30,sum=205}] : {count:int, deptno:int, sum:int} list
 
-set("mode", "validate");
-> val it = () : unit
 
 (*) 'group' with no aggregates
 from e in emps
@@ -2275,8 +2261,6 @@ order deptno;
 > val it = [10,20,30] : int list
 
 
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) composite 'group' with no aggregates
 from e in emps
@@ -2299,14 +2283,10 @@ group {} compute count over ();
 
 (*) 'group' with empty key, empty input, no aggregate functions
 (* TODO: 'where false' + 'group {}' returns wrong result. *)
-set("mode", "validate");
-> val it = () : unit
 from e in emps
 where false
 group {};
 > val it = [()] : unit list
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) 'group' with 'where' and complex argument to 'sum'
 from e in emps
@@ -2354,8 +2334,6 @@ order deptno;
 >    {deptno=30,existsId=true,existsStar=true,notExistsId=false,sumId=205}]
 >   : {deptno:int, existsId:bool, existsStar:bool, notExistsId:bool, sumId:int} list
 
-set("mode", "validate");
-> val it = () : unit
 
 (*) 'compute' with 'empty' and 'nonEmpty' as an aggregate functions
 from e in emps
@@ -2368,8 +2346,6 @@ where e.deptno = 50
 compute {empty over (), nonEmpty over ()};
 > val it = {empty=true,nonEmpty=false} : {empty:bool, nonEmpty:bool}
 
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) 'group' with record key
 (*) (useful if we want to refer to 'e' later in the pipeline)
@@ -2444,8 +2420,6 @@ from (x, y, z) in [("a", "p", "e"), ("m", "a", "n"), ("a", "l", "e"), ("a", "w",
   group x compute {z = (fn ys => concat (x :: ys)) over y};
 > val it = [{x="a",z="aplw"},{x="m",z="ma"}] : {x:string, z:string} list
 
-set("mode", "validate");
-> val it = () : unit
 
 (*) similar, but with composite key
 from (x, y, z) in [("a", "p", "e"), ("m", "a", "n"), ("a", "l", "e"), ("a", "w", "e")]
@@ -2454,8 +2428,6 @@ from (x, y, z) in [("a", "p", "e"), ("m", "a", "n"), ("a", "l", "e"), ("a", "w",
 >   : {a:string, x:string, z:string} list
 
 
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) similar, but aggregate does not reference key
 from (x, y, z) in [("a", "p", "e"), ("m", "a", "n"), ("a", "l", "e"), ("a", "w", "e")]
@@ -2649,8 +2621,6 @@ from e in emps,
 >    {deptno=20,sumId=101,x=121},{deptno=10,sumId=100,x=110}]
 >   : {deptno:int, sumId:int, x:int} list
 
-set("mode", "validate");
-> val it = () : unit
 
 (*) Join followed by single group (from right input)
 from e in emps,
@@ -2677,8 +2647,6 @@ from e in emps,
 > val it = [30,20,10] : int list
 
 
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) Join followed by order
 from e in emps,
@@ -2935,14 +2903,10 @@ from {a = c, b = a, c = b} in [{a=1,b=2,c=3}];
 from {a = a, ...} in [{a=1,b=2}];
 > val it = [1] : int list
 (* TODO: record pattern with literal constraint includes the literal field *)
-set("mode", "validate");
-> val it = () : unit
 from {a = a, b = true, c = c} in [{a=1,b=true,c=3}];
 > val it = [{a=1,c=3}] : {a:int, c:int} list
 from {a = c, b = true, c = a} in [{a=1,b=true,c=3}];
 > val it = [{a=3,c=1}] : {a:int, c:int} list
-set("mode", "evaluate");
-> val it = () : unit
 from {a = c, b = true, c = a} in [{a=1,b=true,c=3},{a=1,b=true,c=4}] group c compute sum over a;
 > val it = [{c=1,sum=7}] : {c:int, sum:int} list
 from {a = a, b = b, c = _} in [{a=1,b=true,c=3},{a=1,b=true,c=4}];
@@ -2975,32 +2939,24 @@ fun listHeads (lists: 'a list) =
   yield hd + 1;
 > val listHeads = fn : int list list -> int list
 
-set("mode", "validate");
-> val it = () : unit
 listHeads [];
 > val it = [] : int list
 listHeads [[1, 2], [3], [4, 5, 6]];
 > val it = [2,4,5] : int list
 
 
-set("mode", "evaluate");
-> val it = () : unit
 
 fun listFields (lists: 'a list) =
   from {a = x, b = y} in lists
   yield x + 1;
 > val listFields = fn : {a:int, b:'a} list -> int list
 
-set("mode", "validate");
-> val it = () : unit
 listFields [];
 > val it = [] : int list
 listFields [{a = 1, b = 2}, {a = 3, b = 0}, {a = 4, b = 5}];
 > val it = [2,4,5] : int list
 
 
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) As above, using abbreviated record pattern
 fun listFields2 (lists: 'a list) =
@@ -3008,16 +2964,12 @@ fun listFields2 (lists: 'a list) =
   yield a + 1;
 > val listFields2 = fn : {a:int, b:'a} list -> int list
 
-set("mode", "validate");
-> val it = () : unit
 listFields2 [];
 > val it = [] : int list
 listFields2 [{a = 1, b = 2}, {a = 3, b = 0}, {a = 4, b = 5}];
 > val it = [2,4,5] : int list
 
 
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) Layered patterns
 fun listHeads2 (lists: 'a list) =
@@ -3058,8 +3010,6 @@ from x in [1, 2],
   group {x, y, z} compute {c = count over ()};
 > val it = [{c=1,x=1,y=2,z=4},{c=1,x=2,y=3,z=5}]
 >   : {c:int, x:int, y:int, z:int} list
-set("mode", "validate");
-> val it = () : unit
 
 (*) Temporary functions
 let
@@ -3079,8 +3029,6 @@ end;
 >   : {abbrev_name:string, deptno:int, id:int} list
 
 
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) There's no flatMap in the standard library, so define one
 fun flatMap f l = List.concat (map f l);
@@ -3486,8 +3434,6 @@ in
 end;
 > val it = [{i=1,j=2}] : {i:int, j:int} bag
 
-set("mode", "validate");
-> val it = () : unit
 
 (*) let query-function in query
 let
@@ -3498,8 +3444,6 @@ end;
 > val it = [{i=3,j=2}] : {i:int, j:int} bag
 
 (*) GROUP and COMPUTE execution
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) group with empty key and scalar compute
 from i in [1,2]
