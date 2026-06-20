@@ -417,7 +417,7 @@ pub enum BuiltInFunction {
     #[strum(props(type = "`exn`"))]
     #[strum(props(constructor_ordinal = "3"))]
     ExnDomain,
-    #[strum(props(p = "List", name = "Empty"))]
+    #[strum(props(p = "List", name = "Empty", global = true))]
     #[strum(props(type = "`exn`"))]
     #[strum(props(constructor_ordinal = "4"))]
     ExnEmpty,
@@ -516,6 +516,15 @@ pub enum BuiltInFunction {
     #[strum(props(name = "*", alias = "op *"))]
     #[strum(props(type = "forall 1 'a * 'a -> 'a"))]
     GTimes,
+    #[strum(props(p = "General", name = "before", global = true))]
+    #[strum(props(type = "forall 1 'a * unit -> 'a"))]
+    GeneralBefore,
+    #[strum(props(p = "General", name = "exnMessage", global = true))]
+    #[strum(props(type = "exn -> string"))]
+    GeneralExnMessage,
+    #[strum(props(p = "General", name = "exnName", global = true))]
+    #[strum(props(type = "exn -> string"))]
+    GeneralExnName,
     #[strum(props(p = "General", name = "ignore", global = true))]
     #[strum(props(type = "forall 1 'a -> unit"))]
     GeneralIgnore,
@@ -1771,7 +1780,7 @@ pub enum BuiltInExn {
     Option,
     #[strum(props(p = "General", explain = "overflow"))]
     Overflow,
-    #[strum(props(p = "General"))]
+    #[strum(props(p = "General", explain = "size"))]
     Size,
     #[strum(props(p = "General"))]
     Span,

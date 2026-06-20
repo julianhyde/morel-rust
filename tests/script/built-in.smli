@@ -35,7 +35,7 @@ fun print x = General.ignore x;
 > val it = 14 : int
 Sys.plan ();
 > val it =
->   "apply2(fnValue +, constant(2), apply2(fnValue Int.times, constant(3), constant(4)))"
+>   "apply2(fnValue Int.+, constant(2), apply2(fnValue Int.*, constant(3), constant(4)))"
 >   : string
 14 div 3;
 > val it = 4 : int
@@ -49,7 +49,7 @@ from (i, j) in [(14, 3), (~14, 3), (14, ~3), (~14, ~3)]
 fn x => x + 1;
 > val it = fn : int -> int
 Sys.plan ();
-> val it = "fn(bind(0) => apply2(fnValue +, get(0), constant(1)))" : string
+> val it = "fn(bind(0) => apply2(fnValue Int.+, get(0), constant(1)))" : string
 
 (* Create a "not a number" value whose sign bit is true. IEEE does not specify
    whether the sign bit of NaN values should be set. It is useful to
@@ -177,7 +177,8 @@ abs ~3.5;
 app;
 > val it = fn : ('a -> unit) -> 'a list -> unit
 (* "val before : 'a * unit -> 'a" maps to "General.before" *)
-(*) TODO before;
+before;
+> val it = fn : 'a * unit -> 'a
 (* "val ceil : real -> int" maps to "Real.ceil" *)
 ceil;
 > val it = fn : real -> int
@@ -195,9 +196,11 @@ String.compare ("abc", "");
 concat;
 > val it = fn : string list -> string
 (* "val exnMessage : exn -> string" maps to "General.exnMessage" *)
-(*) TODO exnMessage;
+exnMessage;
+> val it = fn : exn -> string
 (* "val exnName : exn -> string" maps to "General.exnName" *)
-(*) TODO exnName;
+exnName;
+> val it = fn : exn -> string
 (* "val explode : string -> char list" maps to "String.explode" *)
 explode;
 > val it = fn : string -> char list

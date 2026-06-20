@@ -75,7 +75,7 @@ Sys.env ();
 >    ("Fri","weekday"),("GEN","int option -> realfmt"),("GREATER","order"),
 >    ("GREATER_THAN","forall 'a. 'a -> 'a range"),
 >    ("General",
->     "{ignore:forall 'a. 'a -> unit, o:forall 'a 'b 'c. ('a -> 'b) * ('c -> 'a) -> 'c -> 'b}"),
+>     "{before:forall 'a. 'a * unit -> 'a, exnMessage:exn -> string, exnName:exn -> string, ignore:forall 'a. 'a -> unit, o:forall 'a 'b 'c. ('a -> 'b) * ('c -> 'a) -> 'c -> 'b}"),
 >    ("HEX","radix"),("INL","forall 'a 'b. 'a -> ('a,'b) either"),
 >    ("INR","forall 'a 'b. 'b -> ('a,'b) either"),("INT","int -> variant"),
 >    ("Int",
@@ -165,7 +165,7 @@ env ();
 >    ("Fri","weekday"),("GEN","int option -> realfmt"),("GREATER","order"),
 >    ("GREATER_THAN","forall 'a. 'a -> 'a range"),
 >    ("General",
->     "{ignore:forall 'a. 'a -> unit, o:forall 'a 'b 'c. ('a -> 'b) * ('c -> 'a) -> 'c -> 'b}"),
+>     "{before:forall 'a. 'a * unit -> 'a, exnMessage:exn -> string, exnName:exn -> string, ignore:forall 'a. 'a -> unit, o:forall 'a 'b 'c. ('a -> 'b) * ('c -> 'a) -> 'c -> 'b}"),
 >    ("HEX","radix"),("INL","forall 'a 'b. 'a -> ('a,'b) either"),
 >    ("INR","forall 'a 'b. 'b -> ('a,'b) either"),("INT","int -> variant"),
 >    ("Int",
@@ -253,7 +253,7 @@ Sys.plan;
 1 + 2;
 > val it = 3 : int
 Sys.plan ();
-> val it = "apply2(fnValue +, constant(1), constant(2))" : string
+> val it = "apply2(fnValue Int.+, constant(1), constant(2))" : string
 
 (*) val set : string * 'a -> unit
 Sys.set;
