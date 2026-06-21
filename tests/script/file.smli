@@ -90,8 +90,7 @@ val scott = file.scott;
 > val scott =
 >   {bonuses=<relation>,depts=<relation>,emps=<relation>,salgrades=<relation>}
 >   : {bonuses:{...} list, depts:{deptno:int, dname:string, loc:string} list,
->      emps:
->           {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
+>      emps:{comm:real, deptno:int, empno:int, ename:string, hiredate:string,
 >            job:string, mgrno:int, sal:real} list, salgrades:{...} list, ...}
 from b in scott.bonuses;
 > val it = [] : {bonus:real, ename:string, job:string, sal:real} list
@@ -190,8 +189,7 @@ file;
 >   : {map:{...},
 >      scott:{bonuses:{bonus:real, ename:string, job:string, sal:real} list,
 >             depts:{deptno:int, dname:string, loc:string} list,
->             emps:
->                  {comm:real, deptno:int, empno:int, ename:string,
+>             emps:{comm:real, deptno:int, empno:int, ename:string,
 >                   hiredate:string, job:string, mgrno:int, sal:real} list,
 >             salgrades:{...} list, ...},
 >      wordle:{answers:{...} list, words:{...} list, ...}, ...}
@@ -201,8 +199,7 @@ file.scott;
 >   {bonuses=<relation>,depts=<relation>,emps=<relation>,salgrades=<relation>}
 >   : {bonuses:{bonus:real, ename:string, job:string, sal:real} list,
 >      depts:{deptno:int, dname:string, loc:string} list,
->      emps:
->           {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
+>      emps:{comm:real, deptno:int, empno:int, ename:string, hiredate:string,
 >            job:string, mgrno:int, sal:real} list, salgrades:{...} list, ...}
 
 (*) End file.smli

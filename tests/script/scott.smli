@@ -94,8 +94,7 @@ val scott = {
 >     {grade=5,hisal=9999.0,losal=3001.0}]}
 >   : {bonuses:{comm:real, ename:string, job:string, sal:real} bag,
 >      depts:{deptno:int, dname:string, loc:string} bag,
->      emps:
->           {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
+>      emps:{comm:real, deptno:int, empno:int, ename:string, hiredate:string,
 >            job:string, mgr:int, sal:real} bag,
 >      salgrades:{grade:int, hisal:real, losal:real} bag}
 
