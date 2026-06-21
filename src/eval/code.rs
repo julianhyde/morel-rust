@@ -2495,6 +2495,7 @@ pub enum EagerF1 {
     RealTrunc,
     RelationalMax,
     RelationalMin,
+    RelationalOnly,
     SysParseTree,
     SysPlanEx,
     SysShow,
@@ -2540,7 +2541,7 @@ impl EagerF1 {
         match &self {
             // lint: sort until '#}' where '##[A-Z]'
             BagHd => List::hd(a0.expect_list(), span.unwrap()),
-            BagOnly | ListOnly => {
+            BagOnly | ListOnly | RelationalOnly => {
                 Relational::only(a0.expect_list(), span.unwrap())
             }
             BagTl => List::tl(a0.expect_list(), span.unwrap()),
@@ -4812,6 +4813,7 @@ fn build_library() -> Lib {
     EagerF1::RelationalMax.implements(&mut b, RelationalMax);
     EagerF1::RelationalMin.implements(&mut b, RelationalMin);
     Eager1::RelationalNonEmpty.implements(&mut b, RelationalNonEmpty);
+    EagerF1::RelationalOnly.implements(&mut b, RelationalOnly);
     Eager1::RelationalSum.implements(&mut b, RelationalSum);
     Eager2::StringCaret.implements(&mut b, StringCaret);
     EagerF2::StringCollate.implements(&mut b, StringCollate);
