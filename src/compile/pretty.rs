@@ -248,7 +248,12 @@ impl Pretty {
                 let mut prefix = String::new();
                 append_id(&mut prefix, &label.to_string());
                 prefix.push(':');
-                self.pretty1_typeless(
+                // Keep the field's type attached to its `label:` prefix and
+                // let it wrap internally (glue), rather than starting it on a
+                // fresh line. The enclosing record already back-tracks each
+                // field onto its own line; a second back-track here is what
+                // split `emps:` from its `{...}`.
+                self.pretty2_typeless(
                     buf,
                     indent,
                     line_end,
