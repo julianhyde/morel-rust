@@ -71,6 +71,22 @@ g 5;
 > val it = ~2147483648 : int
 2147483647;
 > val it = 2147483647 : int
+1.0;
+> val it = 1 : real
+0.0;
+> val it = 0 : real
+~0.0;
+> val it = ~0 : real
+~2.0;
+> val it = ~2 : real
+1.5;
+> val it = 1.5 : real
+1.0e10;
+> val it = 1E10 : real
+1.5e9;
+> val it = 1.5E9 : real
+(Real.posInf / Real.posInf, Real.posInf, Real.negInf, 0.0, ~0.0);
+> val it = (nan,inf,~inf,0,~0) : real * real * real * real * real
 "a string";
 > val it = "a string" : string
 "a \"quoted\" string\\with backslash";

@@ -1202,6 +1202,21 @@ Real.toString ~0.0;
 > val it = "~0" : string
 Real.toString 0.01;
 > val it = "0.01" : string
+Real.toString 1.0;
+> val it = "1" : string
+Real.toString ~1.0;
+> val it = "~1" : string
+Real.toString ~2.0;
+> val it = "~2" : string
+Real.toString 100.0;
+> val it = "100" : string
+(*) Whole-number reals with an exponent also drop ".0".
+Real.toString 1.0e10;
+> val it = "1E10" : string
+Real.toString ~1.0e10;
+> val it = "~1E10" : string
+Real.toString ~1.0625e8;
+> val it = "~1.0625E8" : string
 Real.toString ~0.000000021;
 > val it = "~2.1E~8" : string
 Real.toString Real.minPos;
