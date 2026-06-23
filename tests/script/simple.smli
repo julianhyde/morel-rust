@@ -1368,6 +1368,11 @@ val r = {name = "test", values = bag [10, 20, 30]};
 SOME (bag [5, 10]);
 > val it = SOME ([10,5]) : int bag option
 
+(* bag resulting from group-by (a common source of ordering issues);
+ * elements reordered *)
+from i in bag [1, 1, 2, 3, 2, 1] group i compute count over ();
+> val it = [{count=1,i=3},{count=3,i=1},{count=2,i=2}] : {count:int, i:int} bag
+
 (* long record values in a bag that wrap across lines;
  * extra whitespace in expected output *)
 bag [{a="aaaaaaaaaa", b="bbbbbbbbbb", c="cccccccccc", d="dddddddddd"}];
@@ -1380,6 +1385,14 @@ bag [{name="alice", age=25, city="wonderland"}];
 > val it =
 >   [{age=25,city="wonderland",name="alice"}]
 >   : {age:int, city:string, name:string} bag
+
+(* group-by with aggregate producing nested bag in output;
+ * elements reordered, output split across lines differently *)
+from r in bag [{x=1, y="a"}, {x=1, y="b"}, {x=2, y="c"}]
+  group r.x compute {ys = (fn v => v) over r.y};
+> val it =
+>   [{x=2,ys=["c"]},{x=1,ys=["a","b"]}]
+>   : {x:int, ys:string bag} bag
 
 (* Integer literals outside the 32-bit 'int' range (~2147483648 to
    2147483647) are rejected during validation. *)
