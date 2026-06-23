@@ -1300,6 +1300,22 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Sys", name = "unset", global = true))]
     #[strum(props(type = "string -> unit"))]
     SysUnset,
+    /// Test-only aggregate `Test.bagSum`, of type `'a bag -> 'a`.
+    #[strum(props(p = "Test", name = "bagSum"))]
+    #[strum(props(type = "forall 1 'a bag -> 'a"))]
+    TestBagSum,
+    /// Test-only function `Test.foo`, of type `int -> int`.
+    #[strum(props(p = "Test", name = "foo", type = "int -> int"))]
+    TestFoo,
+    /// Test-only aggregate `Test.listSum`, of type `'a list -> 'a`.
+    #[strum(props(p = "Test", name = "listSum"))]
+    #[strum(props(type = "forall 1 'a list -> 'a"))]
+    TestListSum,
+    /// Test-only aggregate `Test.overSum`, overloaded over both bag and
+    /// list; both variants sum.
+    #[strum(props(p = "Test", name = "overSum"))]
+    #[strum(props(type = "forall 1 'a bag -> 'a"))]
+    TestOverSum,
     /// `Time.+ (t1, t2)`: time addition.
     #[strum(props(p = "Time", name = "+", type = "time * time -> time"))]
     TimeAdd,
@@ -1817,6 +1833,8 @@ pub enum BuiltInRecord {
     StringCvt,
     #[strum(props(name = "Sys"))]
     Sys,
+    #[strum(props(name = "Test"))]
+    Test,
     #[strum(props(name = "Time"))]
     Time,
     #[strum(props(name = "Variant"))]
