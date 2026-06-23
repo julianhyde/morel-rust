@@ -2855,6 +2855,8 @@ pub enum Eager1 {
     TestBagSum,
     TestFoo,
     TestListSum,
+    TestOverCountBag,
+    TestOverCountList,
     TestOverSum,
     TimeFromMicroseconds,
     TimeFromMilliseconds,
@@ -3224,6 +3226,8 @@ impl Eager1 {
                 }
             }
             TestFoo => a0.clone(),
+            TestOverCountBag => Val::Int(a0.expect_list().len() as i32),
+            TestOverCountList => Val::Int(a0.expect_list().len() as i32 + 1000),
             TimeFromMicroseconds => time::from_microseconds(a0.expect_int()),
             TimeFromMilliseconds => time::from_milliseconds(a0.expect_int()),
             TimeFromNanoseconds => time::from_nanoseconds(a0.expect_int()),
@@ -4986,6 +4990,8 @@ fn build_library() -> Lib {
     Eager1::TestBagSum.implements(&mut b, TestBagSum);
     Eager1::TestFoo.implements(&mut b, TestFoo);
     Eager1::TestListSum.implements(&mut b, TestListSum);
+    Eager1::TestOverCountBag.implements(&mut b, TestOverCountBag);
+    Eager1::TestOverCountList.implements(&mut b, TestOverCountList);
     Eager1::TestOverSum.implements(&mut b, TestOverSum);
     Eager2::TimeAdd.implements(&mut b, TimeAdd);
     Eager2::TimeCompare.implements(&mut b, TimeCompare);

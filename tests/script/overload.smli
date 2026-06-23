@@ -357,12 +357,9 @@ from i in bag [1, 2, 3]
 > val it = 1 : int
 
 (* -------------------------------------------------------------------
- * Synthetic aggregate tests: Test.bagSum, Test.listSum, Test.overSum.
- * The 'Test' structure is hidden by default, so expose it here.
- *
- * (Test.overCount, whose bag and list variants return different values,
- * is omitted: rust does not yet dispatch a qualified overloaded
- * structure member by collection kind.)
+ * Synthetic aggregate tests: Test.bagSum, Test.listSum, Test.overSum,
+ * Test.overCount. The 'Test' structure is hidden by default, so expose
+ * it here.
  *)
 Sys.set ("excludeStructures", "");
 > val it = () : unit
@@ -391,6 +388,14 @@ from e in (from x in [1, 2, 3] unorder)
 from e in [1, 2, 3]
  group {} compute Test.overSum over e;
 > val it = [6] : int list
+(*) Test.overCount selects the bag variant in a bag context (returns count)
+from e in (from x in [1, 2, 3] unorder)
+ group {} compute Test.overCount over e;
+> val it = [3] : int bag
+(*) Test.overCount selects the list variant in a list context (count + 1000)
+from e in [1, 2, 3]
+ group {} compute Test.overCount over e;
+> val it = [1003] : int list
 
 (*) Test.bagSum into, with bag input
 from e in (from x in [1, 2, 3] unorder) into Test.bagSum;
@@ -410,6 +415,12 @@ from e in (from x in [1, 2, 3] unorder) into Test.overSum;
 (*) Test.overSum into, with list input
 from e in [1, 2, 3] into Test.overSum;
 > val it = 6 : int
+(*) Test.overCount into, bag input (returns count)
+from e in (from x in [1, 2, 3] unorder) into Test.overCount;
+> val it = 3 : int
+(*) Test.overCount into, list input (returns count + 1000)
+from e in [1, 2, 3] into Test.overCount;
+> val it = 1003 : int
 
 Sys.unset "excludeStructures";
 > val it = () : unit
