@@ -29,8 +29,8 @@ Relational;
 > val it =
 >   {compare=fn,count=fn,empty=fn,iterate=fn,max=fn,min=fn,nonEmpty=fn,sum=fn}
 >   : {compare:'a * 'a -> order, count:'b bag -> int, empty:'c bag -> bool,
->      iterate:'d -> ('d * 'd -> 'd) -> 'd, max:'e bag -> 'e, min:'f bag -> 'f,
->      nonEmpty:'g bag -> bool, sum:'h bag -> 'h}
+>       iterate:'d -> ('d * 'd -> 'd) -> 'd, max:'e bag -> 'e,
+>       min:'f bag -> 'f, nonEmpty:'g bag -> bool, sum:'h bag -> 'h}
 
 (* Descending:
      datatype descending = DESC of 'a

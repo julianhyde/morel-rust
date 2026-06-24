@@ -142,7 +142,7 @@ fun addQueen (i, n, qs, fc) =
   end;
 > val addQueen = fn
 >   : int * int * (int * int) list * (unit -> (int * int) list option)
->     -> (int * int) list option
+>      -> (int * int) list option
 
 fun queens n = addQueen (1, n, [], fn () => NONE);
 > val queens = fn : int -> (int * int) list option
@@ -157,13 +157,14 @@ queens 6;
 
 (*) One solution for n=8.
 queens 8;
-> val it = SOME [(8,4),(7,2),(6,7),(5,3),(4,6),(3,8),(2,5),(1,1)] : (int * int) list option
+> val it = SOME [(8,4),(7,2),(6,7),(5,3),(4,6),(3,8),(2,5),(1,1)]
+>   : (int * int) list option
 
 (*) One solution for n=12.
 queens 12;
 > val it =
->   SOME [(12,4),(11,9),(10,7),(9,2),(8,11),(7,6),(6,12),(5,10),(4,8),(3,5),(2,3),
->    (1,1)] : (int * int) list option
+>   SOME [(12,4),(11,9),(10,7),(9,2),(8,11),(7,6),(6,12),(5,10),(4,8),(3,5),
+>         (2,3),(1,1)] : (int * int) list option
 
 (* For higher values of N, the algorithm is correct but takes too
  * long to run.
@@ -218,11 +219,12 @@ fun queens' n =
   in
     addQueen (1, n, [], fn () => NONE)
   end;
-> val queens'  =  fn : int -> (int * int) list option
+> val queens' = fn : int -> (int * int) list option
 
 (*) The single-function algorithm gives the same solution.
 queens' 8;
-> val it = SOME [(8,4),(7,2),(6,7),(5,3),(4,6),(3,8),(2,5),(1,1)] : (int * int) list option
+> val it = SOME [(8,4),(7,2),(6,7),(5,3),(4,6),(3,8),(2,5),(1,1)]
+>   : (int * int) list option
 
 (* Pattern 7: `val rec ... and` with tuple pattern -------------------
  * `val rec (x, y) = (1, 2)` is morel-specific; SML/NJ rejects it.

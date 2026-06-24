@@ -29,17 +29,17 @@ Sys.set ("stringDepth", ~1);
 Int;
 > val it =
 >   {+=fn,abs=fn,compare=fn,`div`=fn,fmt=fn,fromInt=fn,fromLarge=fn,
->    fromString=fn,max=fn,maxInt=SOME 2147483647,min=fn,minInt=SOME ~2147483648,
->    `mod`=fn,precision=SOME 32,quot=fn,rem=fn,sameSign=fn,sign=fn,toInt=fn,
->    toLarge=fn,toString=fn,~=fn}
+>    fromString=fn,max=fn,maxInt=SOME 2147483647,min=fn,
+>    minInt=SOME ~2147483648,`mod`=fn,precision=SOME 32,quot=fn,rem=fn,
+>    sameSign=fn,sign=fn,toInt=fn,toLarge=fn,toString=fn,~=fn}
 >   : {+:int * int -> int, abs:int -> int, compare:int * int -> order,
->      `div`:int * int -> int, fmt:radix -> int -> string, fromInt:int -> int,
->      fromLarge:int -> int, fromString:string -> int option,
->      max:int * int -> int, maxInt:int option, min:int * int -> int,
->      minInt:int option, `mod`:int * int -> int, precision:int option,
->      quot:int * int -> int, rem:int * int -> int, sameSign:int * int -> bool,
->      sign:int -> int, toInt:int -> int, toLarge:int -> int,
->      toString:int -> string, ~:int -> int}
+>       `div`:int * int -> int, fmt:radix -> int -> string, fromInt:int -> int,
+>       fromLarge:int -> int, fromString:string -> int option,
+>       max:int * int -> int, maxInt:int option, min:int * int -> int,
+>       minInt:int option, `mod`:int * int -> int, precision:int option,
+>       quot:int * int -> int, rem:int * int -> int,
+>       sameSign:int * int -> bool, sign:int -> int, toInt:int -> int,
+>       toLarge:int -> int, toString:int -> string, ~:int -> int}
 
 (* Operators "+" and "~" are also available as members of the Int structure. *)
 Int.`+` (1, 2);
@@ -203,14 +203,14 @@ List.map (fn (Name, X) =>
 > ---------- ----------- --------------------------------- ----------- --------- ------------ -----------
 > 0                    0 0                                 0           0         0            0
 > 1                    1 1                                 1           1         1            1
-> ~1                  -1 ~1                                ~1          ~1        ~1           ~1
+> ~1                  ~1 ~1                                ~1          ~1        ~1           ~1
 > 42                  42 101010                            42          2A        52           42
-> ~42                -42 ~101010                           ~42         ~2A       ~52          ~42
+> ~42                ~42 ~101010                           ~42         ~2A       ~52          ~42
 > 255                255 11111111                          255         FF        377          255
-> ~255              -255 ~11111111                         ~255        ~FF       ~377         ~255
+> ~255              ~255 ~11111111                         ~255        ~FF       ~377         ~255
 > 1024              1024 10000000000                       1024        400       2000         1024
 > Int.maxInt  2147483647 1111111111111111111111111111111   2147483647  7FFFFFFF  17777777777  2147483647
-> Int.minInt -2147483648 ~10000000000000000000000000000000 ~2147483648 ~80000000 ~20000000000 ~2147483648
+> Int.minInt ~2147483648 ~10000000000000000000000000000000 ~2147483648 ~80000000 ~20000000000 ~2147483648
 >
 > val it : {Name:string, X:int, bin:string, dec:string, hex:string, oct:string, toString:string} list
 Sys.unset "output";

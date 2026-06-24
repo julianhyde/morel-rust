@@ -110,7 +110,7 @@ true;
 >   {1=1,2=2,3=3,4=4,5=5,6=6,7=7,8=8,9=9,10=10,11=11,a="a",a1="a1",a10="a10",
 >    a2="a2"}
 >   : {1:int, 2:int, 3:int, 4:int, 5:int, 6:int, 7:int, 8:int, 9:int, 10:int,
->      11:int, a:string, a1:string, a10:string, a2:string}
+>       11:int, a:string, a1:string, a10:string, a2:string}
 {1=1,2=2,3=3,4=4,5=5,6=6,7=7,8=8,9=9,10=10,11=11};
 > val it = (1,2,3,4,5,6,7,8,9,10,11)
 >   : int * int * int * int * int * int * int * int * int * int * int
@@ -499,7 +499,7 @@ fun foo x
  `A bc` = 8};
 > val it = {`A bc`=8,ABC123=5,Abc_=7,Abc_123=6,x=1,x'=2,x''=3,x'y=4}
 >   : {`A bc`:int, ABC123:int, Abc_:int, Abc_123:int, x:int, x':int, x'':int,
->      x'y:int}
+>       x'y:int}
 
 (*) Quoted identifiers
 val `identifier with space` = 1;
@@ -700,8 +700,8 @@ strTimes "" 12 [];
 >    "aaaaa","aaaa","aaa","aa","a",""] : string list
 strTimes "" 13 [];
 > val it =
->   ["aaaaaaaaaaaa","aaaaaaaaaaa","aaaaaaaaaa","aaaaaaaaa","aaaaaaaa","aaaaaaa",
->    "aaaaaa","aaaaa","aaaa","aaa","aa","a",...] : string list
+>   ["aaaaaaaaaaaa","aaaaaaaaaaa","aaaaaaaaaa","aaaaaaaaa","aaaaaaaa",
+>    "aaaaaaa","aaaaaa","aaaaa","aaaa","aaa","aa","a",...] : string list
 strTimes "" 20 [];
 > val it =
 >   ["aaaaaaaaaaaaaaaaaaa","aaaaaaaaaaaaaaaaaa","aaaaaaaaaaaaaaaaa",
@@ -712,13 +712,11 @@ strTimes "" 20 [];
 
 [{a="aaaaaaaaaaaaaaaaaaaaaa",b="bbbbbbbbbbbbbb",c="cccccccccccccccccc",d="ddddddddd"}];
 > val it =
->   [
->    {a="aaaaaaaaaaaaaaaaaaaaaa",b="bbbbbbbbbbbbbb",c="cccccccccccccccccc",
+>   [{a="aaaaaaaaaaaaaaaaaaaaaa",b="bbbbbbbbbbbbbb",c="cccccccccccccccccc",
 >     d="ddddddddd"}] : {a:string, b:string, c:string, d:string} list
 [{a="aaaaaaaaaaaaaaaaaaaaaa",b="bbbbbbbbbbbbbb",c="cccccccccccccccccc",d="ddddddddd"},{a="aaaaaaaaaaaaaaaaaaaaaa",b="bbbbbbbbbbbbbb",c="cccccccccccccccccc",d="ddddddddd"}];
 > val it =
->   [
->    {a="aaaaaaaaaaaaaaaaaaaaaa",b="bbbbbbbbbbbbbb",c="cccccccccccccccccc",
+>   [{a="aaaaaaaaaaaaaaaaaaaaaa",b="bbbbbbbbbbbbbb",c="cccccccccccccccccc",
 >     d="ddddddddd"},
 >    {a="aaaaaaaaaaaaaaaaaaaaaa",b="bbbbbbbbbbbbbb",c="cccccccccccccccccc",
 >     d="ddddddddd"}] : {a:string, b:string, c:string, d:string} list
@@ -726,7 +724,7 @@ strTimes "" 20 [];
 > val it =
 >   {a=1,b=2,c=3,d=4,e=5,f=6,g=7,h=8,i=9,j=10,k=11,l=12,m=13,n=14,o_=15,p=16}
 >   : {a:int, b:int, c:int, d:int, e:int, f:int, g:int, h:int, i:int, j:int,
->      k:int, l:int, m:int, n:int, o_:int, p:int}
+>       k:int, l:int, m:int, n:int, o_:int, p:int}
 
 (*
 sml prints the following, but we cannot split types yet:
@@ -738,7 +736,8 @@ val it = {a=1,b={a=2,b={a=3,b={a=4,b={a=#,b=#}}}}}
 {a=1,b={a=2,b={a=3,b={a=4,b={a=5,b={a=6,b={a=7,b={}}}}}}}};
 > val it = {a=1,b={a=2,b={a=3,b={a=4,b={a=#,b=#}}}}}
 >   : {a:int,
->      b:{a:int, b:{a:int, b:{a:int, b:{a:int, b:{a:int, b:{a:int, b:unit}}}}}}}
+>       b:{a:int,
+>           b:{a:int, b:{a:int, b:{a:int, b:{a:int, b:{a:int, b:unit}}}}}}}
 
 (*) Bug: Fails due to lack of parentheses
 (*
@@ -1275,48 +1274,46 @@ let val bag = 5 in bag + 1 end;
 (*) bag of ints, including a negative value;
 (*) elements reordered vs natural iteration order
 bag [3, 1, ~2];
-> val it = [~2,1,3] : int bag
+> val it = [3,1,~2] : int bag
 
 (*) same query, different order, that's ok
 bag [3, 1, ~2];
-> val it = [3,~2,1] : int bag
+> val it = [3,1,~2] : int bag
 
 (*) bag of strings;
 (*) elements reordered and output split across lines with extra whitespace
 bag ["cherry", "apple", "banana"];
-> val it = ["banana","apple",
->    "cherry"] : string bag
+> val it = ["cherry","apple","banana"] : string bag
 
 (*) bag of strings with commas and brackets inside;
 (*) elements reordered
 bag ["a,b", "[c]", "(d,e)"];
-> val it = ["(d,e)","a,b","[c]"] : string bag
+> val it = ["a,b","[c]","(d,e)"] : string bag
 
 (*) bag of booleans; elements reordered
 bag [true, false, true];
-> val it = [false,true,true] : bool bag
+> val it = [true,false,true] : bool bag
 
 (*) bag of chars; elements reordered
 bag [#"x", #"y", #"z"];
-> val it = [#"z",#"x",#"y"] : char bag
+> val it = [#"x",#"y",#"z"] : char bag
 
 (*) bag of reals; elements reordered
 bag [1.5, 2.5, 3.5];
-> val it = [3.5,1.5,2.5] : real bag
+> val it = [1.5,2.5,3.5] : real bag
 
 (*) bag of tuples; elements reordered
 bag [(1, "a"), (2, "b"), (3, "c")];
-> val it = [(3,"c"),(1,"a"),(2,"b")] : (int * string) bag
+> val it = [(1,"a"),(2,"b"),(3,"c")] : (int * string) bag
 
 (*) bag of records, elements reordered but fields still alphabetical
 bag [{name="bob", age=30}, {name="alice", age=25}];
-> val it = [{age=25,name="alice"},
->           {age=30,name="bob"}]
+> val it = [{age=30,name="bob"},{age=25,name="alice"}]
 >   : {age:int, name:string} bag
 
 (*) bag of nested lists; elements reordered
 bag [[1, 2], [3, 4, 5], [6]];
-> val it = [[6],[1,2],[3,4,5]] : int list bag
+> val it = [[1,2],[3,4,5],[6]] : int list bag
 
 (*) bag of unit
 bag [(), ()];
@@ -1332,15 +1329,15 @@ bag ([] : string list);
 
 (*) bag of bags (elements reordered, and with whitespace)
 bag [bag [1, 2], bag [3]];
-> val it = [[3],[1,          2]] : int bag bag
+> val it = [[1,2],[3]] : int bag bag
 
 (*) bag of int list options; elements reordered, extra whitespace
 bag [SOME [1,2], NONE, SOME [2,0]];
-> val it = [NONE,SOME [1,2],  SOME [2,0]] : int list option bag
+> val it = [SOME [1,2],NONE,SOME [2,0]] : int list option bag
 
 (*) record containing a bag field; bag elements reordered
 val r = {name = "test", values = bag [10, 20, 30]};
-> val r = {name="test",values=[30,10,20]} : {name:string, values:int bag}
+> val r = {name="test",values=[10,20,30]} : {name:string, values:int bag}
 
 (*) list of bags
 [bag [1, 2], bag [3, 4]];
@@ -1348,28 +1345,25 @@ val r = {name = "test", values = bag [10, 20, 30]};
 
 (*) same, with whitespace
 [bag [1, 2], bag [3, 4]];
-> val it = [[1,  2],
-> [3,4]] : int bag list
+> val it = [[1,2],[3,4]] : int bag list
 
 (*) tuple containing a bag; bag elements reordered
 (bag [1, 2], "hello");
-> val it = ([2,1],"hello") : int bag * string
+> val it = ([1,2],"hello") : int bag * string
 
 (*) option containing a bag; bag elements reordered
 SOME (bag [5, 10]);
-> val it = SOME ([10,5]) : int bag option
+> val it = SOME [5,10] : int bag option
 
 (*) long record values in a bag that wrap across lines;
 (*) extra whitespace in expected output
 bag [{a="aaaaaaaaaa", b="bbbbbbbbbb", c="cccccccccc", d="dddddddddd"}];
-> val it =
->   [{a="aaaaaaaaaa",b="bbbbbbbbbb",c="cccccccccc",d="dddddddddd"}]
+> val it = [{a="aaaaaaaaaa",b="bbbbbbbbbb",c="cccccccccc",d="dddddddddd"}]
 >   : {a:string, b:string, c:string, d:string} bag
 
 (*) bag with wrapped type line; extra whitespace
 bag [{name="alice", age=25, city="wonderland"}];
-> val it =
->   [{age=25,city="wonderland",name="alice"}]
+> val it = [{age=25,city="wonderland",name="alice"}]
 >   : {age:int, city:string, name:string} bag
 
 (*) End simple.smli

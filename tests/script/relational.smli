@@ -153,7 +153,8 @@ let val emp0 = {id = 100, name = "Fred", deptno = 10} in #id emp0 end;
 val emp0 = {id = 100, name = "Fred", deptno = 10};
 > val emp0 = {deptno=10,id=100,name="Fred"} : {deptno:int, id:int, name:string}
 val emp1 = {id = 101, name = "Velma", deptno = 20};
-> val emp1 = {deptno=20,id=101,name="Velma"} : {deptno:int, id:int, name:string}
+> val emp1 = {deptno=20,id=101,name="Velma"}
+>   : {deptno:int, id:int, name:string}
 val emp2 = {id = 102, name = "Shaggy", deptno = 30};
 > val emp2 = {deptno=30,id=102,name="Shaggy"}
 >   : {deptno:int, id:int, name:string}
@@ -464,8 +465,8 @@ fun singleUnitItems (items: {product: string, units: int} list) =
 from r in orders
   yieldAll singleUnitItems r.items;
 > val it =
->   [{product="beer",units=1},{product="soda",units=1},{product="beer",units=1}]
->   : {product:string, units:int} list
+>   [{product="beer",units=1},{product="soda",units=1},
+>    {product="beer",units=1}] : {product:string, units:int} list
 
 (* Outer joins ---------------------------------------------------- *)
 
@@ -515,15 +516,14 @@ from i in [1, 2] left join j in [1, 2] on i = j;
 from r in orders
   left join i in r.items on i.units > 2;
 > val it =
->   [
->    {i=SOME {product="soda",units=3},
+>   [{i=SOME {product="soda",units=3},
 >     r={id=1,items=[{product="beer",units=1},{product="soda",units=3}]}},
 >    {i=SOME {product="milk",units=5},
 >     r={id=2,items=[{product="milk",units=5},{product="beer",units=2}]}},
->    {i=NONE,r={id=3,items=[{product="soda",units=1},{product="beer",units=1}]}}]
->   :
->     {i:{product:string, units:int} option,
->      r:{id:int, items:{product:string, units:int} list}} list
+>    {i=NONE,
+>     r={id=3,items=[{product="soda",units=1},{product="beer",units=1}]}}]
+>   : {i:{product:string, units:int} option,
+>       r:{id:int, items:{product:string, units:int} list}} list
 
 (* A 'right join' wraps the input ('left') fields in 'option'. A source row
  * matching no input row is emitted with 'NONE' for the input fields; an input
@@ -563,12 +563,14 @@ from e in emps
   yield {e.deptno}
   order DESC deptno
   yield {deptno};
-> val it = [{deptno=30},{deptno=30},{deptno=20},{deptno=10}] : {deptno:int} list
+> val it = [{deptno=30},{deptno=30},{deptno=20},{deptno=10}]
+>   : {deptno:int} list
 
 from e in emps
   yield {e.deptno}
   order DESC deptno;
-> val it = [{deptno=30},{deptno=30},{deptno=20},{deptno=10}] : {deptno:int} list
+> val it = [{deptno=30},{deptno=30},{deptno=20},{deptno=10}]
+>   : {deptno:int} list
 
 from e in emps
   yield {e.deptno}
@@ -894,11 +896,11 @@ from e in scott.emps
   yield {e.empno, e.job};
 > val it =
 >   [{empno=7788,job="ANALYST"},{empno=7902,job="ANALYST"},
->    {empno=7369,job="CLERK"},{empno=7876,job="CLERK"},{empno=7900,job="CLERK"},
->    {empno=7566,job="MANAGER"},{empno=7698,job="MANAGER"},
->    {empno=7499,job="SALESMAN"},{empno=7521,job="SALESMAN"},
->    {empno=7654,job="SALESMAN"},{empno=7844,job="SALESMAN"}]
->   : {empno:int, job:string} list
+>    {empno=7369,job="CLERK"},{empno=7876,job="CLERK"},
+>    {empno=7900,job="CLERK"},{empno=7566,job="MANAGER"},
+>    {empno=7698,job="MANAGER"},{empno=7499,job="SALESMAN"},
+>    {empno=7521,job="SALESMAN"},{empno=7654,job="SALESMAN"},
+>    {empno=7844,job="SALESMAN"}] : {empno:int, job:string} list
 
 (*) Ordinal in subquery
 from i in [1,2,3,4]
@@ -1367,7 +1369,8 @@ from e in emps
   yield {d = e.deptno}
   order DESC d
   yield {tens = d div 10, units = d mod 10};
-> val it = [{tens=3,units=0},{tens=3,units=0},{tens=2,units=0},{tens=1,units=0}]
+> val it =
+>   [{tens=3,units=0},{tens=3,units=0},{tens=2,units=0},{tens=1,units=0}]
 >   : {tens:int, units:int} list
 
 (*) assignment to 'd' via a pattern
@@ -1681,9 +1684,10 @@ from e in scott.emps
   order (job, deptno);
 > val it =
 >   [{deptno=20,job="ANALYST"},{deptno=10,job="CLERK"},{deptno=20,job="CLERK"},
->    {deptno=30,job="CLERK"},{deptno=10,job="MANAGER"},{deptno=20,job="MANAGER"},
->    {deptno=30,job="MANAGER"},{deptno=10,job="PRESIDENT"},
->    {deptno=30,job="SALESMAN"}] : {deptno:int, job:string} list
+>    {deptno=30,job="CLERK"},{deptno=10,job="MANAGER"},
+>    {deptno=20,job="MANAGER"},{deptno=30,job="MANAGER"},
+>    {deptno=10,job="PRESIDENT"},{deptno=30,job="SALESMAN"}]
+>   : {deptno:int, job:string} list
 
 (*) Query 2, using `group` with no aggregate functions, equivalent to query 1
 (*) (The 'order' clause is for deterministic results.)
@@ -1693,9 +1697,10 @@ from e in scott.emps
   order (job, deptno);
 > val it =
 >   [{deptno=20,job="ANALYST"},{deptno=10,job="CLERK"},{deptno=20,job="CLERK"},
->    {deptno=30,job="CLERK"},{deptno=10,job="MANAGER"},{deptno=20,job="MANAGER"},
->    {deptno=30,job="MANAGER"},{deptno=10,job="PRESIDENT"},
->    {deptno=30,job="SALESMAN"}] : {deptno:int, job:string} list
+>    {deptno=30,job="CLERK"},{deptno=10,job="MANAGER"},
+>    {deptno=20,job="MANAGER"},{deptno=30,job="MANAGER"},
+>    {deptno=10,job="PRESIDENT"},{deptno=30,job="SALESMAN"}]
+>   : {deptno:int, job:string} list
 
 (*) Function defined inside query
 from e in emps
@@ -2332,7 +2337,8 @@ order deptno;
 >   [{deptno=10,existsId=true,existsStar=true,notExistsId=false,sumId=100},
 >    {deptno=20,existsId=true,existsStar=true,notExistsId=false,sumId=101},
 >    {deptno=30,existsId=true,existsStar=true,notExistsId=false,sumId=205}]
->   : {deptno:int, existsId:bool, existsStar:bool, notExistsId:bool, sumId:int} list
+>   : {deptno:int, existsId:bool, existsStar:bool, notExistsId:bool, sumId:int}
+>     list
 
 
 (*) 'compute' with 'empty' and 'nonEmpty' as an aggregate functions
@@ -2353,7 +2359,8 @@ from e in emps
 group {e = {e.deptno, odd = e.id mod 2 = 1}} compute {c = count over ()}
 yield {e.deptno, c1 = c + 1}
 order deptno;
-> val it = [{c1=2,deptno=10},{c1=2,deptno=20},{c1=2,deptno=30},{c1=2,deptno=30}]
+> val it =
+>   [{c1=2,deptno=10},{c1=2,deptno=20},{c1=2,deptno=30},{c1=2,deptno=30}]
 >   : {c1:int, deptno:int} list
 
 (*) 'group' with join
@@ -2512,7 +2519,8 @@ order deptno;
 >   [{deptno=10,rows=[{deptno=10,id=100,name="Fred"}]},
 >    {deptno=20,rows=[{deptno=20,id=101,name="Velma"}]},
 >    {deptno=30,
->     rows=[{deptno=30,id=102,name="Shaggy"},{deptno=30,id=103,name="Scooby"}]}]
+>     rows=[{deptno=30,id=102,name="Shaggy"},
+>           {deptno=30,id=103,name="Scooby"}]}]
 >   : {deptno:int, rows:{deptno:int, id:int, name:string} list} list
 
 (*) Identity aggregate function, using lambda
@@ -2523,7 +2531,8 @@ order deptno;
 >   [{deptno=10,rows=[{deptno=10,id=100,name="Fred"}]},
 >    {deptno=20,rows=[{deptno=20,id=101,name="Velma"}]},
 >    {deptno=30,
->     rows=[{deptno=30,id=102,name="Shaggy"},{deptno=30,id=103,name="Scooby"}]}]
+>     rows=[{deptno=30,id=102,name="Shaggy"},
+>           {deptno=30,id=103,name="Scooby"}]}]
 >   : {deptno:int, rows:{deptno:int, id:int, name:string} list} list
 
 
@@ -2533,18 +2542,18 @@ where e.deptno = d.deptno
 group e.deptno compute {rows = (fn x => x) over current}
 order deptno;
 > val it =
->   [
->    {deptno=10,
+>   [{deptno=10,
 >     rows=[{d={deptno=10,name="Sales"},e={deptno=10,id=100,name="Fred"}}]},
 >    {deptno=20,
 >     rows=[{d={deptno=20,name="HR"},e={deptno=20,id=101,name="Velma"}}]},
 >    {deptno=30,
->     rows=
->     [{d={deptno=30,name="Engineering"},e={deptno=30,id=102,name="Shaggy"}},
->      {d={deptno=30,name="Engineering"},e={deptno=30,id=103,name="Scooby"}}]}]
->   :
->     {deptno:int,
->      rows:{d:{deptno:int, name:string}, e:{deptno:int, id:int, name:string}} list} list
+>     rows=[{d={deptno=30,name="Engineering"},
+>            e={deptno=30,id=102,name="Shaggy"}},
+>           {d={deptno=30,name="Engineering"},
+>            e={deptno=30,id=103,name="Scooby"}}]}]
+>   : {deptno:int,
+>       rows:{d:{deptno:int, name:string}, e:{deptno:int, id:int, name:string}}
+>            list} list
 
 (*) Group followed by yield
 from e in emps
@@ -2901,8 +2910,8 @@ from {a = a, b = b, c = _} in [{a=1,b=true,c=3},{a=1,b=true,c=4}];
 > val it = [{a=1,b=true},{a=1,b=true}] : {a:int, b:bool} list
 from {a = a, b = b, c = _} in [{a=1,b=true,c=3},{a=1,b=true,c=4}], d in ["a", "b"];
 > val it =
->   [{a=1,b=true,d="a"},{a=1,b=true,d="b"},{a=1,b=true,d="a"},{a=1,b=true,d="b"}]
->   : {a:int, b:bool, d:string} list
+>   [{a=1,b=true,d="a"},{a=1,b=true,d="b"},{a=1,b=true,d="a"},
+>    {a=1,b=true,d="b"}] : {a:int, b:bool, d:string} list
 from {a = a, b = b, ...} in [{a=1,b=true,c=3},{a=1,b=true,c=4}];
 > val it = [{a=1,b=true},{a=1,b=true}] : {a:int, b:bool} list
 from {a = a, c = c, ...} in [{a=1,b=true,c=3},{a=1,b=true,c=4}];
@@ -3013,7 +3022,8 @@ in
   yield {e.id, e.deptno, abbrev_name = abbrev e.name}
 end;
 > val it =
->   [{abbrev_name="Sha.",deptno=30,id=102},{abbrev_name="Sco.",deptno=30,id=103}]
+>   [{abbrev_name="Sha.",deptno=30,id=102},
+>    {abbrev_name="Sco.",deptno=30,id=103}]
 >   : {abbrev_name:string, deptno:int, id:int} list
 
 
@@ -3117,7 +3127,8 @@ from t1 in triples, t2 in triples
 >   [{t1={foo=fn,x=1,y=2},t2={foo=fn,x=1,y=2}},
 >    {t1={foo=fn,x=3,y=5},t2={foo=fn,x=3,y=5}},
 >    {t1={foo=fn,x=2,y=6},t2={foo=fn,x=2,y=6}}]
->   : {t1:{foo:int -> int, x:int, y:int}, t2:{foo:int -> int, x:int, y:int}} list
+>   : {t1:{foo:int -> int, x:int, y:int}, t2:{foo:int -> int, x:int, y:int}}
+>     list
  (* (~1+2,2) < (~3+5,5) < (~2+6,6) *)
 
 (*) A deep nested loop

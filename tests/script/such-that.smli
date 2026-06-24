@@ -38,7 +38,7 @@ from i where i >= 0 andalso i <= 10;
 > val it = [0,1,2,3,4,5,6,7,8,9,10] : int bag
 
 from i where i >= 0 andalso i <= 5 orelse i = 8 orelse i > 20 andalso i < 22;
-> val it = [1,2,3,4,5,21,8,0] : int bag
+> val it = [0,1,2,3,4,5,8,21] : int bag
 
 from i where i > 0 andalso i < 4 yield {j = i + 1};
 > j
@@ -68,7 +68,7 @@ from s where s = "abc";
 > val it = ["abc"] : string bag
 
 from i where i = 0 orelse i = 12;
-> val it = [12,0] : int bag
+> val it = [0,12] : int bag
 
 from i where i > 0 andalso i < 10 orelse i > 12 andalso i <= 15;
 > val it = [1,2,3,4,5,6,7,8,9,13,14,15] : int bag
@@ -256,7 +256,7 @@ from e where (case e of INR (b, i) => b andalso i > 5 andalso i < 15 andalso i m
 >   : ('a,bool * int) either bag
 
 from e where (case e of INR (b, i) => i > 0 andalso i < 5 andalso b = (i mod 2 = 0) | _ => false);
-> val it = [INR (false,1),INR (false,3),INR (true,2),INR (true,4)]
+> val it = [INR (false,1),INR (true,2),INR (false,3),INR (true,4)]
 >   : ('a,bool * int) either bag
 
 (*) Multiple constructor arms combined with orelse (via maybeUnion)
@@ -352,7 +352,7 @@ fun isLarge n = n elem [10, 20];
 > val isLarge = fn : int -> bool
 
 from n where isSmall n orelse isLarge n;
-> val it = [1,2,20,10] : int bag
+> val it = [1,2,10,20] : int bag
 
 (* -- Predicate inversion ----------------------------------------- *)
 
@@ -392,14 +392,14 @@ from x in [3, 5, 7], y
   group y compute count over ();
 > count y
 > ----- --
+>     1 ~1
+>     1  0
 >     2  1
 >     2  2
 >     2  3
 >     2  4
 >     1  5
 >     1  6
->     1 -1
->     1  0
 >
 > val it : {count:int, y:int} bag
 
@@ -410,7 +410,7 @@ from x where x = 3 andalso x > 10;
 > val it = [] : int bag
 
 from x where x = 3 orelse x > 0 andalso x < 5;
-> val it = [1,2,3,4] : int bag
+> val it = [3,1,2,4] : int bag
 
 from x where x = 3 orelse x > 10 andalso x < 15;
 > val it = [3,11,12,13,14] : int bag
@@ -804,9 +804,9 @@ end;
 fun isEmp e =
   e elem scott.emps;
 > val isEmp = fn
->   :
->     {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
->      job:string, mgr:int, sal:real} -> bool
+>   : {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
+>       job:string, mgr:int, sal:real}
+>      -> bool
 from e
   where isEmp e andalso e.deptno = 20
   yield e.ename;
@@ -816,9 +816,9 @@ from e
 fun isClerk e =
   e elem scott.emps andalso e.job = "CLERK";
 > val isClerk = fn
->   :
->     {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
->      job:string, mgr:int, sal:real} -> bool
+>   : {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
+>       job:string, mgr:int, sal:real}
+>      -> bool
 from e
   where isClerk e andalso e.deptno = 20
   yield e.ename;
@@ -841,9 +841,9 @@ fun hasJob (e: typeof (Bag.hd scott.emps),
             job) =
   e.job = job;
 > val hasJob = fn
->   :
->     {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
->      job:string, mgr:int, sal:real} * string -> bool
+>   : {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
+>       job:string, mgr:int, sal:real} * string
+>      -> bool
 
 (*) Valid, because the argument has an extent.
 from e in scott.emps,
@@ -893,7 +893,7 @@ from s in ["abcd", "ant"], p where String.isPrefix p s;
 > val it : {p:string, s:string} bag
 
 from s in ["abcd", "ant"], p where String.isPrefix p s yield p distinct;
-> val it = ["a","ab","abc","ant","abcd","an",""] : string bag
+> val it = ["","a","ab","abc","abcd","an","ant"] : string bag
 
 from p where (exists s in ["abcd", "ant"] where String.isPrefix p s) order p;
 > val it = ["","a","ab","abc","abcd","an","ant"] : string list
@@ -941,16 +941,16 @@ in
   from empno
     where empInDeptName(empno, "SALES")
 end;
-> val it = [7521,7844,7654,7499,7698,7900] : int bag
+> val it = [7499,7521,7654,7698,7844,7900] : int bag
 
 (* Invert a function that tests membership of table --------------- *)
 
 fun isClerk e =
   e elem scott.emps andalso e.job = "CLERK";
 > val isClerk = fn
->   :
->     {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
->      job:string, mgr:int, sal:real} -> bool
+>   : {comm:real, deptno:int, empno:int, ename:string, hiredate:string,
+>       job:string, mgr:int, sal:real}
+>      -> bool
 
 let
   fun enumerate predicate =
@@ -960,10 +960,10 @@ in
 end;
 > comm deptno empno ename  hiredate   job   mgr  sal
 > ---- ------ ----- ------ ---------- ----- ---- ----
->    0     20  7369 SMITH  1980-12-17 CLERK 7902  800
->    0     20  7876 ADAMS  1987-05-23 CLERK 7788 1100
->    0     30  7900 JAMES  1981-12-03 CLERK 7698  950
->    0     10  7934 MILLER 1982-01-23 CLERK 7782 1300
+>    0     20  7369 SMITH  1980-12-16 CLERK 7902  800
+>    0     20  7876 ADAMS  1987-05-22 CLERK 7788 1100
+>    0     30  7900 JAMES  1981-12-02 CLERK 7698  950
+>    0     10  7934 MILLER 1982-01-22 CLERK 7782 1300
 >
 > val it : {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
 
@@ -1144,10 +1144,8 @@ in
   {path = from x, y, n where path (x, y, n)}
 end;
 > val it =
->   {
->    path=
->    [{n=1,x="a",y="b"},{n=1,x="b",y="c"},{n=1,x="c",y="d"},{n=1,x="d",y="e"},
->     {n=1,x="e",y="f"},{n=1,x="a",y="c"}]}
+>   {path=[{n=1,x="a",y="b"},{n=1,x="b",y="c"},{n=1,x="c",y="d"},
+>          {n=1,x="d",y="e"},{n=1,x="e",y="f"},{n=1,x="a",y="c"}]}
 >   : {path:{n:int, x:string, y:string} bag}
 
 (*) Siblings
@@ -1160,10 +1158,8 @@ in
   {sibling = from x, y where sibling (x, y)}
 end;
 > val it =
->   {
->    sibling=
->    [{x="Bob",y="Bob"},{x="Bob",y="Carol"},{x="Carol",y="Bob"},
->     {x="Carol",y="Carol"}]} : {sibling:{x:string, y:string} bag}
+>   {sibling=[{x="Bob",y="Bob"},{x="Bob",y="Carol"},{x="Carol",y="Bob"},
+>             {x="Carol",y="Carol"}]} : {sibling:{x:string, y:string} bag}
 
 (* More edges *)
 (*
@@ -1206,9 +1202,9 @@ in
 end;
 > x z
 > - -
-> 4 3
-> 1 2
 > 1 3
+> 1 2
+> 4 3
 >
 > val it : {x:int, z:int} bag
 
@@ -1220,9 +1216,9 @@ from x, z
   distinct;
 > x z
 > - -
-> 4 3
-> 1 2
 > 1 3
+> 1 2
+> 4 3
 >
 > val it : {x:int, z:int} bag
 
@@ -1232,9 +1228,9 @@ from x, z
   distinct;
 > x z
 > - -
-> 4 3
-> 1 2
 > 1 3
+> 1 2
+> 4 3
 >
 > val it : {x:int, z:int} bag
 

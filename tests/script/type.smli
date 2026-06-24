@@ -508,17 +508,16 @@ from b in [SOME true, NONE];
 val f : ('a -> (int * int) list) -> ('a -> (int * int) list) -> 'a -> (int * int) list = fn a => fn b => fn c => [];
 > val f = fn
 >   : ('a -> (int * int) list)
->     -> ('a -> (int * int) list) -> 'a -> (int * int) list
+>      -> ('a -> (int * int) list) -> 'a -> (int * int) list
 
 (*) Function with tuple type and lots of type variables returns record type.
 (*) Note that after 'z, type variables are 'ba, 'bb, etc.
 (*) Also note that 'o' needs to be quoted.
 fun r0 (a, b, c, d, e, f, g, h, i, j, k, l, m, n, `o`, p, q, r, s, t, u, v, w, x, y, z, aa, ab, ac) = {a=a,b=b,c=c};
 > val r0 = fn
->   :
->     'a * 'b * 'c * 'd * 'e * 'f * 'g * 'h * 'i * 'j * 'k * 'l * 'm * 'n * 'o *
->     'p * 'q * 'r * 's * 't * 'u * 'v * 'w * 'x * 'y * 'z * 'ba * 'bb * 'bc
->     -> {a:'a, b:'b, c:'c}
+>   : 'a * 'b * 'c * 'd * 'e * 'f * 'g * 'h * 'i * 'j * 'k * 'l * 'm * 'n * 'o
+>      * 'p * 'q * 'r * 's * 't * 'u * 'v * 'w * 'x * 'y * 'z * 'ba * 'bb * 'bc
+>      -> {a:'a, b:'b, c:'c}
 
 set("mode", "validate");
 > val it = () : unit

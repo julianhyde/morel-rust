@@ -157,8 +157,8 @@ Sys.set ("output", "tabular");
 [{id=1, name="Alice"}, {id=2, name="Bob"}];
 > id name
 > -- -----
-> 1  Alice
-> 2  Bob
+>  1 Alice
+>  2 Bob
 >
 > val it : {id:int, name:string} list
 
