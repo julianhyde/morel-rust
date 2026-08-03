@@ -1781,11 +1781,17 @@ impl Display for Code {
             Self::BindAnd(codes) => {
                 Self::write_codes(f, "bindAnd(", codes, ")")
             }
+            Self::BindCons(head, tail) => {
+                write!(f, "bindCons({}, {})", head, tail)
+            }
             Self::BindConstructor(name, inner) => {
                 write!(f, "bindCon({}, {})", name, inner)
             }
             Self::BindConstructor2(tag, _) => {
                 write!(f, "bindCon2(#{})", tag)
+            }
+            Self::BindList(codes) => {
+                Self::write_codes(f, "bindList(", codes, ")")
             }
             Self::BindLiteral(v) => write!(f, "{}", v),
             Self::BindSlot(_, slot) => write!(f, "bind({})", slot),
@@ -1835,12 +1841,25 @@ impl Display for Code {
                 }
                 write!(f, ")")
             }
+            Self::FromRowSink(factory) => {
+                write!(f, "from(sink ")?;
+                factory.create().fmt_plan(f)?;
+                write!(f, ")")
+            }
             Self::GetLocal(_, slot) => write!(f, "get({})", slot),
             Self::Let(codes, result_code) => {
                 Self::write_codes(f, "let(", codes, "")?;
                 write!(f, " in {})", result_code)
             }
             Self::Link(slot, name) => write!(f, "link({}, {})", slot, name),
+            Self::MapElements(elements_code, over_code, _slots) => {
+                write!(f, "mapElements({}, {})", elements_code, over_code)
+            }
+            Self::Max(_, code, _) => write!(f, "max({})", code),
+            Self::Min(_, code, _) => write!(f, "min({})", code),
+            Self::Native0(eager) => {
+                write!(f, "apply(fnValue {:?})", eager)
+            }
             Self::Native1(eager, code0) => {
                 write!(f, "apply(fnValue {}, argCode {})", eager.plan(), code0)
             }
@@ -1853,6 +1872,22 @@ impl Display for Code {
                     code1,
                 )
             }
+            Self::Native3(eager, code0, code1, code2) => {
+                write!(
+                    f,
+                    "apply3(fnValue {}, {}, {}, {})",
+                    eager.plan(),
+                    code0,
+                    code1,
+                    code2
+                )
+            }
+            Self::NativeCustom(custom, codes) => Self::write_codes(
+                f,
+                &format!("apply(fnValue {:?}, argCode tuple(", custom),
+                codes,
+                "))",
+            ),
             Self::NativeF0(eager) => {
                 write!(f, "apply0(fnValue {})", eager.plan(),)
             }
@@ -1913,6 +1948,28 @@ impl Display for Code {
                     )
                 }
             }
+            Self::Nth(_, slot) => write!(f, "nth:{}", slot),
+            Self::Raise(code, _) => write!(f, "raise({})", code),
+            Self::RaiseCompileError(msg, _) => {
+                write!(f, "raiseCompileError({})", msg)
+            }
+            Self::RaiseIllegalArgument(msg, _) => {
+                write!(f, "raiseIllegalArgument({})", msg)
+            }
+            Self::RangeContains(_, range_code, code) => {
+                write!(f, "rangeContains({}, {})", range_code, code)
+            }
+            Self::RangeCsOf(_, code) => write!(f, "rangeCsOf({})", code),
+            Self::RangeDsComplement(_, code) => {
+                write!(f, "rangeDsComplement({})", code)
+            }
+            Self::RangeDsOf(_, _, code) => write!(f, "rangeDsOf({})", code),
+            Self::RangeEnumerate(_, _, code) => {
+                write!(f, "rangeEnumerate({})", code)
+            }
+            Self::RangeFlatten(_, _, code) => {
+                write!(f, "rangeFlatten({})", code)
+            }
             Self::RecValBindings(items) => {
                 write!(f, "recValBindings(")?;
                 for (i, (slot, code, _)) in items.iter().enumerate() {
@@ -1924,11 +1981,13 @@ impl Display for Code {
                 write!(f, ")")
             }
             Self::SelfRef => write!(f, "self"),
+            Self::TailApply(fn_code, arg_code) => {
+                write!(f, "tailApply({}, {})", fn_code, arg_code)
+            }
             Self::Tuple(codes) => Self::write_codes(f, "tuple(", codes, ")"),
             Self::ValidatePartialArg1(func, code, _span) => {
                 write!(f, "validate({}, {})", func.full_name(), code)
             }
-            _ => todo!("fmt: {:?}", self),
         }
     }
 }
