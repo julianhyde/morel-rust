@@ -99,6 +99,26 @@ pub trait RowSink {
         r: &mut EvalEnv,
         f: &mut Frame,
     ) -> Result<Val, MorelError>;
+
+    /// Writes this sink, and the sinks downstream of it, in the format
+    /// that `Sys.plan` prints.
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult;
+}
+
+/// Returns whether `code` is the constant `true`. The condition of a scan
+/// or join is constant `true` when the step has no filter; morel-java
+/// leaves the condition out of the plan in that case, and so do we.
+fn is_constant_true(code: &Code) -> bool {
+    matches!(code, Code::Constant(_, Val::Bool(true)))
+}
+
+/// Writes the operands of a set operator as `arg0 c0, arg1 c1, `, including
+/// the trailing separator, so that a `sink` argument can follow.
+fn write_args(f: &mut Formatter<'_>, codes: &[Code]) -> FmtResult {
+    for (i, code) in codes.iter().enumerate() {
+        write!(f, "arg{} {}, ", i, code)?;
+    }
+    Ok(())
 }
 
 /// Implementation of RowSink for a scan or `join` step.
@@ -143,6 +163,20 @@ impl ScanRowSink {
 }
 
 impl RowSink for ScanRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(
+            f,
+            "join(pat {}, exp {}",
+            self.pat_code, self.collection_code
+        )?;
+        if !is_constant_true(&self.condition_code) {
+            write!(f, ", condition {}", self.condition_code)?;
+        }
+        write!(f, ", sink ")?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
     fn start(
         &mut self,
         r: &mut EvalEnv,
@@ -291,6 +325,20 @@ impl BuildJoinRowSink {
 }
 
 impl RowSink for BuildJoinRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(
+            f,
+            "buildJoin(pat {}, exp {}",
+            self.pat_code, self.collection_code
+        )?;
+        if !is_constant_true(&self.condition_code) {
+            write!(f, ", condition {}", self.condition_code)?;
+        }
+        write!(f, ", sink ")?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
     fn start(
         &mut self,
         r: &mut EvalEnv,
@@ -394,6 +442,12 @@ impl WhereRowSink {
 }
 
 impl RowSink for WhereRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "where(condition {}, sink ", self.filter_code)?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
     fn start(
         &mut self,
         r: &mut EvalEnv,
@@ -476,6 +530,14 @@ impl UnionRowSink {
 }
 
 impl RowSink for UnionRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "union(")?;
+        write_args(f, &self.codes)?;
+        write!(f, "sink ")?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
     fn start(
         &mut self,
         r: &mut EvalEnv,
@@ -531,6 +593,10 @@ impl ExistsRowSink {
 }
 
 impl RowSink for ExistsRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "exists")
+    }
+
     fn start(
         &mut self,
         _r: &mut EvalEnv,
@@ -578,6 +644,10 @@ impl CollectRowSink {
 }
 
 impl RowSink for CollectRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "collect({})", self.code)
+    }
+
     fn start(
         &mut self,
         _r: &mut EvalEnv,
@@ -668,6 +738,12 @@ impl OrderRowSink {
 }
 
 impl RowSink for OrderRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "order(code {}, sink ", self.order_code)?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
     fn start(
         &mut self,
         r: &mut EvalEnv,
@@ -740,6 +816,12 @@ impl SkipRowSink {
 }
 
 impl RowSink for SkipRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "skip(count {}, sink ", self.skip_code)?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
     fn start(
         &mut self,
         r: &mut EvalEnv,
@@ -795,6 +877,12 @@ impl TakeRowSink {
 }
 
 impl RowSink for TakeRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "take(count {}, sink ", self.take_code)?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
     fn start(
         &mut self,
         r: &mut EvalEnv,
@@ -866,6 +954,14 @@ impl IntersectRowSink {
 }
 
 impl RowSink for IntersectRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "intersect(distinct {}, ", self.distinct)?;
+        write_args(f, &self.codes)?;
+        write!(f, "sink ")?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
     fn start(
         &mut self,
         r: &mut EvalEnv,
@@ -962,6 +1058,14 @@ impl ExceptRowSink {
 }
 
 impl RowSink for ExceptRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "except(distinct {}, ", self.distinct)?;
+        write_args(f, &self.codes)?;
+        write!(f, "sink ")?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
     fn start(
         &mut self,
         r: &mut EvalEnv,
@@ -1088,6 +1192,16 @@ impl GroupRowSink {
 }
 
 impl RowSink for GroupRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "group(key {}", self.key_code)?;
+        if let Some(aggregate_code) = &self.aggregate_code {
+            write!(f, ", agg {}", aggregate_code)?;
+        }
+        write!(f, ", sink ")?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
     fn start(
         &mut self,
         r: &mut EvalEnv,
@@ -1213,6 +1327,10 @@ impl ComputeRowSink {
 }
 
 impl RowSink for ComputeRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "compute(code {})", self.compute_code)
+    }
+
     fn start(
         &mut self,
         _r: &mut EvalEnv,
@@ -1314,6 +1432,12 @@ impl YieldRowSink {
 }
 
 impl RowSink for YieldRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "yield(codes [{}], sink ", self.yield_code)?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
     fn start(
         &mut self,
         r: &mut EvalEnv,
@@ -1390,6 +1514,12 @@ impl UnorderRowSink {
 }
 
 impl RowSink for UnorderRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "unorder(sink ")?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
     fn start(
         &mut self,
         r: &mut EvalEnv,
@@ -1437,6 +1567,12 @@ impl OrdinalRowSink {
 }
 
 impl RowSink for OrdinalRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "ordinal(sink ")?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
     fn start(
         &mut self,
         r: &mut EvalEnv,
@@ -1500,6 +1636,12 @@ impl OrdinalFilterRowSink {
 }
 
 impl RowSink for OrdinalFilterRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(f, "ordinalFilter(condition {}, sink ", self.filter_code)?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
     fn start(
         &mut self,
         r: &mut EvalEnv,
