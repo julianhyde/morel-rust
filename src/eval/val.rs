@@ -100,7 +100,7 @@ pub enum Val {
     Int(i32),
     Order(Order),
     Real(f32),
-    String(String),
+    String(Rc<str>),
     /// `Word(bits)` represents Standard ML's unsigned 64-bit `word` type.
     /// Printed in hexadecimal, e.g. `0wxFF`.
     Word(u64),
@@ -292,9 +292,9 @@ impl Val {
         }
     }
 
-    pub(crate) fn expect_string(&self) -> String {
+    pub(crate) fn expect_string(&self) -> &str {
         match self {
-            Val::String(s) => s.clone(),
+            Val::String(s) => s,
             _ => panic!("Expected string"),
         }
     }
@@ -349,7 +349,7 @@ impl Val {
 
     pub(crate) fn maybe_string(&self) -> Option<String> {
         match self {
-            Val::String(s) => Some(s.clone()),
+            Val::String(s) => Some(s.to_string()),
             _ => None,
         }
     }

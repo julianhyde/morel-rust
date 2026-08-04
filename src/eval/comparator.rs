@@ -415,10 +415,7 @@ mod tests {
     fn test_natural_comparator_strings() {
         let cmp = NaturalComparator;
         assert_eq!(
-            cmp.compare(
-                &Val::String("a".to_string()),
-                &Val::String("b".to_string())
-            ),
+            cmp.compare(&Val::String("a".into()), &Val::String("b".into())),
             Ordering::Less
         );
     }

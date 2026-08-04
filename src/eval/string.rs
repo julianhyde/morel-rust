@@ -152,7 +152,9 @@ impl Str {
         } else {
             chars.len()
         };
-        Ok(Val::String(chars[start..end].iter().collect()))
+        Ok(Val::String(
+            chars[start..end].iter().collect::<String>().into(),
+        ))
     }
 
     /// Computes the Morel expression `String.fields f s`.
@@ -174,7 +176,7 @@ impl Str {
             if is_delimiter.expect_bool() {
                 // This is a delimiter
                 // Always save the current field (even if empty)
-                fields.push(Val::String(current_field.clone()));
+                fields.push(Val::String((current_field.clone()).into()));
                 current_field.clear();
             } else {
                 // Not a delimiter, add to current field
@@ -233,7 +235,7 @@ impl Str {
                 Ok(result.expect_char())
             })
             .collect();
-        Ok(Val::String(chars?))
+        Ok(Val::String((chars?).into()))
     }
 
     /// Computes the Morel expression `StringCvt.padLeft c i s`. Returns
@@ -308,7 +310,9 @@ impl Str {
             ));
         }
 
-        Ok(Val::String(chars[start..end].iter().collect()))
+        Ok(Val::String(
+            chars[start..end].iter().collect::<String>().into(),
+        ))
     }
 
     /// Computes the Morel expression `String.tokens f s`.
@@ -331,7 +335,7 @@ impl Str {
             if is_delimiter.expect_bool() {
                 // This is a delimiter
                 if !current_token.is_empty() {
-                    tokens.push(Val::String(current_token.clone()));
+                    tokens.push(Val::String((current_token.clone()).into()));
                     current_token.clear();
                 }
             } else {
@@ -361,8 +365,8 @@ impl Str {
         let mut result = String::new();
         for c in s.chars() {
             let str_val = func.apply_f1(r, f, &Val::Char(c))?;
-            result.push_str(&str_val.expect_string());
+            result.push_str(str_val.expect_string());
         }
-        Ok(Val::String(result))
+        Ok(Val::String((result).into()))
     }
 }

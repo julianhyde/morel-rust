@@ -205,7 +205,7 @@ pub(crate) fn record(arg: Val) -> Val {
             Val::String(s) => s,
             _ => panic!("Expected string label, got {:?}", label),
         };
-        let label = Label::from(label_str);
+        let label = Label::from(label_str.to_string());
         let (inner_type, inner_val) = expect_variant(&variant_val);
         fields.insert(label.clone(), Rc::new(inner_type.clone()));
         values.push((label, inner_val.clone()));
@@ -239,7 +239,7 @@ pub(crate) fn constant(arg: Val) -> Val {
         Val::String(s) => s,
         _ => panic!("Expected string, got {:?}", arg),
     };
-    match name.as_str() {
+    match &*name {
         "NONE" => none(),
         "LESS" => variant_of(
             Type::Data("order".to_string(), vec![]),
@@ -285,13 +285,13 @@ pub(crate) fn construct(arg: Val) -> Val {
         other => panic!("Expected string name, got {:?}", other),
     };
     let payload = iter.next().unwrap();
-    match name.as_str() {
+    match &*name {
         "SOME" | "INL" | "INR" | "DESC" => {
             let (inner_type, inner_val) = match payload {
                 Val::Variant(boxed) => *boxed,
                 other => panic!("Expected variant payload, got {:?}", other),
             };
-            match name.as_str() {
+            match &*name {
                 "SOME" => variant_of(
                     Type::Data("option".to_string(), vec![Rc::new(inner_type)]),
                     Val::Some(Box::new(inner_val)),
@@ -326,7 +326,7 @@ pub(crate) fn construct(arg: Val) -> Val {
         "CONS" => cons(payload),
         // Unknown constructor: keep the payload wrapped as a variant so
         // its inner type/value print recursively in the fallback display.
-        _ => variant_of(Type::Named(vec![], name.clone()), payload),
+        _ => variant_of(Type::Named(vec![], name.to_string()), payload),
     }
 }
 
@@ -386,7 +386,7 @@ pub(crate) fn print(arg: Val) -> Val {
     };
     let mut buf = String::new();
     append(&mut buf, &inner_type, &inner_val);
-    Val::String(buf)
+    Val::String((buf).into())
 }
 
 /// Recursive helper for [`print()`]. Appends the variant representation
@@ -809,7 +809,7 @@ impl<'a> Parser<'a> {
                 let s = self.parse_string_literal();
                 return variant_of(
                     Type::Primitive(PrimitiveType::String),
-                    Val::String(s),
+                    Val::String((s).into()),
                 );
             }
             Some(b'#') => {
@@ -866,7 +866,7 @@ impl<'a> Parser<'a> {
                 let s = self.parse_string_literal();
                 variant_of(
                     Type::Primitive(PrimitiveType::String),
-                    Val::String(s),
+                    Val::String((s).into()),
                 )
             }
             "LIST" => self.parse_collection(list),
@@ -882,7 +882,7 @@ impl<'a> Parser<'a> {
             "CONSTANT" => {
                 self.skip_ws();
                 let name = self.parse_string_literal();
-                constant(Val::String(name))
+                constant(Val::String((name).into()))
             }
             "CONSTRUCT" => {
                 self.skip_ws();

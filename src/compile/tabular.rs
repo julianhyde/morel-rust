@@ -221,7 +221,7 @@ fn option_string(s: &str, string_depth: i32) -> String {
     if s.is_empty() || s.contains('"') {
         format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
     } else {
-        stringify_scalar(&Val::String(s.to_string()), string_depth)
+        stringify_scalar(&Val::String((s.to_string()).into()), string_depth)
     }
 }
 
@@ -654,7 +654,7 @@ fn stringify_scalar(value: &Val, string_depth: i32) -> String {
                     s.chars().take(string_depth as usize).collect();
                 format!("{}#", prefix)
             } else {
-                s.clone()
+                s.to_string()
             }
         }
         _ => format!("{:?}", value),

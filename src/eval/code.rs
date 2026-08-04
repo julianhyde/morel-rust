@@ -2557,7 +2557,7 @@ impl EagerF0 {
                 } else {
                     "".to_string()
                 };
-                Val::String(s)
+                Val::String((s).into())
             }
             SysShowAll => {
                 // Return a list of (property_name, SOME value | NONE) pairs.
@@ -2695,7 +2695,7 @@ impl EagerF1 {
                     .directory
                     .as_ref()
                     .map(|d| d.as_path().to_path_buf());
-                Ok(datalog_execute(&a0.expect_string(), dir.as_deref()))
+                Ok(datalog_execute(a0.expect_string(), dir.as_deref()))
             }
             DatalogValidate => {
                 let dir = r
@@ -2704,10 +2704,10 @@ impl EagerF1 {
                     .directory
                     .as_ref()
                     .map(|d| d.as_path().to_path_buf());
-                Ok(Val::String(datalog_validate(
-                    &a0.expect_string(),
-                    dir.as_deref(),
-                )))
+                Ok(Val::String(
+                    (datalog_validate(a0.expect_string(), dir.as_deref()))
+                        .into(),
+                ))
             }
             DateDate => {
                 date::make_date(a0.expect_list(), span.unwrap(), r.session)
@@ -2729,13 +2729,13 @@ impl EagerF1 {
             InteractUse => {
                 let path = a0.expect_string();
                 r.emit_effect(Effect::EmitLine(format!("[opening {}]", path)));
-                r.emit_effect(Effect::UseFile(path, false));
+                r.emit_effect(Effect::UseFile(path.to_string(), false));
                 Ok(Val::Unit)
             }
             InteractUseSilently => {
                 let path = a0.expect_string();
                 r.emit_effect(Effect::EmitLine(format!("[opening {}]", path)));
-                r.emit_effect(Effect::UseFile(path, true));
+                r.emit_effect(Effect::UseFile(path.to_string(), true));
                 Ok(Val::Unit)
             }
             ListHd => List::hd(a0.expect_list(), span.unwrap()),
@@ -2758,10 +2758,12 @@ impl EagerF1 {
                 // input round-trips to "()". A parse error raises `Fail`.
                 let source = a0.expect_string();
                 if source.trim().is_empty() {
-                    Ok(Val::String("()".to_string()))
+                    Ok(Val::String(("()".to_string()).into()))
                 } else {
-                    match parse_statement(&source) {
-                        Ok(stmt) => Ok(Val::String(ast_dumper_dump(&stmt))),
+                    match parse_statement(source) {
+                        Ok(stmt) => {
+                            Ok(Val::String((ast_dumper_dump(&stmt)).into()))
+                        }
                         Err(_) => Err(MorelError::Runtime(
                             BuiltInExn::Fail,
                             span.unwrap().clone(),
@@ -2799,19 +2801,23 @@ impl EagerF1 {
                         .map(|d| format!("{}", d))
                         .unwrap_or_default(),
                 };
-                Ok(Val::String(s))
+                Ok(Val::String((s).into()))
             }
             SysShow => {
                 // Return SOME(value) or NONE for the given property.
                 let prop_name = a0.expect_string();
-                let result = if let Some(prop) = Prop::lookup(&prop_name) {
+                let result = if let Some(prop) = Prop::lookup(prop_name) {
                     if prop.is_required() {
                         let val = r.session.config.get(prop);
-                        Val::Some(Box::new(Val::String(val.to_string())))
+                        Val::Some(Box::new(Val::String(
+                            (val.to_string()).into(),
+                        )))
                     } else if let Some(val) =
                         r.session.config.get_optional(prop)
                     {
-                        Val::Some(Box::new(Val::String(val.to_string())))
+                        Val::Some(Box::new(Val::String(
+                            (val.to_string()).into(),
+                        )))
                     } else {
                         Val::Unit // NONE is represented as Unit
                     }
@@ -2822,7 +2828,7 @@ impl EagerF1 {
             }
             SysUnset => {
                 let prop = a0.expect_string();
-                r.emit_effect(Effect::UnsetShellProp(prop));
+                r.emit_effect(Effect::UnsetShellProp(prop.to_string()));
                 Ok(Val::Unit)
             }
             TimeFromReal => time::from_real(a0.expect_real(), span.unwrap()),
@@ -3053,14 +3059,14 @@ impl Eager1 {
             BagLength => Val::Int(List::length(a0.expect_list())),
             BagNull => Val::Bool(List::null(a0.expect_list())),
             BagToList => a0, // Already a Val::List
-            BoolFromString => Bool::from_string(&a0.expect_string()),
+            BoolFromString => Bool::from_string(a0.expect_string()),
             BoolNot => Val::Bool(Bool::not(a0.expect_bool())),
             BoolToString => {
                 Val::String((Bool::to_string(a0.expect_bool())).into())
             }
-            CharFromCString => Char::from_c_string(&a0.expect_string()),
+            CharFromCString => Char::from_c_string(a0.expect_string()),
             CharFromInt => Char::from_int(a0.expect_int()),
-            CharFromString => Char::from_string(&a0.expect_string()),
+            CharFromString => Char::from_string(a0.expect_string()),
             CharIsAlpha => Val::Bool(Char::is_alpha(a0.expect_char())),
             CharIsAlphaNum => Val::Bool(Char::is_alpha_num(a0.expect_char())),
             CharIsAscii => Val::Bool(Char::is_ascii(a0.expect_char())),
@@ -3075,19 +3081,23 @@ impl Eager1 {
             CharIsSpace => Val::Bool(Char::is_space(a0.expect_char())),
             CharIsUpper => Val::Bool(Char::is_upper(a0.expect_char())),
             CharOrd => Val::Int(Char::ord(a0.expect_char())),
-            CharToCString => Val::String(Char::to_c_string(a0.expect_char())),
+            CharToCString => {
+                Val::String((Char::to_c_string(a0.expect_char())).into())
+            }
             CharToLower => Val::Char(Char::to_lower(a0.expect_char())),
-            CharToString => Val::String(Char::to_string(a0.expect_char())),
+            CharToString => {
+                Val::String((Char::to_string(a0.expect_char())).into())
+            }
             CharToUpper => Val::Char(Char::to_upper(a0.expect_char())),
-            DatalogTranslate => match datalog_translate(&a0.expect_string()) {
-                Some(s) => Val::Some(Box::new(Val::String(s))),
+            DatalogTranslate => match datalog_translate(a0.expect_string()) {
+                Some(s) => Val::Some(Box::new(Val::String((s).into()))),
                 None => Val::Unit,
             },
             DateDay => {
                 let (n, o) = a0.expect_date();
                 date::day(n, o)
             }
-            DateFromString => date::from_string(&a0.expect_string()),
+            DateFromString => date::from_string(a0.expect_string()),
             DateFromTimeUniv => date::from_time_univ(a0.expect_time()),
             DateHour => {
                 let (n, o) = a0.expect_date();
@@ -3151,16 +3161,16 @@ impl Eager1 {
                 } else {
                     exn.to_string()
                 };
-                Val::String(message)
+                Val::String((message).into())
             }
             GeneralExnName => {
                 let (exn, _) = exn_from_val(&a0);
-                Val::String(exn.to_string())
+                Val::String((exn.to_string()).into())
             }
             GeneralIgnore => Val::Unit,
             IntFromInt => a0,
             IntFromLarge => a0,
-            IntFromString => match Int::from_string(&a0.expect_string()) {
+            IntFromString => match Int::from_string(a0.expect_string()) {
                 Some(n) => Val::Some(Box::new(Val::Int(n))),
                 None => Val::Unit,
             },
@@ -3221,7 +3231,7 @@ impl Eager1 {
             PpHsep => Val::Doc(Rc::new(lindig::hsep(a0.expect_doc_list()))),
             PpParens => Val::Doc(Rc::new(lindig::parens(a0.expect_doc()))),
             PpSep => Val::Doc(Rc::new(lindig::sep(a0.expect_doc_list()))),
-            PpText => Val::Doc(Rc::new(lindig::text(&a0.expect_string()))),
+            PpText => Val::Doc(Rc::new(lindig::text(a0.expect_string()))),
             PpVcat => Val::Doc(Rc::new(lindig::vcat(a0.expect_doc_list()))),
             PpVsep => Val::Doc(Rc::new(lindig::vsep(a0.expect_doc_list()))),
             RangeAtLeast => BuiltInFunction::RangeAtLeast.constructor_val(a0),
@@ -3333,7 +3343,7 @@ impl Eager1 {
             }
             RealAbs => Val::Real(Real::abs(a0.expect_real())),
             RealFromInt => Val::Real(Real::from_int(a0.expect_int())),
-            RealFromString => Real::from_string(&a0.expect_string()),
+            RealFromString => Real::from_string(a0.expect_string()),
             RealIsFinite => Val::Bool(Real::is_finite(a0.expect_real())),
             RealIsNan => Val::Bool(Real::is_nan(a0.expect_real())),
             RealIsNormal => Val::Bool(Real::is_normal(a0.expect_real())),
@@ -3346,7 +3356,9 @@ impl Eager1 {
             RealSignBit => Val::Bool(Real::sign_bit(a0.expect_real())),
             RealSplit => Real::split(a0.expect_real()),
             RealToManExp => Real::to_man_exp(a0.expect_real()),
-            RealToString => Val::String(Real::to_string(a0.expect_real())),
+            RealToString => {
+                Val::String((Real::to_string(a0.expect_real())).into())
+            }
             RelationalCount => Val::Int(a0.expect_list().len() as i32),
             RelationalEmpty => Val::Bool(a0.expect_list().is_empty()),
             RelationalNonEmpty => Val::Bool(!a0.expect_list().is_empty()),
@@ -3362,7 +3374,7 @@ impl Eager1 {
             }
             StringConcat => {
                 let strings = a0.expect_list();
-                Val::String(Str::concat(strings))
+                Val::String((Str::concat(strings)).into())
             }
             StringCvtRealfmtFix => {
                 BuiltInFunction::StringCvtRealfmtFix.constructor_val(a0)
@@ -3375,7 +3387,7 @@ impl Eager1 {
             }
             StringExplode => {
                 let s = a0.expect_string();
-                Val::List(Rc::new(Str::explode(&s)))
+                Val::List(Rc::new(Str::explode(s)))
             }
             StringImplode => {
                 let chars = a0.expect_list();
@@ -3402,7 +3414,7 @@ impl Eager1 {
             TimeFromMilliseconds => time::from_milliseconds(a0.expect_int()),
             TimeFromNanoseconds => time::from_nanoseconds(a0.expect_int()),
             TimeFromSeconds => time::from_seconds(a0.expect_int()),
-            TimeFromString => time::from_string(&a0.expect_string()),
+            TimeFromString => time::from_string(a0.expect_string()),
             TimeToMicroseconds => time::to_microseconds(a0.expect_time()),
             TimeToMilliseconds => time::to_milliseconds(a0.expect_time()),
             TimeToNanoseconds => time::to_nanoseconds(a0.expect_time()),
@@ -3451,7 +3463,7 @@ impl Eager1 {
             // `Word.fromInt`/`fromLargeInt`: sign-extend the 32-bit int to
             // the 64-bit word.
             WordFromInt => Val::Word(a0.expect_int() as i64 as u64),
-            WordFromString => match word::from_string(&a0.expect_string()) {
+            WordFromString => match word::from_string(a0.expect_string()) {
                 Some(w) => Val::Some(Box::new(Val::Word(w))),
                 None => Val::Unit,
             },
@@ -3463,7 +3475,9 @@ impl Eager1 {
             // `Word.toInt`/`toIntX`/`toLargeInt`/`toLargeIntX`: truncate to
             // the low 32 bits, as morel-java's `(int)(long) w`.
             WordToInt => Val::Int(a0.expect_word() as i32),
-            WordToString => Val::String(word::to_string(a0.expect_word())),
+            WordToString => {
+                Val::String((word::to_string(a0.expect_word())).into())
+            }
         }
     }
 
@@ -3624,7 +3638,7 @@ impl Eager2 {
                 Val::Order(Char::compare(a0.expect_char(), a1.expect_char()))
             }
             CharContains => {
-                Val::Bool(Char::contains(&a0.expect_string(), a1.expect_char()))
+                Val::Bool(Char::contains(a0.expect_string(), a1.expect_char()))
             }
             CharEq => Val::Bool(a0.expect_char() == a1.expect_char()),
             CharGe => Val::Bool(a0.expect_char() >= a1.expect_char()),
@@ -3633,7 +3647,7 @@ impl Eager2 {
             CharLt => Val::Bool(a0.expect_char() < a1.expect_char()),
             CharNe => Val::Bool(a0.expect_char() != a1.expect_char()),
             CharNotContains => Val::Bool(Char::not_contains(
-                &a0.expect_string(),
+                a0.expect_string(),
                 a1.expect_char(),
             )),
             DateCompare => {
@@ -3643,7 +3657,7 @@ impl Eager2 {
             }
             DateFmt => {
                 let (n, o) = a1.expect_date();
-                date::fmt(&a0.expect_string(), n, o)
+                date::fmt(a0.expect_string(), n, o)
             }
             FnConst => a0,
             FnEqual => Val::Bool(a0 == a1),
@@ -3655,7 +3669,7 @@ impl Eager2 {
             }
             IntDiv => Val::Int(Int::div(a0.expect_int(), a1.expect_int())),
             IntEq => Val::Bool(a0.expect_int() == a1.expect_int()),
-            IntFmt => Val::String(Int::fmt(&a0, a1.expect_int())),
+            IntFmt => Val::String((Int::fmt(&a0, a1.expect_int())).into()),
             IntGe => Val::Bool(a0.expect_int() >= a1.expect_int()),
             IntGt => Val::Bool(a0.expect_int() > a1.expect_int()),
             IntLe => Val::Bool(a0.expect_int() <= a1.expect_int()),
@@ -3728,9 +3742,9 @@ impl Eager2 {
                     .collect::<Vec<_>>()
                     .into(),
             ),
-            PpRender => {
-                Val::String(lindig::render(a0.expect_int(), a1.expect_doc()))
-            }
+            PpRender => Val::String(
+                (lindig::render(a0.expect_int(), a1.expect_doc())).into(),
+            ),
             RangeContains => {
                 Val::Bool(range_contains(&NaturalComparator, &a0, &a1))
             }
@@ -3739,7 +3753,7 @@ impl Eager2 {
             }
             RealDivide => Val::Real(a0.expect_real() / a1.expect_real()),
             RealEq => Val::Bool(a0.expect_real() == a1.expect_real()),
-            RealFmt => Val::String(Real::fmt(&a0, a1.expect_real())),
+            RealFmt => Val::String((Real::fmt(&a0, a1.expect_real())).into()),
             RealFromManExp => {
                 // Type: {exp:int, man:real} -> real
                 // Record fields are passed in order: a0 = exp, a1 = man
@@ -3763,29 +3777,28 @@ impl Eager2 {
                 Val::Bool(Real::unordered(a0.expect_real(), a1.expect_real()))
             }
             RelationalCompare => Relational::compare(&a0, &a1),
-            StringCaret => Val::String(format!(
+            StringCaret => Val::String(Rc::from(format!(
                 "{}{}",
                 a0.expect_string(),
                 a1.expect_string()
-            )),
-            StringCompare => Val::Order(Str::compare(
-                &a0.expect_string(),
-                &a1.expect_string(),
-            )),
+            ))),
+            StringCompare => {
+                Val::Order(Str::compare(a0.expect_string(), a1.expect_string()))
+            }
             StringEq => Val::Bool(a0.expect_string() == a1.expect_string()),
             StringGe => Val::Bool(a0.expect_string() >= a1.expect_string()),
             StringGt => Val::Bool(a0.expect_string() > a1.expect_string()),
             StringIsPrefix => Val::Bool(Str::is_prefix(
-                &a0.expect_string(),
-                &a1.expect_string(),
+                a0.expect_string(),
+                a1.expect_string(),
             )),
             StringIsSubstring => Val::Bool(Str::is_substring(
-                &a0.expect_string(),
-                &a1.expect_string(),
+                a0.expect_string(),
+                a1.expect_string(),
             )),
             StringIsSuffix => Val::Bool(Str::is_suffix(
-                &a0.expect_string(),
-                &a1.expect_string(),
+                a0.expect_string(),
+                a1.expect_string(),
             )),
             StringLe => Val::Bool(a0.expect_string() <= a1.expect_string()),
             StringLt => Val::Bool(a0.expect_string() < a1.expect_string()),
@@ -3813,7 +3826,7 @@ impl Eager2 {
                 Val::Order(Order(a0.expect_word().cmp(&a1.expect_word())))
             }
             WordDiv => Val::Word(a0.expect_word() / a1.expect_word()),
-            WordFmt => Val::String(word::fmt(&a0, a1.expect_word())),
+            WordFmt => Val::String((word::fmt(&a0, a1.expect_word())).into()),
             WordMax => Val::Word(a0.expect_word().max(a1.expect_word())),
             WordMin => Val::Word(a0.expect_word().min(a1.expect_word())),
             WordMod => Val::Word(a0.expect_word() % a1.expect_word()),
@@ -4195,36 +4208,36 @@ impl EagerF2 {
                 }
                 let s1 = tuple[0].expect_string();
                 let s2 = tuple[1].expect_string();
-                Ok(Val::Order(Str::collate(r, f, &a0, &s1, &s2)?))
+                Ok(Val::Order(Str::collate(r, f, &a0, s1, s2)?))
             }
             StringConcatWith => {
                 let sep = a0.expect_string();
                 let strings = a1.expect_list();
-                Ok(Val::String(Str::concat_with(&sep, strings)))
+                Ok(Val::String((Str::concat_with(sep, strings)).into()))
             }
             StringFields => {
                 let s = a1.expect_string();
-                Str::fields(r, f, &a0, &s)
+                Str::fields(r, f, &a0, s)
             }
             StringMap => {
                 let s = a1.expect_string();
-                Str::map(r, f, &a0, &s)
+                Str::map(r, f, &a0, s)
             }
             StringSub => {
-                Str::sub(&a0.expect_string(), a1.expect_int(), span.unwrap())
+                Str::sub(a0.expect_string(), a1.expect_int(), span.unwrap())
             }
             StringTokens => {
                 let s = a1.expect_string();
-                Str::tokens(r, f, &a0, &s)
+                Str::tokens(r, f, &a0, s)
             }
             StringTranslate => {
                 let s = a1.expect_string();
-                Str::translate(r, f, &a0, &s)
+                Str::translate(r, f, &a0, s)
             }
             SysSet => {
                 let prop = a0.expect_string();
                 let val = a1;
-                r.emit_effect(Effect::SetShellProp(prop, val));
+                r.emit_effect(Effect::SetShellProp(prop.to_string(), val));
                 Ok(Val::Unit)
             }
             TimeFmt => {
@@ -4410,10 +4423,10 @@ impl EagerF3 {
                     Val::Some(v) => Some(v.expect_int()),
                     _ => panic!("Expected int option"),
                 };
-                Str::extract(&s, i, j, span.unwrap())
+                Str::extract(s, i, j, span.unwrap())
             }
             StringSubstring => Str::substring(
-                &a0.expect_string(),
+                a0.expect_string(),
                 a1.expect_int(),
                 a2.expect_int(),
                 span.unwrap(),
@@ -4489,16 +4502,22 @@ impl Eager3 {
 
         match self {
             // lint: sort until '#}' where '##[A-Z]'
-            StringCvtPadLeft => Val::String(Str::pad_left(
-                a0.expect_char(),
-                a1.expect_int(),
-                a2.expect_string(),
-            )),
-            StringCvtPadRight => Val::String(Str::pad_right(
-                a0.expect_char(),
-                a1.expect_int(),
-                a2.expect_string(),
-            )),
+            StringCvtPadLeft => Val::String(
+                (Str::pad_left(
+                    a0.expect_char(),
+                    a1.expect_int(),
+                    a2.expect_string().to_string(),
+                ))
+                .into(),
+            ),
+            StringCvtPadRight => Val::String(
+                (Str::pad_right(
+                    a0.expect_char(),
+                    a1.expect_int(),
+                    a2.expect_string().to_string(),
+                ))
+                .into(),
+            ),
         }
     }
 
@@ -5386,7 +5405,7 @@ fn exn_from_val(value: &Val) -> (BuiltInExn, Option<String>) {
             .unwrap_or_else(|_| panic!("unknown exn constructor: {}", name));
         let payload = if exn == BuiltInExn::Fail {
             match inner.as_ref() {
-                Val::String(s) => Some(s.clone()),
+                Val::String(s) => Some(s.to_string()),
                 _ => None,
             }
         } else {
