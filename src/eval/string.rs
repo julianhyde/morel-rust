@@ -23,6 +23,7 @@ use crate::eval::order::Order;
 use crate::eval::val::Val;
 use crate::shell::kernel::MorelError;
 use std::cmp::Ordering;
+use std::rc::Rc;
 
 /// Support for the `string` built-in type and the `String` structure.
 pub struct Str;
@@ -52,7 +53,7 @@ impl Str {
             let result = match func_val {
                 Val::Code(fn_code) => {
                     // User-defined function: apply to tuple
-                    let tuple = Val::List(vec![c1, c2]);
+                    let tuple = Val::List(Rc::new(vec![c1, c2]));
                     fn_code.eval_f1(r, f, &tuple)?
                 }
                 Val::Fn(builtin_fn) => {
@@ -182,9 +183,9 @@ impl Str {
         }
 
         // Always add the last field (even if empty)
-        fields.push(Val::String(current_field));
+        fields.push(Val::String((current_field).into()));
 
-        Ok(Val::List(fields))
+        Ok(Val::List(Rc::new(fields)))
     }
 
     /// Computes the Morel expression `String.implode l`.
@@ -341,10 +342,10 @@ impl Str {
 
         // Don't forget the last token if it's non-empty
         if !current_token.is_empty() {
-            tokens.push(Val::String(current_token));
+            tokens.push(Val::String((current_token).into()));
         }
 
-        Ok(Val::List(tokens))
+        Ok(Val::List(Rc::new(tokens)))
     }
 
     /// Computes the Morel expression `String.translate f s`.

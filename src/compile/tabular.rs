@@ -249,7 +249,7 @@ fn field_name_types(type_: &Type) -> Vec<(String, Rc<Type>)> {
 /// single field.
 fn fields_of(value: &Val) -> Vec<Val> {
     match value {
-        Val::List(fields) => fields.clone(),
+        Val::List(fields) => fields.as_ref().clone(),
         other => vec![other.clone()],
     }
 }

@@ -113,7 +113,7 @@ pub enum Val {
     /// `Date.year` use the local broken-down time (`utc_nanos +
     /// offset_secs * 1e9`).
     Date(i64, i32),
-    List(Vec<Val>),
+    List(Rc<Vec<Val>>),
     /// Built-in function.
     Fn(BuiltInFunction),
 
@@ -485,7 +485,7 @@ impl Display for Val {
             Val::List(l) => {
                 let mut first = true;
                 write!(f, "[")?;
-                for v in l {
+                for v in l.iter() {
                     if first {
                         first = false;
                     } else {
