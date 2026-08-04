@@ -281,11 +281,17 @@ impl Str {
         index: i32,
         span: &Span,
     ) -> Result<Val, MorelError> {
-        let chars: Vec<char> = s.chars().collect();
-        if index < 0 || index as usize >= chars.len() {
-            Err(MorelError::Runtime(BuiltInExn::Subscript, span.clone()))
-        } else {
-            Ok(Val::Char(chars[index as usize]))
+        if index < 0 {
+            return Err(MorelError::Runtime(
+                BuiltInExn::Subscript,
+                span.clone(),
+            ));
+        }
+        match s.chars().nth(index as usize) {
+            Some(c) => Ok(Val::Char(c)),
+            None => {
+                Err(MorelError::Runtime(BuiltInExn::Subscript, span.clone()))
+            }
         }
     }
 
@@ -299,20 +305,43 @@ impl Str {
         j: i32,
         span: &Span,
     ) -> Result<Val, MorelError> {
-        let chars: Vec<char> = s.chars().collect();
-        let start = i as usize;
-        let end = (i + j) as usize;
-
-        if i < 0 || j < 0 || end > chars.len() {
+        if i < 0 || j < 0 {
             return Err(MorelError::Runtime(
                 BuiltInExn::Subscript,
                 span.clone(),
             ));
         }
-
-        Ok(Val::String(
-            chars[start..end].iter().collect::<String>().into(),
-        ))
+        // Walk once to the start, then to the end, slicing rather than
+        // materializing the characters.
+        let mut iter = s.char_indices().skip(i as usize);
+        let start = match iter.next() {
+            Some((b, _)) => b,
+            None if i as usize == s.chars().count() => s.len(),
+            None => {
+                return Err(MorelError::Runtime(
+                    BuiltInExn::Subscript,
+                    span.clone(),
+                ));
+            }
+        };
+        let mut end = start;
+        let mut taken = 0;
+        if j > 0 {
+            for (b, c) in s[start..].char_indices() {
+                if taken == j as usize {
+                    break;
+                }
+                end = start + b + c.len_utf8();
+                taken += 1;
+            }
+        }
+        if taken < j as usize {
+            return Err(MorelError::Runtime(
+                BuiltInExn::Subscript,
+                span.clone(),
+            ));
+        }
+        Ok(Val::String(s[start..end].into()))
     }
 
     /// Computes the Morel expression `String.tokens f s`.
