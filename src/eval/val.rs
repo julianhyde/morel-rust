@@ -215,7 +215,7 @@ pub enum Val {
 #[derive(Clone, Debug)]
 pub struct ClosureData {
     pub frame_def: Arc<FrameDef>,
-    pub matches: Vec<(Code, Code)>,
+    pub matches: Arc<[(Code, Code)]>,
     pub bound_vals: Vec<Val>,
     pub no_match: Option<MorelError>,
 }

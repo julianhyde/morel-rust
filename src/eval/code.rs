@@ -247,7 +247,7 @@ pub enum Code {
     /// application of this closure has no matching clause.
     CreateClosure(
         Arc<FrameDef>,
-        Vec<(Code, Code)>,
+        Arc<[(Code, Code)]>,
         Vec<Code>,
         Option<MorelError>,
     ),
@@ -264,7 +264,7 @@ pub enum Code {
     /// pairs until it can bind the argument to a pattern and finally
     /// evaluates the expression. `no_match` is the error to return when
     /// no pattern matches.
-    Fn(Arc<FrameDef>, Vec<(Code, Code)>, Option<MorelError>),
+    Fn(Arc<FrameDef>, Arc<[(Code, Code)]>, Option<MorelError>),
 
     /// `FromRowSink(factory)` evaluates a query using push-based row sinks.
     /// The factory creates a fresh row sink pipeline for each evaluation.
@@ -540,7 +540,7 @@ impl Code {
         }
         Code::CreateClosure(
             frame_def.clone(),
-            pat_expr_codes.to_vec(),
+            pat_expr_codes.into(),
             bind_codes.to_vec(),
             span.map(|s| MorelError::Runtime(BuiltInExn::Match, s)),
         )
@@ -563,7 +563,7 @@ impl Code {
         }
         Code::Fn(
             frame_def.clone(),
-            pat_expr_codes.to_vec(),
+            pat_expr_codes.into(),
             span.map(|s| MorelError::Runtime(BuiltInExn::Match, s)),
         )
     }
@@ -1825,7 +1825,7 @@ impl Display for Code {
             Self::Fn(_, matches, _) => {
                 write!(f, "fn(")?;
                 let mut first = true;
-                for (pat, expr) in matches {
+                for (pat, expr) in matches.iter() {
                     if first {
                         first = false;
                     } else {
