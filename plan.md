@@ -118,6 +118,78 @@ Need investigation — may be separate bugs, not plan-format:
 - Cases where rust's optimizer compiles a query to a structurally
   different `Code` tree than morel-java (operator inlining differences).
 
+## Outcome (step 1 landed)
+
+Full byte-match (option B) proved reachable only for plans **without**
+variable references. The `stack(offset K, name X)` numbering is a
+contextual de-Bruijn depth into morel-java's evaluation stack, driven by
+java's lowering (`if`→`tailApply(match)`, closures); rust's slot-based
+frames don't mirror it, so lambda/`if`/closure plans can't byte-match
+without porting java's stack model into the describer. So step 1 is a
+**hybrid**:
+
+- Describer now matches java for variable-free plans: labels from strum
+  props (fix C), empty node → bare (`tuple`), threaded error span
+  dropped, native arity (`apply`/`apply2`/`apply3` + `argCode`),
+  integers rendered `-1` not `~1`.
+- `built-in/list.smli`, `built-in/string.smli`: adopted java's file
+  verbatim; the variable-containing `Sys.plan` calls (offset-blocked,
+  plus `globalMarshal`/`apply1`/`tyCon`) are bracketed with
+  `set("mode","validate")`. Now byte-identical to java except the gate
+  markers (list 148→48, string 24→16 divergent lines).
+- `built-in/{option,bag,sys,vector,real}.smli`: these carry pre-existing
+  content divergences unrelated to `Sys.plan` (float formatting,
+  `Vector.maxLen`, the `Sys` structure's members, exception spans,
+  unsupported props like `inlinePassCount`), so wholesale java-adoption
+  is blocked. Their plan lines were re-blessed to the improved
+  describer output — a strict convergence gain (or flat), no regression.
+
+Net across the 7 scripts: 816 → 684 divergent lines vs java (−132).
+
+### Remaining
+- Offset-blocked lambda/closure plans stay gated (documented divergence).
+- The 5 content-divergent scripts need separate work (or a scope call):
+  their `Sys.plan` lines could be surgically converged to java text, but
+  full file parity is blocked by non-plan content differences that are
+  out of #48's scope.
+
+## Decision: full describer rewrite (option B)
+
+The `.smli` files must be **byte-identical to morel-java's**. rust's plan
+output therefore has to match java's `describe` format exactly, not just
+labels. This means reworking `Display for Code` (and `row_sink::fmt_plan`)
+to emit java's node vocabulary. Proving ground: `built-in/list.smli`
+(full java reference captured).
+
+### Transformation map (rust `Display for Code` → morel-java `DescriberImpl`)
+
+| rust now | morel-java | kind |
+|---|---|---|
+| `tuple()` (empty) | `tuple` (bare, no parens) | describe core rule: a node with no args prints bare |
+| `…, constant(<span>)` | (absent) | drop the threaded error span (fix B) |
+| `List.at`, `List.elem` | `List.@`, `elem` | label (fix C — done) |
+| `apply2(fnValue f, tuple(), constant(span))` | `apply(fnValue f, argCode tuple)` | arity: 1-arg native prints `apply(… argCode …)` |
+| `get(N)` | `stack(offset K, name X)` | variable access — needs the binder name + java offset |
+| `fn(bind(0) => B)` | `match(x, B)` | lambda: `fn`→`match`, `bind`→var name |
+| `fn(bindTuple(bind(0),bind(1)) => B)` | `match(v, tailApply(fnCode match((x,y), B), argCode stack…))` | tuple-pattern lambda |
+| `case(c, true, t, _, e)` | `tailApply(fnCode match(true, t, _, e), argCode c)` | `if`/`case` lowering |
+| `apply(fnValue Option.SOME, …)` | `tailApply(fnValue tyCon, …)` | constructor application → `tyCon` |
+| `createClosure(…)/recValBindings(slot 0: …) in get(0)` | `let(matchCode0 match(…), resultCode stack…)` | closure / rec-let |
+| `fn(… a - b …)` for `op -` | `constant(Int.-)` | java constant-folds an operator section |
+
+The first four are describe-time renames (feasible). `get→stack`,
+`fn→match`, `case→tailApply(match)`, constructor→`tyCon`, and the
+closure/let shape are describe-time *translations* of rust's own nodes
+into java's shape (feasible if the node carries names/offsets). The
+operator constant-folding (`op -` → `constant(Int.-)`) is a Core-level
+difference and may need recognizing an eta-expanded operator, or a
+lowering change — treat as the last/hardest item.
+
+Separately, the `.smli` files also carry ordinary **propagation drift**
+(java uses `List.foldl (op -)` where rust has a lambda, extra `foldl`
+lines, `except`/`intersect`/`only` placement) — closed by normal
+propagation to the latest java revision, not by this describer work.
+
 ## Decisions
 
 - **Labels come from strum props.** `EagerFn::plan()` reads each

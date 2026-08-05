@@ -337,8 +337,7 @@ Real.sign nan;
 > uncaught exception Domain [domain error]
 >   raised at: stdIn:1.1-1.14
 Sys.plan ();
-> val it = "apply2(fnValue Real.sign, constant(NaN), constant(stdIn:1.1-1.14))"
->   : string
+> val it = "apply(fnValue Real.sign, argCode constant(NaN))" : string
 
 (* "signBit r" returns true if and only if the sign of r (infinities, zeros,
    and NaN, included) is negative. SML/NJ, MLton, Morel Java treat NaN as
@@ -428,8 +427,7 @@ Real.compare (nan, nan);
 > uncaught exception Unordered
 >   raised at: stdIn:1.1-1.24
 Sys.plan ();
-> val it =
->   "apply(fnValue Real.compare, argCode tuple(constant(NaN), constant(NaN), constant(stdIn:1.1-1.24)))"
+> val it = "apply2(fnValue Real.compare, constant(NaN), constant(NaN))"
 >   : string
 
 (* "val compareReal : real * real -> IEEEReal.real_order" behaves similarly to
@@ -948,7 +946,7 @@ Real.fromInt 1;
 Real.fromInt ~2;
 > val it = ~2 : real
 Sys.plan ();
-> val it = "apply(fnValue Real.fromInt, argCode constant(~2))" : string
+> val it = "apply(fnValue Real.fromInt, argCode constant(-2))" : string
 
 (*) real is a synonym for Real.fromInt
 real;
@@ -956,7 +954,7 @@ real;
 real ~2;
 > val it = ~2 : real
 Sys.plan ();
-> val it = "apply(fnValue Real.fromInt, argCode constant(~2))" : string
+> val it = "apply(fnValue Real.fromInt, argCode constant(-2))" : string
 
 (*  "fromString s" scans a `real` value from a string. Returns `SOME(r)` if a
     `real` value can be scanned from a prefix of `s`, ignoring any initial

@@ -60,7 +60,7 @@ Bag.null (bag [1]);
 > val it = false : bool
 Sys.plan ();
 > val it =
->   "apply(fnValue Bag.null, argCode apply(fnValue Bag, argCode tuple(constant(1))))"
+>   "apply(fnValue Bag.null, argCode apply(fnValue bag, argCode tuple(constant(1))))"
 >   : string
 
 (*) val length : 'a bag -> int
@@ -72,7 +72,7 @@ Bag.length (bag [1,2]);
 > val it = 2 : int
 Sys.plan ();
 > val it =
->   "apply(fnValue Bag.length, argCode apply(fnValue Bag, argCode tuple(constant(1), constant(2))))"
+>   "apply(fnValue Bag.length, argCode apply(fnValue bag, argCode tuple(constant(1), constant(2))))"
 >   : string
 
 (*) val fromList : 'a list -> 'a bag
@@ -102,7 +102,7 @@ Bag.`@` (bag [], bag []);
 > val it = [] : 'a bag
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.at, apply(fnValue Bag, argCode tuple()), apply(fnValue Bag, argCode tuple()))"
+>   "apply2(fnValue Bag.@, apply(fnValue bag, argCode tuple), apply(fnValue bag, argCode tuple))"
 >   : string
 
 (*) val hd : 'a bag -> 'a
@@ -114,8 +114,7 @@ Bag.hd (bag []);
 > uncaught exception Empty
 >   raised at: stdIn:1.1-1.16
 Sys.plan ();
-> val it =
->   "apply2(fnValue Bag.hd, apply(fnValue Bag, argCode tuple()), constant(stdIn:1.1-1.16))"
+> val it = "apply(fnValue Bag.hd, argCode apply(fnValue bag, argCode tuple))"
 >   : string
 
 (*) val tl : 'a bag -> 'a bag
@@ -127,8 +126,7 @@ Bag.tl (bag []);
 > uncaught exception Empty
 >   raised at: stdIn:1.1-1.16
 Sys.plan ();
-> val it =
->   "apply2(fnValue Bag.tl, apply(fnValue Bag, argCode tuple()), constant(stdIn:1.1-1.16))"
+> val it = "apply(fnValue Bag.tl, argCode apply(fnValue bag, argCode tuple))"
 >   : string
 
 (*) val only : 'a bag -> 'a
@@ -172,7 +170,7 @@ Bag.getItem (bag [1]);
 > val it = SOME (1,[]) : (int * int bag) option
 Sys.plan ();
 > val it =
->   "apply(fnValue Bag.getItem, argCode apply(fnValue Bag, argCode tuple(constant(1))))"
+>   "apply(fnValue Bag.getItem, argCode apply(fnValue bag, argCode tuple(constant(1))))"
 >   : string
 
 (*) val take : 'a bag * int -> 'a bag
@@ -192,7 +190,7 @@ Bag.`take` (bag [1,2,3], ~1);
 >   raised at: stdIn:1.1-1.29
 Sys.plan ();
 > val it =
->   "apply(fnValue Bag.take, argCode tuple(apply(fnValue Bag, argCode tuple(constant(1), constant(2), constant(3))), constant(~1), constant(stdIn:1.1-1.29)))"
+>   "apply2(fnValue Bag.take, apply(fnValue bag, argCode tuple(constant(1), constant(2), constant(3))), constant(-1))"
 >   : string
 
 (*) val drop : 'a bag * int -> 'a bag
@@ -208,7 +206,7 @@ Bag.drop (bag [1,2,3], 3);
 > val it = [] : int bag
 Sys.plan ();
 > val it =
->   "apply(fnValue Bag.drop, argCode tuple(apply(fnValue Bag, argCode tuple(constant(1), constant(2), constant(3))), constant(3), constant(stdIn:1.1-1.26)))"
+>   "apply2(fnValue Bag.drop, apply(fnValue bag, argCode tuple(constant(1), constant(2), constant(3))), constant(3))"
 >   : string
 
 (*) val concat : 'a bag list -> 'a bag
@@ -225,7 +223,7 @@ Bag.concat [bag [], bag [], bag []];
 Bag.concat [];
 > val it = [] : 'a bag
 Sys.plan ();
-> val it = "apply(fnValue Bag.concat, argCode tuple())" : string
+> val it = "apply(fnValue Bag.concat, argCode tuple)" : string
 
 (*) val app : ('a -> unit) -> 'a bag -> unit
 Bag.app;
@@ -236,7 +234,7 @@ Bag.app (fn x => ignore (x + 2)) (bag []);
 > val it = () : unit
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.app, fn(bind(0) => apply(fnValue General.ignore, argCode apply2(fnValue Int.+, get(0), constant(2)))), apply(fnValue Bag, argCode tuple()))"
+>   "apply2(fnValue Bag.app, fn(bind(0) => apply(fnValue General.ignore, argCode apply2(fnValue Int.+, get(0), constant(2)))), apply(fnValue bag, argCode tuple))"
 >   : string
 
 (*) val map : ('a -> 'b) -> 'a bag -> 'b bag
@@ -248,7 +246,7 @@ Bag.map (fn x => x + 1) (bag []);
 > val it = [] : int bag
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.map, fn(bind(0) => apply2(fnValue Int.+, get(0), constant(1))), apply(fnValue Bag, argCode tuple()))"
+>   "apply2(fnValue Bag.map, fn(bind(0) => apply2(fnValue Int.+, get(0), constant(1))), apply(fnValue bag, argCode tuple))"
 >   : string
 
 (*) val mapPartial : ('a -> 'b option) -> 'a bag -> 'b bag
@@ -260,7 +258,7 @@ Bag.mapPartial (fn x => if x mod 2 = 0 then NONE else SOME (x + 1)) (bag []);
 > val it = [] : int bag
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.mapPartial, fn(bind(0) => case(apply2(fnValue =, apply2(fnValue Int.mod, get(0), constant(2)), constant(0)), true, constant([NONE]), _, apply(fnValue Option.some, argCode apply2(fnValue Int.+, get(0), constant(1))))), apply(fnValue Bag, argCode tuple()))"
+>   "apply2(fnValue Bag.mapPartial, fn(bind(0) => case(apply2(fnValue =, apply2(fnValue Int.mod, get(0), constant(2)), constant(0)), true, constant([NONE]), _, apply(fnValue Option.SOME, argCode apply2(fnValue Int.+, get(0), constant(1))))), apply(fnValue bag, argCode tuple))"
 >   : string
 
 (*) val find : ('a -> bool) -> 'a bag -> 'a option
@@ -272,7 +270,7 @@ Bag.find (fn x => x mod 11 = 0) (bag [2,3,5,8,13,21,34]);
 > val it = NONE : int option
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.find, fn(bind(0) => apply2(fnValue =, apply2(fnValue Int.mod, get(0), constant(11)), constant(0))), apply(fnValue Bag, argCode tuple(constant(2), constant(3), constant(5), constant(8), constant(13), constant(21), constant(34))))"
+>   "apply2(fnValue Bag.find, fn(bind(0) => apply2(fnValue =, apply2(fnValue Int.mod, get(0), constant(11)), constant(0))), apply(fnValue bag, argCode tuple(constant(2), constant(3), constant(5), constant(8), constant(13), constant(21), constant(34))))"
 >   : string
 
 (*) val filter : ('a -> bool) -> 'a bag -> 'a bag
@@ -286,7 +284,7 @@ Bag.filter (fn x => x mod 2 = 0) (bag []);
 > val it = [] : int bag
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.filter, fn(bind(0) => apply2(fnValue =, apply2(fnValue Int.mod, get(0), constant(2)), constant(0))), apply(fnValue Bag, argCode tuple()))"
+>   "apply2(fnValue Bag.filter, fn(bind(0) => apply2(fnValue =, apply2(fnValue Int.mod, get(0), constant(2)), constant(0))), apply(fnValue bag, argCode tuple))"
 >   : string
 
 (*) val partition : ('a -> bool) -> 'a bag -> 'a bag * 'a bag
@@ -300,7 +298,7 @@ Bag.partition (fn x => x mod 2 = 0) (bag []);
 > val it = ([],[]) : int bag * int bag
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.partition, fn(bind(0) => apply2(fnValue =, apply2(fnValue Int.mod, get(0), constant(2)), constant(0))), apply(fnValue Bag, argCode tuple()))"
+>   "apply2(fnValue Bag.partition, fn(bind(0) => apply2(fnValue =, apply2(fnValue Int.mod, get(0), constant(2)), constant(0))), apply(fnValue bag, argCode tuple))"
 >   : string
 
 (*) val fold : ('a * 'b -> 'b) -> 'b -> 'a bag -> 'b
@@ -316,7 +314,7 @@ Bag.fold (fn (a, b) => a - b) 0 (bag [1,2,3,4]);
 > val it = 2 : int
 Sys.plan ();
 > val it =
->   "apply(fnValue Bag.fold, argCode tuple(fn(bindTuple(bind(0), bind(1)) => apply2(fnValue Int.-, get(0), get(1))), constant(0), apply(fnValue Bag, argCode tuple(constant(1), constant(2), constant(3), constant(4)))))"
+>   "apply3(fnValue Bag.fold, fn(bindTuple(bind(0), bind(1)) => apply2(fnValue Int.-, get(0), get(1))), constant(0), apply(fnValue bag, argCode tuple(constant(1), constant(2), constant(3), constant(4))))"
 >   : string
 
 (*) val exists : ('a -> bool) -> 'a bag -> bool
@@ -332,7 +330,7 @@ Bag.`exists` (fn x => x mod 2 = 0) (bag []);
 > val it = false : bool
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.exists, fn(bind(0) => apply2(fnValue =, apply2(fnValue Int.mod, get(0), constant(2)), constant(0))), apply(fnValue Bag, argCode tuple()))"
+>   "apply2(fnValue Bag.exists, fn(bind(0) => apply2(fnValue =, apply2(fnValue Int.mod, get(0), constant(2)), constant(0))), apply(fnValue bag, argCode tuple))"
 >   : string
 
 (*) val all : ('a -> bool) -> 'a bag -> bool
@@ -348,7 +346,7 @@ Bag.all (fn x => x mod 2 = 0) (bag []);
 > val it = true : bool
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.all, fn(bind(0) => apply2(fnValue =, apply2(fnValue Int.mod, get(0), constant(2)), constant(0))), apply(fnValue Bag, argCode tuple()))"
+>   "apply2(fnValue Bag.all, fn(bind(0) => apply2(fnValue =, apply2(fnValue Int.mod, get(0), constant(2)), constant(0))), apply(fnValue bag, argCode tuple))"
 >   : string
 
 (*) val tabulate : int * (int -> 'a) -> 'a bag
@@ -365,7 +363,7 @@ Bag.tabulate (~1, let fun fact n = if n = 0 then 1 else n * fact (n - 1) in fact
 >   raised at: stdIn:1.1-1.86
 Sys.plan ();
 > val it =
->   "apply(fnValue Bag.tabulate, argCode tuple(constant(~1), let(recValBindings(slot 0: createClosure(captures(self), body(case(apply2(fnValue =, get(1), constant(0)), true, constant(1), _, apply2(fnValue Int.*, get(1), applyClosure(fn get(0) arg apply2(fnValue Int.-, get(1), constant(1)))))))) in get(0)), constant(stdIn:1.1-1.86)))"
+>   "apply2(fnValue Bag.tabulate, constant(-1), let(recValBindings(slot 0: createClosure(captures(self), body(case(apply2(fnValue =, get(1), constant(0)), true, constant(1), _, apply2(fnValue Int.*, get(1), applyClosure(fn get(0) arg apply2(fnValue Int.-, get(1), constant(1)))))))) in get(0)))"
 >   : string
 
 (*) End bag.smli
