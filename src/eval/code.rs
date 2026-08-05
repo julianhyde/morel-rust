@@ -2968,6 +2968,8 @@ pub enum Eager1 {
     RelationalEmpty,
     RelationalNonEmpty,
     RelationalSum,
+    RelationalSumInt,
+    RelationalSumReal,
     StringConcat,
     StringCvtRealfmtFix,
     StringCvtRealfmtGen,
@@ -3352,6 +3354,12 @@ impl Eager1 {
                 } else {
                     Val::Int(items.iter().map(Val::expect_int).sum())
                 }
+            }
+            RelationalSumInt => {
+                Val::Int(a0.expect_list().iter().map(Val::expect_int).sum())
+            }
+            RelationalSumReal => {
+                Val::Real(a0.expect_list().iter().map(Val::expect_real).sum())
             }
             StringConcat => {
                 let strings = a0.expect_list();
@@ -4689,6 +4697,13 @@ fn real_plan_constant(x: f32) -> String {
 }
 
 fn plan_label(variant: &str) -> String {
+    // Internal overload instances whose label is a `structure.name$type`
+    // form that does not follow from a structure `p` prop.
+    match variant {
+        "RelationalSumInt" => return "Relational.sum$int".to_string(),
+        "RelationalSumReal" => return "Relational.sum$real".to_string(),
+        _ => {}
+    }
     let variant = match variant {
         "WordShiftLeft" => "WordOpShiftLeft",
         "WordShiftRight" => "WordOpShiftRight",
@@ -5166,6 +5181,8 @@ fn build_library() -> Lib {
     Eager1::RelationalNonEmpty.implements(&mut b, RelationalNonEmpty);
     EagerF1::RelationalOnly.implements(&mut b, RelationalOnly);
     Eager1::RelationalSum.implements(&mut b, RelationalSum);
+    Eager1::RelationalSumInt.implements(&mut b, RelationalSumInt);
+    Eager1::RelationalSumReal.implements(&mut b, RelationalSumReal);
     Eager2::StringCaret.implements(&mut b, StringCaret);
     EagerF2::StringCollate.implements(&mut b, StringCollate);
     Eager2::StringCompare.implements(&mut b, StringCompare);
