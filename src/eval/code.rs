@@ -4705,6 +4705,11 @@ fn plan_label(variant: &str) -> String {
         "IntGt" | "RealGt" | "StringGt" | "CharGt" => "GGt",
         "IntLe" | "RealLe" | "StringLe" | "CharLe" => "GLe",
         "IntGe" | "RealGe" | "StringGe" | "CharGe" => "GGe",
+        // A `bag [...]` literal is `Bag.fromList (...)`, and `Bag.hd`/`Bag.tl`
+        // are the `List` functions, as morel-java's plans show.
+        "Bag" => "BagFromList",
+        "BagHd" => "ListHd",
+        "BagTl" => "ListTl",
         other => other,
     };
     BuiltInFunction::from_str(variant)
