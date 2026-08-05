@@ -1804,7 +1804,7 @@ impl Display for Code {
             Self::Constant(_, v) => match v {
                 Val::Char(c) => write!(f, "constant({})", c),
                 Val::Fn(fun) => write!(f, "constant({})", fun.full_name()),
-                Val::Real(x) => write!(f, "constant({})", x),
+                Val::Real(x) => write!(f, "constant({})", real_plan_constant(*x)),
                 Val::String(s) => write!(f, "constant({})", s),
                 Val::Unit => write!(f, "constant([NONE])"),
                 // Plans render integers Java-style (`-1`), not with morel's
@@ -4670,6 +4670,24 @@ impl Custom {
 /// `WordIdentity` backs several word conversions (`Word.toLarge`,
 /// `Word.fromLarge`, ...) that are identity at runtime — the `Code` node no
 /// longer records which, so it borrows one representative label.
+/// Renders a real constant as it appears in a plan dump: always with a
+/// decimal point (`13.0`, `-0.0`), and `Infinity`/`-Infinity`/`NaN` for
+/// the special values, rather than morel's `13`/`inf`/`nan` value form.
+fn real_plan_constant(x: f32) -> String {
+    if x.is_nan() {
+        return "NaN".to_string();
+    }
+    if x.is_infinite() {
+        return if x < 0.0 { "-Infinity" } else { "Infinity" }.to_string();
+    }
+    let s = format!("{}", x);
+    if s.contains(['.', 'e', 'E']) {
+        s.replace('e', "E")
+    } else {
+        format!("{}.0", s)
+    }
+}
+
 fn plan_label(variant: &str) -> String {
     let variant = match variant {
         "WordShiftLeft" => "WordOpShiftLeft",
