@@ -141,9 +141,7 @@ impl Vector {
         Ok(Val::List(Rc::new(result)))
     }
 
-    /// Maximum length of a vector. Matches morel-java's
-    /// `(1 << 24) - 1` so that `Vector.maxLen` agrees across
-    /// implementations.
+    /// Maximum length of a vector.
     pub(crate) fn max_len() -> i32 {
         (1 << 24) - 1
     }
