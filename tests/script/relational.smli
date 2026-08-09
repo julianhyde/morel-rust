@@ -2414,8 +2414,6 @@ fun product [] = 1
   | product (hd :: tl) = hd * (product tl);
 > val product = fn : int list -> int
 
-set("mode", "validate");
-> val it = () : unit
 product (factorize 12);
 > val it = 12 : int
 fun hcf (m, n) =
@@ -2453,8 +2451,6 @@ end;
 > val it = 9 : int
 
 
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) "group by" via higher-order functions
 (*

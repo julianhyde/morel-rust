@@ -284,6 +284,10 @@ Sys.parseTree "val x = 1 + 2";
 Sys.parseTree "";
 > val it = "()" : string
 
+(*) Attributes are reflected in the parse tree.
+Sys.parseTree "1 [@a]";
+> val it = "(attributedExp (int_literal 1) (attribute @a))" : string
+
 (*) val plan : unit -> string
 Sys.plan;
 > val it = fn : unit -> string
@@ -291,6 +295,16 @@ Sys.plan;
 > val it = 3 : int
 Sys.plan ();
 > val it = "apply2(fnValue Int.+, constant(1), constant(2))" : string
+
+(*) val planEx : string -> string
+Sys.planEx;
+> val it = fn : string -> string
+
+val zebra = true;
+> val zebra = true : bool
+
+val aardvark = 1 + (if zebra then 2 else 3);
+> val aardvark = 3 : int
 
 (*) Word literals are unparsed in hexadecimal (e.g. "0wxAB") in the plan.
 val warthog = 0wxAB + 0w1;

@@ -693,11 +693,15 @@ impl Code {
             Code::Apply(_, _) => {
                 *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
             }
-            Code::ApplyClosure(_, _, _) => *mode == EvalMode::Eager0,
+            Code::ApplyClosure(_, _, _) => {
+                *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
+            }
             Code::ApplyConstant(_, _) => {
                 *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
             }
-            Code::Bind(_) => *mode == EvalMode::Eager0,
+            Code::Bind(_) => {
+                *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
+            }
             Code::BindAnd(_) => *mode == EvalMode::EagerV1,
             Code::BindCons(_, _) => {
                 *mode == EvalMode::EagerV1 || *mode == EvalMode::Eager1
@@ -738,7 +742,9 @@ impl Code {
             }
             Code::FromRowSink(_) => *mode == EvalMode::EagerF0,
             Code::GetLocal(_, _) => *mode == EvalMode::EagerF0,
-            Code::Let(_, _) => *mode == EvalMode::Eager0,
+            Code::Let(_, _) => {
+                *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
+            }
             Code::Link(_, _) => *mode == EvalMode::EagerF0,
             Code::MapElements(_, _, _) => *mode == EvalMode::EagerF0,
             Code::Max(_, _, _) => *mode == EvalMode::EagerF0,
@@ -750,7 +756,9 @@ impl Code {
             Code::Native2(_, _, _, _) => {
                 *mode == EvalMode::Eager2 || *mode == EvalMode::EagerF0
             }
-            Code::Native3(_, _, _, _) => *mode == EvalMode::Eager3,
+            Code::Native3(_, _, _, _) => {
+                *mode == EvalMode::Eager3 || *mode == EvalMode::EagerF0
+            }
             Code::NativeCustom(_, args) => match args.len() {
                 1 => *mode == EvalMode::Eager1 || *mode == EvalMode::EagerF0,
                 _ => *mode == EvalMode::Eager2 || *mode == EvalMode::EagerF0,
@@ -762,7 +770,9 @@ impl Code {
             Code::NativeF2(_, _, _, _) => {
                 *mode == EvalMode::EagerV2 || *mode == EvalMode::EagerF0
             }
-            Code::NativeF3(_, _, _, _, _) => *mode == EvalMode::EagerV3,
+            Code::NativeF3(_, _, _, _, _) => {
+                *mode == EvalMode::EagerV3 || *mode == EvalMode::EagerF0
+            }
             Code::Nth(_, _) => {
                 *mode == EvalMode::Eager1 || *mode == EvalMode::EagerF0
             }

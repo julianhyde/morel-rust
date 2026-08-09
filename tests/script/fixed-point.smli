@@ -282,8 +282,6 @@ fixp as100 0.0;
 fixp as100 ~1.0;
 > val it = ~10 : real
 
-set("mode", "validate");
-> val it = () : unit
 
 (* Given a list of strings, 'prefixes' returns a list of their
  * prefixes that are one character shorter. *)
@@ -295,8 +293,6 @@ prefixes ["cat", "dog", "", "car", "cart"];
 > val it = ["ca","do","","ca","car"] : string list
 
 
-set("mode", "evaluate");
-> val it = () : unit
 
 (* Workaround for [MOREL-270] Ambiguous collection types. *)
 fun mustBeList (list: 'a list) = list;
