@@ -375,6 +375,12 @@ impl Step {
                     cond.collect_vars(collector);
                 }
             }
+            StepKind::Skip(expr) | StepKind::Take(expr) => {
+                // The count is evaluated once per execution of the query,
+                // so it may read the enclosing row -- including its
+                // `ordinal`, which needs a slot like any other variable.
+                expr.collect_vars(collector);
+            }
             StepKind::Where(expr) => {
                 expr.collect_vars(collector);
             }

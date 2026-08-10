@@ -125,11 +125,31 @@ impl Expr {
     }
 
     /// Returns whether this expression, or any sub-expression, references
-    /// `ordinal`. A nested `from` is not traversed: its `ordinal` counts
-    /// that query's rows, not this one's.
+    /// an `ordinal` that counts *this* step's rows.
+    ///
+    /// A nested query is traversed only where it is evaluated once per
+    /// execution rather than once per row -- the collection its first step
+    /// scans, a `take` or `skip` count, an operand of `union`, `except` or
+    /// `intersect`. An `ordinal` there counts the enclosing rows, so this
+    /// step must supply it; anywhere else in the nested query it counts
+    /// that query's own rows, which the nested query supplies itself.
     pub(crate) fn uses_ordinal(&self) -> bool {
         match self {
             Expr::Ordinal(_) => true,
+            Expr::From(_, steps)
+            | Expr::Exists(_, steps)
+            | Expr::Forall(_, steps) => {
+                steps.iter().enumerate().any(|(i, step)| match &step.kind {
+                    StepKind::Scan(_, e, _) if i == 0 => e.uses_ordinal(),
+                    StepKind::Skip(e) | StepKind::Take(e) => e.uses_ordinal(),
+                    StepKind::Except(_, exprs)
+                    | StepKind::Intersect(_, exprs)
+                    | StepKind::Union(_, exprs) => {
+                        exprs.iter().any(Expr::uses_ordinal)
+                    }
+                    _ => false,
+                })
+            }
             Expr::Aggregate(_, arg, agg, _) => {
                 arg.uses_ordinal() || agg.uses_ordinal()
             }
