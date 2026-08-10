@@ -513,6 +513,13 @@ pub enum Pat {
     Cons(Rc<Type>, Box<Pat>, Box<Pat>),
 }
 
+/// Name of the frame slot holding the `ordinal` counter.
+///
+/// It holds a `$` so that it cannot be a field the user wrote: a query
+/// may have its own field called `ordinal` (reached as `` `ordinal` ``),
+/// and the counter must not clobber it.
+pub(crate) const ORDINAL_SLOT: &str = "ordinal$";
+
 /// Constructors whose values have a dedicated `Val` representation, so a
 /// pattern naming one can be matched against a value at compile time.
 /// Every other constructor belongs to a datatype whose values are
