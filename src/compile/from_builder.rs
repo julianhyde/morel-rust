@@ -190,7 +190,10 @@ fn replace_ordinal(expr: &Expr, repl: &Expr) -> Expr {
         ),
         Expr::Let(t, decls, body) => Expr::Let(
             t.clone(),
-            decls.clone(),
+            decls
+                .iter()
+                .map(|d| replace_ordinal_decl(d, repl))
+                .collect(),
             Box::new(replace_ordinal(body, repl)),
         ),
         Expr::Raise(t, e, sp) => Expr::Raise(
@@ -258,6 +261,21 @@ fn replace_ordinal_steps(steps: &[Step], repl: &Expr) -> Vec<Step> {
             }
         })
         .collect()
+}
+
+fn replace_ordinal_decl(d: &Decl, repl: &Expr) -> Decl {
+    let rebind = |b: &ValBind| ValBind {
+        pat: b.pat.clone(),
+        t: b.t.clone(),
+        expr: replace_ordinal(&b.expr, repl),
+        overload_pat: b.overload_pat.clone(),
+        span: b.span.clone(),
+    };
+    match d {
+        Decl::NonRecVal(b) => Decl::NonRecVal(Box::new(rebind(b))),
+        Decl::RecVal(binds) => Decl::RecVal(binds.iter().map(rebind).collect()),
+        other => other.clone(),
+    }
 }
 
 fn replace_ordinal_match(m: &Match, repl: &Expr) -> Match {
@@ -684,7 +702,18 @@ impl FromBuilder {
     ///   useless-if-not-last (they only change scalar to record, which
     ///   only matters as last step)
     pub fn yield_(&mut self, exp: Expr) -> &mut Self {
-        self.yield_internal(false, None, exp)
+        // A `yield` normally holds the `ordinal` call itself. It cannot
+        // when the call sits inside a function, whose frame is not the
+        // one holding the counter, so materialize the field and let the
+        // closure capture it as it would any other variable.
+        let exp = if exp.ordinal_under_fn() {
+            self.with_ordinal(exp)
+        } else {
+            exp
+        };
+        self.yield_internal(false, None, exp);
+        self.drop_ordinal();
+        self
     }
 
     /// Yields `exp`, binding the whole row to the single atom name `binder`,
