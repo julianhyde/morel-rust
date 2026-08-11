@@ -158,12 +158,59 @@ impl Expr {
                 e.uses_ordinal()
                     || matches.iter().any(|m| m.expr.uses_ordinal())
             }
-            Expr::Let(_, _, e) => e.uses_ordinal(),
+            Expr::Fn(_, matches, _) => {
+                matches.iter().any(|m| m.expr.uses_ordinal())
+            }
+            Expr::Let(_, decls, e) => {
+                decls.iter().any(Decl::uses_ordinal) || e.uses_ordinal()
+            }
             Expr::List(_, exprs) | Expr::Tuple(_, exprs) => {
                 exprs.iter().any(Expr::uses_ordinal)
             }
             _ => false,
         }
+    }
+
+    /// Returns whether an `ordinal` in this expression sits inside a
+    /// function, and so would be read from that function's own frame
+    /// rather than the one holding the counter.
+    ///
+    /// Such a read has to come from the row instead: a field is captured
+    /// by a closure like any other variable, a frame slot is not.
+    pub(crate) fn ordinal_under_fn(&self) -> bool {
+        fn walk(e: &Expr, in_fn: bool) -> bool {
+            match e {
+                Expr::Ordinal(_) => in_fn,
+                Expr::Fn(_, matches, _) => {
+                    matches.iter().any(|m| walk(&m.expr, true))
+                }
+                Expr::Aggregate(_, a, b, _) | Expr::Apply(_, a, b, _) => {
+                    walk(a, in_fn) || walk(b, in_fn)
+                }
+                Expr::Case(_, e, matches, _) => {
+                    walk(e, in_fn)
+                        || matches.iter().any(|m| walk(&m.expr, in_fn))
+                }
+                Expr::Let(_, decls, e) => {
+                    decls.iter().any(|d| decl_walk(d, in_fn)) || walk(e, in_fn)
+                }
+                Expr::List(_, es) | Expr::Tuple(_, es) => {
+                    es.iter().any(|e| walk(e, in_fn))
+                }
+                Expr::Raise(_, e, _) => walk(e, in_fn),
+                _ => false,
+            }
+        }
+        fn decl_walk(d: &Decl, in_fn: bool) -> bool {
+            match d {
+                Decl::NonRecVal(b) => walk(&b.expr, in_fn),
+                Decl::RecVal(binds) => {
+                    binds.iter().any(|b| walk(&b.expr, in_fn))
+                }
+                _ => false,
+            }
+        }
+        walk(self, false)
     }
 
     /// Returns the steps if this is a From expression.
@@ -926,6 +973,16 @@ pub enum Decl {
 }
 
 impl Decl {
+    /// Returns whether any expression this declaration binds references
+    /// an `ordinal` counting the enclosing step's rows.
+    pub(crate) fn uses_ordinal(&self) -> bool {
+        match self {
+            Decl::NonRecVal(b) => b.expr.uses_ordinal(),
+            Decl::RecVal(binds) => binds.iter().any(|b| b.expr.uses_ordinal()),
+            _ => false,
+        }
+    }
+
     /// Invokes an action for each top-level binding.
     ///
     /// If a recursive val has multiple arms, each of those arms is a binding.
