@@ -71,6 +71,21 @@ fn tokenize(s: &str) -> Vec<(usize, usize, Option<Category>)> {
             let end = scan_string(b, i);
             spans.push((i, end, Some(Category::String)));
             i = end;
+        } else if c == '`' {
+            // Quoted identifier. Following the grammar's
+            // `quoted_identifier`, a doubled backtick is an escaped
+            // backtick. The whole thing, backticks included, is one
+            // token, and is never looked up in the keyword set: in
+            // ``from `from` in [1,2]`` only the first `from` is a
+            // keyword.
+            let end = scan_quoted_identifier(b, i);
+            let category = if end < n && b[end] == b'.' {
+                Category::TypeVar
+            } else {
+                Category::Identifier
+            };
+            spans.push((i, end, Some(category)));
+            i = end;
         } else if c == '\'' && i + 1 < n && (b[i + 1] as char).is_alphabetic() {
             // Type variable: 'a, 'b, ...
             let mut end = i + 1;
@@ -123,18 +138,42 @@ fn tokenize(s: &str) -> Vec<(usize, usize, Option<Category>)> {
     spans
 }
 
+/// Returns the byte index just past the quoted identifier starting at
+/// `start`. A doubled backtick is an escaped backtick and does not end
+/// the identifier. An unterminated identifier runs to the end of the
+/// input: the shell re-highlights the buffer on every keystroke, so a
+/// partly typed line is not valid Morel and must still highlight.
+fn scan_quoted_identifier(b: &[u8], start: usize) -> usize {
+    let n = b.len();
+    let mut j = start + 1;
+    while j < n {
+        if b[j] == b'`' {
+            if j + 1 < n && b[j + 1] == b'`' {
+                j += 2;
+            } else {
+                return j + 1;
+            }
+        } else {
+            j += 1;
+        }
+    }
+    n
+}
+
 /// Whether `c` can continue an identifier or type variable.
 fn is_ident_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '\''
 }
 
 /// Whether `c` is a symbol/operator character (not the start of a comment,
-/// string, type variable, word, or number, and not whitespace).
+/// string, quoted identifier, type variable, word, or number, and not
+/// whitespace).
 fn is_symbol_char(c: char) -> bool {
     !c.is_alphanumeric()
         && !c.is_whitespace()
         && c != '"'
         && c != '\''
+        && c != '`'
         && c != '_'
 }
 
@@ -341,6 +380,66 @@ mod tests {
                 (" ", None),
                 ("1", Some(Category::Numeric)),
                 (";", Some(Category::Symbol)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_tokenize_quoted_identifier() {
+        // A keyword inside backticks is an identifier, not a keyword,
+        // and the backticks belong to the token.
+        assert_eq!(
+            cats("from `from` in [1,2]"),
+            vec![
+                ("from", Some(Category::Keyword)),
+                (" ", None),
+                ("`from`", Some(Category::Identifier)),
+                (" ", None),
+                ("in", Some(Category::Keyword)),
+                (" ", None),
+                ("[", Some(Category::Symbol)),
+                ("1", Some(Category::Numeric)),
+                (",", Some(Category::Symbol)),
+                ("2", Some(Category::Numeric)),
+                ("]", Some(Category::Symbol)),
+            ]
+        );
+        // Two words inside one pair of backticks are one token.
+        assert_eq!(
+            cats("`let val`"),
+            vec![("`let val`", Some(Category::Identifier))]
+        );
+        // A doubled backtick is an escaped backtick.
+        assert_eq!(
+            cats("`a``b`"),
+            vec![("`a``b`", Some(Category::Identifier))]
+        );
+        // A quoted structure name, as in ``\`Map\`.empty``.
+        assert_eq!(
+            cats("`Map`.empty"),
+            vec![
+                ("`Map`", Some(Category::TypeVar)),
+                (".", Some(Category::Symbol)),
+                ("empty", Some(Category::Identifier)),
+            ]
+        );
+        // A symbol run stops at a backtick, rather than swallowing it.
+        assert_eq!(
+            cats("[`x`]"),
+            vec![
+                ("[", Some(Category::Symbol)),
+                ("`x`", Some(Category::Identifier)),
+                ("]", Some(Category::Symbol)),
+            ]
+        );
+        // Unterminated: the shell re-highlights on every keystroke, so
+        // a partly typed identifier runs to the end of the input.
+        assert_eq!(
+            cats("val `ab"),
+            vec![
+                ("val", Some(Category::Keyword)),
+                (" ", None),
+                ("`ab", Some(Category::Identifier)),
             ]
         );
     }
