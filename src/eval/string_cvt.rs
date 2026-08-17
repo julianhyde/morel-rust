@@ -23,8 +23,9 @@
 //! functions here pass it back unexamined.
 
 use crate::eval::code::{EvalEnv, Frame};
-use crate::eval::val::Val;
+use crate::eval::val::{NativeFn, Val};
 use crate::shell::kernel::MorelError;
+use std::rc::Rc;
 
 /// Reads from `src` the longest prefix of characters satisfying `p`,
 /// and returns it with the rest of the stream. `splitl`, `takel` and
@@ -72,4 +73,38 @@ pub(crate) fn skip_ws(
         s = pair[1].clone();
     }
     Ok(s)
+}
+
+/// Scans `s` with the scanner `scan`, giving it a reader over the
+/// characters of `s`. The stream is a position in `s`, but the
+/// scanner's type does not say so, and the reader is the only thing
+/// that can make sense of it.
+pub(crate) fn scan_string(
+    r: &mut EvalEnv,
+    f: &mut Frame,
+    scan: &Val,
+    s: &str,
+) -> Result<Val, MorelError> {
+    let chars: Rc<Vec<char>> = Rc::new(s.chars().collect());
+    let reader = Val::NativeFn(Rc::new(NativeFn::new(
+        "StringCvt.scanString.reader",
+        move |v| match usize::try_from(v.expect_int())
+            .ok()
+            .and_then(|i| chars.get(i).map(|c| (i, *c)))
+        {
+            Some((i, c)) => Val::Some(Box::new(Val::List(Rc::new(vec![
+                Val::Char(c),
+                Val::Int(i as i32 + 1),
+            ])))),
+            // NONE: the end of the string, or a position beyond it.
+            None => Val::Unit,
+        },
+    )));
+    let scanner = scan.apply_f1(r, f, &reader)?;
+    match scanner.apply_f1(r, f, &Val::Int(0))? {
+        Val::Some(pair) => {
+            Ok(Val::Some(Box::new(pair.expect_list()[0].clone())))
+        }
+        _ => Ok(Val::Unit),
+    }
 }
