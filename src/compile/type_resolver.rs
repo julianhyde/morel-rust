@@ -6422,7 +6422,8 @@ impl TypeResolver {
     ) -> Result<Expr, Error> {
         let span = &record.span;
         let mut exp = base.clone();
-        let mut fields = self.record_field_names(env, base)?;
+        let mut fields =
+            self.record_field_names(env, base, &modifier_labels(modifiers))?;
         for modifier in modifiers {
             let rec_name = free_name(&fields, "$rec");
             // Two declarations, not one binding of each: the second
@@ -6455,7 +6456,8 @@ impl TypeResolver {
                     &fields,
                 )?,
                 Modifier::All(verb, lenient, all_expr) => {
-                    let all_fields = self.record_field_names(env, all_expr)?;
+                    let all_fields =
+                        self.record_field_names(env, all_expr, &[])?;
                     let name = free_name(&fields, "$all");
                     val_binds.push(ValBind::of(
                         &PatKind::Identifier(name.clone()).spanned(span),
@@ -6500,11 +6502,13 @@ impl TypeResolver {
 
     /// Returns the field names of a record-valued expression, in label
     /// order. Deducing the expression into a fresh variable is what makes
-    /// them known.
+    /// them known. `wanted` are the labels the modifiers mention, which
+    /// the error names as the only ones we can be sure of.
     fn record_field_names(
         &mut self,
         env: &dyn TypeEnv,
         expr: &Expr,
+        wanted: &[String],
     ) -> Result<Vec<String>, Error> {
         let v = self.variable();
         self.deduce_expr_type(env, expr, &v)?;
@@ -6523,10 +6527,17 @@ impl TypeResolver {
                 Term::Variable(_) => None,
             })
             .ok_or_else(|| {
+                let fields = wanted
+                    .iter()
+                    .map(|f| format!("#{}", f))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 Error::Compile(
-                    "unresolved flex record (can't tell what fields there \
-                     are besides those seen by the modifiers)"
-                        .to_string(),
+                    format!(
+                        "unresolved flex record (can't tell what fields \
+                         there are besides {})",
+                        fields
+                    ),
                     expr.span.clone(),
                 )
             })
@@ -7604,6 +7615,33 @@ fn let_body(exp: &Expr) -> Expr {
         e = *body;
     }
     e
+}
+
+/// The labels a record's modifiers mention, in the order written. When
+/// the base's fields are unknown these are the only ones we know it has,
+/// and the error says so.
+fn modifier_labels(modifiers: &[Modifier]) -> Vec<String> {
+    let mut out = Vec::new();
+    for m in modifiers {
+        match m {
+            Modifier::Assign(_, _, args) => {
+                out.extend(args.iter().filter_map(|a| {
+                    a.label
+                        .as_ref()
+                        .map(|l| l.name.clone())
+                        .or_else(|| a.expr.implicit_label_opt())
+                }))
+            }
+            Modifier::Remove(_, labels) => {
+                out.extend(labels.iter().map(|l| l.name.clone()))
+            }
+            Modifier::Rename(args) => {
+                out.extend(args.iter().map(|(_, from)| from.name.clone()))
+            }
+            Modifier::All(..) => {}
+        }
+    }
+    out
 }
 
 /// Returns a name that is not one of `fields`.
