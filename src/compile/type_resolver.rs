@@ -35,11 +35,13 @@ use crate::compile::types::{
 use crate::eval::code::{LIBRARY, Lib};
 use crate::eval::file::TypedValue;
 use crate::shell::error::Error;
+use crate::syntax::ast::Label as AstLabel;
 use crate::syntax::ast::{
-    DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunBind, JoinType,
-    LabeledExpr, Literal, LiteralKind, Match, MorelNode, Pat, PatField,
-    PatKind, RangeItem, Span, Statement, StatementKind, Step, StepKind,
-    Type as AstType, TypeField, TypeKind, TypeScheme, ValBind,
+    Absent, DatatypeBind, Decl, DeclKind, Exists, Expr, ExprKind, FunBind,
+    JoinType, LabeledExpr, Literal, LiteralKind, Match, Modifier, ModifierVerb,
+    MorelNode, Pat, PatField, PatKind, RangeItem, Span, Statement,
+    StatementKind, Step, StepKind, Type as AstType, TypeField, TypeKind,
+    TypeScheme, ValBind,
 };
 use crate::syntax::parser;
 use crate::unify::unifier::{
@@ -991,7 +993,7 @@ fn join_source_walk(
                 join_source_walk(x, input, shadowed)?;
             }
         }
-        E::Record(base, fields) => {
+        E::Record(base, fields, _) => {
             if let Some(b) = base {
                 join_source_walk(b, input, shadowed)?;
             }
@@ -3088,7 +3090,17 @@ impl TypeResolver {
                         .spanned(span);
                 self.deduce_expr_type(env, &call, v)?
             }
-            ExprKind::Record(with_expr, labeled_expr_list) => {
+            ExprKind::Record(base, _, modifiers)
+                if base.is_some() && !modifiers.is_empty() =>
+            {
+                // A record replace modifiers becomes nested `let`s, but only
+                // once we know which fields there are to destructure.
+                let base = base.as_ref().unwrap();
+                let desugared =
+                    self.desugar_modifiers(env, expr, base, modifiers)?;
+                self.deduce_expr_type(env, &desugared, v)?
+            }
+            ExprKind::Record(with_expr, labeled_expr_list, _) => {
                 let mut field_vars = Vec::new(); // never read
                 let (with_expr2, labeled_expr_list2) =
                     if let Some(base) = with_expr {
@@ -3134,7 +3146,8 @@ impl TypeResolver {
                         )?;
                         (None, labeled_expr_list2)
                     };
-                let x = ExprKind::Record(with_expr2, labeled_expr_list2);
+                let x =
+                    ExprKind::Record(with_expr2, labeled_expr_list2, vec![]);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::RecordSelector(name) => {
@@ -3699,7 +3712,7 @@ impl TypeResolver {
 
         let mut envs = p.env.builder();
         if binder.is_none()
-            && let ExprKind::Record(with, labeled_exprs) = expr2.kind
+            && let ExprKind::Record(with, labeled_exprs, _) = expr2.kind
         {
             let mut v = None;
             if let Some(with) = with
@@ -3898,7 +3911,7 @@ impl TypeResolver {
         if !is_atom {
             // Validate key expression: if it's a record, check all fields;
             // if not a record, check that a label can be derived.
-            if let ExprKind::Record(_, labeled_exprs) = &key_expr.kind {
+            if let ExprKind::Record(_, labeled_exprs, _) = &key_expr.kind {
                 Self::validate_record_fields(labeled_exprs, "group")?;
             } else if key_expr.implicit_label_opt().is_none() {
                 return Err(Error::Compile(
@@ -3910,7 +3923,7 @@ impl TypeResolver {
             // Validate compute expression: if it's a record, check all fields;
             // if not a record, check that a label can be derived.
             if let Some(compute) = compute_expr {
-                if let ExprKind::Record(_, labeled_exprs) = &compute.kind {
+                if let ExprKind::Record(_, labeled_exprs, _) = &compute.kind {
                     Self::validate_record_fields(labeled_exprs, "compute")?;
                 } else if compute.implicit_label_opt().is_none() {
                     return Err(Error::Compile(
@@ -3996,7 +4009,7 @@ impl TypeResolver {
             Ok(())
         };
         match &expr.kind {
-            ExprKind::Record(_, labeled_exprs) => {
+            ExprKind::Record(_, labeled_exprs, _) => {
                 for labeled_expr in labeled_exprs {
                     if let Some(label) = labeled_expr.get_label() {
                         visit(label, labeled_expr.label_span())?;
@@ -4017,7 +4030,7 @@ impl TypeResolver {
     /// For other expressions, returns 1.
     fn field_count(expr: &Expr) -> usize {
         match &expr.kind {
-            ExprKind::Record(_, labeled_exprs) => labeled_exprs.len(),
+            ExprKind::Record(_, labeled_exprs, _) => labeled_exprs.len(),
             _ => 1,
         }
     }
@@ -4026,7 +4039,7 @@ impl TypeResolver {
     /// exactly one field).
     fn is_singleton_record(expr: Option<&Expr>) -> bool {
         if let Some(expr) = expr
-            && let ExprKind::Record(_, labeled_exprs) = &expr.kind
+            && let ExprKind::Record(_, labeled_exprs, _) = &expr.kind
             && labeled_exprs.len() == 1
         {
             true
@@ -4062,7 +4075,7 @@ impl TypeResolver {
         let v_key = self.variable();
         let mut group_env_builder = p.root_env.builder();
 
-        if let ExprKind::Record(_with, labeled_exprs) = &key_expr.kind {
+        if let ExprKind::Record(_with, labeled_exprs, _) = &key_expr.kind {
             let labeled_exprs2 = self.deduce_record_type(
                 &*p.env,
                 labeled_exprs,
@@ -4071,7 +4084,7 @@ impl TypeResolver {
             )?;
 
             key_expr2 = self.reg_expr(
-                &ExprKind::Record(None, labeled_exprs2),
+                &ExprKind::Record(None, labeled_exprs2, vec![]),
                 &key_expr.span,
                 key_expr.id,
                 &v_key,
@@ -4114,7 +4127,7 @@ impl TypeResolver {
             self.compute_stack.push(p.with_env(&over_env));
 
             let v_compute = self.variable();
-            let result = if let ExprKind::Record(_with, labeled_exprs) =
+            let result = if let ExprKind::Record(_with, labeled_exprs, _) =
                 &compute.kind
             {
                 // Multiple compute fields. Sort into BTreeMap order
@@ -4154,7 +4167,7 @@ impl TypeResolver {
                     );
                 });
                 self.record_term(&map, &v_compute);
-                let x = ExprKind::Record(None, labeled_exprs2);
+                let x = ExprKind::Record(None, labeled_exprs2, vec![]);
                 Some(Box::new(self.reg_expr(
                     &x,
                     &compute.span,
@@ -4261,7 +4274,7 @@ impl TypeResolver {
 
         // Process compute expression
         let mut compute_expr2;
-        if let ExprKind::Record(_with, labeled_exprs) = &compute_expr.kind {
+        if let ExprKind::Record(_with, labeled_exprs, _) = &compute_expr.kind {
             // Multiple compute fields. Sort into BTreeMap order
             // (alphabetical by label) so that evaluation order
             // matches the record type's field order.
@@ -4291,7 +4304,7 @@ impl TypeResolver {
                 });
             }
             compute_expr2 = Expr {
-                kind: ExprKind::Record(None, labeled_exprs2),
+                kind: ExprKind::Record(None, labeled_exprs2, vec![]),
                 span: compute_expr.span.clone(),
                 id: compute_expr.id,
                 attributes: Vec::new(),
@@ -6358,6 +6371,122 @@ impl TypeResolver {
     }
 
     /// Converts a variable to a sequence.
+    /// Returns a pattern that destructures a record into its fields.
+    fn fields_pat_of(span: &Span, fields: &[String]) -> Pat {
+        PatKind::Record(
+            fields
+                .iter()
+                .map(|f| {
+                    PatField::Labeled(
+                        span.clone(),
+                        f.clone(),
+                        PatKind::Identifier(f.clone()).spanned(span),
+                    )
+                })
+                .collect(),
+            false,
+        )
+        .spanned(span)
+    }
+
+    /// Turns a record's modifiers into nested `let`s. Each modifier
+    /// becomes
+    ///
+    /// ```text
+    /// let val {f1, f2, ...} = <previous> in {<new fields>} end
+    /// ```
+    ///
+    /// so that the modifier's expressions see the fields of the record
+    /// the previous modifier produced -- `{r replace sal = sal * 12.0}`
+    /// multiplies the old `sal` -- and the record it builds says which
+    /// fields survive. Mirrors morel-java's `desugarModifiers`.
+    fn desugar_modifiers(
+        &mut self,
+        env: &dyn TypeEnv,
+        record: &Expr,
+        base: &Expr,
+        modifiers: &[Modifier],
+    ) -> Result<Expr, Error> {
+        let span = &record.span;
+        let mut exp = base.clone();
+        let mut fields = self.record_field_names(env, base)?;
+        for modifier in modifiers {
+            let mut val_binds = vec![ValBind::of(
+                &Self::fields_pat_of(span, &fields),
+                None,
+                &exp,
+            )];
+            let args: Vec<(String, Expr)> = match modifier {
+                Modifier::Assign(verb, lenient, assignments) => {
+                    assign_fields(span, *verb, *lenient, assignments, &fields)?
+                }
+                Modifier::All(verb, lenient, all_expr) => {
+                    let all_fields = self.record_field_names(env, all_expr)?;
+                    let name = free_name(&fields);
+                    val_binds.push(ValBind::of(
+                        &PatKind::Identifier(name.clone()).spanned(span),
+                        None,
+                        all_expr,
+                    ));
+                    assign_all_fields(
+                        span,
+                        *verb,
+                        *lenient,
+                        &fields,
+                        &all_fields,
+                        &name,
+                    )?
+                }
+                Modifier::Remove(verb, labels) => {
+                    remove_fields(span, *verb, labels, &fields)?
+                }
+                Modifier::Rename(args) => rename_fields(span, args, &fields)?,
+            };
+            fields = args.iter().map(|(f, _)| f.clone()).collect();
+            fields.sort();
+            let body = ExprKind::Record(
+                None,
+                args.into_iter()
+                    .map(|(label, e)| {
+                        LabeledExpr::new(Some(AstLabel::new(&label, span)), &e)
+                    })
+                    .collect(),
+                vec![],
+            )
+            .spanned(span);
+            let decl = DeclKind::Val(false, false, val_binds).spanned(span);
+            exp = ExprKind::Let(vec![decl], Box::new(body)).spanned(span);
+        }
+        Ok(exp)
+    }
+
+    /// Returns the field names of a record-valued expression, in label
+    /// order. Deducing the expression into a fresh variable is what makes
+    /// them known.
+    fn record_field_names(
+        &mut self,
+        env: &dyn TypeEnv,
+        expr: &Expr,
+    ) -> Result<Vec<String>, Error> {
+        let v = self.variable();
+        self.deduce_expr_type(env, expr, &v)?;
+        self.resolve_during_deduce(&v)
+            .and_then(|term| match term {
+                Term::Sequence(seq) => {
+                    Self::field_list(&self.unifier.op_defs, &seq)
+                }
+                Term::Variable(_) => None,
+            })
+            .ok_or_else(|| {
+                Error::Compile(
+                    "unresolved flex record (can't tell what fields there \
+                     are besides those seen by the modifiers)"
+                        .to_string(),
+                    expr.span.clone(),
+                )
+            })
+    }
+
     fn variable_to_sequence(&self, v: &Var) -> Option<Sequence> {
         // Search terms in reverse for the most recently added term for v.
         for (var, term) in self.terms.iter().rev() {
@@ -6762,7 +6891,7 @@ impl TypeResolver {
     /// non-alphabetically ordered fields.
     fn validate_order_rec(&mut self, expr: &Expr) -> Expr {
         match &expr.kind {
-            ExprKind::Record(ty, labeled_exprs) => {
+            ExprKind::Record(ty, labeled_exprs, modifiers) => {
                 // Collect labels with their span start positions.
                 // For explicit labels ({name = e.name}), use the label span.
                 // For implicit labels ({e.name}), use the expression span.
@@ -6823,7 +6952,11 @@ impl TypeResolver {
                     .collect();
 
                 Expr {
-                    kind: ExprKind::Record(ty.clone(), new_labeled_exprs),
+                    kind: ExprKind::Record(
+                        ty.clone(),
+                        new_labeled_exprs,
+                        modifiers.clone(),
+                    ),
                     span: expr.span.clone(),
                     id: expr.id,
                     attributes: expr.attributes.clone(),
@@ -7416,4 +7549,213 @@ T7 = bool
         assert_eq!(s, x);
         assert!(result_var.id < 0);
     }
+}
+
+/// Returns a name that is not one of `fields`.
+fn free_name(fields: &[String]) -> String {
+    let mut name = "$all".to_string();
+    while fields.contains(&name) {
+        name.push('_');
+    }
+    name
+}
+
+/// Returns the expression `<name>` — a reference to a bound field.
+fn id(span: &Span, name: &str) -> Expr {
+    ExprKind::Identifier(name.to_string()).spanned(span)
+}
+
+/// Returns the expression `#field name`.
+fn field_of(span: &Span, name: &str, field: &str) -> Expr {
+    ExprKind::Apply(
+        Box::new(ExprKind::RecordSelector(field.to_string()).spanned(span)),
+        Box::new(id(span, name)),
+    )
+    .spanned(span)
+}
+
+/// Returns `e : typeof field`, so that the assigned expression must have
+/// the type the field already has. `field` is in scope as the variable
+/// the enclosing `let` destructured it into.
+fn same_type(span: &Span, e: &Expr, field: &str) -> Expr {
+    ExprKind::Annotated(
+        Box::new(e.clone()),
+        Box::new(TypeKind::Expression(Box::new(id(span, field))).spanned(span)),
+    )
+    .spanned(span)
+}
+
+fn field_not_found(field: &str, span: &Span) -> Error {
+    Error::Compile(format!("field '{}' does not exist", field), span.clone())
+}
+
+fn field_exists(field: &str, span: &Span) -> Error {
+    Error::Compile(format!("field '{}' already exists", field), span.clone())
+}
+
+fn duplicate_field(field: &str, span: &Span) -> Error {
+    Error::Compile(
+        format!("duplicate field '{}' in record", field),
+        span.clone(),
+    )
+}
+
+/// Applies an `extend` or `replace` modifier, in either case taking each
+/// label to whichever of the verb's two cases it falls in: the record has
+/// the label already, or it does not.
+fn assign_fields(
+    span: &Span,
+    verb: ModifierVerb,
+    lenient: bool,
+    assignments: &[LabeledExpr],
+    fields: &[String],
+) -> Result<Vec<(String, Expr)>, Error> {
+    let mut assigned: Vec<(String, &Expr)> = Vec::new();
+    for a in assignments {
+        let name = a
+            .get_label()
+            .or_else(|| a.expr.implicit_label_opt())
+            .ok_or_else(|| {
+                Error::Compile(
+                    "cannot derive label for expression".to_string(),
+                    a.expr.span.clone(),
+                )
+            })?;
+        if fields.contains(&name) {
+            if verb.exists() == Exists::Error {
+                return Err(field_exists(&name, &a.expr.span));
+            }
+        } else if verb.absent() == Absent::Error {
+            return Err(field_not_found(&name, &a.expr.span));
+        }
+        assigned.push((name, &a.expr));
+    }
+
+    let mut args: Vec<(String, Expr)> = Vec::new();
+    // Fields the record has: assigned, or kept as they were.
+    for field in fields {
+        let e = assigned.iter().find(|(n, _)| n == field).map(|(_, e)| *e);
+        match e {
+            Some(e) if verb.exists() != Exists::Skip => {
+                let e = if lenient {
+                    e.clone()
+                } else {
+                    same_type(span, e, field)
+                };
+                args.push((field.clone(), e));
+            }
+            _ => args.push((field.clone(), id(span, field))),
+        }
+    }
+    // Labels the record does not have: added, or ignored.
+    if verb.absent() == Absent::Add {
+        for (name, e) in &assigned {
+            if !fields.iter().any(|f| f == name) {
+                args.push((name.clone(), (*e).clone()));
+            }
+        }
+    }
+    Ok(args)
+}
+
+/// Applies an `extend all` or `replace all` modifier: the same rules as
+/// [`assign_fields`], for every field of the modifier's record-valued
+/// argument, which the enclosing `let` has bound to `name`.
+fn assign_all_fields(
+    span: &Span,
+    verb: ModifierVerb,
+    lenient: bool,
+    fields: &[String],
+    all_fields: &[String],
+    name: &str,
+) -> Result<Vec<(String, Expr)>, Error> {
+    for field in all_fields {
+        if fields.contains(field) {
+            if verb.exists() == Exists::Error {
+                return Err(field_exists(field, span));
+            }
+        } else if verb.absent() == Absent::Error {
+            return Err(field_not_found(field, span));
+        }
+    }
+    let mut args: Vec<(String, Expr)> = Vec::new();
+    for field in fields {
+        if !all_fields.iter().any(|f| f == field)
+            || verb.exists() == Exists::Skip
+        {
+            args.push((field.clone(), id(span, field)));
+        } else {
+            let e = field_of(span, name, field);
+            let e = if lenient {
+                e
+            } else {
+                same_type(span, &e, field)
+            };
+            args.push((field.clone(), e));
+        }
+    }
+    if verb.absent() == Absent::Add {
+        for field in all_fields {
+            if !fields.iter().any(|f| f == field) {
+                args.push((field.clone(), field_of(span, name, field)));
+            }
+        }
+    }
+    Ok(args)
+}
+
+/// Applies a `remove` modifier.
+fn remove_fields(
+    span: &Span,
+    verb: ModifierVerb,
+    labels: &[AstLabel],
+    fields: &[String],
+) -> Result<Vec<(String, Expr)>, Error> {
+    let mut removed: Vec<&str> = Vec::new();
+    for label in labels {
+        if !fields.contains(&label.name) && verb.absent() == Absent::Error {
+            return Err(field_not_found(&label.name, &label.span));
+        }
+        if removed.contains(&label.name.as_str()) {
+            return Err(duplicate_field(&label.name, &label.span));
+        }
+        removed.push(&label.name);
+    }
+    Ok(fields
+        .iter()
+        .filter(|f| !removed.contains(&f.as_str()))
+        .map(|f| (f.clone(), id(span, f)))
+        .collect())
+}
+
+/// Applies a `rename` modifier. It takes the value of each label on the
+/// right, which must exist, and gives it to the label on the left, which
+/// must not survive the renaming.
+fn rename_fields(
+    span: &Span,
+    renames: &[(AstLabel, AstLabel)],
+    fields: &[String],
+) -> Result<Vec<(String, Expr)>, Error> {
+    let mut sources: Vec<&str> = Vec::new();
+    for (_, source) in renames {
+        if !fields.contains(&source.name) {
+            return Err(field_not_found(&source.name, &source.span));
+        }
+        if sources.contains(&source.name.as_str()) {
+            return Err(duplicate_field(&source.name, &source.span));
+        }
+        sources.push(&source.name);
+    }
+    let mut args: Vec<(String, Expr)> = fields
+        .iter()
+        .filter(|f| !sources.contains(&f.as_str()))
+        .map(|f| (f.clone(), id(span, f)))
+        .collect();
+    for (target, source) in renames {
+        if args.iter().any(|(f, _)| *f == target.name) {
+            return Err(field_exists(&target.name, &target.span));
+        }
+        args.push((target.name.clone(), id(span, &source.name)));
+    }
+    Ok(args)
 }

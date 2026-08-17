@@ -824,11 +824,11 @@ from d in [{a=1,b=true}] yield #x d;
 >   raised at: stdIn:1.32-1.36
 
 (*) with
-:t from d in [{a=1,b=true}], i in [2] yield {d with b=false};
+:t from d in [{a=1,b=true}], i in [2] yield {d replace b=false};
 > val it : {a:int, b:bool} list
 
 (*) Override constrains the type of a NONE field to string option
-:t {{a = "1", b = NONE} with b = SOME "3"};
+:t {{a = "1", b = NONE} replace b = SOME "3"};
 > val it : {a:string, b:string option}
 
 :t from e in [{x=1,y=2},{x=3,y=4},{x=5,y=6}]
