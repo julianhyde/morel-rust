@@ -186,6 +186,9 @@ impl Expr {
             ExprKind::Elements => Some("elements".to_string()),
             ExprKind::Identifier(name) => Some(name.clone()),
             ExprKind::Ordinal => Some("ordinal".to_string()),
+            // Modifiers do not change what a record is called:
+            // `{a = 1, {v remove x}}` has a field named `v`.
+            ExprKind::Record(Some(base), _, _) => base.implicit_label_opt(),
             _ => None,
         }
     }

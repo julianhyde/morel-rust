@@ -803,40 +803,39 @@ impl MorelParser {
     }
 
     fn record_expr(input: ParseInput) -> ParseResult<Expr> {
-        Ok(match_nodes!(input.children();
-            [] => {
-                ExprKind::Record(None, vec![], vec![]).wrap(input)
-            },
-            [record_body(b)] => {
-                ExprKind::Record(b.0, b.1, b.2).wrap(input)
-            },
-        ))
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn record_body(
-        input: ParseInput,
-    ) -> ParseResult<(Option<Box<Expr>>, Vec<LabeledExpr>, Vec<Modifier>)> {
         let node = input.clone();
-        let (fields, modifiers): (Vec<LabeledExpr>, Vec<Modifier>) = match_nodes!(input.children();
-            [record_fields(exprs), record_modifier(ms)..] => {
-                (exprs, ms.collect())
-            },
+        let span = input_to_span(&node);
+        let (fields, modifiers) = match_nodes!(input.children();
+            [] => (vec![], vec![]),
+            [record_body(b)] => b,
         );
         if modifiers.is_empty() {
-            return Ok((None, fields, modifiers));
+            return Ok(ExprKind::Record(None, fields, modifiers).spanned(&span));
         }
         // The modifiers apply to a base expression, so there must be
         // exactly one field and it must carry no label of its own.
         match <[LabeledExpr; 1]>::try_from(fields) {
-            Ok([field]) if field.label.is_none() => {
-                Ok((Some(Box::new(field.expr)), vec![], modifiers))
-            }
+            Ok([field]) if field.label.is_none() => Ok(ExprKind::Record(
+                Some(Box::new(field.expr)),
+                vec![],
+                modifiers,
+            )
+            .spanned(&span)),
             _ => Err(node.error(
                 "a record modifier applies to a base expression; enclose \
                  the expression and its modifiers in braces",
             )),
         }
+    }
+
+    fn record_body(
+        input: ParseInput,
+    ) -> ParseResult<(Vec<LabeledExpr>, Vec<Modifier>)> {
+        Ok(match_nodes!(input.children();
+            [record_fields(exprs), record_modifier(ms)..] => {
+                (exprs, ms.collect())
+            },
+        ))
     }
 
     fn record_fields(input: ParseInput) -> ParseResult<Vec<LabeledExpr>> {
@@ -869,7 +868,7 @@ impl MorelParser {
             [_replace(_), _or(_), _skip(_), modifier_operand(o)] => {
                 o.into_modifier(ModifierVerb::ReplaceOrSkip, false)
             },
-            [_replace(_), _or(_), _skip(_), _lenient(_),
+            [_replace(_), _lenient(_), _or(_), _skip(_),
              modifier_operand(o)] => {
                 o.into_modifier(ModifierVerb::ReplaceOrSkip, true)
             },
@@ -1490,6 +1489,10 @@ impl MorelParser {
             [identifier(i), pat(p)] => {
                 let span = input_to_span(&input);
                 PatField::Labeled(span, i.to_string(), p)
+            },
+            [natural(n), pat(p)] => {
+                let span = input_to_span(&input);
+                PatField::Labeled(span, n.to_string(), p)
             },
         ))
     }

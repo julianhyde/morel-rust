@@ -402,7 +402,7 @@ record_fields = { labeled_expr ~ ("," ~ labeled_expr)* }
 // and an operand.
 record_modifier = {
     _extend ~ (_or ~ (_skip | _replace ~ _lenient?))? ~ modifier_operand
-  | _replace ~ (_or ~ _skip)? ~ _lenient? ~ modifier_operand
+  | _replace ~ _lenient? ~ (_or ~ _skip)? ~ modifier_operand
   | _remove ~ (_or ~ _skip)? ~ record_label ~ ("," ~ record_label)*
   | _rename ~ rename_arg ~ ("," ~ rename_arg)*
 }
@@ -523,7 +523,9 @@ list_pat = { "[" ~ (pat ~ ("," ~ pat)*)? ~ "]" }
 atomic_pat_list = { atomic_pat+ }
 
 pat_field = { labeled_pat_field | anon_pat_field }
-labeled_pat_field = { identifier ~ "=" ~ pat }
+// A tuple is a record whose labels are ordinals, so `{1=a,2=b}`
+// matches a pair.
+labeled_pat_field = { (identifier | natural) ~ "=" ~ pat }
 anon_pat_field = { pat }
 ellipsis = { "..." }
 
