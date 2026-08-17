@@ -36,6 +36,10 @@ use crate::eval::code::{LIBRARY, Lib};
 use crate::eval::file::TypedValue;
 use crate::shell::error::Error;
 use crate::syntax::ast::Label as AstLabel;
+
+/// Field names of the expressions record modifiers are applied to,
+/// keyed by the extent of each expression's span.
+type ModifierFields = Rc<RefCell<HashMap<(usize, usize), Vec<String>>>>;
 use crate::syntax::ast::{
     Absent, DatatypeBind, Decl, DeclKind, Exists, Expr, ExprKind, FunBind,
     JoinType, LabeledExpr, Literal, LiteralKind, Match, Modifier, ModifierVerb,
@@ -853,6 +857,17 @@ pub struct TypeResolver {
     /// resolved; see [`ORDINAL`].
     ordinal_validations: Vec<(Term, Span)>,
 
+    /// Field names of an expression a record modifier is applied to,
+    /// keyed by the extent of its span, learned when unification
+    /// settled its type. Survives a retry -- the next attempt reads it
+    /// before deducing, and can then desugar. morel-java's `fieldNames`.
+    modifier_fields: ModifierFields,
+
+    /// Records whose modifiers could not be desugared, to report after
+    /// unification if a later attempt does not desugar them.
+    /// (labels the modifiers mention, span)
+    modifier_validations: Vec<(Vec<String>, Span)>,
+
     /// Overloaded operator instances. Maps name to list of
     /// candidate terms (the types of each `val inst` binding).
     overloads: HashMap<String, Vec<Term>>,
@@ -1325,6 +1340,8 @@ impl TypeResolver {
             field_errors: Rc::new(RefCell::new(Vec::new())),
             field_selectors: Vec::new(),
             ordinal_validations: Vec::new(),
+            modifier_fields: Rc::new(RefCell::new(HashMap::new())),
+            modifier_validations: Vec::new(),
             typed_values: Rc::new(RefCell::new(HashMap::new())),
             retry_requested: Rc::new(RefCell::new(false)),
             overloads: HashMap::new(),
@@ -1427,6 +1444,9 @@ impl TypeResolver {
         self.field_errors.borrow_mut().clear();
         self.field_selectors.clear();
         self.ordinal_validations.clear();
+        // `modifier_fields` is deliberately kept: it is what the next
+        // attempt knows that this one did not.
+        self.modifier_validations.clear();
         self.typed_values.borrow_mut().clear();
         self.node_var_map.clear();
         self.overload_constraints.clear();
@@ -1513,6 +1533,25 @@ impl TypeResolver {
         }
 
         type_map.expanded_type_binds = self.expanded_type_binds.clone();
+
+        // A record whose modifiers were never desugared, because the
+        // fields of its base never became known. morel-java's
+        // `checkRecordModifiers` reports the same thing.
+        if let Some((wanted, span)) = self.modifier_validations.first() {
+            let fields = wanted
+                .iter()
+                .map(|f| format!("#{}", f))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(Error::Compile(
+                format!(
+                    "unresolved flex record (can't tell what fields there \
+                     are besides {})",
+                    fields
+                ),
+                span.clone(),
+            ));
+        }
 
         // Now that the types are resolved, check that every `ordinal`
         // counts the rows of an ordered collection. It cannot be checked
@@ -3093,11 +3132,45 @@ impl TypeResolver {
             ExprKind::Record(base, _, modifiers)
                 if base.is_some() && !modifiers.is_empty() =>
             {
-                // A record replace modifiers becomes nested `let`s, but only
+                // A record with modifiers becomes nested `let`s, but only
                 // once we know which fields there are to destructure.
                 let base = base.as_ref().unwrap();
-                let desugared =
-                    self.desugar_modifiers(env, expr, base, modifiers)?;
+                let Some(desugared) =
+                    self.desugar_modifiers(env, expr, base, modifiers)?
+                else {
+                    // The fields of the base are not known yet. Deduce
+                    // the modifiers' expressions -- in the enclosing
+                    // environment, because without the field names there
+                    // is nothing to shadow them -- so that every node
+                    // has a type, and leave the record's own type
+                    // unconstrained. An action asks for another attempt
+                    // if unification settles the base; if it never does,
+                    // the check after unification reports an unresolved
+                    // flex record. morel-java's
+                    // `deduceUnresolvedRecordType`.
+                    for m in modifiers {
+                        match m {
+                            Modifier::Assign(_, _, args) => {
+                                for a in args {
+                                    let vv = self.variable();
+                                    self.deduce_expr_type(env, &a.expr, &vv)?;
+                                }
+                            }
+                            Modifier::All(_, _, e) => {
+                                let vv = self.variable();
+                                self.deduce_expr_type(env, e, &vv)?;
+                            }
+                            Modifier::Remove(..) | Modifier::Rename(..) => {}
+                        }
+                    }
+                    // The error points at the base, as morel-java's
+                    // does: it is the base's type that is not known.
+                    self.modifier_validations
+                        .push((modifier_labels(modifiers), base.span.clone()));
+                    return Ok(
+                        self.reg_expr(&expr.kind, &expr.span, expr.id, v)
+                    );
+                };
                 self.deduce_expr_type(env, &desugared, v)?
             }
             ExprKind::Record(with_expr, labeled_expr_list, _) => {
@@ -6419,11 +6492,12 @@ impl TypeResolver {
         record: &Expr,
         base: &Expr,
         modifiers: &[Modifier],
-    ) -> Result<Expr, Error> {
+    ) -> Result<Option<Expr>, Error> {
         let span = &record.span;
         let mut exp = base.clone();
-        let mut fields =
-            self.record_field_names(env, base, &modifier_labels(modifiers))?;
+        let Some(mut fields) = self.record_field_names(env, base)? else {
+            return Ok(None);
+        };
         for modifier in modifiers {
             let rec_name = free_name(&fields, "$rec");
             // Two declarations, not one binding of each: the second
@@ -6456,8 +6530,11 @@ impl TypeResolver {
                     &fields,
                 )?,
                 Modifier::All(verb, lenient, all_expr) => {
-                    let all_fields =
-                        self.record_field_names(env, all_expr, &[])?;
+                    let Some(all_fields) =
+                        self.record_field_names(env, all_expr)?
+                    else {
+                        return Ok(None);
+                    };
                     let name = free_name(&fields, "$all");
                     val_binds.push(ValBind::of(
                         &PatKind::Identifier(name.clone()).spanned(span),
@@ -6497,50 +6574,101 @@ impl TypeResolver {
             decls.push(DeclKind::Val(false, false, val_binds).spanned(span));
             exp = ExprKind::Let(decls, Box::new(body)).spanned(span);
         }
-        Ok(exp)
+        Ok(Some(exp))
     }
 
     /// Returns the field names of a record-valued expression, in label
-    /// order. Deducing the expression into a fresh variable is what makes
-    /// them known. `wanted` are the labels the modifiers mention, which
-    /// the error names as the only ones we can be sure of.
+    /// order, or `None` if they are not known yet.
+    ///
+    /// A previous attempt may have learned them; otherwise deducing the
+    /// expression and resolving the constraints so far may settle them.
+    /// When neither does -- because only a use further down the
+    /// declaration will settle the type -- an action records them when
+    /// unification gets there, and asks for another attempt, which
+    /// finds them in the cache. Mirrors morel-java's
+    /// `modifierFieldNames`.
     fn record_field_names(
         &mut self,
         env: &dyn TypeEnv,
         expr: &Expr,
-        wanted: &[String],
-    ) -> Result<Vec<String>, Error> {
+    ) -> Result<Option<Vec<String>>, Error> {
+        let key = expr.span.extent();
+        if let Some(names) = self.modifier_fields.borrow().get(&key) {
+            return Ok(Some(names.clone()));
+        }
         let v = self.variable();
         self.deduce_expr_type(env, expr, &v)?;
-        self.resolve_during_deduce(&v)
-            .and_then(|term| match term {
-                Term::Sequence(seq) => {
-                    // `unit` is the record with no fields, so it is a
-                    // base like any other -- though a selector on it is
-                    // still an error, so `field_list` does not say so.
-                    let op = &self.unifier.op_defs[seq.op.0 as usize].name;
-                    if op == "unit" {
-                        return Some(Vec::new());
-                    }
-                    Self::field_list(&self.unifier.op_defs, &seq)
-                }
+        let names =
+            self.resolve_during_deduce(&v).and_then(|term| match term {
+                Term::Sequence(seq) => self.term_field_names(&seq),
                 Term::Variable(_) => None,
-            })
-            .ok_or_else(|| {
-                let fields = wanted
-                    .iter()
-                    .map(|f| format!("#{}", f))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                Error::Compile(
-                    format!(
-                        "unresolved flex record (can't tell what fields \
-                         there are besides {})",
-                        fields
-                    ),
-                    expr.span.clone(),
-                )
-            })
+            });
+        if let Some(names) = names {
+            self.modifier_fields.borrow_mut().insert(key, names.clone());
+            Ok(Some(names))
+        } else {
+            self.remember_fields_when_known(v, key);
+            Ok(None)
+        }
+    }
+
+    /// The field names of a record or tuple term. `unit` is the record
+    /// with no fields, so its names are the empty list, not `None`;
+    /// otherwise `{{} extend i = 1}` would never desugar.
+    fn term_field_names(&self, seq: &Sequence) -> Option<Vec<String>> {
+        if self.unifier.op_defs[seq.op.0 as usize].name == "unit" {
+            return Some(Vec::new());
+        }
+        Self::field_list(&self.unifier.op_defs, seq)
+    }
+
+    /// Registers an action so that when `v` resolves to a record type,
+    /// the field names of the expression spanning `key` are remembered
+    /// and another attempt is asked for.
+    fn remember_fields_when_known(&mut self, v: Var, key: (usize, usize)) {
+        struct RememberFields {
+            key: (usize, usize),
+            fields: ModifierFields,
+            retry_requested: Rc<RefCell<bool>>,
+        }
+        impl Action for RememberFields {
+            fn accept(
+                &self,
+                _variable: &Var,
+                term: &Term,
+                _substitution: &Substitution,
+                op_defs: &[OpDef],
+                _term_pairs: &mut Vec<(Term, Term)>,
+            ) {
+                let Term::Sequence(seq) = term else {
+                    return;
+                };
+                let names = if op_defs[seq.op.0 as usize].name == "unit" {
+                    Some(Vec::new())
+                } else {
+                    TypeResolver::field_list(op_defs, seq)
+                };
+                if let Some(names) = names
+                    && self
+                        .fields
+                        .borrow_mut()
+                        .insert(self.key, names)
+                        .is_none()
+                {
+                    // Each attempt learns at least one more, so the
+                    // retry loop terminates.
+                    *self.retry_requested.borrow_mut() = true;
+                }
+            }
+        }
+        self.actions.push((
+            v,
+            Rc::new(RememberFields {
+                key,
+                fields: Rc::clone(&self.modifier_fields),
+                retry_requested: Rc::clone(&self.retry_requested),
+            }),
+        ));
     }
 
     fn variable_to_sequence(&self, v: &Var) -> Option<Sequence> {
@@ -6828,7 +6956,6 @@ impl TypeResolver {
                         .collect();
                     struct OpenRecordAction {
                         pattern_fields: Vec<(String, Var)>,
-                        op_defs: Rc<Vec<OpDef>>,
                     }
                     impl Action for OpenRecordAction {
                         fn accept(
@@ -6836,12 +6963,17 @@ impl TypeResolver {
                             _variable: &Var,
                             term: &Term,
                             substitution: &Substitution,
-                            _op_defs: &[OpDef],
+                            op_defs: &[OpDef],
                             term_pairs: &mut Vec<(Term, Term)>,
                         ) {
+                            // The unifier's own table, not a snapshot
+                            // taken when the action was registered: an
+                            // op created in between would not be in it,
+                            // and looking the sequence's op up would run
+                            // off the end.
                             if let Term::Sequence(seq) = term
                                 && let Some(field_list) =
-                                    TypeResolver::field_list(&self.op_defs, seq)
+                                    TypeResolver::field_list(op_defs, seq)
                             {
                                 for (field_name, v_field) in
                                     &self.pattern_fields
@@ -6867,10 +6999,7 @@ impl TypeResolver {
                     }
                     self.actions.push((
                         *v,
-                        Rc::new(OpenRecordAction {
-                            pattern_fields,
-                            op_defs: self.unifier.op_defs.clone(),
-                        }),
+                        Rc::new(OpenRecordAction { pattern_fields }),
                     ));
                 } else {
                     self.record_term(&map, &v);

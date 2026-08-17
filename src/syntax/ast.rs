@@ -73,6 +73,13 @@ impl Span {
         self.start
     }
 
+    /// Returns the span's extent, which identifies the node it came
+    /// from: the same source deduced again gives the same spans, where
+    /// node ids are assigned only as deduction proceeds.
+    pub fn extent(&self) -> (usize, usize) {
+        (self.start, self.end)
+    }
+
     /// Sums the spans of elements.
     pub fn sum<T>(elements: &[T], extract: fn(&T) -> Span) -> Option<Span> {
         let mut span = None;
