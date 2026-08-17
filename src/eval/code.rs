@@ -3931,6 +3931,7 @@ pub enum EagerF2 {
     RelationalIterate,
     StringCollate,
     StringConcatWith,
+    StringCvtScanString,
     StringCvtSkipWs,
     StringFields,
     StringMap,
@@ -4233,6 +4234,9 @@ impl EagerF2 {
                 let sep = a0.expect_string();
                 let strings = a1.expect_list();
                 Ok(Val::String((Str::concat_with(sep, strings)).into()))
+            }
+            StringCvtScanString => {
+                string_cvt::scan_string(r, f, &a0, a1.expect_string())
             }
             StringCvtSkipWs => string_cvt::skip_ws(r, f, &a0, &a1),
             StringFields => {
@@ -5246,6 +5250,7 @@ fn build_library() -> Lib {
     Eager1::StringCvtRealfmtFix.implements(&mut b, StringCvtRealfmtFix);
     Eager1::StringCvtRealfmtGen.implements(&mut b, StringCvtRealfmtGen);
     Eager1::StringCvtRealfmtSci.implements(&mut b, StringCvtRealfmtSci);
+    EagerF2::StringCvtScanString.implements(&mut b, StringCvtScanString);
     EagerF2::StringCvtSkipWs.implements(&mut b, StringCvtSkipWs);
     EagerF3::StringCvtSplitl.implements(&mut b, StringCvtSplitl);
     EagerF3::StringCvtTakel.implements(&mut b, StringCvtTakel);

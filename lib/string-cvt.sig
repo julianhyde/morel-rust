@@ -83,6 +83,15 @@ sig
   (** `skipWS rdr src` drops any leading whitespace from `src`. *)
   val skipWS : (char, 'a) reader -> 'a -> 'a
       [@@prototype "skipWS rdr src"]
+
+  (**
+   * `scanString f s` scans the string `s` using the scanner `f`, and returns
+   * `SOME a` if `f` reads a value `a` from a prefix of `s`, `NONE` otherwise.
+   * `f` is given a reader over the characters of `s`; the type of the stream
+   * that it reads from is not specified.
+   *)
+  val scanString : ((char, 'b) reader -> ('a, 'b) reader) -> string -> 'a option
+      [@@prototype "scanString f s"]
 end
 [@@description "String conversion utilities and types."]
 

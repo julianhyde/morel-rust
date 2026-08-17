@@ -27,14 +27,18 @@ Sys.set ("stringDepth", ~1);
 > val it = () : unit
 
 StringCvt;
-> val it = {dropl=fn,padLeft=fn,padRight=fn,skipWS=fn,splitl=fn,takel=fn}
+> val it =
+>   {dropl=fn,padLeft=fn,padRight=fn,scanString=fn,skipWS=fn,splitl=fn,
+>    takel=fn}
 >   : {dropl:(char -> bool) -> ('a -> (char * 'a) option) -> 'a -> 'a,
 >       padLeft:char -> int -> string -> string,
 >       padRight:char -> int -> string -> string,
->       skipWS:('b -> (char * 'b) option) -> 'b -> 'b,
+>       scanString:(('b -> (char * 'b) option) -> 'b -> ('c * 'b) option)
+>                   -> string -> 'c option,
+>       skipWS:('d -> (char * 'd) option) -> 'd -> 'd,
 >       splitl:(char -> bool)
->               -> ('c -> (char * 'c) option) -> 'c -> string * 'c,
->       takel:(char -> bool) -> ('d -> (char * 'd) option) -> 'd -> string}
+>               -> ('e -> (char * 'e) option) -> 'e -> string * 'e,
+>       takel:(char -> bool) -> ('f -> (char * 'f) option) -> 'f -> string}
 
 (*) The constructors of `radix` and `realfmt` are at the top level.
 BIN;
@@ -143,5 +147,57 @@ fun listReader [] = NONE
 > val listReader = fn : 'a list -> ('a * 'a list) option
 StringCvt.splitl Char.isAlpha listReader (String.explode "ab1");
 > val it = ("ab",[#"1"]) : string * char list
+
+(* "scanString f s" scans s with the scanner f. scanString makes the reader
+ * and passes it to f, so these tests also check that a function value made
+ * by the interpreter can be applied by a Morel closure. *)
+StringCvt.scanString;
+> val it = fn
+>   : (('a -> (char * 'a) option) -> 'a -> ('b * 'a) option)
+>      -> string -> 'b option
+
+(*) The scanner applies the reader directly.
+fun firstChar rdr src =
+  case rdr src of
+      NONE => NONE
+    | SOME (c, src2) => SOME (Char.toUpper c, src2);
+> val firstChar = fn : ('a -> (char * 'b) option) -> 'a -> (char * 'b) option
+StringCvt.scanString firstChar "abc";
+> val it = SOME #"A" : char option
+StringCvt.scanString firstChar "";
+> val it = NONE : char option
+
+(*) The scanner reads twice, threading the stream through itself.
+fun firstTwo rdr src =
+  case rdr src of
+      NONE => NONE
+    | SOME (c1, s1) =>
+      (case rdr s1 of
+           NONE => NONE
+         | SOME (c2, s2) => SOME (String.implode [c1, c2], s2));
+> val firstTwo = fn : ('a -> (char * 'a) option) -> 'a -> (string * 'a) option
+StringCvt.scanString firstTwo "abc";
+> val it = SOME "ab" : string option
+StringCvt.scanString firstTwo "a";
+> val it = NONE : string option
+
+(*) The scanner passes the reader on to another function.
+fun digits rdr src =
+  case StringCvt.splitl Char.isDigit rdr src of
+      ("", _) => NONE
+    | (s, src2) => SOME (s, src2);
+> val digits = fn : ('a -> (char * 'a) option) -> 'a -> (string * 'a) option
+StringCvt.scanString digits "123abc";
+> val it = SOME "123" : string option
+StringCvt.scanString digits "abc";
+> val it = NONE : string option
+
+(*) The scan may stop before the end of the string.
+StringCvt.scanString digits "12ab34";
+> val it = SOME "12" : string option
+
+(*) A scanner that ignores the reader never looks at the stream.
+StringCvt.scanString (fn rdr => fn src => SOME (1, src)) "abc";
+> val it = SOME 1 : int option
 
 (*) End string-cvt.smli

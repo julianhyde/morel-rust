@@ -1276,6 +1276,12 @@ pub enum BuiltInFunction {
     #[strum(props(type = "int option -> realfmt"))]
     #[strum(props(constructor_ordinal = "3"))]
     StringCvtRealfmtSci,
+    #[strum(props(p = "StringCvt", name = "scanString"))]
+    #[strum(props(
+        type = "forall 2 (('b -> (char * 'b) option) -> 'b -> ('a * 'b) \
+                option) -> string -> 'a option"
+    ))]
+    StringCvtScanString,
     #[strum(props(p = "StringCvt", name = "skipWS"))]
     #[strum(props(type = "forall 1 ('a -> (char * 'a) option) -> 'a -> 'a"))]
     StringCvtSkipWs,
