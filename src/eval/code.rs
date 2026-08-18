@@ -3917,6 +3917,7 @@ pub enum EagerF2 {
     BagTake,
     BoolScan,
     CharScan,
+    DateScan,
     EitherApp,
     EitherAppLeft,
     EitherAppRight,
@@ -4047,6 +4048,7 @@ impl EagerF2 {
             }
             BoolScan => string_cvt::bool_scan(r, f, &a0, &a1),
             CharScan => string_cvt::char_scan(r, f, &a0, &a1),
+            DateScan => string_cvt::date_scan(r, f, &a0, &a1),
             EitherApp => {
                 let tuple = a0.expect_list();
                 Either::app(r, f, &tuple[0], &tuple[1], &a1)?;
@@ -4981,6 +4983,7 @@ fn build_library() -> Lib {
     EagerF0::DateLocalOffset.implements(&mut b, DateLocalOffset);
     Eager1::DateMinute.implements(&mut b, DateMinute);
     Eager1::DateMonthFn.implements(&mut b, DateMonthFn);
+    EagerF2::DateScan.implements(&mut b, DateScan);
     Eager1::DateSecond.implements(&mut b, DateSecond);
     Eager1::DateToString.implements(&mut b, DateToString);
     Eager1::DateToTime.implements(&mut b, DateToTime);

@@ -25,6 +25,7 @@
 use crate::compile::library::BuiltInExn;
 use crate::compile::span::Span;
 use crate::eval::code::{EvalEnv, Frame};
+use crate::eval::date::date_of;
 use crate::eval::int::radix_base;
 use crate::eval::val::{NativeFn, Val};
 use crate::shell::kernel::MorelError;
@@ -629,4 +630,117 @@ pub(crate) fn time_scan(
     };
     nanos = if negative { -total } else { total };
     Ok(scanned(Val::Time(nanos), rest))
+}
+
+/// Reads exactly `n` digits, and returns their value.
+fn fixed_digits(
+    r: &mut EvalEnv,
+    f: &mut Frame,
+    rdr: &Val,
+    src: &Val,
+    n: usize,
+) -> Result<Option<(i32, Val)>, MorelError> {
+    let mut value = 0i32;
+    let mut s = src.clone();
+    for _ in 0..n {
+        let Some((c, rest)) = read(r, f, rdr, &s)? else {
+            return Ok(None);
+        };
+        let Some(d) = c.to_digit(10) else {
+            return Ok(None);
+        };
+        value = value * 10 + d as i32;
+        s = rest;
+    }
+    Ok(Some((value, s)))
+}
+
+/// Reads a word of `n` letters, and returns its position in `words`.
+fn word_of(
+    r: &mut EvalEnv,
+    f: &mut Frame,
+    rdr: &Val,
+    src: &Val,
+    words: &[&str],
+) -> Result<Option<(usize, Val)>, MorelError> {
+    let mut text = String::new();
+    let mut s = src.clone();
+    for _ in 0..3 {
+        let Some((c, rest)) = read(r, f, rdr, &s)? else {
+            return Ok(None);
+        };
+        text.push(c);
+        s = rest;
+    }
+    Ok(words.iter().position(|w| *w == text).map(|i| (i, s)))
+}
+
+/// Scans a date in the form `Date.toString` writes -- `Wed Mar 08
+/// 19:06:45 2023` -- which is what SML/NJ documents. Whitespace is not
+/// skipped: a space is part of the form, and the day may be written
+/// with a leading space instead of a leading zero. The weekday is read
+/// but not checked against the date.
+pub(crate) fn date_scan(
+    r: &mut EvalEnv,
+    f: &mut Frame,
+    rdr: &Val,
+    src: &Val,
+) -> Result<Val, MorelError> {
+    const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
+        "Nov", "Dec",
+    ];
+    let Some((_, s)) = word_of(r, f, rdr, src, &DAYS)? else {
+        return Ok(Val::Unit);
+    };
+    let Some(s) = expect_word(r, f, rdr, &s, " ")? else {
+        return Ok(Val::Unit);
+    };
+    let Some((month, s)) = word_of(r, f, rdr, &s, &MONTHS)? else {
+        return Ok(Val::Unit);
+    };
+    let Some(s) = expect_word(r, f, rdr, &s, " ")? else {
+        return Ok(Val::Unit);
+    };
+    // Two columns for the day: `08`, or ` 8` as `Date.fmt` writes it,
+    // in which case the space stands where the leading zero would.
+    let (width, s) = match expect_word(r, f, rdr, &s, " ")? {
+        Some(after) => (1, after),
+        None => (2, s),
+    };
+    let Some((day, s)) = fixed_digits(r, f, rdr, &s, width)? else {
+        return Ok(Val::Unit);
+    };
+    let Some(s) = expect_word(r, f, rdr, &s, " ")? else {
+        return Ok(Val::Unit);
+    };
+    let Some((hour, s)) = fixed_digits(r, f, rdr, &s, 2)? else {
+        return Ok(Val::Unit);
+    };
+    let Some(s) = expect_word(r, f, rdr, &s, ":")? else {
+        return Ok(Val::Unit);
+    };
+    let Some((minute, s)) = fixed_digits(r, f, rdr, &s, 2)? else {
+        return Ok(Val::Unit);
+    };
+    let Some(s) = expect_word(r, f, rdr, &s, ":")? else {
+        return Ok(Val::Unit);
+    };
+    let Some((second, s)) = fixed_digits(r, f, rdr, &s, 2)? else {
+        return Ok(Val::Unit);
+    };
+    let Some(s) = expect_word(r, f, rdr, &s, " ")? else {
+        return Ok(Val::Unit);
+    };
+    // The year is as many digits as there are, not four: a date may
+    // fall outside four digits.
+    let (year, rest) = take_while(r, f, rdr, &s, |c| c.is_ascii_digit())?;
+    let Ok(year) = year.parse::<i32>() else {
+        return Ok(Val::Unit);
+    };
+    match date_of(year, month as u32 + 1, day, hour, minute, second) {
+        Some(date) => Ok(scanned(date, rest)),
+        None => Ok(Val::Unit),
+    }
 }

@@ -326,6 +326,12 @@ pub enum BuiltInFunction {
     #[strum(props(type = "date -> `month`"))]
     DateMonthFn,
     /// `Date.second d`.
+    #[strum(props(p = "Date", name = "scan"))]
+    #[strum(props(
+        type = "forall 1 ('a -> (char * 'a) option) -> 'a -> (date * 'a) \
+                option"
+    ))]
+    DateScan,
     #[strum(props(p = "Date", name = "second", type = "date -> int"))]
     DateSecond,
     /// `Date.toString d`.
