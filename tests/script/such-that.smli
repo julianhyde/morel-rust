@@ -1879,4 +1879,20 @@ end;
 >
 > val it : {d:int, n:string} bag
 
+(* A variable whose values cannot be enumerated is an error. Where the query
+ * still has a scan, the expander names the pattern; where the query has one
+ * step and has simplified to the extent alone, there is no pattern left to
+ * name, so the message names the type. Either way it is an error, not a
+ * crash. *)
+from i;
+> stdIn:1.6 Error: cannot enumerate all values of type ''a'
+>   raised at: stdIn:1.6
+from i, j;
+> stdIn:1.6 Error: pattern 'i' is not grounded
+>   raised at: stdIn:1.6
+from b: bool;
+> stdIn:1.6 Error: cannot enumerate all values of type 'bool'
+>   raised at: stdIn:1.6
+
+
 (*) End suchThat.smli
