@@ -161,6 +161,12 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Bool", name = "orelse", alias = "op orelse"))]
     #[strum(props(type = "bool * bool -> bool"))]
     BoolOrElse,
+    #[strum(props(p = "Bool", name = "scan"))]
+    #[strum(props(
+        type = "forall 1 ('a -> (char * 'a) option) -> 'a -> (bool * 'a) \
+                option"
+    ))]
+    BoolScan,
     #[strum(props(p = "Bool", name = "toString", type = "bool -> string"))]
     BoolToString,
     #[strum(props(name = "true", type = "bool"))]
