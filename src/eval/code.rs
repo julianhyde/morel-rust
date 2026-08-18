@@ -2612,6 +2612,7 @@ pub enum EagerF1 {
     BagHd,
     BagOnly,
     BagTl,
+    BoolFromString,
     CharChr,
     CharPred,
     CharSucc,
@@ -2671,7 +2672,7 @@ impl EagerF1 {
     pub(crate) fn apply(
         &self,
         r: &mut EvalEnv,
-        _f: &mut Frame,
+        f: &mut Frame,
         a0: Val,
         span: Option<&Span>,
     ) -> Result<Val, MorelError> {
@@ -2685,6 +2686,12 @@ impl EagerF1 {
                 Relational::only(a0.expect_list(), span.unwrap())
             }
             BagTl => List::tl(a0.expect_list(), span.unwrap()),
+            BoolFromString => string_cvt::scan_str(
+                r,
+                f,
+                string_cvt::bool_scan,
+                a0.expect_string(),
+            ),
             CharChr => Char::chr(a0.expect_int(), span.unwrap()),
             CharPred => Char::pred(a0.expect_char(), span.unwrap()),
             CharSucc => Char::succ(a0.expect_char(), span.unwrap()),
@@ -2848,7 +2855,6 @@ pub enum Eager1 {
     BagLength,
     BagNull,
     BagToList,
-    BoolFromString,
     BoolNot,
     BoolToString,
     CharFromCString,
@@ -3062,7 +3068,7 @@ impl Eager1 {
             BagLength => Val::Int(List::length(a0.expect_list())),
             BagNull => Val::Bool(List::null(a0.expect_list())),
             BagToList => a0, // Already a Val::List
-            BoolFromString => Bool::from_string(a0.expect_string()),
+
             BoolNot => Val::Bool(Bool::not(a0.expect_bool())),
             BoolToString => {
                 Val::String((Bool::to_string(a0.expect_bool())).into())
@@ -3887,6 +3893,7 @@ pub enum EagerF2 {
     BagPartition,
     BagTabulate,
     BagTake,
+    BoolScan,
     EitherApp,
     EitherAppLeft,
     EitherAppRight,
@@ -4012,6 +4019,7 @@ impl EagerF2 {
             BagTake => {
                 List::take(a0.expect_list(), a1.expect_int(), span.unwrap())
             }
+            BoolScan => string_cvt::bool_scan(r, f, &a0, &a1),
             EitherApp => {
                 let tuple = a0.expect_list();
                 Either::app(r, f, &tuple[0], &tuple[1], &a1)?;
@@ -4877,13 +4885,14 @@ fn build_library() -> Lib {
     Eager2::BoolAndAlso.implements(&mut b, BoolAndAlso);
     Eager2::BoolEq.implements(&mut b, BoolEq);
     Eager0::BoolFalse.implements(&mut b, BoolFalse);
-    Eager1::BoolFromString.implements(&mut b, BoolFromString);
+    EagerF1::BoolFromString.implements(&mut b, BoolFromString);
     Eager2::BoolGt.implements(&mut b, BoolGt);
     Eager2::BoolImplies.implements(&mut b, BoolImplies);
     Eager2::BoolLt.implements(&mut b, BoolLt);
     Eager2::BoolNe.implements(&mut b, BoolNe);
     Eager1::BoolNot.implements(&mut b, BoolNot);
     Eager2::BoolOrElse.implements(&mut b, BoolOrElse);
+    EagerF2::BoolScan.implements(&mut b, BoolScan);
     Eager1::BoolToString.implements(&mut b, BoolToString);
     Eager0::BoolTrue.implements(&mut b, BoolTrue);
     EagerF1::CharChr.implements(&mut b, CharChr);

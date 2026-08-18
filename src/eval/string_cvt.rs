@@ -85,8 +85,83 @@ pub(crate) fn scan_string(
     scan: &Val,
     s: &str,
 ) -> Result<Val, MorelError> {
+    let reader = string_reader(s);
+    let scanner = scan.apply_f1(r, f, &reader)?;
+    match scanner.apply_f1(r, f, &Val::Int(0))? {
+        Val::Some(pair) => {
+            Ok(Val::Some(Box::new(pair.expect_list()[0].clone())))
+        }
+        _ => Ok(Val::Unit),
+    }
+}
+
+/// Reads `word` from `src`, character by character, and returns the
+/// stream that follows it; `None` if the stream does not begin with it.
+pub(crate) fn expect_word(
+    r: &mut EvalEnv,
+    f: &mut Frame,
+    rdr: &Val,
+    src: &Val,
+    word: &str,
+) -> Result<Option<Val>, MorelError> {
+    let mut s = src.clone();
+    for want in word.chars() {
+        let Val::Some(pair) = rdr.apply_f1(r, f, &s)? else {
+            return Ok(None);
+        };
+        let pair = pair.expect_list();
+        if pair[0].expect_char() != want {
+            return Ok(None);
+        }
+        s = pair[1].clone();
+    }
+    Ok(Some(s))
+}
+
+/// `SOME (value, rest)`, the result of a scanner that read something.
+pub(crate) fn scanned(value: Val, rest: Val) -> Val {
+    Val::Some(Box::new(Val::List(Rc::new(vec![value, rest]))))
+}
+
+/// Scans `true` or `false`, after skipping whitespace.
+pub(crate) fn bool_scan(
+    r: &mut EvalEnv,
+    f: &mut Frame,
+    rdr: &Val,
+    src: &Val,
+) -> Result<Val, MorelError> {
+    let s = skip_ws(r, f, rdr, src)?;
+    for (word, value) in [("true", true), ("false", false)] {
+        if let Some(rest) = expect_word(r, f, rdr, &s, word)? {
+            return Ok(scanned(Val::Bool(value), rest));
+        }
+    }
+    Ok(Val::Unit)
+}
+
+/// Scans a value from a prefix of `s` with a scanner written in Rust,
+/// as `StringCvt.scanString` does for one written in Morel. `Bool
+/// .fromString` and its like are defined that way, so whitespace is
+/// skipped and characters after the value are ignored.
+pub(crate) fn scan_str(
+    r: &mut EvalEnv,
+    f: &mut Frame,
+    scan: impl Fn(&mut EvalEnv, &mut Frame, &Val, &Val) -> Result<Val, MorelError>,
+    s: &str,
+) -> Result<Val, MorelError> {
+    let reader = string_reader(s);
+    match scan(r, f, &reader, &Val::Int(0))? {
+        Val::Some(pair) => {
+            Ok(Val::Some(Box::new(pair.expect_list()[0].clone())))
+        }
+        _ => Ok(Val::Unit),
+    }
+}
+
+/// A reader over the characters of `s`. The stream is a position in `s`.
+pub(crate) fn string_reader(s: &str) -> Val {
     let chars: Rc<Vec<char>> = Rc::new(s.chars().collect());
-    let reader = Val::NativeFn(Rc::new(NativeFn::new(
+    Val::NativeFn(Rc::new(NativeFn::new(
         "StringCvt.scanString.reader",
         move |v| match usize::try_from(v.expect_int())
             .ok()
@@ -99,12 +174,5 @@ pub(crate) fn scan_string(
             // NONE: the end of the string, or a position beyond it.
             None => Val::Unit,
         },
-    )));
-    let scanner = scan.apply_f1(r, f, &reader)?;
-    match scanner.apply_f1(r, f, &Val::Int(0))? {
-        Val::Some(pair) => {
-            Ok(Val::Some(Box::new(pair.expect_list()[0].clone())))
-        }
-        _ => Ok(Val::Unit),
-    }
+    )))
 }
