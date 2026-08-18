@@ -596,6 +596,12 @@ pub enum BuiltInFunction {
     IntRem,
     #[strum(props(p = "Int", name = "sameSign", type = "int * int -> bool"))]
     IntSameSign,
+    #[strum(props(p = "Int", name = "scan"))]
+    #[strum(props(
+        type = "forall 1 radix -> ('a -> (char * 'a) option) -> 'a -> (int \
+                * 'a) option"
+    ))]
+    IntScan,
     #[strum(props(p = "Int", name = "sign", type = "int -> int"))]
     IntSign,
     #[strum(props(p = "Int", name = "*", type = "int * int -> int"))]
@@ -1157,6 +1163,12 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Real", name = "sameSign"))]
     #[strum(props(type = "real * real -> bool"))]
     RealSameSign,
+    #[strum(props(p = "Real", name = "scan"))]
+    #[strum(props(
+        type = "forall 1 ('a -> (char * 'a) option) -> 'a -> (real * 'a) \
+                option"
+    ))]
+    RealScan,
     #[strum(props(p = "Real", name = "sign"))]
     #[strum(props(type = "real -> int", throws = "Domain"))]
     RealSign,
@@ -1762,6 +1774,12 @@ pub enum BuiltInFunction {
     WordOpTimes,
     #[strum(props(p = "Word", name = "orb", type = "word * word -> word"))]
     WordOrb,
+    #[strum(props(p = "Word", name = "scan"))]
+    #[strum(props(
+        type = "forall 1 radix -> ('a -> (char * 'a) option) -> 'a -> \
+                (word * 'a) option"
+    ))]
+    WordScan,
     #[strum(props(p = "Word", name = "toInt", type = "word -> int"))]
     WordToInt,
     #[strum(props(p = "Word", name = "toIntX", type = "word -> int"))]

@@ -2631,6 +2631,7 @@ pub enum EagerF1 {
     RealCeil,
     RealCheckFloat,
     RealFloor,
+    RealFromString,
     RealRound,
     RealSign,
     RealTrunc,
@@ -2754,6 +2755,12 @@ impl EagerF1 {
                 Real::check_float(a0.expect_real(), span.unwrap())
             }
             RealFloor => Real::floor(a0.expect_real(), span.unwrap()),
+            RealFromString => string_cvt::scan_str(
+                r,
+                f,
+                string_cvt::real_scan,
+                a0.expect_string(),
+            ),
             RealRound => Real::round(a0.expect_real(), span.unwrap()),
             RealSign => Real::sign(a0.expect_real(), span.unwrap()),
             RealTrunc => Real::trunc(a0.expect_real(), span.unwrap()),
@@ -2975,7 +2982,6 @@ pub enum Eager1 {
     RangeToList,
     RealAbs,
     RealFromInt,
-    RealFromString,
     RealIsFinite,
     RealIsNan,
     RealIsNormal,
@@ -3352,7 +3358,6 @@ impl Eager1 {
             }
             RealAbs => Val::Real(Real::abs(a0.expect_real())),
             RealFromInt => Val::Real(Real::from_int(a0.expect_int())),
-            RealFromString => Real::from_string(a0.expect_string()),
             RealIsFinite => Val::Bool(Real::is_finite(a0.expect_real())),
             RealIsNan => Val::Bool(Real::is_nan(a0.expect_real())),
             RealIsNormal => Val::Bool(Real::is_normal(a0.expect_real())),
@@ -3935,6 +3940,7 @@ pub enum EagerF2 {
     OptionMap,
     OptionMapPartial,
     RealCompare,
+    RealScan,
     RelationalIterate,
     StringCollate,
     StringConcatWith,
@@ -4206,6 +4212,7 @@ impl EagerF2 {
             // each iteration. Subtracts already-seen elements (semi-naive
             // evaluation) so cyclic graphs terminate. Stops when no
             // genuinely new elements appear.
+            RealScan => string_cvt::real_scan(r, f, &a0, &a1),
             RelationalIterate => {
                 let mut list: Vec<Val> = a0.expect_list().to_vec();
                 let mut new_list: Vec<Val> = list.clone();
@@ -4324,6 +4331,7 @@ pub enum EagerF3 {
     EitherFold,
     FnCurry,
     FnRepeat,
+    IntScan,
     LPFoldl,
     LPFoldlEq,
     LPFoldr,
@@ -4340,6 +4348,7 @@ pub enum EagerF3 {
     VectorFoldr,
     VectorFoldri,
     VectorUpdate,
+    WordScan,
 }
 
 impl EagerF3 {
@@ -4383,6 +4392,8 @@ impl EagerF3 {
 
         match &self {
             BagFold => List::foldl(r, f, &a0, &a1, a2.expect_list()),
+            IntScan => string_cvt::int_scan(r, f, &a0, &a1, &a2),
+            WordScan => string_cvt::word_scan(r, f, &a0, &a1, &a2),
             StringCvtDropl => Ok(string_cvt::splitl(r, f, &a0, &a1, &a2)?.1),
             StringCvtSplitl => {
                 let (prefix, rest) = string_cvt::splitl(r, f, &a0, &a1, &a2)?;
@@ -5034,6 +5045,7 @@ fn build_library() -> Lib {
     Eager2::IntQuot.implements(&mut b, IntQuot);
     Eager2::IntRem.implements(&mut b, IntRem);
     Eager2::IntSameSign.implements(&mut b, IntSameSign);
+    EagerF3::IntScan.implements(&mut b, IntScan);
     Eager1::IntSign.implements(&mut b, IntSign);
     Eager2::IntTimes.implements(&mut b, IntTimes);
     Eager1::IntToInt.implements(&mut b, IntToInt);
@@ -5195,7 +5207,7 @@ fn build_library() -> Lib {
     Eager2::RealFmt.implements(&mut b, RealFmt);
     Eager1::RealFromInt.implements(&mut b, RealFromInt);
     Eager2::RealFromManExp.implements(&mut b, RealFromManExp);
-    Eager1::RealFromString.implements(&mut b, RealFromString);
+    EagerF1::RealFromString.implements(&mut b, RealFromString);
     Eager2::RealGe.implements(&mut b, RealGe);
     Eager2::RealGt.implements(&mut b, RealGt);
     Eager1::RealIsFinite.implements(&mut b, RealIsFinite);
@@ -5224,6 +5236,7 @@ fn build_library() -> Lib {
     Eager2::RealRem.implements(&mut b, RealRem);
     EagerF1::RealRound.implements(&mut b, RealRound);
     Eager2::RealSameSign.implements(&mut b, RealSameSign);
+    EagerF2::RealScan.implements(&mut b, RealScan);
     EagerF1::RealSign.implements(&mut b, RealSign);
     Eager1::RealSignBit.implements(&mut b, RealSignBit);
     Eager1::RealSplit.implements(&mut b, RealSplit);
@@ -5394,6 +5407,7 @@ fn build_library() -> Lib {
     Eager2::WordArithShiftRight.implements(&mut b, WordOpShiftRightArith);
     Eager2::WordOpTimes.implements(&mut b, WordOpTimes);
     Eager2::WordOrb.implements(&mut b, WordOrb);
+    EagerF3::WordScan.implements(&mut b, WordScan);
     Eager1::WordToInt.implements(&mut b, WordToInt);
     Eager1::WordToInt.implements(&mut b, WordToIntX);
     Eager1::WordIdentity.implements(&mut b, WordToLarge);
