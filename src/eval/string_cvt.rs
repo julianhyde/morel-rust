@@ -22,10 +22,13 @@
 //! or `NONE` at the end. Only the reader knows what the stream is; the
 //! functions here pass it back unexamined.
 
+use crate::compile::library::BuiltInExn;
+use crate::compile::span::Span;
 use crate::eval::code::{EvalEnv, Frame};
 use crate::eval::int::radix_base;
 use crate::eval::val::{NativeFn, Val};
 use crate::shell::kernel::MorelError;
+use std::iter::repeat;
 use std::rc::Rc;
 
 /// Reads from `src` the longest prefix of characters satisfying `p`,
@@ -571,4 +574,59 @@ pub(crate) fn string_scan(
         return Ok(Val::Unit);
     }
     Ok(scanned(Val::String(out.into()), s))
+}
+
+/// Scans a time: a decimal number of seconds, after skipping
+/// whitespace. There is no exponent -- `1.5e3` is 1.5 seconds and stops
+/// at the `e` -- and either the whole part or the fraction may be
+/// missing, but not both, so `1.` and `.` are nothing.
+///
+/// Morel's `time` counts nanoseconds, so digits beyond a nanosecond are
+/// discarded, and a number of seconds too large to count raises `Time`.
+pub(crate) fn time_scan(
+    r: &mut EvalEnv,
+    f: &mut Frame,
+    rdr: &Val,
+    src: &Val,
+    span: &Span,
+) -> Result<Val, MorelError> {
+    const NANOS: i64 = 1_000_000_000;
+    let s = skip_ws(r, f, rdr, src)?;
+    let (negative, s) = signed(r, f, rdr, &s, true)?;
+    let (whole, s) = take_while(r, f, rdr, &s, |c| c.is_ascii_digit())?;
+    let (frac, rest) = match expect_word(r, f, rdr, &s, ".")? {
+        Some(after) => {
+            let (frac, after2) =
+                take_while(r, f, rdr, &after, |c| c.is_ascii_digit())?;
+            // A point must have a digit after it: `1.` is not a time.
+            if frac.is_empty() {
+                return Ok(Val::Unit);
+            }
+            (frac, after2)
+        }
+        None => (String::new(), s),
+    };
+    if whole.is_empty() && frac.is_empty() {
+        return Ok(Val::Unit);
+    }
+    // Nine digits of fraction, truncated or padded with zeros.
+    let mut nanos: i64 = frac
+        .chars()
+        .chain(repeat('0'))
+        .take(9)
+        .fold(0, |acc, c| acc * 10 + c.to_digit(10).unwrap_or(0) as i64);
+    // A number may be all fraction: `.5` is half a second.
+    let seconds = if whole.is_empty() {
+        Some(0)
+    } else {
+        whole.parse::<i64>().ok()
+    };
+    let total = seconds
+        .and_then(|s| s.checked_mul(NANOS))
+        .and_then(|s| s.checked_add(nanos));
+    let Some(total) = total else {
+        return Err(MorelError::Runtime(BuiltInExn::Time, span.clone()));
+    };
+    nanos = if negative { -total } else { total };
+    Ok(scanned(Val::Time(nanos), rest))
 }

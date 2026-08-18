@@ -3972,6 +3972,7 @@ pub enum EagerF2 {
     StringTranslate,
     SysSet,
     TimeFmt,
+    TimeScan,
     VectorAll,
     VectorApp,
     VectorAppi,
@@ -4303,6 +4304,7 @@ impl EagerF2 {
             TimeFmt => {
                 time::fmt(a0.expect_int(), a1.expect_time(), span.unwrap())
             }
+            TimeScan => string_cvt::time_scan(r, f, &a0, &a1, span.unwrap()),
             VectorAll => Ok(Val::Bool(List::all(r, f, &a0, a1.expect_list())?)),
             VectorApp => {
                 Vector::app(r, f, &a0, a1.expect_list())?;
@@ -5357,6 +5359,7 @@ fn build_library() -> Lib {
     Eager2::TimeLe.implements(&mut b, TimeLe);
     Eager2::TimeLt.implements(&mut b, TimeLt);
     EagerF0::TimeNow.implements(&mut b, TimeNow);
+    EagerF2::TimeScan.implements(&mut b, TimeScan);
     Eager2::TimeSub.implements(&mut b, TimeSub);
     Eager1::TimeToMicroseconds.implements(&mut b, TimeToMicroseconds);
     Eager1::TimeToMilliseconds.implements(&mut b, TimeToMilliseconds);

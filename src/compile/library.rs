@@ -1532,6 +1532,12 @@ pub enum BuiltInFunction {
     #[strum(props(type = "unit -> time"))]
     TimeNow,
     /// `Time.- (t1, t2)`: time subtraction.
+    #[strum(props(p = "Time", name = "scan", throws = "Time"))]
+    #[strum(props(
+        type = "forall 1 ('a -> (char * 'a) option) -> 'a -> (time * 'a) \
+                option"
+    ))]
+    TimeScan,
     #[strum(props(p = "Time", name = "-", type = "time * time -> time"))]
     TimeSub,
     /// `Time.toMicroseconds t`: returns microseconds.
