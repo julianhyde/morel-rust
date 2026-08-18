@@ -1453,9 +1453,6 @@ Sys.set ("stringDepth", 1000000);
 > val it = () : unit
 
 
-set("mode", "validate");
-> val it = () : unit
-
 (* Generates a program of length 'n', to stress the unifier. *)
 fun program n =
   let
@@ -1500,8 +1497,6 @@ let  val i0 = 0; val i1 = 1; val i2 = 2; val i3 = 3; val i4 = i2 * i2; val i5 = 
 >     int * int * int * int * int
 
 (*) 'typeof' in evaluate mode
-set("mode", "evaluate");
-> val it = () : unit
 
 fn x: typeof 1 => true;
 > val it = fn : int -> bool

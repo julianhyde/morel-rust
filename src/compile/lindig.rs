@@ -576,30 +576,34 @@ fn fits(width: i32, mut col: i32, mut item: Option<Rc<Item>>) -> bool {
                 }));
             }
             Doc::Group(d) => {
-                let flat = Rc::new(Item {
+                // Inside a flat layout every group is flat too, so the scan
+                // continues with the group's contents.
+                //
+                // A downstream group in a broken layout makes its own break
+                // decision, and either way this scan is over: if its
+                // flattened form does not fit, it breaks, and the line break
+                // ends the current line; and if it does fit, scanning on
+                // asks the very same question this call is answering (same
+                // width, same column, same work list), so the answer is the
+                // same 'true'. Answering it directly is what keeps the scan
+                // linear: recursing instead costs time exponential in the
+                // number of nested groups, which is what a wide tuple or
+                // record is.
+                if mode == Mode::Break {
+                    return true;
+                }
+                item = Some(Rc::new(Item {
                     indent: i,
                     mode: Mode::Flat,
                     doc: (**d).clone(),
                     next,
-                });
-                if mode == Mode::Break
-                    && !fits(width, col, Some(Rc::clone(&flat)))
-                {
-                    return true;
-                }
-                item = Some(flat);
+                }));
             }
-            Doc::Union(wide, _) => {
-                let wide_item = Rc::new(Item {
-                    indent: i,
-                    mode: Mode::Flat,
-                    doc: (**wide).clone(),
-                    next,
-                });
-                if !fits(width, col, Some(Rc::clone(&wide_item))) {
-                    return true;
-                }
-                item = Some(wide_item);
+            Doc::Union(..) => {
+                // A union always makes its own decision, even inside a flat
+                // layout, and by the argument above the answer is 'true'
+                // whichever branch it takes.
+                return true;
             }
             Doc::Column(f) => {
                 item = Some(Rc::new(Item {
