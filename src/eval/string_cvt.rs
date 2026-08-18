@@ -388,3 +388,132 @@ pub(crate) fn real_scan(
     };
     Ok(scanned(Val::Real(sign * value), rest))
 }
+
+/// Reads one character from `src`, or `None` at the end of the stream.
+fn read(
+    r: &mut EvalEnv,
+    f: &mut Frame,
+    rdr: &Val,
+    src: &Val,
+) -> Result<Option<(char, Val)>, MorelError> {
+    match rdr.apply_f1(r, f, src)? {
+        Val::Some(pair) => {
+            let pair = pair.expect_list();
+            Ok(Some((pair[0].expect_char(), pair[1].clone())))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Reads `n` digits in `radix` and returns their value, or `None` if
+/// there are fewer than `n`, or the value is not a character.
+fn code(
+    r: &mut EvalEnv,
+    f: &mut Frame,
+    rdr: &Val,
+    src: &Val,
+    n: usize,
+    radix: u32,
+) -> Result<Option<(char, Val)>, MorelError> {
+    let mut value: u32 = 0;
+    let mut s = src.clone();
+    for _ in 0..n {
+        let Some((c, rest)) = read(r, f, rdr, &s)? else {
+            return Ok(None);
+        };
+        let Some(d) = c.to_digit(radix) else {
+            return Ok(None);
+        };
+        value = value * radix + d;
+        s = rest;
+    }
+    // A character is a byte, as `Char.maxOrd` says; and a surrogate is
+    // not a character at all.
+    match u8::try_from(value) {
+        Ok(b) => Ok(Some((b as char, s))),
+        Err(_) => Ok(None),
+    }
+}
+
+/// Scans one character in Standard ML source form: itself, or an escape
+/// sequence. Whitespace is not skipped -- a space is a character like
+/// any other -- and a raw non-printable character is not a constant.
+pub(crate) fn char_scan(
+    r: &mut EvalEnv,
+    f: &mut Frame,
+    rdr: &Val,
+    src: &Val,
+) -> Result<Val, MorelError> {
+    let mut s = src.clone();
+    loop {
+        let Some((c, rest)) = read(r, f, rdr, &s)? else {
+            return Ok(Val::Unit);
+        };
+        if c != '\\' {
+            // A printable character stands for itself; `"` must be
+            // escaped, as in source.
+            return if (' '..='~').contains(&c) && c != '"' {
+                Ok(scanned(Val::Char(c), rest))
+            } else {
+                Ok(Val::Unit)
+            };
+        }
+        let Some((e, after)) = read(r, f, rdr, &rest)? else {
+            return Ok(Val::Unit);
+        };
+        let simple = match e {
+            'a' => Some('\x07'),
+            'b' => Some('\x08'),
+            't' => Some('\t'),
+            'n' => Some('\n'),
+            'v' => Some('\x0B'),
+            'f' => Some('\x0C'),
+            'r' => Some('\r'),
+            '"' => Some('"'),
+            '\\' => Some('\\'),
+            _ => None,
+        };
+        if let Some(c) = simple {
+            return Ok(scanned(Val::Char(c), after));
+        }
+        match e {
+            // `\^c` is the control character `c` minus 64.
+            '^' => {
+                let Some((c, after2)) = read(r, f, rdr, &after)? else {
+                    return Ok(Val::Unit);
+                };
+                return if ('@'..='_').contains(&c) {
+                    Ok(scanned(Val::Char((c as u8 - 64) as char), after2))
+                } else {
+                    Ok(Val::Unit)
+                };
+            }
+            // `\uxxxx` is four hexadecimal digits.
+            'u' => {
+                return match code(r, f, rdr, &after, 4, 16)? {
+                    Some((c, after2)) => Ok(scanned(Val::Char(c), after2)),
+                    None => Ok(Val::Unit),
+                };
+            }
+            // `\ddd` is exactly three decimal digits.
+            '0'..='9' => {
+                return match code(r, f, rdr, &rest, 3, 10)? {
+                    Some((c, after2)) => Ok(scanned(Val::Char(c), after2)),
+                    None => Ok(Val::Unit),
+                };
+            }
+            // `\f...f\` -- a formatting sequence -- is skipped, and
+            // the scan goes on with what follows it.
+            ' ' | '\t' | '\n' | '\r' | '\x0B' | '\x0C' => {
+                let (_, after2) =
+                    take_while(r, f, rdr, &after, char::is_whitespace)?;
+                let Some(after3) = expect_word(r, f, rdr, &after2, "\\")?
+                else {
+                    return Ok(Val::Unit);
+                };
+                s = after3;
+            }
+            _ => return Ok(Val::Unit),
+        }
+    }
+}
