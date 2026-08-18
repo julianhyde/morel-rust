@@ -3899,6 +3899,7 @@ pub enum EagerF2 {
     BagTabulate,
     BagTake,
     BoolScan,
+    CharScan,
     EitherApp,
     EitherAppLeft,
     EitherAppRight,
@@ -4026,6 +4027,7 @@ impl EagerF2 {
                 List::take(a0.expect_list(), a1.expect_int(), span.unwrap())
             }
             BoolScan => string_cvt::bool_scan(r, f, &a0, &a1),
+            CharScan => string_cvt::char_scan(r, f, &a0, &a1),
             EitherApp => {
                 let tuple = a0.expect_list();
                 Either::app(r, f, &tuple[0], &tuple[1], &a1)?;
@@ -4937,6 +4939,7 @@ fn build_library() -> Lib {
     Eager2::CharNotContains.implements(&mut b, CharNotContains);
     Eager1::CharOrd.implements(&mut b, CharOrd);
     EagerF1::CharPred.implements(&mut b, CharPred);
+    EagerF2::CharScan.implements(&mut b, CharScan);
     EagerF1::CharSucc.implements(&mut b, CharSucc);
     Eager1::CharToCString.implements(&mut b, CharToCString);
     Eager1::CharToLower.implements(&mut b, CharToLower);

@@ -243,6 +243,12 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Char", name = "pred", throws = "Chr"))]
     #[strum(props(type = "char -> char"))]
     CharPred,
+    #[strum(props(p = "Char", name = "scan"))]
+    #[strum(props(
+        type = "forall 1 ('a -> (char * 'a) option) -> 'a -> (char * 'a) \
+                option"
+    ))]
+    CharScan,
     #[strum(props(p = "Char", name = "succ", throws = "Chr"))]
     #[strum(props(type = "char -> char"))]
     CharSucc,
