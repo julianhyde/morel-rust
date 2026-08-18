@@ -2638,6 +2638,7 @@ pub enum EagerF1 {
     RelationalMax,
     RelationalMin,
     RelationalOnly,
+    StringFromString,
     SysParseTree,
     SysPlanEx,
     SysShow,
@@ -2766,6 +2767,12 @@ impl EagerF1 {
             RealTrunc => Real::trunc(a0.expect_real(), span.unwrap()),
             RelationalMax => Relational::max(a0.expect_list(), span.unwrap()),
             RelationalMin => Relational::min(a0.expect_list(), span.unwrap()),
+            StringFromString => string_cvt::scan_str(
+                r,
+                f,
+                string_cvt::string_scan,
+                a0.expect_string(),
+            ),
             SysParseTree => {
                 // Parse the argument as a top-level Morel statement and
                 // return an S-expression dump of the resulting AST. Empty
@@ -3006,9 +3013,12 @@ pub enum Eager1 {
     StringCvtRealfmtGen,
     StringCvtRealfmtSci,
     StringExplode,
+    StringFromCString,
     StringImplode,
     StringSize,
     StringStr,
+    StringToCString,
+    StringToString,
     TestBagSum,
     TestFoo,
     TestHighlight,
@@ -3409,6 +3419,7 @@ impl Eager1 {
                 let s = a0.expect_string();
                 Val::List(Rc::new(Str::explode(s)))
             }
+            StringFromCString => Str::from_c_string(a0.expect_string()),
             StringImplode => {
                 let chars = a0.expect_list();
                 Val::String((Str::implode(chars)).into())
@@ -3417,6 +3428,12 @@ impl Eager1 {
             StringStr => {
                 let c = a0.expect_char();
                 Val::String((c.to_string()).into())
+            }
+            StringToCString => {
+                Val::String((Str::to_c_string(a0.expect_string())).into())
+            }
+            StringToString => {
+                Val::String((Str::to_string_escaped(a0.expect_string())).into())
             }
             TestBagSum | TestListSum | TestOverSum => {
                 // Sum the (numeric) collection, like `Relational.sum`.
@@ -3949,6 +3966,7 @@ pub enum EagerF2 {
     StringCvtSkipWs,
     StringFields,
     StringMap,
+    StringScan,
     StringSub,
     StringTokens,
     StringTranslate,
@@ -4264,6 +4282,7 @@ impl EagerF2 {
                 let s = a1.expect_string();
                 Str::map(r, f, &a0, s)
             }
+            StringScan => string_cvt::string_scan(r, f, &a0, &a1),
             StringSub => {
                 Str::sub(a0.expect_string(), a1.expect_int(), span.unwrap())
             }
@@ -5283,6 +5302,8 @@ fn build_library() -> Lib {
     Eager1::StringExplode.implements(&mut b, StringExplode);
     EagerF3::StringExtract.implements(&mut b, StringExtract);
     EagerF2::StringFields.implements(&mut b, StringFields);
+    Eager1::StringFromCString.implements(&mut b, StringFromCString);
+    EagerF1::StringFromString.implements(&mut b, StringFromString);
     Eager2::StringGe.implements(&mut b, StringGe);
     Eager2::StringGt.implements(&mut b, StringGt);
     Eager1::StringImplode.implements(&mut b, StringImplode);
@@ -5294,10 +5315,13 @@ fn build_library() -> Lib {
     EagerF2::StringMap.implements(&mut b, StringMap);
     Eager0::StringMaxSize.implements(&mut b, StringMaxSize);
     Eager2::StringNe.implements(&mut b, StringNe);
+    EagerF2::StringScan.implements(&mut b, StringScan);
     Eager1::StringSize.implements(&mut b, StringSize);
     Eager1::StringStr.implements(&mut b, StringStr);
     EagerF2::StringSub.implements(&mut b, StringSub);
     EagerF3::StringSubstring.implements(&mut b, StringSubstring);
+    Eager1::StringToCString.implements(&mut b, StringToCString);
+    Eager1::StringToString.implements(&mut b, StringToString);
     EagerF2::StringTokens.implements(&mut b, StringTokens);
     EagerF2::StringTranslate.implements(&mut b, StringTranslate);
     EagerF0::SysClearEnv.implements(&mut b, SysClearEnv);

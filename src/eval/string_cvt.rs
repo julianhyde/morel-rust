@@ -435,9 +435,96 @@ fn code(
     }
 }
 
-/// Scans one character in Standard ML source form: itself, or an escape
+/// What reading one character in Standard ML source form produced.
+enum Scanned {
+    /// A character, and the stream after it.
+    Char(char, Val),
+    /// An escaped formatting sequence -- a backslash, whitespace and a
+    /// backslash -- which stands for nothing; and the stream after it.
+    Nothing(Val),
+    /// Nothing that can be read: the end of the stream, an ill-formed
+    /// escape, or a raw character that has to be escaped. The stream is
+    /// left where it was.
+    None,
+}
+
+/// Reads one character in Standard ML source form: itself, or an escape
 /// sequence. Whitespace is not skipped -- a space is a character like
-/// any other -- and a raw non-printable character is not a constant.
+/// any other. `quote` says whether a raw double-quote is a character,
+/// which it is in a string but not in a character constant.
+fn scan_char(
+    r: &mut EvalEnv,
+    f: &mut Frame,
+    rdr: &Val,
+    src: &Val,
+    quote: bool,
+) -> Result<Scanned, MorelError> {
+    let Some((c, rest)) = read(r, f, rdr, src)? else {
+        return Ok(Scanned::None);
+    };
+    if c != '\\' {
+        // A printable character stands for itself.
+        return Ok(if (' '..='~').contains(&c) && (quote || c != '"') {
+            Scanned::Char(c, rest)
+        } else {
+            Scanned::None
+        });
+    }
+    let Some((e, after)) = read(r, f, rdr, &rest)? else {
+        return Ok(Scanned::None);
+    };
+    let simple = match e {
+        'a' => Some('\x07'),
+        'b' => Some('\x08'),
+        't' => Some('\t'),
+        'n' => Some('\n'),
+        'v' => Some('\x0B'),
+        'f' => Some('\x0C'),
+        'r' => Some('\r'),
+        '"' => Some('"'),
+        '\\' => Some('\\'),
+        _ => None,
+    };
+    if let Some(c) = simple {
+        return Ok(Scanned::Char(c, after));
+    }
+    match e {
+        // `\^c` is the control character `c` minus 64.
+        '^' => {
+            let Some((c, after2)) = read(r, f, rdr, &after)? else {
+                return Ok(Scanned::None);
+            };
+            Ok(if ('@'..='_').contains(&c) {
+                Scanned::Char((c as u8 - 64) as char, after2)
+            } else {
+                Scanned::None
+            })
+        }
+        // `\uxxxx` is four hexadecimal digits.
+        'u' => Ok(match code(r, f, rdr, &after, 4, 16)? {
+            Some((c, after2)) => Scanned::Char(c, after2),
+            None => Scanned::None,
+        }),
+        // `\ddd` is exactly three decimal digits.
+        '0'..='9' => Ok(match code(r, f, rdr, &rest, 3, 10)? {
+            Some((c, after2)) => Scanned::Char(c, after2),
+            None => Scanned::None,
+        }),
+        // A formatting sequence: a backslash, whitespace, a backslash.
+        ' ' | '\t' | '\n' | '\r' | '\x0B' | '\x0C' => {
+            let (_, after2) =
+                take_while(r, f, rdr, &after, char::is_whitespace)?;
+            Ok(match expect_word(r, f, rdr, &after2, "\\")? {
+                Some(after3) => Scanned::Nothing(after3),
+                None => Scanned::None,
+            })
+        }
+        _ => Ok(Scanned::None),
+    }
+}
+
+/// Scans one character constant. A formatting sequence stands for
+/// nothing, so the scan goes on with what follows it.
 pub(crate) fn char_scan(
     r: &mut EvalEnv,
     f: &mut Frame,
@@ -446,74 +533,42 @@ pub(crate) fn char_scan(
 ) -> Result<Val, MorelError> {
     let mut s = src.clone();
     loop {
-        let Some((c, rest)) = read(r, f, rdr, &s)? else {
-            return Ok(Val::Unit);
-        };
-        if c != '\\' {
-            // A printable character stands for itself; `"` must be
-            // escaped, as in source.
-            return if (' '..='~').contains(&c) && c != '"' {
-                Ok(scanned(Val::Char(c), rest))
-            } else {
-                Ok(Val::Unit)
-            };
-        }
-        let Some((e, after)) = read(r, f, rdr, &rest)? else {
-            return Ok(Val::Unit);
-        };
-        let simple = match e {
-            'a' => Some('\x07'),
-            'b' => Some('\x08'),
-            't' => Some('\t'),
-            'n' => Some('\n'),
-            'v' => Some('\x0B'),
-            'f' => Some('\x0C'),
-            'r' => Some('\r'),
-            '"' => Some('"'),
-            '\\' => Some('\\'),
-            _ => None,
-        };
-        if let Some(c) = simple {
-            return Ok(scanned(Val::Char(c), after));
-        }
-        match e {
-            // `\^c` is the control character `c` minus 64.
-            '^' => {
-                let Some((c, after2)) = read(r, f, rdr, &after)? else {
-                    return Ok(Val::Unit);
-                };
-                return if ('@'..='_').contains(&c) {
-                    Ok(scanned(Val::Char((c as u8 - 64) as char), after2))
-                } else {
-                    Ok(Val::Unit)
-                };
-            }
-            // `\uxxxx` is four hexadecimal digits.
-            'u' => {
-                return match code(r, f, rdr, &after, 4, 16)? {
-                    Some((c, after2)) => Ok(scanned(Val::Char(c), after2)),
-                    None => Ok(Val::Unit),
-                };
-            }
-            // `\ddd` is exactly three decimal digits.
-            '0'..='9' => {
-                return match code(r, f, rdr, &rest, 3, 10)? {
-                    Some((c, after2)) => Ok(scanned(Val::Char(c), after2)),
-                    None => Ok(Val::Unit),
-                };
-            }
-            // `\f...f\` -- a formatting sequence -- is skipped, and
-            // the scan goes on with what follows it.
-            ' ' | '\t' | '\n' | '\r' | '\x0B' | '\x0C' => {
-                let (_, after2) =
-                    take_while(r, f, rdr, &after, char::is_whitespace)?;
-                let Some(after3) = expect_word(r, f, rdr, &after2, "\\")?
-                else {
-                    return Ok(Val::Unit);
-                };
-                s = after3;
-            }
-            _ => return Ok(Val::Unit),
+        match scan_char(r, f, rdr, &s, false)? {
+            Scanned::Char(c, rest) => return Ok(scanned(Val::Char(c), rest)),
+            Scanned::Nothing(rest) => s = rest,
+            Scanned::None => return Ok(Val::Unit),
         }
     }
+}
+
+/// Scans a run of characters in Standard ML source form, stopping at the
+/// first thing that is not one -- a raw non-printable character, or an
+/// ill-formed escape -- and returning what it has read so far. Unlike a
+/// character constant, a raw double-quote is a character, and the empty
+/// stream yields the empty string rather than nothing.
+pub(crate) fn string_scan(
+    r: &mut EvalEnv,
+    f: &mut Frame,
+    rdr: &Val,
+    src: &Val,
+) -> Result<Val, MorelError> {
+    let mut out = String::new();
+    let mut s = src.clone();
+    loop {
+        match scan_char(r, f, rdr, &s, true)? {
+            Scanned::Char(c, rest) => {
+                out.push(c);
+                s = rest;
+            }
+            Scanned::Nothing(rest) => s = rest,
+            Scanned::None => break,
+        }
+    }
+    // Nothing read, and something there that could not be read: the
+    // stream does not start with a string. (An empty stream does yield
+    // the empty string.)
+    if out.is_empty() && read(r, f, rdr, &s)?.is_some() {
+        return Ok(Val::Unit);
+    }
+    Ok(scanned(Val::String(out.into()), s))
 }

@@ -1333,6 +1333,12 @@ pub enum BuiltInFunction {
     #[strum(props(p = "String", name = "fields", global = "fields"))]
     #[strum(props(type = "(char -> bool) -> string -> string list"))]
     StringFields,
+    #[strum(props(p = "String", name = "fromCString"))]
+    #[strum(props(type = "string -> string option"))]
+    StringFromCString,
+    #[strum(props(p = "String", name = "fromString"))]
+    #[strum(props(type = "string -> string option"))]
+    StringFromString,
     #[strum(props(p = "String", name = ">="))]
     #[strum(props(type = "string * string -> bool"))]
     StringGe,
@@ -1365,6 +1371,12 @@ pub enum BuiltInFunction {
     #[strum(props(p = "String", name = "<>"))]
     #[strum(props(type = "string * string -> bool"))]
     StringNe,
+    #[strum(props(p = "String", name = "scan"))]
+    #[strum(props(
+        type = "forall 1 ('a -> (char * 'a) option) -> 'a -> (string * 'a) \
+                option"
+    ))]
+    StringScan,
     #[strum(props(p = "String", name = "size", global = true))]
     #[strum(props(type = "string -> int"))]
     StringSize,
@@ -1378,6 +1390,12 @@ pub enum BuiltInFunction {
     #[strum(props(type = "string * int * int -> string"))]
     #[strum(props(throws = "Subscript"))]
     StringSubstring,
+    #[strum(props(p = "String", name = "toCString"))]
+    #[strum(props(type = "string -> string"))]
+    StringToCString,
+    #[strum(props(p = "String", name = "toString"))]
+    #[strum(props(type = "string -> string"))]
+    StringToString,
     #[strum(props(p = "String", name = "tokens", global = "tokens"))]
     #[strum(props(type = "(char -> bool) -> string -> string list"))]
     StringTokens,

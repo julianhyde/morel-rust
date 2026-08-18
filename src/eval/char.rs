@@ -32,6 +32,35 @@ impl Char {
     pub(crate) const MAX_ORD: i32 = 255;
     pub(crate) const MIN_CHAR: char = '\u{0000}';
 
+    /// How many characters the C escape sequence at the head of `s`
+    /// occupies. `from_c_string` reads that sequence; this says how far
+    /// to advance to read the next one.
+    pub(crate) fn c_escape_len(s: &str) -> usize {
+        let b = s.as_bytes();
+        if b.is_empty() {
+            return 0;
+        }
+        if b[0] != b'\\' {
+            return 1;
+        }
+        if b.len() < 2 {
+            return 1;
+        }
+        if b[1].is_ascii_digit() && b[1] < b'8' {
+            return (2..b.len().min(4))
+                .take_while(|&i| b[i].is_ascii_digit() && b[i] < b'8')
+                .last()
+                .map_or(2, |i| i + 1);
+        }
+        if b[1] == b'x' {
+            return (2..b.len())
+                .take_while(|&i| b[i].is_ascii_hexdigit())
+                .last()
+                .map_or(2, |i| i + 1);
+        }
+        2
+    }
+
     /// Implements Morel `Char.chr i`. May throw [BuiltInExn::Chr].
     pub(crate) fn chr(i: i32, span: &Span) -> Result<Val, MorelError> {
         if !(0..=Self::MAX_ORD).contains(&i) {
