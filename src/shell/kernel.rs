@@ -597,6 +597,15 @@ impl Kernel {
                     })?);
                 Ok(())
             }
+            "rangeMaxLength" => {
+                let i = val.maybe_int().ok_or_else(|| {
+                    Error::Runtime(
+                        "value for property must have type 'int'".to_string(),
+                    )
+                })?;
+                self.session.borrow_mut().config.range_max_length = Some(i);
+                Ok(())
+            }
             "stringDepth" => {
                 self.config.string_depth =
                     Some(val.maybe_int().ok_or_else(|| {
@@ -694,6 +703,10 @@ impl Kernel {
             }
             "printLength" => {
                 self.config.print_length = None;
+                Ok(())
+            }
+            "rangeMaxLength" => {
+                self.session.borrow_mut().config.range_max_length = None;
                 Ok(())
             }
             "stringDepth" => {

@@ -457,6 +457,17 @@ define_props! {
         required: true,
     },
 
+    RangeMaxLength => {
+        doc: "Integer property 'rangeMaxLength' is the largest number of \
+              values that expanding a range may produce. A domain is \
+              finite but not therefore small: without a limit, a range \
+              over 'int' would be enumerated until memory ran out. \
+              Default is 2^24 - 1, as 'Vector.maxLen' is.",
+        camel_name: "rangeMaxLength",
+        default: Some(PropVal::Int((1 << 24) - 1)),
+        required: true,
+    },
+
     Relationalize => {
         doc: "Boolean property 'relationalize' controls conversion to \
                 relational algebra. Default is false.",
@@ -620,7 +631,7 @@ mod tests {
     #[test]
     fn test_all_properties() {
         let all_props = Prop::all();
-        assert_eq!(all_props.len(), 26);
+        assert_eq!(all_props.len(), 27);
         assert!(all_props.contains(&Prop::Directory));
         assert!(all_props.contains(&Prop::LineWidth));
         assert!(all_props.contains(&Prop::Now));

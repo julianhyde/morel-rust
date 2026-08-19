@@ -52,6 +52,21 @@ pub trait Discrete {
     fn min_value(&self) -> Option<Val>;
     /// Returns the maximum value of this type, or `None` if unbounded.
     fn max_value(&self) -> Option<Val>;
+
+    /// How many values this type has, saturating at `u128::MAX`.
+    ///
+    /// A count serves only to answer whether a range is longer than
+    /// `rangeMaxLength`, so a domain too large to number exactly --
+    /// a sixteen-character tuple has 256^16 values -- saturates, and
+    /// is refused, which is the same answer an exact count would give.
+    fn size(&self) -> u128;
+
+    /// The position of `v`, counting from 0 at [`Self::min_value`].
+    ///
+    /// Positions count the values between two others without visiting
+    /// them, so that a range of billions is refused as quickly as a
+    /// range of three is built.
+    fn ordinal(&self, v: &Val) -> u128;
 }
 
 pub struct IntDiscrete;
@@ -78,6 +93,12 @@ impl Discrete for IntDiscrete {
     }
     fn max_value(&self) -> Option<Val> {
         Some(Val::Int(i32::MAX))
+    }
+    fn size(&self) -> u128 {
+        1u128 << 32
+    }
+    fn ordinal(&self, v: &Val) -> u128 {
+        u128::from(v.expect_int().wrapping_sub(i32::MIN) as u32)
     }
 }
 
@@ -108,6 +129,12 @@ impl Discrete for CharDiscrete {
     fn max_value(&self) -> Option<Val> {
         char::from_u32(Char::MAX_ORD as u32).map(Val::Char)
     }
+    fn size(&self) -> u128 {
+        Char::MAX_ORD as u128 + 1
+    }
+    fn ordinal(&self, v: &Val) -> u128 {
+        v.expect_char() as u128
+    }
 }
 
 pub struct BoolDiscrete;
@@ -133,6 +160,12 @@ impl Discrete for BoolDiscrete {
     fn max_value(&self) -> Option<Val> {
         Some(Val::Bool(true))
     }
+    fn size(&self) -> u128 {
+        2
+    }
+    fn ordinal(&self, v: &Val) -> u128 {
+        u128::from(v.expect_bool())
+    }
 }
 
 pub struct UnitDiscrete;
@@ -149,6 +182,12 @@ impl Discrete for UnitDiscrete {
     }
     fn max_value(&self) -> Option<Val> {
         Some(Val::Unit)
+    }
+    fn size(&self) -> u128 {
+        1
+    }
+    fn ordinal(&self, _v: &Val) -> u128 {
+        0
     }
 }
 
@@ -210,6 +249,22 @@ impl Discrete for TupleDiscrete {
     fn max_value(&self) -> Option<Val> {
         self.extreme(false)
     }
+    fn size(&self) -> u128 {
+        self.components
+            .iter()
+            .fold(1u128, |acc, c| acc.saturating_mul(c.size()))
+    }
+    fn ordinal(&self, v: &Val) -> u128 {
+        // Lexicographic, most significant component first, as `next`
+        // steps the rightmost and carries leftwards.
+        let items = v.expect_list();
+        self.components
+            .iter()
+            .zip(items.iter())
+            .fold(0u128, |acc, (c, x)| {
+                acc.saturating_mul(c.size()).saturating_add(c.ordinal(x))
+            })
+    }
 }
 
 /// Discrete for the `'a descending` datatype: next/prev are swapped
@@ -247,6 +302,18 @@ impl Discrete for DescendingDiscrete {
             .min_value()
             .map(|x| Val::Constructor(DESCENDING_DESC, Box::new(x)))
     }
+    fn size(&self) -> u128 {
+        self.inner.size()
+    }
+    fn ordinal(&self, v: &Val) -> u128 {
+        // The order is reversed, so a value's position is measured
+        // from the other end.
+        let inner_val = match v {
+            Val::Constructor(DESCENDING_DESC, inner) => inner.as_ref(),
+            _ => panic!("DescendingDiscrete::ordinal: expected DESC value"),
+        };
+        self.inner.size() - 1 - self.inner.ordinal(inner_val)
+    }
 }
 
 /// Discrete for the built-in `order` enum: LESS < EQUAL < GREATER.
@@ -281,6 +348,19 @@ impl Discrete for OrderDiscrete {
     fn max_value(&self) -> Option<Val> {
         use crate::eval::order::Order;
         Some(Val::Order(Order(Ordering::Greater)))
+    }
+    fn size(&self) -> u128 {
+        3
+    }
+    fn ordinal(&self, v: &Val) -> u128 {
+        match v {
+            Val::Order(o) => match o.0 {
+                Ordering::Less => 0,
+                Ordering::Equal => 1,
+                Ordering::Greater => 2,
+            },
+            _ => panic!("OrderDiscrete::ordinal: expected Val::Order"),
+        }
     }
 }
 
@@ -318,6 +398,17 @@ impl Discrete for OptionDiscrete {
     fn max_value(&self) -> Option<Val> {
         self.inner.max_value().map(|x| Val::Some(Box::new(x)))
     }
+    fn size(&self) -> u128 {
+        self.inner.size().saturating_add(1)
+    }
+    fn ordinal(&self, v: &Val) -> u128 {
+        match v {
+            // NONE precedes every SOME.
+            Val::Unit => 0,
+            Val::Some(s) => self.inner.ordinal(s).saturating_add(1),
+            _ => panic!("OptionDiscrete::ordinal: expected NONE or SOME"),
+        }
+    }
 }
 
 /// Discrete for `('a, 'b) either`: every `INL a` precedes every `INR b`.
@@ -352,6 +443,18 @@ impl Discrete for EitherDiscrete {
     }
     fn max_value(&self) -> Option<Val> {
         self.right.max_value().map(|x| Val::Inr(Box::new(x)))
+    }
+    fn size(&self) -> u128 {
+        self.left.size().saturating_add(self.right.size())
+    }
+    fn ordinal(&self, v: &Val) -> u128 {
+        match v {
+            Val::Inl(x) => self.left.ordinal(x),
+            Val::Inr(x) => {
+                self.left.size().saturating_add(self.right.ordinal(x))
+            }
+            _ => panic!("EitherDiscrete::ordinal: expected INL or INR"),
+        }
     }
 }
 
@@ -437,6 +540,26 @@ impl Discrete for DataDiscrete {
         } else {
             self.last_of(self.constructors.len() - 1)
         }
+    }
+    fn size(&self) -> u128 {
+        self.constructors.iter().fold(0u128, |acc, c| {
+            acc.saturating_add(c.as_ref().map_or(1, |d| d.size()))
+        })
+    }
+    fn ordinal(&self, v: &Val) -> u128 {
+        let (ord, inner) = match v {
+            Val::Constructor(ord, inner) => (*ord, inner.as_ref()),
+            _ => panic!("DataDiscrete::ordinal: expected Val::Constructor"),
+        };
+        // The constructors that precede this one, then the position
+        // within it.
+        let before = self.constructors[..ord].iter().fold(0u128, |acc, c| {
+            acc.saturating_add(c.as_ref().map_or(1, |d| d.size()))
+        });
+        let within = self.constructors[ord]
+            .as_ref()
+            .map_or(0, |d| d.ordinal(inner));
+        before.saturating_add(within)
     }
 }
 

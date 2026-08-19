@@ -321,6 +321,7 @@ pub struct Config {
     pub now: Option<Rc<String>>,
     pub optional_int: Option<i32>,
     pub match_coverage_enabled: Option<bool>,
+    pub range_max_length: Option<i32>,
     pub output: Option<Output>,
     pub script_directory: Option<Rc<PathBuf>>,
     pub string_fold: Option<i32>,
@@ -339,6 +340,7 @@ impl Default for Config {
             now: None,
             optional_int: None,
             output: Some(Output::Classic),
+            range_max_length: Some((1 << 24) - 1),
             match_coverage_enabled: None,
             script_directory: None,
             string_fold: None,
@@ -391,6 +393,9 @@ impl Configurable for Config {
             (Prop::Output, PropVal::Output(x)) => {
                 self.output = Some(*x);
             }
+            (Prop::RangeMaxLength, PropVal::Int(i)) => {
+                self.range_max_length = Some(*i);
+            }
             (Prop::ScriptDirectory, PropVal::PathBuf(b)) => {
                 self.script_directory = Some(b.clone());
             }
@@ -438,6 +443,13 @@ impl Configurable for Config {
             Prop::Output => {
                 if let Some(o) = &self.output {
                     PropVal::Output(*o)
+                } else {
+                    prop.default_value()
+                }
+            }
+            Prop::RangeMaxLength => {
+                if let Some(i) = self.range_max_length {
+                    PropVal::Int(i)
                 } else {
                     prop.default_value()
                 }
