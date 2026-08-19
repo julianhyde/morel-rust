@@ -33,6 +33,7 @@ use crate::compile::type_env::{Binding, EmptyTypeEnv, FunTypeEnv, TypeEnv};
 use crate::compile::type_resolver::Resolved;
 use crate::compile::types::{PrimitiveType, Type};
 use crate::compile::{compiler, inliner};
+use crate::eval::big_int::BigInt;
 use crate::eval::code::Effect;
 use crate::eval::link_table::LinkTable;
 use crate::eval::session::Config as SessionConfig;
@@ -598,12 +599,24 @@ impl Kernel {
                 Ok(())
             }
             "rangeMaxLength" => {
-                let i = val.maybe_int().ok_or_else(|| {
-                    Error::Runtime(
-                        "value for property must have type 'int'".to_string(),
-                    )
-                })?;
-                self.session.borrow_mut().config.range_max_length = Some(i);
+                // The limit is an "IntInf.int", so it may be larger than
+                // an "int" can hold; such a value is written as a
+                // numeral in a string.
+                let i = val
+                    .maybe_int()
+                    .map(|i| BigInt::from_i64(i64::from(i)))
+                    .or_else(|| {
+                        val.maybe_string().and_then(|s| BigInt::parse(&s))
+                    })
+                    .ok_or_else(|| {
+                        Error::Runtime(
+                            "value for property 'rangeMaxLength' must have \
+                             type 'IntInf.int'"
+                                .to_string(),
+                        )
+                    })?;
+                self.session.borrow_mut().config.range_max_length =
+                    Some(Rc::new(i));
                 Ok(())
             }
             "stringDepth" => {

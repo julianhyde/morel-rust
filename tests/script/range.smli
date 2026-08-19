@@ -542,19 +542,14 @@ Range.flatten [CLOSED (1, 10)];
 Range.flatten [CLOSED (1, 3)];
 > val it = [1,2,3] : int list
 
-(* In morel-java the limit is an "IntInf.int", so it may be larger than
- * a Morel "int" can hold, and is then written as a numeral in a string:
- * 'Sys.set ("rangeMaxLength", "4722366482869645213696")' sets it to
- * 2^72. morel-rust has no "IntInf", so the limit is an "int" and stops
- * at 2^31 - 1; a string is not a value for it. *)
+(* The limit may be larger than a Morel "int" can hold, and is then
+ * written as a numeral in a string. *)
 Sys.set ("rangeMaxLength", "4722366482869645213696");
-> Runtime Error: value for property must have type 'int'
-Sys.set ("rangeMaxLength", 2147483647);
 > val it = () : unit
 List.length (Range.flatten [CLOSED (1, 100)]);
 > val it = 100 : int
 Sys.show "rangeMaxLength";
-> val it = SOME "2147483647" : string option
+> val it = SOME "4722366482869645213696" : string option
 Sys.unset "rangeMaxLength";
 > val it = () : unit
 

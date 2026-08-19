@@ -23,6 +23,7 @@
 //! a later commit with `Range.discreteSetOf`.
 
 use crate::compile::library::BuiltInFunction;
+use crate::eval::big_int::BigInt;
 use crate::eval::comparator::Comparator;
 use crate::eval::discrete::Discrete;
 use crate::eval::val::{self, Val};
@@ -413,7 +414,7 @@ pub fn enumerate_finite(
     hi: &Bound,
     discrete: &dyn Discrete,
     cmp: &dyn Comparator,
-    max_len: u128,
+    max_len: &BigInt,
     out: &mut Vec<Val>,
 ) -> bool {
     // An endpoint left unbounded is the end of the domain, and a
@@ -456,7 +457,7 @@ pub fn enumerate_finite(
         let lo_ord = discrete.ordinal(&start);
         let hi_ord = discrete.ordinal(hi_val);
         let count = hi_ord.saturating_sub(lo_ord).saturating_add(1);
-        if count > max_len {
+        if BigInt::from_u128(count) > *max_len {
             return false;
         }
     }

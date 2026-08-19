@@ -32,6 +32,7 @@ use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::datalog::execute as datalog_execute;
 use crate::datalog::translate_string as datalog_translate;
 use crate::datalog::validate as datalog_validate;
+use crate::eval::big_int::BigInt;
 use crate::eval::bool::Bool;
 use crate::eval::bound::{
     Bound, complement, enumerate_finite, enumerate_ranges, from_ranges,
@@ -1192,14 +1193,18 @@ impl Code {
                         Some(d) => {
                             let lo = Bound::lower(range);
                             let hi = Bound::upper(range);
+                            // The limit is unset only if the user
+                            // unsets it, and then the default applies.
                             let max_len = r
                                 .session
                                 .config
                                 .range_max_length
-                                .unwrap_or((1 << 24) - 1)
-                                as u128;
+                                .clone()
+                                .unwrap_or_else(|| {
+                                    Rc::new(BigInt::from_u128((1 << 24) - 1))
+                                });
                             if !enumerate_finite(
-                                &lo, &hi, &*d.0, &*cmp.0, max_len, &mut out,
+                                &lo, &hi, &*d.0, &*cmp.0, &max_len, &mut out,
                             ) {
                                 return Err(MorelError::Runtime(
                                     BuiltInExn::Size,
