@@ -165,9 +165,13 @@ impl BigInt {
         }
     }
 
+    /// This less `other`.
+    #[must_use]
+    pub fn sub(&self, other: &Self) -> Self {
+        self.add(&other.neg())
+    }
+
     /// The product of this and `other`.
-    // As `is_negative`: offered, but not yet called outside tests.
-    #[allow(dead_code)]
     #[must_use]
     pub fn mul(&self, other: &Self) -> Self {
         if self.is_zero() || other.is_zero() {

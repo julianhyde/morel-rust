@@ -456,8 +456,8 @@ pub fn enumerate_finite(
     if cmp.compare(&start, hi_val) != Ordering::Greater {
         let lo_ord = discrete.ordinal(&start);
         let hi_ord = discrete.ordinal(hi_val);
-        let count = hi_ord.saturating_sub(lo_ord).saturating_add(1);
-        if BigInt::from_u128(count) > *max_len {
+        let count = hi_ord.sub(&lo_ord).add(&BigInt::from_u128(1));
+        if count > *max_len {
             return false;
         }
     }
