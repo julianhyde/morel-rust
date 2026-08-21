@@ -818,37 +818,36 @@ from b where b orelse not b;
 from ob where Option.getOpt (ob, false) orelse true;
 > val it = [NONE,SOME false,SOME true] : bool option list
 
-(* Morel-rust cannot yet materialize the extent of a tuple type, so
- * this section is validated but not evaluated. *)
 (*) Tuple extent, a cartesian product.
-set("mode", "validate");
-> val it = () : unit
 from bc where bc = (true, ()) orelse true;
 > 1     2
 > ----- --
 > false ()
 > true  ()
 >
-> val it : (bool * unit) bag
+> val it : (bool * unit) list
 
 (* The 'unit' extent yields the same value that '()' evaluates to, so it
- * compares equal and prints as '()'. Classic mode prints a 'unit' from
- * its type and so would hide a wrong value; tabular mode prints the
- * value. *)
+ * prints as '()'. Classic mode prints a 'unit' from its type and so
+ * would hide a wrong value; tabular mode prints the value. *)
 from u: unit;
 > val it = [()] : unit list
-(from u: unit) = [()];
-> val it = true : bool
-(from u: unit * unit) = [((), ())];
-> val it = true : bool
 from u: unit * unit;
 > 1  2
 > -- --
 > () ()
 >
 > val it : (unit * unit) list
-set("mode", "evaluate");
-> val it = () : unit
+
+(* The extent materializes as a list, and prints as one, but the type
+ * resolver still calls an extent scan a bag; so a query that compares
+ * with a list is refused. morel-java gives 'true' for both. *)
+(from u: unit) = [()];
+> stdIn:1.1-1.22 Error: Cannot deduce type: conflict: bag(unit) vs list(unit)
+>   raised at: stdIn:1.1-1.22
+(from u: unit * unit) = [((), ())];
+> stdIn:1.1-1.35 Error: Cannot deduce type: conflict: bag(tuple(unit, unit)) vs list(tuple(unit, unit))
+>   raised at: stdIn:1.1-1.35
 
 (*) A quantifier over a finite extent.
 exists b where b;
@@ -1956,20 +1955,45 @@ from p as (b: bool, c: bool) where b;
 > stdIn:1.6-1.30 Error: pattern '_' is not grounded
 >   raised at: stdIn:1.6-1.30
 
-(* A variable whose values cannot be enumerated is an error. Where the query
- * still has a scan, the expander names the pattern; where the query has one
- * step and has simplified to the extent alone, there is no pattern left to
- * name, so the message names the type. Either way it is an error, not a
- * crash. *)
+(* A variable whose values cannot be enumerated is an error. A query whose
+ * only step is that scan has nothing else to blame, so the message names
+ * the type; one of several scans names the pattern. Either way it is an
+ * error, not a crash. *)
 from i;
 > stdIn:1.6 Error: cannot enumerate all values of type ''a'
+>   raised at: stdIn:1.6
+from i: int;
+> stdIn:1.6 Error: cannot enumerate all values of type 'int'
+>   raised at: stdIn:1.6
+from s: string;
+> stdIn:1.6 Error: cannot enumerate all values of type 'string'
 >   raised at: stdIn:1.6
 from i, j;
 > stdIn:1.6 Error: pattern 'i' is not grounded
 >   raised at: stdIn:1.6
+
+(*) A finite type comes out in the type's order, and needs no sorting.
 from b: bool;
-> stdIn:1.6 Error: cannot enumerate all values of type 'bool'
->   raised at: stdIn:1.6
+> val it = [false,true] : bool list
+datatype color = RED | GREEN | BLUE;
+> datatype color = RED | GREEN | BLUE
+from c: color;
+> val it = [RED,GREEN,BLUE] : color list
+(*) A constructor that takes an argument contributes one value per argument.
+datatype box = BOX of bool;
+> datatype box = BOX of bool
+from x: box;
+> val it = [BOX false,BOX true] : box list
+(*) A record extent is the cartesian product of its fields'.
+from x: {a: bool, b: bool};
+> a     b
+> ----- -----
+> false false
+> false true
+> true  false
+> true  true
+>
+> val it : {a:bool, b:bool} list
 
 
 (*) End suchThat.smli

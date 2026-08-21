@@ -30,10 +30,12 @@ use crate::compile::expander::{DatatypeMap, FnEnv, and_all, expr_eq};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::generator::{Cache, Cardinality, Generator};
 use crate::compile::library::{BuiltInFunction, lookup_struct_field};
+use crate::compile::postfix::peel_type;
 use crate::compile::replacer::substitute;
 use crate::compile::span::Span;
 use crate::compile::type_env::Id;
 use crate::compile::types::{Label, PrimitiveType, Type};
+use crate::eval::char::Char;
 use crate::eval::val::Val;
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
@@ -788,19 +790,33 @@ fn create_finite_extent_generator(
 /// `'a option` for finite `'a`, tuples of finite components, and
 /// user datatypes whose constructors are all nullary.
 fn finite_extent(t: &Type, datatypes: &DatatypeMap) -> Option<Expr> {
-    match t {
-        Type::Primitive(PrimitiveType::Bool) => Some(bool_extent_list()),
+    // A datatype named in an annotation arrives as an alias for
+    // itself -- `from x: color` gives `Alias("color", Data("color",
+    // []))` -- so peel before matching.
+    match peel_type(t) {
+        // lint: sort until '#}' where '#Type::'
         Type::Data(name, args) if name == "option" && args.len() == 1 => {
             let inner = finite_extent(&args[0], datatypes)?;
             Some(option_extent_list(&args[0], inner))
         }
-        Type::Data(name, _) => {
-            let constructors = datatypes.get(name)?;
-            // Phase 1 of datatype extents: only nullary
-            // constructors. Constructors that take arguments would
-            // need the arg type's extent, plus a way to construct
-            // `Val::Constructor(ord, val)` in Core for each one.
-            Some(datatype_extent_list(t, name, constructors))
+        // A datatype with type arguments -- `bool descending`, `(bool,
+        // unit) either` -- would need its constructors' argument types
+        // instantiated from those arguments, which
+        // `constructor_arg_types` does not record; refuse rather than
+        // enumerate it wrongly.
+        Type::Data(name, args) if args.is_empty() => {
+            let constructors = datatypes.constructors.get(name)?;
+            datatype_extent_list(t, constructors, datatypes)
+        }
+        Type::Primitive(PrimitiveType::Bool) => Some(bool_extent_list()),
+        Type::Primitive(PrimitiveType::Char) => Some(char_extent_list()),
+        Type::Primitive(PrimitiveType::Unit) => Some(unit_extent_list()),
+        Type::Record(false, fields) => {
+            let mut extents = Vec::with_capacity(fields.len());
+            for ft in fields.values() {
+                extents.push(finite_extent(ft, datatypes)?);
+            }
+            Some(record_extent_cartesian(t, fields.keys().count(), extents))
         }
         Type::Tuple(types) => {
             let mut extents = Vec::with_capacity(types.len());
@@ -809,29 +825,103 @@ fn finite_extent(t: &Type, datatypes: &DatatypeMap) -> Option<Expr> {
             }
             Some(tuple_extent_cartesian(types, extents))
         }
+        // #}
         _ => None,
     }
 }
 
-/// Produces a list-expression of every nullary-constructor value of
-/// the given datatype. `data_t` is the datatype's `Type`, `name` is
-/// the datatype name, and `constructors` is the constructor list in
-/// declaration order.
+/// Produces a list-expression of every value of the given datatype:
+/// each nullary constructor, and each value of the argument type of
+/// every constructor that takes one. `data_t` is the datatype's
+/// `Type` and `constructors` is the constructor list in declaration
+/// order. Returns `None` if any constructor's argument type is
+/// unknown or is not itself finite.
 fn datatype_extent_list(
     data_t: &Type,
-    _name: &str,
     constructors: &[String],
-) -> Expr {
+    datatypes: &DatatypeMap,
+) -> Option<Expr> {
     let data_t_box: Rc<Type> = Rc::new(data_t.clone());
     let list_t = Rc::new(Type::List(data_t_box.clone()));
-    // Each constructor is a global `CoreExpr::Identifier` after
-    // resolution — that's how the user-typed `BLUE` reaches Core.
-    // It carries the datatype's `Type::Data` directly (constants
-    // have no parameter). The compiler later re-interprets the
-    // identifier through the resolver/eval lookup tables.
-    let elems: Vec<Expr> = constructors
-        .iter()
-        .map(|cname| Expr::Identifier(data_t_box.clone(), cname.clone()))
+    let mut elems: Vec<Expr> = Vec::with_capacity(constructors.len());
+    for cname in constructors {
+        match datatypes.arg_types.get(cname) {
+            // A nullary constructor is a value in itself. It is a
+            // global `CoreExpr::Identifier` after resolution — that's
+            // how the user-typed `BLUE` reaches Core — carrying the
+            // datatype's `Type::Data` directly.
+            None => {
+                elems.push(Expr::Identifier(data_t_box.clone(), cname.clone()))
+            }
+            // A constructor that takes an argument contributes one
+            // value per value of that argument, so the argument type
+            // must be finite too.
+            Some(arg_t) => {
+                let arg_extent = finite_extent(arg_t, datatypes)?;
+                let Expr::List(_, arg_elems) = arg_extent else {
+                    return None;
+                };
+                let con_t = Rc::new(Type::Fn(
+                    Rc::new(arg_t.clone()),
+                    data_t_box.clone(),
+                ));
+                for v in arg_elems {
+                    elems.push(Expr::Apply(
+                        data_t_box.clone(),
+                        Box::new(Expr::Identifier(
+                            con_t.clone(),
+                            cname.clone(),
+                        )),
+                        Box::new(v),
+                        Span::new(""),
+                    ));
+                }
+            }
+        }
+    }
+    Some(Expr::List(list_t, elems))
+}
+
+/// Produces a list-expression of the one `unit` value.
+fn unit_extent_list() -> Expr {
+    let unit_t = Rc::new(Type::Primitive(PrimitiveType::Unit));
+    let list_t = Rc::new(Type::List(unit_t.clone()));
+    Expr::List(list_t, vec![Expr::Literal(unit_t, Val::Unit)])
+}
+
+/// Produces a list-expression of every `char`, in code-point order.
+fn char_extent_list() -> Expr {
+    let char_t = Rc::new(Type::Primitive(PrimitiveType::Char));
+    let list_t = Rc::new(Type::List(char_t.clone()));
+    let elems: Vec<Expr> = (0..=Char::MAX_ORD as u32)
+        .filter_map(char::from_u32)
+        .map(|c| Expr::Literal(char_t.clone(), Val::Char(c)))
+        .collect();
+    Expr::List(list_t, elems)
+}
+
+/// Produces a list-expression of every value of a record type: the
+/// cartesian product of its fields' extents, in field order (which is
+/// the order a record type keeps them in).
+fn record_extent_cartesian(
+    record_t: &Type,
+    field_count: usize,
+    extents: Vec<Expr>,
+) -> Expr {
+    debug_assert_eq!(field_count, extents.len());
+    let record_t_box = Rc::new(record_t.clone());
+    let list_t = Rc::new(Type::List(record_t_box.clone()));
+    let value_lists: Vec<Vec<Expr>> = extents
+        .into_iter()
+        .map(|e| match e {
+            Expr::List(_, vs) => vs,
+            _ => Vec::new(),
+        })
+        .collect();
+    // A record value is a tuple of its field values, in field order.
+    let elems: Vec<Expr> = cartesian_product(&value_lists)
+        .into_iter()
+        .map(|values| Expr::Tuple(record_t_box.clone(), values))
         .collect();
     Expr::List(list_t, elems)
 }

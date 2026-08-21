@@ -23,6 +23,7 @@
 // as future-use surface.
 #![allow(dead_code)]
 
+use crate::compile::expander::DatatypeMap;
 use crate::compile::library;
 use crate::compile::pat_coverage::check_coverage;
 use crate::compile::postfix::{PostfixKind, peel_type, postfix_dispatch};
@@ -110,6 +111,16 @@ pub struct TypeMap {
 }
 
 impl TypeMap {
+    /// The datatype information the expander needs to enumerate the
+    /// values of a datatype: constructor names, and the argument type
+    /// of each constructor that takes one.
+    pub fn datatype_map(&self) -> DatatypeMap {
+        DatatypeMap::new(
+            &self.datatype_constructors,
+            &self.constructor_arg_types,
+        )
+    }
+
     pub fn new(
         node_var_map: &HashMap<i32, Var>,
         op_defs: Rc<Vec<OpDef>>,
