@@ -17,8 +17,8 @@
 
 use crate::compile::library;
 use crate::compile::lindig::{
-    self, Doc, align, beside, fill, flatten, group, hard_line, hcat, line,
-    nest, render, text, union,
+    self, Doc, align, beside, flatten, group, hard_line, hcat, line, nest,
+    pack, render, text, union,
 };
 use crate::compile::tabular;
 use crate::compile::types::Label;
@@ -660,7 +660,7 @@ impl Pretty {
         }
         beside(
             text(open),
-            beside(align(fill(&lindig::empty(), &items)), text(close)),
+            beside(align(pack(&lindig::empty(), &items)), text(close)),
         )
     }
 
@@ -840,7 +840,7 @@ impl Pretty {
                         field_items.push(d);
                     }
                 }
-                let fields_doc = fill(&text(" "), &field_items);
+                let fields_doc = pack(&text(" "), &field_items);
                 beside(text("{"), beside(align(nest(1, fields_doc)), text("}")))
             }
             Type::Tuple(arg_types) => {
@@ -871,7 +871,7 @@ impl Pretty {
                 }
                 // Continuation lines indent one column past the first
                 // element, as SML/NJ does.
-                align(nest(1, fill(&text(" "), &product_items)))
+                align(nest(1, pack(&text(" "), &product_items)))
             }
             Type::Variable(ty_var) => text(&ty_var.name()),
         }
