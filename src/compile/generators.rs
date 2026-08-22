@@ -34,11 +34,12 @@ use crate::compile::postfix::peel_type;
 use crate::compile::replacer::substitute;
 use crate::compile::span::Span;
 use crate::compile::type_env::Id;
-use crate::compile::types::{Label, PrimitiveType, Type};
+use crate::compile::types::{Label, PrimitiveType, Type, instantiate};
 use crate::eval::char::Char;
 use crate::eval::val::Val;
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
+use strum::IntoEnumIterator;
 
 /// Tries to derive a generator for `pat` from the conjuncts in
 /// `constraints`. Returns `true` if a generator was added to the
@@ -119,10 +120,14 @@ pub fn maybe_generator_with_scope(
                 ],
             )
         {
-            if references(lhs, pat_name) {
+            // The other side of the equality is the single value the
+            // pattern takes, so it must not be the pattern itself: `x
+            // = x` says nothing, and generating "the value of x" from
+            // an x that nothing has bound yet yields garbage.
+            if references(lhs, pat_name) && !references(rhs, pat_name) {
                 point_match = Some(c);
                 point_value = Some(rhs);
-            } else if references(rhs, pat_name) {
+            } else if references(rhs, pat_name) && !references(lhs, pat_name) {
                 // Reverse direction: `value = pat`. Reject if the
                 // value references another unbounded sibling — the
                 // sibling will pick up this constraint via the
@@ -795,18 +800,9 @@ fn finite_extent(t: &Type, datatypes: &DatatypeMap) -> Option<Expr> {
     // []))` -- so peel before matching.
     match peel_type(t) {
         // lint: sort until '#}' where '#Type::'
-        Type::Data(name, args) if name == "option" && args.len() == 1 => {
-            let inner = finite_extent(&args[0], datatypes)?;
-            Some(option_extent_list(&args[0], inner))
-        }
-        // A datatype with type arguments -- `bool descending`, `(bool,
-        // unit) either` -- would need its constructors' argument types
-        // instantiated from those arguments, which
-        // `constructor_arg_types` does not record; refuse rather than
-        // enumerate it wrongly.
-        Type::Data(name, args) if args.is_empty() => {
+        Type::Data(name, args) => {
             let constructors = datatypes.constructors.get(name)?;
-            datatype_extent_list(t, constructors, datatypes)
+            datatype_extent_list(t, constructors, args, datatypes)
         }
         Type::Primitive(PrimitiveType::Bool) => Some(bool_extent_list()),
         Type::Primitive(PrimitiveType::Char) => Some(char_extent_list()),
@@ -839,13 +835,14 @@ fn finite_extent(t: &Type, datatypes: &DatatypeMap) -> Option<Expr> {
 fn datatype_extent_list(
     data_t: &Type,
     constructors: &[String],
+    args: &[Rc<Type>],
     datatypes: &DatatypeMap,
 ) -> Option<Expr> {
     let data_t_box: Rc<Type> = Rc::new(data_t.clone());
     let list_t = Rc::new(Type::List(data_t_box.clone()));
     let mut elems: Vec<Expr> = Vec::with_capacity(constructors.len());
     for cname in constructors {
-        match datatypes.arg_types.get(cname) {
+        match constructor_arg_type(cname, args, datatypes) {
             // A nullary constructor is a value in itself. It is a
             // global `CoreExpr::Identifier` after resolution — that's
             // how the user-typed `BLUE` reaches Core — carrying the
@@ -857,14 +854,12 @@ fn datatype_extent_list(
             // value per value of that argument, so the argument type
             // must be finite too.
             Some(arg_t) => {
-                let arg_extent = finite_extent(arg_t, datatypes)?;
+                let arg_extent = finite_extent(&arg_t, datatypes)?;
                 let Expr::List(_, arg_elems) = arg_extent else {
                     return None;
                 };
-                let con_t = Rc::new(Type::Fn(
-                    Rc::new(arg_t.clone()),
-                    data_t_box.clone(),
-                ));
+                let con_t =
+                    Rc::new(Type::Fn(Rc::new(arg_t), data_t_box.clone()));
                 for v in arg_elems {
                     elems.push(Expr::Apply(
                         data_t_box.clone(),
@@ -880,6 +875,35 @@ fn datatype_extent_list(
         }
     }
     Some(Expr::List(list_t, elems))
+}
+
+/// The type of the argument that constructor `cname` takes, with the
+/// datatype's type variables replaced by the type arguments `args` at
+/// this use; `None` if it is nullary.
+///
+/// A user datatype records its constructors' argument types as
+/// declared. A built-in one -- `option`, `descending`, `either` --
+/// does not, but each of its constructors is a built-in function
+/// whose declared type says the same thing: `DESC` is `forall 1 'a ->
+/// 'a descending`, so its argument type is `'a`.
+fn constructor_arg_type(
+    cname: &str,
+    args: &[Rc<Type>],
+    datatypes: &DatatypeMap,
+) -> Option<Type> {
+    let declared = if let Some(t) = datatypes.arg_types.get(cname) {
+        t.clone()
+    } else {
+        let f = BuiltInFunction::iter().find(|f| f.name() == cname)?;
+        // A nullary built-in constructor, such as `NONE`, has no
+        // function type and so takes no argument.
+        let f_type = f.get_type();
+        let Type::Fn(arg, _) = peel_type(&f_type) else {
+            return None;
+        };
+        (**arg).clone()
+    };
+    Some(instantiate(&declared, args))
 }
 
 /// Produces a list-expression of the one `unit` value.
@@ -939,44 +963,6 @@ fn bool_extent_list() -> Expr {
             Expr::Literal(bool_t, Val::Bool(true)),
         ],
     )
-}
-
-fn option_extent_list(inner_t: &Type, inner_extent: Expr) -> Expr {
-    let inner_t_box = Box::new(inner_t.clone());
-    let option_t = Rc::new(Type::Data(
-        "option".to_string(),
-        vec![Rc::new(inner_t.clone())],
-    ));
-    let list_t = Rc::new(Type::List(option_t.clone()));
-
-    // NONE: Expr::Literal carrying the OptionNone built-in value.
-    // The compiler converts this to `Code::new_constant(t,
-    // Val::Unit)` (the runtime encoding of `NONE`).
-    let none_expr =
-        Expr::Literal(option_t.clone(), Val::Fn(BuiltInFunction::OptionNone));
-
-    // SOME : 'a -> 'a option
-    let some_fn_t =
-        Rc::new(Type::Fn(inner_t_box.clone().into(), option_t.clone()));
-    let some_fn_expr =
-        Expr::Literal(some_fn_t, Val::Fn(BuiltInFunction::OptionSome));
-
-    let inner_elems = match inner_extent {
-        Expr::List(_, vs) => vs,
-        _ => return none_expr, // shouldn't happen
-    };
-
-    let mut elems = Vec::with_capacity(inner_elems.len() + 1);
-    elems.push(none_expr);
-    for v in inner_elems {
-        elems.push(Expr::Apply(
-            option_t.clone(),
-            Box::new(some_fn_expr.clone()),
-            Box::new(v),
-            Span::new(""),
-        ));
-    }
-    Expr::List(list_t, elems)
 }
 
 fn tuple_extent_cartesian(types: &[Rc<Type>], extents: Vec<Expr>) -> Expr {

@@ -3759,16 +3759,17 @@ impl TypeResolver {
         env_builder.push("current".to_string(), Term::Variable(v_current));
         let env4 = env_builder.build();
 
-        // Output collection's element type is `v`; output collection
-        // kind defaults to bag (the natural choice for an enumerated
-        // extent — `from p where p > 0 andalso p < 5` is a bag).
+        // An extent comes out in its type's order -- that is what
+        // makes it reproducible -- so the scan is ordered and the
+        // collection is a list, as it is in morel-java. The materialized
+        // extent has always printed as a list; calling it a bag here
+        // meant a query that compared with a list was refused.
         let c = self.unifier.variable();
-        self.bag_term(Term::Variable(v), &c);
+        self.list_term(Term::Variable(v), &c);
 
         steps.push(StepKind::ScanExtent(Box::new(pat2)).spanned(span));
 
-        let mut triple = Triple::new(p.root_env.clone(), env4, v, Some(c));
-        triple.ordered = false;
+        let triple = Triple::new(p.root_env.clone(), env4, v, Some(c));
         Ok(triple)
     }
 
