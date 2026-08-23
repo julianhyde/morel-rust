@@ -156,7 +156,7 @@ Sys.env ();
 >    ("Word",
 >     "{*:word * word -> word, +:word * word -> word, -:word * word -> word, <:word * word -> bool, <<:word * word -> word, <=:word * word -> bool, >:word * word -> bool, >=:word * word -> bool, >>:word * word -> word, andb:word * word -> word, compare:word * word -> order, `div`:word * word -> word, fmt:radix -> word -> string, fromInt:int -> word, fromLarge:word -> word, fromLargeInt:int -> word, fromLargeWord:word -> word, fromString:string -> word option, max:word * word -> word, min:word * word -> word, `mod`:word * word -> word, notb:word -> word, orb:word * word -> word, toInt:word -> int, toIntX:word -> int, toLarge:word -> word, toLargeInt:word -> int, toLargeIntX:word -> int, toLargeWord:word -> word, toLargeWordX:word -> word, toLargeX:word -> word, toString:word -> string, wordSize:int, xorb:word * word -> word, ~:word -> word, ~>>:word * word -> word}"),
 >    ("false","bool"),("it","unit -> (string * string) list"),
->    ("nil","forall 'a. 'a bag"),("nil","forall 'a. 'a list"),
+>    ("nil","forall 'a. 'a list"),
 >    ("scott",
 >     "{bonuses:{comm:real, ename:string, job:string, sal:real} bag, depts:{deptno:int, dname:string, loc:string} bag, emps:{comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag, salgrades:{grade:int, hisal:real, losal:real} bag}"),
 >    ("true","bool")] : (string * string) list
@@ -251,7 +251,7 @@ env ();
 >    ("Word",
 >     "{*:word * word -> word, +:word * word -> word, -:word * word -> word, <:word * word -> bool, <<:word * word -> word, <=:word * word -> bool, >:word * word -> bool, >=:word * word -> bool, >>:word * word -> word, andb:word * word -> word, compare:word * word -> order, `div`:word * word -> word, fmt:radix -> word -> string, fromInt:int -> word, fromLarge:word -> word, fromLargeInt:int -> word, fromLargeWord:word -> word, fromString:string -> word option, max:word * word -> word, min:word * word -> word, `mod`:word * word -> word, notb:word -> word, orb:word * word -> word, toInt:word -> int, toIntX:word -> int, toLarge:word -> word, toLargeInt:word -> int, toLargeIntX:word -> int, toLargeWord:word -> word, toLargeWordX:word -> word, toLargeX:word -> word, toString:word -> string, wordSize:int, xorb:word * word -> word, ~:word -> word, ~>>:word * word -> word}"),
 >    ("false","bool"),("it","unit -> (string * string) list"),
->    ("nil","forall 'a. 'a bag"),("nil","forall 'a. 'a list"),
+>    ("nil","forall 'a. 'a list"),
 >    ("scott",
 >     "{bonuses:{comm:real, ename:string, job:string, sal:real} bag, depts:{deptno:int, dname:string, loc:string} bag, emps:{comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag, salgrades:{grade:int, hisal:real, losal:real} bag}"),
 >    ("true","bool")] : (string * string) list
@@ -284,6 +284,10 @@ Sys.parseTree "val x = 1 + 2";
 Sys.parseTree "";
 > val it = "()" : string
 
+(*) Attributes are reflected in the parse tree.
+Sys.parseTree "1 [@a]";
+> val it = "(attributedExp (int_literal 1) (attribute @a))" : string
+
 (*) val plan : unit -> string
 Sys.plan;
 > val it = fn : unit -> string
@@ -291,6 +295,16 @@ Sys.plan;
 > val it = 3 : int
 Sys.plan ();
 > val it = "apply2(fnValue Int.+, constant(1), constant(2))" : string
+
+(*) val planEx : string -> string
+Sys.planEx;
+> val it = fn : string -> string
+
+val zebra = true;
+> val zebra = true : bool
+
+val aardvark = 1 + (if zebra then 2 else 3);
+> val aardvark = 3 : int
 
 (*) Word literals are unparsed in hexadecimal (e.g. "0wxAB") in the plan.
 val warthog = 0wxAB + 0w1;
