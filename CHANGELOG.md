@@ -48,22 +48,22 @@ Contributors:
 
 Morel Rust's second release. Release 0.2.0 could parse the whole
 language but evaluate only a fraction of it; this release adds query
-expressions, user-defined types, and most of the standard library.
+expressions, user-defined types, and Datalog support, doubles the size
+of the standard library, and now runs in the browser via WebAssembly.
 
-The version number jumps from 0.2.0 to 0.9.0 so that it matches the
-release of [Morel Java](https://github.com/hydromatic/morel) that this
-release is compatible with, as
-[Morel Go](https://github.com/hydromatic/morel-go) also does.
-
-Our goal is to be compatible with the Morel language as implemented by
-[Morel Java](https://github.com/hydromatic/morel), and our strategy is
-to copy the `.smli` test scripts from that project and get them to
+The version number matches that of
+[Morel Java](https://github.com/hydromatic/morel) version 0.9.0, released
+[two weeks](https://github.com/hydromatic/morel/blob/main/HISTORY.md#0.9.0)
+before this release, with which this release is
+feature-compatible. Our goal is to be compatible with the Morel
+language as implemented by Morel Java, and our strategy is to copy the
+`.smli` test scripts from that project and get them to
 pass. Compatibility is therefore measured by how much of Morel Java's
 script corpus Morel Rust reproduces line for line; at this release, it
-is 91%, over 64 shared script files. Sections that Morel Rust cannot
-yet reproduce run under `set ("mode", "validate")`, which parses a
-statement and echoes its recorded output without evaluating it; this
-release halves the number of statements gated that way.
+is 91%, about 28,000 lines over 64 files. Much of the difference is
+Morel Java's ability, provided by
+[Apache Calcite](https://calcite.apache.org) and missing in Morel
+Rust, to translate expressions to SQL and execute them via JDBC.
 
 Contributors:
 Julian Hyde,
@@ -92,7 +92,6 @@ Key features:
 ### Features
 
 * Materialize the extent of any finite type
-* Add `BigInt`, an integer of arbitrary size
 * Allow an unbounded scan to have any pattern, and report one that cannot be
   enumerated ([morel#440](https://github.com/hydromatic/morel/issues/440))
 * `scan` for `Bool`, `Char`, `Date`, `Int`, `Real`, `String`, `Time` and
@@ -183,8 +182,6 @@ Key features:
   ([morel#338](https://github.com/hydromatic/morel/issues/338))
 * Postfix method-call syntax `x.f ()` and `x.f (a, b)`
   ([morel#346](https://github.com/hydromatic/morel/issues/346))
-* Allow nested block comments
-  ([morel#306](https://github.com/hydromatic/morel/issues/306))
 * Unparse expressions
   ([#41](https://github.com/hydromatic/morel-rust/issues/41))
 * Replace `Relational.only` with overloaded `Bag.only` and `List.only`
@@ -260,6 +257,7 @@ Key features:
 
 ### Bug-fixes and internal improvements
 
+* Add `BigInt`, an integer of arbitrary size
 * Property error messages should specify the property name and its type
   ([morel#455](https://github.com/hydromatic/morel/issues/455))
 * Enumerating `unit` yields a value that prints as `{}` and is not `()`
@@ -464,6 +462,9 @@ Key features:
 ### Component upgrades
 
 * Bump pest from 2.1 to 2.8
+* Move minimum supported Rust version (MSRV) down from 1.95.0 to
+  1.93.1 (while still supporting all later versions including
+  `stable`)
 
 ### Site and documentation
 
