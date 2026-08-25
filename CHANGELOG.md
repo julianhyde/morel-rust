@@ -24,7 +24,7 @@ For a full list of releases, see
 <a href="https://github.com/hydromatic/morel-rust/releases">GitHub</a>.
 
 <!--
-## <a href="https://github.com/hydromatic/morel-rust/releases/tag/v0.x.0">0.x.0</a> / xxxx-xx-xx
+## <a id="0.x.0" href="https://github.com/hydromatic/morel-rust/releases/tag/v0.x.0">0.x.0</a> / xxxx-xx-xx
 
 Release 0.x.0 ...
 
@@ -44,7 +44,7 @@ Contributors:
   ([#xxx](https://github.com/hydromatic/morel-rust/issues/xxx))
 -->
 
-## <a href="https://github.com/hydromatic/morel-rust/releases/tag/v0.9.0">0.9.0</a> / 2026-08-24
+## <a id="0.9.0" href="https://github.com/hydromatic/morel-rust/releases/tag/v0.9.0">0.9.0</a> / 2026-08-24
 
 Morel Rust's second release. Release 0.2.0 could parse the whole
 language but evaluate only a fraction of it; this release adds query
@@ -472,7 +472,7 @@ Key features:
 * Document and test various recursion patterns
   ([#39](https://github.com/hydromatic/morel-rust/issues/39))
 
-## <a href="https://github.com/hydromatic/morel-rust/releases/tag/v0.2.0">0.2.0</a> / 2025-10-23
+## <a id="0.2.0" href="https://github.com/hydromatic/morel-rust/releases/tag/v0.2.0">0.2.0</a> / 2025-10-23
 
 Initial release.
 
