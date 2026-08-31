@@ -173,6 +173,11 @@ pub struct TypeMap {
     /// condition was written with. Shared with the session, which is
     /// what carries it from one statement to the next.
     pub check_predicates: Rc<RefCell<CheckPredicates>>,
+    /// The names the user has bound, in this statement or an earlier
+    /// one. A `check` condition may refer only to the value it is given
+    /// and to the standard basis, and this is how a reference to
+    /// something the user declared is told from one to a built-in.
+    pub user_bindings: HashSet<String>,
     /// Overload constraints that were still unresolved when unification
     /// finished: `(name, type term, candidate instance terms)`. They become
     /// the predicates of a qualified type; see
@@ -212,6 +217,7 @@ impl TypeMap {
             type_aliases: HashMap::new(),
             type_checks: HashMap::new(),
             check_predicates: Rc::new(RefCell::new(HashMap::new())),
+            user_bindings: HashSet::new(),
             predicate_terms: Vec::new(),
             var_alias_map: HashMap::new(),
             datatype_constructors: HashMap::new(),
@@ -952,6 +958,8 @@ pub struct TypeResolver {
     /// so that they can be handed to the type map, and through it to
     /// `Resolver`.
     pub check_predicates: Rc<RefCell<CheckPredicates>>,
+    /// The names the user has bound; see [`TypeMap::user_bindings`].
+    pub user_bindings: HashSet<String>,
     /// Number of parameters of each type alias, e.g. 1 for
     /// `type 'a my_list = 'a list`. An alias is a type function,
     /// and must be applied to exactly this many arguments.
@@ -1666,6 +1674,7 @@ impl TypeResolver {
             type_aliases: HashMap::new(),
             type_checks: HashMap::new(),
             check_predicates: Rc::new(RefCell::new(HashMap::new())),
+            user_bindings: HashSet::new(),
             alias_arities: HashMap::new(),
             expanded_type_binds: HashMap::new(),
             user_datatype_arities: HashMap::new(),
@@ -1897,6 +1906,7 @@ impl TypeResolver {
         type_map.type_aliases = self.type_aliases.clone();
         type_map.type_checks = self.type_checks.clone();
         type_map.check_predicates = Rc::clone(&self.check_predicates);
+        type_map.user_bindings = self.user_bindings.clone();
 
         // A record whose modifiers were never desugared, because the
         // fields of its base never became known. morel-java's

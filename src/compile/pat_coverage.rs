@@ -458,6 +458,23 @@ fn and2(a: Formula, b: Formula) -> Formula {
 // AST walker
 // ---------------------------------------------------------------------------
 
+/// Returns whether a match list matches every value of its argument
+/// type.
+///
+/// Used to decide whether a `check` condition needs `| _ => false`
+/// appending: a condition need not be exhaustive, and a value it does
+/// not match does not satisfy it.
+pub fn is_exhaustive(matches: &[Match], type_map: &TypeMap) -> bool {
+    let Some(arg_type) = matches[0].pat.id.and_then(|id| type_map.get_type(id))
+    else {
+        // The argument type is not known, so nothing can be said; treat
+        // the match as exhaustive and append nothing.
+        return true;
+    };
+    let mut checker = CoverageChecker::new(type_map);
+    checker.check_match(matches, &arg_type).0
+}
+
 /// Checks pattern coverage for all match expressions in a declaration.
 ///
 /// Returns warnings (non-exhaustive) or an error (redundant arm).

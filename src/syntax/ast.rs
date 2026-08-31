@@ -85,6 +85,25 @@ impl Span {
         }
     }
 
+    /// Returns this span with trailing whitespace removed.
+    ///
+    /// A type's span can run on to what follows it, and an error that
+    /// quotes a declaration should not include the space before its
+    /// `check` clause.
+    pub fn trim_end(&self) -> Self {
+        let mut end = self.end;
+        while end > self.start
+            && self.input.as_bytes()[end - 1].is_ascii_whitespace()
+        {
+            end -= 1;
+        }
+        Span {
+            input: self.input.clone(),
+            start: self.start,
+            end,
+        }
+    }
+
     /// Creates the union of two spans.
     pub fn union(&self, other: &Span) -> Self {
         use std::cmp::{max, min};
@@ -1619,7 +1638,7 @@ impl TypeBind {
         if let TypeKind::Checked(t, checks) = type_.kind {
             // The binding ends where the type it declares ends; the
             // conditions that follow are not part of it.
-            let span = span.to(&t.span);
+            let span = span.to(&t.span).trim_end();
             return TypeBind {
                 type_vars,
                 name,
