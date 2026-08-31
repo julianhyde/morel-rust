@@ -264,7 +264,7 @@ impl Pretty {
     fn value_doc(&self, type_ref: &Type, value: &Val, depth: i32) -> Doc {
         // Strip any alias.
         let mut current_type = type_ref;
-        while let Type::Alias(_, inner, _) = current_type {
+        while let Type::Alias(_, inner, _, _) = current_type {
             current_type = inner;
         }
 
@@ -746,7 +746,7 @@ impl Pretty {
     fn type_doc(&self, type_ref: &Type, left: u8, right: u8) -> Doc {
         match type_ref {
             // lint: sort until '#}' where '##Type::'
-            Type::Alias(name, _inner, _args) => text(name),
+            Type::Alias(name, _inner, _args, _checks) => text(name),
             Type::Bag(element_type) => self.collection_type_doc(
                 type_ref,
                 left,
@@ -964,10 +964,11 @@ impl TypeVarRenumberer {
     fn visit(&mut self, type_ref: &Type) -> Type {
         match type_ref {
             // lint: sort until '#}' where '##Type::'
-            Type::Alias(name, type_, args) => Type::Alias(
+            Type::Alias(name, type_, args, checks) => Type::Alias(
                 name.clone(),
                 Rc::new(self.visit(type_)),
                 self.visit_list(args.as_slice()),
+                checks.clone(),
             ),
             Type::Bag(inner) => Type::Bag(Rc::new(self.visit(inner))),
             Type::Data(name, args) => {

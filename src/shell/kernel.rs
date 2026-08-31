@@ -224,7 +224,7 @@ fn type_contains_var(t: &Type) -> bool {
         Type::Named(args, _) | Type::Data(_, args) => {
             args.iter().any(|t| type_contains_var(t))
         }
-        Type::Alias(_, t, args) => {
+        Type::Alias(_, t, args, _) => {
             type_contains_var(t) || args.iter().any(|t| type_contains_var(t))
         }
     }

@@ -17,7 +17,7 @@
 
 use crate::compile::span::Span;
 use crate::compile::type_env::Id;
-use crate::compile::types::{Label, Type};
+use crate::compile::types::{Checks, Label, Type};
 use crate::eval::val::Val;
 use crate::syntax::ast::JoinType;
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
@@ -1124,11 +1124,15 @@ pub struct TypeBind {
     pub type_vars: Vec<String>,
     pub name: String,
     pub type_: Type,
+    /// The conditions of a checked type, empty if the type is
+    /// unchecked. They are carried so that the declaration echoes as it
+    /// was written.
+    pub checks: Checks,
 }
 
 impl Display for TypeBind {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}: {}", self.name, self.type_)
+        write!(f, "{}: {}{}", self.name, self.type_, self.checks)
     }
 }
 
