@@ -788,6 +788,26 @@ impl<'a> Compiler<'a> {
             Expr::Apply(result_type, f, a, span) => match f.as_ref() {
                 Expr::Literal(_t, Val::Fn(f)) => {
                     let impl_ = f.get_impl();
+                    // `$check` needs the value's type, to quote it in the
+                    // message if the condition does not hold, so it is
+                    // compiled rather than applied. Its argument is
+                    // always a quadruple: the condition, the value, the
+                    // name of the checked type, and what the value is of.
+                    if *f == BuiltInFunction::ZCheck
+                        && let Expr::Tuple(_, args) = a.as_ref()
+                        && args.len() == 4
+                        && let Expr::Literal(_, Val::String(name)) = &args[2]
+                        && let Expr::Literal(_, Val::String(blame)) = &args[3]
+                    {
+                        return Code::Check(Box::new(code::CheckCode {
+                            condition: self.compile_arg(cx, &args[0]),
+                            value: self.compile_arg(cx, &args[1]),
+                            type_: args[1].type_(),
+                            name: name.to_string(),
+                            blame: blame.to_string(),
+                            span: span.clone(),
+                        }));
+                    }
                     // For 1-arg functions (E1, EF1), always compile the
                     // argument as a single Code — even if it's a tuple
                     // expression. The function takes one argument; a

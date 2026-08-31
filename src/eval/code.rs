@@ -25,6 +25,7 @@ use crate::compile::library::{
     BuiltIn, BuiltInExn, BuiltInFunction, BuiltInRecord,
 };
 use crate::compile::lindig;
+use crate::compile::pretty::Pretty;
 use crate::compile::span::Span;
 use crate::compile::type_env::Binding;
 use crate::compile::type_parser;
@@ -63,8 +64,8 @@ use crate::eval::variant;
 use crate::eval::vector::Vector;
 use crate::eval::word;
 use crate::shell::highlight::highlight_concise;
-use crate::shell::kernel::{Kernel, MorelError};
-use crate::shell::prop::Prop;
+use crate::shell::kernel::{Kernel, MorelError, UNCAUGHT_PREFIX};
+use crate::shell::prop::{Output as PropOutput, Prop};
 use crate::syntax::ast_dumper::dump as ast_dumper_dump;
 use crate::syntax::parser::parse_statement;
 use std::cell::RefCell;
@@ -228,6 +229,12 @@ pub enum Code {
     /// (typically `MorelError::Runtime(Match, span)` where `span` is
     /// the case expression's source location).
     Case(Vec<Code>, Option<MorelError>),
+    /// `Check(check)` returns a value if the condition of the type it is
+    /// being claimed at holds of it, and otherwise raises `Constraint`.
+    ///
+    /// This is what enforces a checked type. Raising is a check's only
+    /// effect: on success it is the identity.
+    Check(Box<CheckCode>),
 
     /// `Compare(comparator, a, b)` evaluates `a` and `b`, compares
     /// them using the type-directed comparator, and returns
@@ -408,6 +415,66 @@ pub enum Code {
     /// argument of a partial application so the check fires when the
     /// closure is built — not when the closure is later applied.
     ValidatePartialArg1(BuiltInFunction, Box<Code>, Span),
+}
+
+/// What a [`Code::Check`] needs: the value being claimed, the condition
+/// it must satisfy, and what to say if it does not.
+#[derive(Clone, PartialEq, Debug)]
+pub struct CheckCode {
+    /// The condition of the type being claimed, applied to the value.
+    pub condition: Code,
+    /// The value being claimed.
+    pub value: Code,
+    /// The value's type, kept so that the message can quote the value as
+    /// the shell would print it.
+    pub type_: Rc<Type>,
+    /// How the type is written, for the message.
+    pub name: String,
+    /// What the value is of -- `field empno`, `element` -- or empty at
+    /// the outermost level.
+    pub blame: String,
+    /// Where the claim is made.
+    pub span: Span,
+}
+
+impl CheckCode {
+    /// Renders the value as the shell would print it.
+    ///
+    /// With the default properties rather than the session's: a message
+    /// is not a binding, and should not elide or wrap because the
+    /// session was told to print narrowly.
+    fn render(&self, value: &Val) -> String {
+        let pretty = Pretty::new(
+            -1,
+            PropOutput::Classic,
+            Prop::PrintLength.default_value().as_int(),
+            Prop::PrintDepth.default_value().as_int(),
+            Prop::StringDepth.default_value().as_int(),
+            0,
+            HashMap::new(),
+            HashMap::new(),
+        );
+        let mut buf = String::new();
+        let _ = pretty.pretty(&mut buf, &self.type_, value);
+        buf.trim().to_string()
+    }
+
+    /// The blame path, ready to append to a message.
+    fn blamed(&self) -> String {
+        if self.blame.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", self.blame)
+        }
+    }
+}
+
+/// Describes an exception as it would be reported, without the "uncaught
+/// exception" that begins a report, so that it can be quoted inside
+/// another message.
+fn strip_uncaught(s: &str) -> String {
+    let s = s.split('\n').next().unwrap_or(s);
+    s.strip_prefix(UNCAUGHT_PREFIX).unwrap_or(s).to_string()
 }
 
 impl Code {
@@ -729,6 +796,7 @@ impl Code {
             Code::Case(_, _) => {
                 *mode == EvalMode::EagerV1 || *mode == EvalMode::EagerF0
             }
+            Code::Check(_) => *mode == EvalMode::EagerF0,
             Code::Compare(_, _, _) => *mode == EvalMode::EagerF0,
             Code::Constant(_, _) => {
                 *mode == EvalMode::Eager0 || *mode == EvalMode::EagerF0
@@ -852,6 +920,51 @@ impl Code {
                 Err(no_match.clone().unwrap_or_else(|| {
                     MorelError::Runtime(BuiltInExn::Match, Span::new("stdIn"))
                 }))
+            }
+            Code::Check(check) => {
+                let value = check.value.eval_f0(r, f)?;
+                let holds = match check.condition.eval_f0(r, f) {
+                    Ok(Val::Bool(b)) => b,
+                    Ok(_) => false,
+                    // A check on a component has already reported, and
+                    // said precisely which component and why. Wrapping it
+                    // again would bury that.
+                    Err(e @ MorelError::Described(..)) => return Err(e),
+                    Err(MorelError::EarlyReturn) => {
+                        return Err(MorelError::EarlyReturn);
+                    }
+                    // The condition could not be evaluated, so whether
+                    // the value has the type is not false but unknown.
+                    // Raise `Constraint` either way -- the value has not
+                    // been shown to have the type -- but say which
+                    // happened, and say what went wrong.
+                    Err(e) => {
+                        return Err(MorelError::Described(
+                            BuiltInExn::Constraint,
+                            format!(
+                                "cannot tell whether {} is a valid {}{}; {}",
+                                check.render(&value),
+                                check.name,
+                                check.blamed(),
+                                strip_uncaught(&e.to_string()),
+                            ),
+                            check.span.clone(),
+                        ));
+                    }
+                };
+                if holds {
+                    return Ok(value);
+                }
+                Err(MorelError::Described(
+                    BuiltInExn::Constraint,
+                    format!(
+                        "{} is not a valid {}{}",
+                        check.render(&value),
+                        check.name,
+                        check.blamed()
+                    ),
+                    check.span.clone(),
+                ))
             }
             Code::Compare(cmp, a_code, b_code) => {
                 let a = a_code.eval_f0(r, f)?;
@@ -1830,6 +1943,11 @@ impl Display for Code {
             }
             Self::BindWildcard => write!(f, "_"),
             Self::Case(codes, _) => Self::write_codes(f, "case(", codes, ")"),
+            Self::Check(check) => write!(
+                f,
+                "check(condition {} value {} {} {})",
+                check.condition, check.value, check.name, check.blame
+            ),
             Self::Compare(_, a, b) => write!(f, "compare({}, {})", a, b),
             Self::Constant(_, v) => match v {
                 Val::Char(c) => write!(f, "constant({})", c),
@@ -2251,6 +2369,7 @@ pub enum Eager0 {
     CharMinChar,
     ExnBind,
     ExnChr,
+    ExnConstraint,
     ExnDiv,
     ExnDomain,
     ExnEmpty,
@@ -2315,6 +2434,7 @@ pub enum Eager0 {
     WeekdayTue,
     WeekdayWed,
     WordWordSize,
+    ZCheck,
 }
 
 impl Eager0 {
@@ -2331,6 +2451,9 @@ impl Eager0 {
             CharMinChar => Val::Char(Char::MIN_CHAR),
             ExnBind => BuiltInFunction::ExnBind.nullary_constructor_val(),
             ExnChr => BuiltInFunction::ExnChr.nullary_constructor_val(),
+            ExnConstraint => {
+                BuiltInFunction::ExnConstraint.nullary_constructor_val()
+            }
             ExnDiv => BuiltInFunction::ExnDiv.nullary_constructor_val(),
             ExnDomain => BuiltInFunction::ExnDomain.nullary_constructor_val(),
             ExnEmpty => BuiltInFunction::ExnEmpty.nullary_constructor_val(),
@@ -2414,6 +2537,11 @@ impl Eager0 {
             WeekdayTue => BuiltInFunction::WeekdayTue.nullary_constructor_val(),
             WeekdayWed => BuiltInFunction::WeekdayWed.nullary_constructor_val(),
             WordWordSize => Val::Int(word::WORD_SIZE),
+            // `$check` is compiled, never evaluated as a value: the
+            // compiler turns an application of it into the check itself,
+            // because it needs the value's type to quote it in the
+            // message. The registry still wants an implementation.
+            ZCheck => Val::Unit,
         }
     }
 
@@ -5001,6 +5129,7 @@ fn build_library() -> Lib {
     Eager1::EitherProj.implements(&mut b, EitherProj);
     Eager0::ExnBind.implements(&mut b, ExnBind);
     Eager0::ExnChr.implements(&mut b, ExnChr);
+    Eager0::ExnConstraint.implements(&mut b, ExnConstraint);
     Eager0::ExnDiv.implements(&mut b, ExnDiv);
     Eager0::ExnDomain.implements(&mut b, ExnDomain);
     Eager0::ExnEmpty.implements(&mut b, ExnEmpty);
@@ -5446,6 +5575,7 @@ fn build_library() -> Lib {
     Eager1::WordToString.implements(&mut b, WordToString);
     Eager0::WordWordSize.implements(&mut b, WordWordSize);
     Eager2::WordXorb.implements(&mut b, WordXorb);
+    Eager0::ZCheck.implements(&mut b, ZCheck);
 
     b.build()
 }
