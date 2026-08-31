@@ -30,7 +30,9 @@ use crate::compile::postfix::{PostfixKind, peel_type, postfix_dispatch};
 use crate::compile::record_modifiers::{self, Source};
 use crate::compile::type_env::{BindType, SchemeTypeEnv, TypeEnv};
 use crate::compile::types;
-use crate::compile::types::{Label, displace, expand_alias, instantiate};
+use crate::compile::types::{
+    Checks, Label, displace, expand_alias, instantiate,
+};
 use crate::compile::types::{
     Predicate, PrimitiveType, Subst, Type, TypeVariable,
 };
@@ -155,6 +157,10 @@ pub struct TypeMap {
     /// its displayed type from here -- the annotation as written --
     /// rather than from the deduced type, which has been expanded.
     pub type_aliases: HashMap<String, Type>,
+    /// The conditions of every checked type in scope, keyed by name.
+    /// A checked type is an alias that carries them; a site that knows
+    /// only the name recovers them here.
+    pub type_checks: HashMap<String, Checks>,
     /// Overload constraints that were still unresolved when unification
     /// finished: `(name, type term, candidate instance terms)`. They become
     /// the predicates of a qualified type; see
@@ -163,6 +169,12 @@ pub struct TypeMap {
 }
 
 impl TypeMap {
+    /// The conditions of the checked type `name`, or none if the name
+    /// is not a checked type.
+    pub fn checks_of(&self, name: &str) -> Checks {
+        self.type_checks.get(name).cloned().unwrap_or_default()
+    }
+
     /// The datatype information the expander needs to enumerate the
     /// values of a datatype: constructor names, and the argument type
     /// of each constructor that takes one.
@@ -186,6 +198,7 @@ impl TypeMap {
             expanded_type_binds: HashMap::new(),
             decl_exp_types: HashMap::new(),
             type_aliases: HashMap::new(),
+            type_checks: HashMap::new(),
             predicate_terms: Vec::new(),
             var_alias_map: HashMap::new(),
             datatype_constructors: HashMap::new(),
@@ -361,6 +374,7 @@ impl TypeMap {
                         alias_name.clone(),
                         type_,
                         vec![],
+                        self.checks_of(alias_name),
                     )));
                 }
             }
@@ -681,7 +695,13 @@ impl<'a> TermToTypeConverter<'a> {
                         let name = s[ALIAS_PREFIX.len()..].to_string();
                         let inner = self.term_type(&sequence.terms[0]);
                         if self.with_alias {
-                            self.lib.intern(Type::Alias(name, inner, vec![]))
+                            let checks = self.type_map.checks_of(&name);
+                            self.lib.intern(Type::Alias(
+                                name,
+                                inner,
+                                vec![],
+                                checks,
+                            ))
                         } else {
                             inner
                         }
@@ -761,7 +781,8 @@ impl<'a> TermToTypeConverter<'a> {
                         .clone()
                 };
                 if let Some(name) = alias_name {
-                    self.lib.intern(Type::Alias(name, inner, vec![]))
+                    let checks = self.type_map.checks_of(&name);
+                    self.lib.intern(Type::Alias(name, inner, vec![], checks))
                 } else {
                     inner
                 }
@@ -911,6 +932,9 @@ pub struct TypeResolver {
     /// User-defined type aliases, populated from `type` declarations
     /// and `datatype` declarations.
     pub type_aliases: HashMap<String, Type>,
+    /// The conditions of every checked type declared so far, keyed by
+    /// name. A checked type is an alias that carries them.
+    pub type_checks: HashMap<String, Checks>,
     /// Number of parameters of each type alias, e.g. 1 for
     /// `type 'a my_list = 'a list`. An alias is a type function,
     /// and must be applied to exactly this many arguments.
@@ -1309,6 +1333,7 @@ impl TypeResolver {
         };
         let mut resolver = TypeResolver::new();
         resolver.type_aliases = self.type_aliases.clone();
+        resolver.type_checks = self.type_checks.clone();
         resolver.user_datatype_arities = self.user_datatype_arities.clone();
         resolver.prior_datatype_constructors =
             self.prior_datatype_constructors.clone();
@@ -1368,6 +1393,18 @@ impl TypeResolver {
         let unbound =
             |name: &str| Err((name.to_string(), ast_type.span.clone()));
         match &ast_type.kind {
+            TypeKind::Checked(t, checks) => {
+                // A condition written where a type is used, rather than
+                // on a declaration, gives an anonymous checked type. It
+                // has only its body and its conditions to be known by.
+                let inner = self.expand_ast_type(env, t, aliases, type_vars)?;
+                Ok(Type::Alias(
+                    String::new(),
+                    Rc::new(inner),
+                    vec![],
+                    Checks::new(checks.clone()),
+                ))
+            }
             TypeKind::Expression(expr) => {
                 // `typeof e`. A type declaration is elaborated before
                 // anything in it has been deduced, so there is no
@@ -1426,6 +1463,7 @@ impl TypeResolver {
                             name.clone(),
                             Rc::new(t.clone()),
                             vec![],
+                            self.checks_of(name),
                         )),
                     }
                 } else if library::builtin_type_arity(name.as_str()) == Some(0)
@@ -1506,6 +1544,7 @@ impl TypeResolver {
     /// errors.
     fn validate_ast_type(&self, ast_type: &AstType) {
         match &ast_type.kind {
+            TypeKind::Checked(t, _) => self.validate_ast_type(t),
             TypeKind::Composite(types) => {
                 self.field_errors.borrow_mut().push((
                     "tuple types must be written 't1 * ... * tn', \
@@ -1607,6 +1646,7 @@ impl TypeResolver {
             fn_op,
             decl_type_vars: BTreeMap::new(),
             type_aliases: HashMap::new(),
+            type_checks: HashMap::new(),
             alias_arities: HashMap::new(),
             expanded_type_binds: HashMap::new(),
             user_datatype_arities: HashMap::new(),
@@ -1836,6 +1876,7 @@ impl TypeResolver {
         type_map.expanded_type_binds = self.expanded_type_binds.clone();
         type_map.decl_exp_types = self.decl_exp_types.clone();
         type_map.type_aliases = self.type_aliases.clone();
+        type_map.type_checks = self.type_checks.clone();
 
         // A record whose modifiers were never desugared, because the
         // fields of its base never became known. morel-java's
@@ -2113,6 +2154,7 @@ impl TypeResolver {
                                 alias_name.to_string(),
                                 body,
                                 vec![],
+                                type_map.checks_of(alias_name),
                             ))
                         } else {
                             resolved_type
@@ -2457,6 +2499,52 @@ impl TypeResolver {
                 }
                 let group: Vec<String> =
                     type_binds.iter().map(|tb| tb.name.clone()).collect();
+                for tb in type_binds {
+                    if tb.checks.is_empty() {
+                        self.type_checks.remove(&tb.name);
+                        continue;
+                    }
+                    // A parameterized type may not be checked: the
+                    // condition would have to hold of every
+                    // instantiation, and it is typed against one.
+                    if !tb.type_vars.is_empty() {
+                        self.field_errors.borrow_mut().push((
+                            format!(
+                                "cannot check parameterized type '{}'",
+                                tb.name
+                            ),
+                            tb.span.clone(),
+                        ));
+                        return Ok(decl.clone());
+                    }
+                    // A condition is a function from the type it
+                    // constrains to `bool`. It sees the type as the type
+                    // it abbreviates: the value has not yet been admitted
+                    // to the checked type, so the constraint may not be
+                    // assumed of it.
+                    for check in &tb.checks {
+                        let bool_type = TypeKind::Id("bool".to_string())
+                            .spanned(&check.span);
+                        let cond_type = TypeKind::Fn(
+                            Box::new(tb.type_.clone()),
+                            Box::new(bool_type),
+                        )
+                        .spanned(&check.span);
+                        // The declaration is what is at fault when a
+                        // condition does not typecheck, so it is what the
+                        // error blames.
+                        let annotated = ExprKind::Annotated(
+                            Box::new(check.clone()),
+                            Box::new(cond_type),
+                        )
+                        .spanned(&decl.span);
+                        self.decl_exp_type(env, &annotated);
+                    }
+                    self.type_checks.insert(
+                        tb.name.clone(),
+                        Checks::new(tb.checks.clone()),
+                    );
+                }
                 for tb in type_binds {
                     // An alias is a type function; remember how many
                     // arguments it takes, so a use with the wrong number
@@ -6077,7 +6165,7 @@ impl TypeResolver {
                 .map(|t| Self::max_type_var_count(t))
                 .max()
                 .unwrap_or(0),
-            Type::Alias(_, inner, args) => {
+            Type::Alias(_, inner, args, _) => {
                 let inner_count = Self::max_type_var_count(inner);
                 let args_count = args
                     .iter()
@@ -6545,7 +6633,7 @@ impl TypeResolver {
                 Self::collect_type_var_ids(a, ids);
                 Self::collect_type_var_ids(b, ids);
             }
-            Type::Alias(_, t, args) => {
+            Type::Alias(_, t, args, _) => {
                 Self::collect_type_var_ids(t, ids);
                 args.iter().for_each(|a| Self::collect_type_var_ids(a, ids));
             }
@@ -6573,7 +6661,7 @@ impl TypeResolver {
     pub(crate) fn type_term(&mut self, type_: &Type, subst: &Subst, v: &Var) {
         match type_ {
             // lint: sort until '#}' where '##Type::'
-            Type::Alias(name, type_, _args) => {
+            Type::Alias(name, type_, _args, _checks) => {
                 // An alias is a term of its own, wrapping the type it
                 // abbreviates. The unifier head-reduces it only where it
                 // meets a different type, so the name survives inference:
@@ -6858,6 +6946,12 @@ impl TypeResolver {
     /// Generates ordinal names for tuple fields: ["1", "2", "3", ...]
     fn tuple_ordinal_names(size: usize) -> Vec<String> {
         (1..=size).map(|i| i.to_string()).collect()
+    }
+
+    /// The conditions of the checked type `name`, or none if the name
+    /// is not a checked type.
+    fn checks_of(&self, name: &str) -> Checks {
+        self.type_checks.get(name).cloned().unwrap_or_default()
     }
 
     /// Creates a type variable.
@@ -8195,8 +8289,13 @@ impl<'a> TypeToTermConverter<'a> {
                 {
                     // The term carries the alias, so the name survives
                     // inference and reaches the type displayed.
-                    let alias =
-                        Type::Alias(name.clone(), Rc::new(alias_type), vec![]);
+                    let checks = self.type_resolver.checks_of(name);
+                    let alias = Type::Alias(
+                        name.clone(),
+                        Rc::new(alias_type),
+                        vec![],
+                        checks,
+                    );
                     self.type_resolver.type_term(&alias, subst, v);
                     // The term carries the alias where it survives
                     // unification; this side table still carries it where

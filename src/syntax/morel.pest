@@ -47,6 +47,7 @@ keywords = {
   | _andalso
   | _as
   | _case
+  | _check
   | _compute
   | _current
   | _datatype
@@ -117,6 +118,7 @@ _and = @{ "and" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 _andalso = @{ "andalso" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 _as = @{ "as" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 _case = @{ "case" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_check = @{ "check" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 _compute = @{ "compute" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 _current = @{ "current" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 _datatype = @{ "datatype" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
@@ -216,6 +218,11 @@ statement = { attributed_decl | expr }
 expr = { expr_annotated }
 
 expr_annotated = { expr_implies ~ (":" ~ type_)? }
+// A `check` clause: `check <match list>`. A match's body is an
+// expression, which does not itself extend over a following `check`, so
+// the first condition of `int check i => i >= 1 check j => j <= 12`
+// ends where the second begins.
+check_clause = { _check ~ match_list }
 
 // Precedence 0: implies
 expr_implies = { expr_orelse ~ expr_implies_arg* }
@@ -637,7 +644,7 @@ exn_desc = { identifier ~ (_of ~ type_)? }
 
 // -- Types -----------------------------------------------
 
-type_ = { fn_type }
+type_ = { fn_type ~ check_clause* }
 fn_type = { tuple_type ~ ("->" ~ fn_type)? }
 tuple_type = { apply_type ~ ("*" ~ apply_type)* }
 apply_type = { atomic_type ~ named_type* ~ expr_attr* }

@@ -25,7 +25,7 @@ use crate::compile::pretty::Pretty;
 use crate::compile::span::Span;
 use crate::compile::type_env::{Binding, Id};
 use crate::compile::type_resolver::TypeMap;
-use crate::compile::types::{Label, PrimitiveType, Type};
+use crate::compile::types::{Checks, Label, PrimitiveType, Type};
 use crate::compile::var_collector::VarCollector;
 use crate::eval::code::{
     self, CmpRef, Code, Effect, EvalEnv, EvalMode, Frame, Impl,
@@ -457,6 +457,7 @@ impl<'a> Compiler<'a> {
                     type_vars: tb.type_vars.clone(),
                     name: tb.name.clone(),
                     type_: tb.type_.clone(),
+                    checks: tb.checks.clone(),
                 }));
             }
         }
@@ -2656,6 +2657,7 @@ struct TypeDeclAction {
     type_vars: Vec<String>,
     name: String,
     type_: Type,
+    checks: Checks,
 }
 
 impl Action for TypeDeclAction {
@@ -2668,8 +2670,8 @@ impl Action for TypeDeclAction {
             _ => format!("({}) {}", self.type_vars.join(", "), self.name),
         };
         r.emit_effect(Effect::EmitLine(format!(
-            "type {} = {}",
-            head, self.type_
+            "type {} = {}{}",
+            head, self.type_, self.checks
         )));
     }
 }

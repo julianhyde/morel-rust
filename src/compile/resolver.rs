@@ -1965,6 +1965,7 @@ impl<'a> Resolver<'a> {
                         name.clone(),
                         Rc::new(body.clone()),
                         vec![],
+                        self.type_map.checks_of(name),
                     ));
                     return resolved.with_type(alias_type);
                 }
@@ -1992,6 +1993,7 @@ impl<'a> Resolver<'a> {
                             name.clone(),
                             inner_type,
                             vec![],
+                            self.type_map.checks_of(name),
                         ));
                         return resolved.with_type(alias_type);
                     }
@@ -2090,6 +2092,7 @@ impl<'a> Resolver<'a> {
                             name.clone(),
                             elem_type.clone(),
                             vec![],
+                            self.type_map.checks_of(name),
                         ))));
                     }
                 }
@@ -2163,6 +2166,7 @@ impl<'a> Resolver<'a> {
             type_vars: type_bind.type_vars.clone(),
             name: type_bind.name.clone(),
             type_: core_type,
+            checks: self.type_map.checks_of(&type_bind.name),
         }
     }
 

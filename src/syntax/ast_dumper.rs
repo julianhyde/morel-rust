@@ -393,6 +393,15 @@ fn dump_type_kind(b: &mut String, t: &Type) {
             }
             b.push(')');
         }
+        TypeKind::Checked(t, checks) => {
+            b.push_str("(checkedType ");
+            dump_type(b, t);
+            for c in checks {
+                b.push(' ');
+                dump_expr(b, c);
+            }
+            b.push(')');
+        }
         TypeKind::Composite(ts) => list(b, "composite", ts.iter(), dump_type),
         TypeKind::Con(name) => {
             b.push_str("(con ");

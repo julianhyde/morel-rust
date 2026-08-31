@@ -15,11 +15,13 @@
 // language governing permissions and limitations under the
 // License.
 
+use crate::syntax::ast::{Expr, checks_text};
 use crate::syntax::parser::append_id;
 use crate::unify::unifier::{COLLECTION_OP_NAME, Term, Var};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Display, Formatter};
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 /// Substitutes `Type::Variable(i)` with `args[i]` throughout a type.
@@ -114,7 +116,7 @@ pub fn displace(type_: &Type, name: &str) -> Type {
 pub fn expand_alias(type_: &Type, name: &str) -> Type {
     match type_ {
         // lint: sort until '#}' where '##Type::'
-        Type::Alias(n, inner, args) => {
+        Type::Alias(n, inner, args, checks) => {
             if n == name {
                 expand_alias(inner, name)
             } else {
@@ -122,6 +124,7 @@ pub fn expand_alias(type_: &Type, name: &str) -> Type {
                     n.clone(),
                     Rc::new(expand_alias(inner, name)),
                     args.clone(),
+                    checks.clone(),
                 )
             }
         }
@@ -189,10 +192,21 @@ pub enum Type {
     /// For example, `order` or `int option`.
     Named(Vec<Rc<Type>>, String),
 
-    /// `Alias(name, type_, args)` represents the declaration
+    /// `Alias(name, type_, args, checks)` represents the declaration
     /// `type name = args type_`; for example,
     /// `type int_pair_list = (int * int) list`.
-    Alias(String, Rc<Type>, Vec<Rc<Type>>),
+    ///
+    /// If `checks` is not empty the alias is a *checked type*: its base
+    /// type plus a condition every value of the type satisfies, as in
+    /// `type nat = int check i => i >= 0`.
+    ///
+    /// A checked type is erased. Its representation is that of the type
+    /// it abbreviates, and the condition does not survive
+    /// [`unalias`], so everything that examines a type structurally --
+    /// choosing an overload, aggregating, printing -- behaves as it does
+    /// for the base type. That is what makes widening free and
+    /// narrowing checked.
+    Alias(String, Rc<Type>, Vec<Rc<Type>>, Checks),
     Data(String, Vec<Rc<Type>>),
 
     /// `Forall(type_, parameter_count)` represents the type
@@ -347,7 +361,7 @@ impl Type {
     ) -> fmt::Result {
         match self {
             // lint: sort until '#}' where '##Type::'
-            Type::Alias(name, _ty, _args) => {
+            Type::Alias(name, _ty, _args, _checks) => {
                 // An alias is displayed under its own name; that is the
                 // point of it surviving inference.
                 f.write_str(name)
@@ -962,5 +976,60 @@ pub fn record_type(fields: BTreeMap<Label, Rc<Type>>) -> Type {
         Type::Tuple(fields.into_values().collect())
     } else {
         Type::Record(false, fields)
+    }
+}
+
+/// The conditions of a checked type: one function per `check` clause,
+/// each from a value of the type to `bool`. Empty if the type is
+/// unchecked.
+///
+/// A condition is part of the type's identity -- two checked types are
+/// the same type when their conditions are textually equal -- but it
+/// does not survive [`unalias`], so nothing that examines a type
+/// structurally sees it.
+#[derive(Clone, Debug, Default)]
+pub struct Checks {
+    /// One [`crate::syntax::ast::ExprKind::Fn`] per clause. Read by
+    /// the pass that inserts the checks these conditions call for; the
+    /// type only has to carry them.
+    #[allow(dead_code)]
+    pub fns: Vec<Expr>,
+    /// The conditions, rendered. A condition is closed, so its text
+    /// decides whether two checked types are the same type; an
+    /// expression does not compare by value.
+    text: String,
+}
+
+impl Checks {
+    /// Creates the conditions of a checked type.
+    pub fn new(fns: Vec<Expr>) -> Self {
+        let text = checks_text(&fns);
+        Checks { fns, text }
+    }
+
+    /// Whether the type carries no condition, and so claims nothing.
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.fns.is_empty()
+    }
+}
+
+impl PartialEq for Checks {
+    fn eq(&self, other: &Self) -> bool {
+        self.text == other.text
+    }
+}
+
+impl Eq for Checks {}
+
+impl Hash for Checks {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.text.hash(state);
+    }
+}
+
+impl Display for Checks {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.text)
     }
 }

@@ -72,6 +72,19 @@ impl Span {
         }
     }
 
+    /// Returns the span from this span's start to `other`'s end.
+    ///
+    /// Unlike [`union`](Self::union) the result does not extend past
+    /// `other`: a type declaration's binding ends where the type it
+    /// declares ends, not where its `check` clauses do.
+    pub fn to(&self, other: &Span) -> Self {
+        Span {
+            input: self.input.clone(),
+            start: self.start,
+            end: other.end.max(self.start),
+        }
+    }
+
     /// Creates the union of two spans.
     pub fn union(&self, other: &Span) -> Self {
         use std::cmp::{max, min};
@@ -1581,6 +1594,83 @@ pub struct TypeBind {
     pub type_vars: Vec<String>,
     pub name: String,
     pub type_: Type,
+    /// Extent of the binding: from its type parameters, or its name,
+    /// to the end of the type it declares.
+    pub span: Span,
+    /// Conditions on the type, one per `check` clause. A type
+    /// declaration lifts them off the type it declares, because there
+    /// they belong to the name being declared.
+    pub checks: Vec<Expr>,
+}
+
+impl TypeBind {
+    /// Creates a type binding, lifting any `check` clauses off the type
+    /// it declares.
+    ///
+    /// A type may carry a condition wherever it is written, so the
+    /// parser has already taken them; here they belong to the name
+    /// being declared.
+    pub fn new(
+        type_vars: Vec<String>,
+        name: String,
+        type_: Type,
+        span: Span,
+    ) -> Self {
+        if let TypeKind::Checked(t, checks) = type_.kind {
+            // The binding ends where the type it declares ends; the
+            // conditions that follow are not part of it.
+            let span = span.to(&t.span);
+            return TypeBind {
+                type_vars,
+                name,
+                type_: *t,
+                span,
+                checks,
+            };
+        }
+        TypeBind {
+            type_vars,
+            name,
+            type_,
+            span,
+            checks: Vec::new(),
+        }
+    }
+
+    /// Appends the type's conditions, as they are written.
+    pub fn append_checks(&self, f: &mut Formatter<'_>) -> FmtResult {
+        append_checks(f, &self.checks)
+    }
+}
+
+/// The `check` clauses of a type, rendered as they are written.
+pub fn checks_text(checks: &[Expr]) -> String {
+    struct Rendered<'a>(&'a [Expr]);
+    impl Display for Rendered<'_> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+            append_checks(f, self.0)
+        }
+    }
+    Rendered(checks).to_string()
+}
+
+/// Appends `check` clauses, as they are written.
+fn append_checks(f: &mut Formatter<'_>, checks: &[Expr]) -> FmtResult {
+    for check in checks {
+        match &check.kind {
+            ExprKind::Fn(matches) => {
+                f.write_str(" check ")?;
+                for (i, m) in matches.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(" | ")?;
+                    }
+                    write!(f, "{} => {}", m.pat, m.expr)?;
+                }
+            }
+            _ => write!(f, " check {}", check)?,
+        }
+    }
+    Ok(())
 }
 
 impl Display for TypeBind {
@@ -1599,7 +1689,8 @@ impl Display for TypeBind {
                 self.name,
                 self.type_
             ),
-        }
+        }?;
+        self.append_checks(f)
     }
 }
 
@@ -1909,6 +2000,14 @@ pub enum TypeKind {
     /// application. For example, `(int, string) either` comes out of the parser
     /// as `App(Composite([int, string]), Id(either))`.
     Composite(Vec<Type>),
+    /// `Checked(t, checks)` is a type that carries `check` conditions:
+    /// `int check i => i >= 0`. Each condition is an
+    /// [`ExprKind::Fn`] from a value of the type to `bool`.
+    ///
+    /// The branches of one condition are alternatives, whereas
+    /// separate conditions are conjoined, so the two may not be
+    /// flattened into one list.
+    Checked(Box<Type>, Vec<Expr>),
 }
 
 impl TypeKind {
@@ -2005,6 +2104,10 @@ impl Type {
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(f, "{}<{}>", t, args_str)
+            }
+            TypeKind::Checked(t, checks) => {
+                write!(f, "{}", t)?;
+                append_checks(f, checks)
             }
             TypeKind::Composite(types) => {
                 write!(f, "(")?;

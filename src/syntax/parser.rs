@@ -1645,14 +1645,15 @@ impl MorelParser {
     }
 
     fn type_bind(input: ParseInput) -> ParseResult<TypeBind> {
+        let span = input_to_span(&input);
         Ok(match_nodes!(input.children();
             [identifier(i), type_(t)] => {
                 let name = i.to_string();
-                TypeBind {type_vars: vec![], name, type_: t}
+                TypeBind::new(vec![], name, t, span)
             },
             [type_vars(vars), identifier(i), type_(t)] => {
                 let name = i.to_string();
-                TypeBind {type_vars: vars, name, type_: t}
+                TypeBind::new(vars, name, t, span)
             },
         ))
     }
@@ -1945,6 +1946,24 @@ impl MorelParser {
     fn type_(input: ParseInput) -> ParseResult<Type> {
         Ok(match_nodes!(input.children();
             [fn_type(t)] => t,
+            [fn_type(t), check_clause(c)..] => {
+                let checks: Vec<Expr> = c.collect();
+                if checks.is_empty() {
+                    t
+                } else {
+                    TypeKind::Checked(Box::new(t), checks).wrap(input)
+                }
+            },
+        ))
+    }
+
+    /// A `check` clause: the condition it states, as a function from a
+    /// value of the type to `bool`.
+    fn check_clause(input: ParseInput) -> ParseResult<Expr> {
+        Ok(match_nodes!(input.children();
+            [_check(_), match_list(matches)] => {
+                ExprKind::Fn(matches).wrap(input)
+            },
         ))
     }
 
@@ -2197,6 +2216,10 @@ impl MorelParser {
     }
 
     fn _case(input: ParseInput) -> ParseResult<()> {
+        Ok(())
+    }
+
+    fn _check(input: ParseInput) -> ParseResult<()> {
         Ok(())
     }
 
@@ -2640,6 +2663,7 @@ pub const RESERVED_WORDS: &[&str] = &[
     "andalso",
     "as",
     "case",
+    "check",
     "compute",
     "current",
     "datatype",
