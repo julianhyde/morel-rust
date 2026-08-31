@@ -46,6 +46,7 @@ keywords = {
     _and
   | _andalso
   | _as
+  | _as_opt
   | _case
   | _check
   | _compute
@@ -117,6 +118,7 @@ _all = @{ "all" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 _and = @{ "and" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 _andalso = @{ "andalso" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 _as = @{ "as" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
+_as_opt = @{ "asOpt" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 _case = @{ "case" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 _check = @{ "check" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
 _compute = @{ "compute" ~ !(ASCII_ALPHANUMERIC | "_" | "'") }
@@ -217,7 +219,14 @@ statement = { attributed_decl | expr }
 
 expr = { expr_annotated }
 
-expr_annotated = { expr_implies ~ (":" ~ type_)? }
+// `:`, `as` and `asOpt` bind alike, and chain left to right, so
+// `i as nat as int` is `(i as nat) as int`. A type is parsed greedily,
+// at the loosest level, which is why they are looser than every
+// operator: `int * int` is a legal type and `... * int` a legal
+// expression, and only the loosest reading is unambiguous.
+expr_annotated = { expr_implies ~ conversion* }
+conversion = { conversion_op ~ type_ }
+conversion_op = { ":" | _as_opt | _as }
 // A `check` clause: `check <match list>`. A match's body is an
 // expression, which does not itself extend over a following `check`, so
 // the first condition of `int check i => i >= 1 check j => j <= 12`

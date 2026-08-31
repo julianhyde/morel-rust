@@ -46,7 +46,7 @@ use crate::compile::types;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
 use crate::syntax::ast::{
-    DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunMatch, Literal,
+    CastKind, DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunMatch, Literal,
     LiteralKind, Match, Modifier, Pat, PatField, PatKind, Span as AstSpan,
     Step as AstStep, StepKind as AstStepKind, Type as AstType, TypeBind,
     TypeKind, ValBind,
@@ -724,6 +724,30 @@ impl<'a> Resolver<'a> {
         span: &Span,
     ) -> CoreExpr {
         self.let_value(expr, span, |id| {
+            let value_t = id.type_();
+            self.check_call(
+                id,
+                name,
+                predicates,
+                BuiltInFunction::ZCheck,
+                value_t,
+                span,
+            )
+        })
+    }
+
+    /// Applies one of the checking operators to a value and the
+    /// conjunction of its type's conditions.
+    fn check_call(
+        &self,
+        id: &CoreExpr,
+        name: &str,
+        predicates: &[CoreExpr],
+        operator: BuiltInFunction,
+        result_t: Rc<Type>,
+        span: &Span,
+    ) -> CoreExpr {
+        {
             let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
             let string_t = Rc::new(Type::Primitive(PrimitiveType::String));
             let value_t = id.type_();
@@ -759,17 +783,14 @@ impl<'a> Resolver<'a> {
                     CoreExpr::Literal(string_t, Val::String(Rc::from(""))),
                 ],
             );
-            let fn_t = Rc::new(Type::Fn(arg_t, value_t.clone()));
+            let fn_t = Rc::new(Type::Fn(arg_t, result_t.clone()));
             CoreExpr::Apply(
-                value_t,
-                Box::new(CoreExpr::Literal(
-                    fn_t,
-                    Val::Fn(BuiltInFunction::ZCheck),
-                )),
+                result_t,
+                Box::new(CoreExpr::Literal(fn_t, Val::Fn(operator))),
                 Box::new(arg),
                 span.clone(),
             )
-        })
+        }
     }
 
     /// Makes a condition total, by appending `_ => false` if it does not
@@ -832,6 +853,73 @@ impl<'a> Resolver<'a> {
                 return;
             }
         }
+    }
+
+    /// Returns `SOME v`.
+    fn some(
+        &self,
+        value: CoreExpr,
+        option_t: &Rc<Type>,
+        span: &Span,
+    ) -> CoreExpr {
+        let fn_t = Rc::new(Type::Fn(value.type_(), Rc::clone(option_t)));
+        CoreExpr::Apply(
+            Rc::clone(option_t),
+            Box::new(CoreExpr::Literal(
+                fn_t,
+                Val::Fn(BuiltInFunction::OptionSome),
+            )),
+            Box::new(value),
+            span.clone(),
+        )
+    }
+
+    /// Returns an expression that gives `SOME v` if the conditions of
+    /// the type hold of `v`, and `NONE` if they do not:
+    ///
+    /// ```text
+    /// let val v = e in if c1 v andalso c2 v then SOME v else NONE end
+    /// ```
+    ///
+    /// `asOpt` asks rather than claims, so a condition that is false is
+    /// an answer; but one that raises has no answer, so it raises too.
+    fn checked_opt(
+        &self,
+        expr: CoreExpr,
+        name: &str,
+        predicates: &[CoreExpr],
+        option_t: &Rc<Type>,
+        span: &Span,
+    ) -> CoreExpr {
+        self.let_value(expr, span, |id| {
+            let attempt = self.check_call(
+                id,
+                name,
+                predicates,
+                BuiltInFunction::ZAttempt,
+                Rc::new(Type::Primitive(PrimitiveType::Bool)),
+                span,
+            );
+            let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
+            CoreExpr::Case(
+                Rc::clone(option_t),
+                Box::new(attempt),
+                vec![
+                    CoreMatch {
+                        pat: CorePat::Literal(bool_t.clone(), Val::Bool(true)),
+                        expr: self.some(id.clone(), option_t, span),
+                    },
+                    CoreMatch {
+                        pat: CorePat::Literal(bool_t, Val::Bool(false)),
+                        expr: CoreExpr::Literal(
+                            Rc::clone(option_t),
+                            Val::Fn(BuiltInFunction::OptionNone),
+                        ),
+                    },
+                ],
+                span.clone(),
+            )
+        })
     }
 
     /// Records function names whose first parameter is `self`, so
@@ -1173,6 +1261,27 @@ impl<'a> Resolver<'a> {
                 matches.iter().map(|m| self.resolve_match(m)).collect(),
                 span.clone(),
             ),
+            ExprKind::Cast(kind, inner, target) => {
+                let value = self.resolve_expr(inner);
+                let Some((name, predicates)) = self.claimed_ast_type(target)
+                else {
+                    // Converting to a type that constrains nothing
+                    // claims nothing, so it is erased, as an annotation
+                    // is -- except that `asOpt` still has to answer.
+                    return match kind {
+                        CastKind::As => value,
+                        CastKind::AsOpt => self.some(value, &t, &span),
+                    };
+                };
+                match kind {
+                    CastKind::As => {
+                        self.checked(value, &name, &predicates, &span)
+                    }
+                    CastKind::AsOpt => {
+                        self.checked_opt(value, &name, &predicates, &t, &span)
+                    }
+                }
+            }
             ExprKind::Cons(a0, a1) => {
                 self.call2(t, BuiltInFunction::ListCons, &span, a0, a1)
             }

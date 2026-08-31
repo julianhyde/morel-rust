@@ -578,6 +578,7 @@ fn visit_expr(
 
         ExprKind::Negate(e)
         | ExprKind::Annotated(e, _)
+        | ExprKind::Cast(_, e, _)
         | ExprKind::Raise(e) => {
             visit_expr(e, type_map, warnings)?;
         }

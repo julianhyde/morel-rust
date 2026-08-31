@@ -18,12 +18,12 @@
 #![allow(clippy::result_large_err)]
 
 use crate::syntax::ast::{
-    Attribute, AttributeKind, AttributePayload, ConBind, ConDesc, DatatypeBind,
-    DatatypeDesc, Decl, DeclKind, ExnDesc, Expr, ExprKind, FunBind, FunMatch,
-    JoinType, Label, LabeledExpr, Literal, LiteralKind, Match, Modifier,
-    ModifierVerb, Pat, PatField, PatKind, RangeItem, SigBind, Span, Spec,
-    SpecKind, Statement, StatementKind, Step, StepKind, Type, TypeBind,
-    TypeDesc, TypeField, TypeKind, TypeScheme, ValBind, ValDesc,
+    Attribute, AttributeKind, AttributePayload, CastKind, ConBind, ConDesc,
+    DatatypeBind, DatatypeDesc, Decl, DeclKind, ExnDesc, Expr, ExprKind,
+    FunBind, FunMatch, JoinType, Label, LabeledExpr, Literal, LiteralKind,
+    Match, Modifier, ModifierVerb, Pat, PatField, PatKind, RangeItem, SigBind,
+    Span, Spec, SpecKind, Statement, StatementKind, Step, StepKind, Type,
+    TypeBind, TypeDesc, TypeField, TypeKind, TypeScheme, ValBind, ValDesc,
 };
 use pest_consume::Parser;
 use pest_consume::match_nodes;
@@ -305,11 +305,47 @@ impl MorelParser {
 
     fn expr_annotated(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [expr_implies(e)] => e,
-            [expr_implies(e), type_(t)] => {
-                ExprKind::Annotated(Box::new(e), Box::new(t)).wrap(input)
+            [expr_implies(e), conversion(cs)..] => {
+                // `:`, `as` and `asOpt` chain left to right, so
+                // `i as nat as int` is `(i as nat) as int`.
+                cs.fold(e, |e, (kind, t)| {
+                    let span = e.span.union(&t.span).trim_end();
+                    match kind {
+                        None => ExprKind::Annotated(
+                            Box::new(e),
+                            Box::new(t),
+                        )
+                        .spanned(&span),
+                        Some(kind) => ExprKind::Cast(
+                            kind,
+                            Box::new(e),
+                            Box::new(t),
+                        )
+                        .spanned(&span),
+                    }
+                })
             },
         ))
+    }
+
+    /// One `: t`, `as t` or `asOpt t`. `None` is an annotation, which
+    /// claims a type but converts nothing.
+    fn conversion(input: ParseInput) -> ParseResult<(Option<CastKind>, Type)> {
+        Ok(match_nodes!(input.children();
+            [conversion_op(kind), type_(t)] => (kind, t),
+        ))
+    }
+
+    fn conversion_op(input: ParseInput) -> ParseResult<Option<CastKind>> {
+        Ok(match input.as_str() {
+            "as" => Some(CastKind::As),
+            "asOpt" => Some(CastKind::AsOpt),
+            _ => None,
+        })
+    }
+
+    fn _as_opt(input: ParseInput) -> ParseResult<()> {
+        Ok(())
     }
 
     fn expr_implies(input: ParseInput) -> ParseResult<Expr> {
@@ -2662,6 +2698,7 @@ pub const RESERVED_WORDS: &[&str] = &[
     "and",
     "andalso",
     "as",
+    "asOpt",
     "case",
     "check",
     "compute",

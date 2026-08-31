@@ -104,6 +104,15 @@ fn dump_expr_kind(b: &mut String, e: &ExprKind<Expr>) {
             }
             b.push(')');
         }
+        ExprKind::Cast(kind, e, t) => {
+            b.push_str("(cast ");
+            b.push_str(&kind.to_string());
+            b.push(' ');
+            dump_expr(b, e);
+            b.push(' ');
+            dump_type(b, t);
+            b.push(')');
+        }
         ExprKind::Compose(a, c) => infix(b, "compose", a, c),
         ExprKind::Cons(a, c) => infix(b, "cons", a, c),
         ExprKind::Current => b.push_str("current"),

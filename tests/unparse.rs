@@ -203,6 +203,8 @@ fn test_each_expr_kind() {
 
     // Type annotation: `:`.
     k.check_kind("1 : int");
+    k.check_kind("1 as int");
+    k.check_kind("1 asOpt int");
 
     // Control flow: if, case, let, fn, raise.
     k.check_kind("if x then 1 else 2");

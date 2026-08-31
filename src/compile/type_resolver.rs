@@ -48,7 +48,7 @@ pub type CheckPredicates = HashMap<String, Vec<CoreExpr>>;
 /// keyed by the extent of each expression's span.
 type ModifierFields = Rc<RefCell<HashMap<(usize, usize), Vec<String>>>>;
 use crate::syntax::ast::{
-    DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunBind, JoinType,
+    CastKind, DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunBind, JoinType,
     LabeledExpr, Literal, LiteralKind, Match, Modifier, MorelNode, Pat,
     PatField, PatKind, RangeItem, Span, Statement, StatementKind, Step,
     StepKind, Type as AstType, TypeField, TypeKind, TypeScheme, ValBind,
@@ -3185,6 +3185,42 @@ impl TypeResolver {
                 )?;
 
                 let x = ExprKind::Case(Box::new(e2), match_list2);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
+            ExprKind::Cast(kind, e, t) => {
+                // `as` has the type it converts to, and constrains the
+                // operand to the same type; `asOpt` has that type
+                // wrapped in `option`. The check itself is inserted by
+                // `Resolver`, which has the value to check.
+                let v_exp = match kind {
+                    CastKind::As => *v,
+                    CastKind::AsOpt => self.variable(),
+                };
+                let t2 = self.deduce_type_type(env, t, &v_exp);
+                let e2 = self.deduce_expr_type(env, e, &v_exp)?;
+                // A conversion displays the type it was asked for, not
+                // the type inference deduces: inference gives the meet,
+                // which for a checked type is the type it abbreviates,
+                // and the conversion is the record of what was verified.
+                // The last conversion in a chain is the one that
+                // decides, so `i as nat as int` is an `int`.
+                match &t.kind {
+                    TypeKind::Id(name)
+                        if self.type_aliases.contains_key(name) =>
+                    {
+                        self.var_alias_map.insert(v_exp, name.clone());
+                    }
+                    _ => {
+                        self.var_alias_map.remove(&v_exp);
+                    }
+                }
+                if *kind == CastKind::AsOpt {
+                    let option_op = self.unifier.op("option", Some(1));
+                    let seq =
+                        self.unifier.apply(option_op, &[Term::Variable(v_exp)]);
+                    self.equiv(&Term::Sequence(seq), v);
+                }
+                let x = ExprKind::Cast(*kind, Box::new(e2), Box::new(t2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Cons(left, right) => {
