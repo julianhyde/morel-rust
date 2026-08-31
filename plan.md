@@ -248,6 +248,38 @@ unifier already names both types and says which is an alias. Elision is
 **textual**, not entailment: `n as nat` is free, `k as nat` where `k` is
 `int check z => z > 0` is not.
 
+**A conversion displays the type it was asked for.** `i as nat` is `nat`
+and `i asOpt nat` is `nat option`; the conversion is the record of what was
+verified, so it must not be weakened away.
+
+This is the one place where **morel-rust implements the corrected
+behaviour rather than the behaviour of the java commit**. As committed,
+`06f806b2` gives `int` and `int option`. The cause is in
+`TypeResolver.deduceCastType`: the operand and the target share one type
+variable, so the target's alias meets the operand's `int` and the #459 meet
+rule weakens it; `asOpt` then wraps the weakened variable.
+
+The fix is not to unpick that unification — the erasures must still meet —
+but to add the conversion to the **written-type** path, which is exactly
+what an annotation already uses. In java that is `deduceRealTypes` /
+`realTypes` / `getRealType`; morel-rust mirrors it, added in #459 part 7
+(`f2576bd3`). A `Cast` node joins the annotation and list cases there, and
+reports `t` for `as` and `t option` for `asOpt`.
+
+Julian has this fix in progress in the java working tree, uncommitted at
+the time of writing (`TypeResolver.java` +22, `check.smli` +24/−11).
+**Re-fetch and re-check before implementing**: it may land as a follow-up
+commit or be folded into a rewritten `06f806b2`. If it has landed, this is
+an ordinary propagation and the note above is history.
+
+Ten `check.smli` lines carry the corrected types — `i as nat`,
+`i asOpt nat`, `j asOpt nat`, `i - 1 as nat`, `(i : int) as nat`,
+`3 asOpt odd`, `2 asOpt odd`, and the two section comments at lines 161 and
+195. Until java commits its fix, `etc/check-convergence.py` will flag them;
+that is expected and correct. `i as nat as int` stays `int` — the last
+conversion is the one that decides — and `j asOpt int` stays `int option`,
+because `int` is what was asked for.
+
 ### M4.5 — Composites
 
 Records, tuples, lists and datatype constructors, followed to any depth.
@@ -322,7 +354,10 @@ acceptance test.
 
 Expect the gate to FAIL on `type.smli` and `check.smli` for the whole of
 M4.1 to M4.8, as it did for the split #459 propagation. That is normal for a
-split; it must pass at M4.9.
+split; it must pass at M4.9 — **except** for the ten conversion lines
+described in M4.4, which stay divergent until morel-java commits its own
+fix. Record them as a known divergence, with the reason, rather than
+copying java's weakened types to make the gate green.
 
 ## Working rules
 
@@ -372,6 +407,13 @@ From `AGENTS.md` and prior propagations:
 5. **Size.** `check.smli` is 1370 lines of oracle-free expected output.
    Bring it over in the order its sections are written; each section states
    what it is about, and they follow the phases above.
+6. **The java commit is not the specification.** `06f806b2` types a
+   conversion as the meet rather than as what was asked for (see M4.4), and
+   morel-rust implements the corrected behaviour. Where the java tree and
+   the design record disagree, the design record wins, and `check.smli` is
+   a *report* of what java does today — check it against
+   `julianhyde/239-check:plan.md` before copying an expected output that
+   looks wrong.
 
 ## Deferred (java deferred them too; do not chase)
 
