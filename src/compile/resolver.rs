@@ -28,6 +28,7 @@ use crate::compile::core::{
     TypeBind as CoreTypeBind, ValBind as CoreValBind,
 };
 use crate::compile::expander;
+use crate::compile::expander::and_all;
 use crate::compile::from_builder::FromBuilder;
 use crate::compile::inliner::Env;
 use crate::compile::library;
@@ -657,6 +658,107 @@ impl<'a> Resolver<'a> {
             span: None,
         }));
         CoreExpr::Let(body.type_(), vec![decl], Box::new(body))
+    }
+
+    /// Wraps an expression in a check, if the type it is being bound at
+    /// constrains anything.
+    ///
+    /// This is where a value flows into a claim: the binding says the
+    /// value is a `nat`, so the condition the type carries must hold of
+    /// it. Everywhere else the name has reduced to the type it
+    /// abbreviates, so nothing is claimed and nothing need be checked.
+    fn with_checks(&self, expr: CoreExpr, pat: &Pat, span: &Span) -> CoreExpr {
+        match self.claimed_type(pat) {
+            Some((name, predicates)) => {
+                self.checked(expr, &name, &predicates, span)
+            }
+            None => expr,
+        }
+    }
+
+    /// The checked type a pattern claims, or none if it claims nothing.
+    ///
+    /// A claim is an annotation the user wrote, not a type inference
+    /// deduced. The two differ: inference gives the meet, which for a
+    /// checked type is the type it abbreviates, so a deduced type has no
+    /// condition left to check.
+    fn claimed_type(&self, pat: &Pat) -> Option<(String, Vec<CoreExpr>)> {
+        match &pat.kind {
+            PatKind::Annotated(_, t) => match &t.kind {
+                TypeKind::Id(name) => self
+                    .type_map
+                    .check_predicates
+                    .borrow()
+                    .get(name)
+                    .filter(|predicates| !predicates.is_empty())
+                    .map(|predicates| (name.clone(), predicates.clone())),
+                _ => None,
+            },
+            PatKind::As(_, inner) => self.claimed_type(inner),
+            _ => None,
+        }
+    }
+
+    /// Returns an expression that gives the value of `expr` if the
+    /// conditions of the type it is claimed at hold of it, and otherwise
+    /// raises `Constraint`.
+    ///
+    /// The `let` is what stops the expression being evaluated twice,
+    /// once for the condition and once for the result.
+    fn checked(
+        &self,
+        expr: CoreExpr,
+        name: &str,
+        predicates: &[CoreExpr],
+        span: &Span,
+    ) -> CoreExpr {
+        self.let_value(expr, span, |id| {
+            let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
+            let string_t = Rc::new(Type::Primitive(PrimitiveType::String));
+            let value_t = id.type_();
+            // Every clause must hold, so they are conjoined; the
+            // branches within one clause are alternatives, and the
+            // condition itself decides between them.
+            let conditions: Vec<CoreExpr> = predicates
+                .iter()
+                .map(|p| {
+                    CoreExpr::Apply(
+                        bool_t.clone(),
+                        Box::new(p.clone()),
+                        Box::new(id.clone()),
+                        span.clone(),
+                    )
+                })
+                .collect();
+            let arg_t = Rc::new(Type::Tuple(vec![
+                bool_t.clone(),
+                value_t.clone(),
+                string_t.clone(),
+                string_t.clone(),
+            ]));
+            let arg = CoreExpr::Tuple(
+                arg_t.clone(),
+                vec![
+                    and_all(conditions),
+                    id.clone(),
+                    CoreExpr::Literal(
+                        string_t.clone(),
+                        Val::String(Rc::from(name)),
+                    ),
+                    CoreExpr::Literal(string_t, Val::String(Rc::from(""))),
+                ],
+            );
+            let fn_t = Rc::new(Type::Fn(arg_t, value_t.clone()));
+            CoreExpr::Apply(
+                value_t,
+                Box::new(CoreExpr::Literal(
+                    fn_t,
+                    Val::Fn(BuiltInFunction::ZCheck),
+                )),
+                Box::new(arg),
+                span.clone(),
+            )
+        })
     }
 
     /// Records function names whose first parameter is `self`, so
@@ -2117,6 +2219,7 @@ impl<'a> Resolver<'a> {
     fn resolve_val_bind(&self, val_bind: &ValBind) -> CoreValBind {
         let pat = self.resolve_pat(&val_bind.pat);
         let expr = self.resolve_expr(&val_bind.expr);
+
         // Get type from type annotation if present, otherwise from type map.
         let type_ = if let Some(type_annotation) = &val_bind.type_annotation {
             Rc::new(self.resolve_ast_type(type_annotation))
@@ -2162,11 +2265,24 @@ impl<'a> Resolver<'a> {
             .cloned()
             .or_else(|| ast_type_to_core_type(&type_bind.type_))
             .unwrap_or(Type::Primitive(PrimitiveType::Unit));
+        let checks = self.type_map.checks_of(&type_bind.name);
+        // A condition is compiled once, here, where it was written and
+        // where its nodes have types. Where a check is inserted is
+        // usually a later statement, whose type map knows nothing of
+        // them.
+        if !checks.is_empty() {
+            let predicates =
+                checks.fns.iter().map(|f| self.resolve_expr(f)).collect();
+            self.type_map
+                .check_predicates
+                .borrow_mut()
+                .insert(type_bind.name.clone(), predicates);
+        }
         CoreTypeBind {
             type_vars: type_bind.type_vars.clone(),
             name: type_bind.name.clone(),
             type_: core_type,
-            checks: self.type_map.checks_of(&type_bind.name),
+            checks,
         }
     }
 
@@ -2610,6 +2726,13 @@ impl<'a> Resolver<'a> {
                 &val_bind.pat.span.union(&val_bind.expr.span).to_pest_span(),
                 self.base_line,
             ));
+            // A binding at a checked type is where a value flows into a
+            // claim, so the type's condition is checked here.
+            let core_expr = self.with_checks(
+                core_expr,
+                &val_bind.pat,
+                span.as_ref().expect("just built"),
+            );
 
             pat_exps.push(PatExpr {
                 pat: core_pat,

@@ -25,7 +25,9 @@ use crate::compile::library::{
 use crate::compile::type_env::{
     BindType, EmptyTypeEnv, FunTypeEnv, SimpleTypeEnv, TypeEnv, TypeEnvBuilder,
 };
-use crate::compile::type_resolver::{BindingKind, Resolved, TypeResolver};
+use crate::compile::type_resolver::{
+    BindingKind, CheckPredicates, Resolved, TypeResolver,
+};
 use crate::compile::types::{Type, displace, shadow_name};
 use crate::eval::big_int::BigInt;
 use crate::eval::code::Code;
@@ -65,6 +67,12 @@ pub struct Session {
     /// this map so that aliases defined in one statement are visible in
     /// later ones.
     pub type_aliases: HashMap<String, Type>,
+    /// The compiled conditions of checked types; see
+    /// [`crate::compile::type_resolver::TypeMap::check_predicates`].
+    /// Shared with each statement's type map, so that a condition
+    /// compiled where its type was declared is found where a check is
+    /// inserted.
+    pub check_predicates: Rc<RefCell<CheckPredicates>>,
     /// Number of parameters of each type alias; see
     /// [`TypeResolver::alias_arities`].
     pub alias_arities: HashMap<String, usize>,
@@ -149,6 +157,7 @@ impl Session {
             type_env: Rc::new(type_env) as Rc<dyn TypeEnv>,
             type_bindings: HashMap::new(),
             type_aliases: HashMap::new(),
+            check_predicates: Rc::new(RefCell::new(HashMap::new())),
             alias_arities: HashMap::new(),
             datatype_constructors,
             user_datatype_arities: HashMap::new(),
@@ -218,6 +227,7 @@ impl Session {
         // so that 'type myInt = int' in one statement and 'val x: myInt = 5'
         // in the next can both refer to the alias.
         type_resolver.type_aliases = self.type_aliases.clone();
+        type_resolver.check_predicates = Rc::clone(&self.check_predicates);
         type_resolver.alias_arities = self.alias_arities.clone();
         // Same for user-declared datatype arities (built-ins live
         // in `library`, queried on demand).

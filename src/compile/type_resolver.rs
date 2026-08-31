@@ -23,6 +23,7 @@
 // as future-use surface.
 #![allow(dead_code)]
 
+use crate::compile::core::Expr as CoreExpr;
 use crate::compile::expander::DatatypeMap;
 use crate::compile::library;
 use crate::compile::pat_coverage::check_coverage;
@@ -39,6 +40,9 @@ use crate::compile::types::{
 use crate::eval::code::{LIBRARY, Lib};
 use crate::eval::file::TypedValue;
 use crate::shell::error::Error;
+
+/// The compiled conditions of checked types, keyed by type name.
+pub type CheckPredicates = HashMap<String, Vec<CoreExpr>>;
 
 /// Field names of the expressions record modifiers are applied to,
 /// keyed by the extent of each expression's span.
@@ -161,6 +165,14 @@ pub struct TypeMap {
     /// A checked type is an alias that carries them; a site that knows
     /// only the name recovers them here.
     pub type_checks: HashMap<String, Checks>,
+    /// The conditions of every checked type, compiled, keyed by name.
+    ///
+    /// A condition is compiled once, where the type is declared, and
+    /// read wherever a check is inserted -- which is usually a later
+    /// statement, whose type map knows nothing of the nodes the
+    /// condition was written with. Shared with the session, which is
+    /// what carries it from one statement to the next.
+    pub check_predicates: Rc<RefCell<CheckPredicates>>,
     /// Overload constraints that were still unresolved when unification
     /// finished: `(name, type term, candidate instance terms)`. They become
     /// the predicates of a qualified type; see
@@ -199,6 +211,7 @@ impl TypeMap {
             decl_exp_types: HashMap::new(),
             type_aliases: HashMap::new(),
             type_checks: HashMap::new(),
+            check_predicates: Rc::new(RefCell::new(HashMap::new())),
             predicate_terms: Vec::new(),
             var_alias_map: HashMap::new(),
             datatype_constructors: HashMap::new(),
@@ -935,6 +948,10 @@ pub struct TypeResolver {
     /// The conditions of every checked type declared so far, keyed by
     /// name. A checked type is an alias that carries them.
     pub type_checks: HashMap<String, Checks>,
+    /// The compiled conditions; see [`TypeMap::check_predicates`]. Held
+    /// so that they can be handed to the type map, and through it to
+    /// `Resolver`.
+    pub check_predicates: Rc<RefCell<CheckPredicates>>,
     /// Number of parameters of each type alias, e.g. 1 for
     /// `type 'a my_list = 'a list`. An alias is a type function,
     /// and must be applied to exactly this many arguments.
@@ -1334,6 +1351,7 @@ impl TypeResolver {
         let mut resolver = TypeResolver::new();
         resolver.type_aliases = self.type_aliases.clone();
         resolver.type_checks = self.type_checks.clone();
+        resolver.check_predicates = Rc::clone(&self.check_predicates);
         resolver.user_datatype_arities = self.user_datatype_arities.clone();
         resolver.prior_datatype_constructors =
             self.prior_datatype_constructors.clone();
@@ -1647,6 +1665,7 @@ impl TypeResolver {
             decl_type_vars: BTreeMap::new(),
             type_aliases: HashMap::new(),
             type_checks: HashMap::new(),
+            check_predicates: Rc::new(RefCell::new(HashMap::new())),
             alias_arities: HashMap::new(),
             expanded_type_binds: HashMap::new(),
             user_datatype_arities: HashMap::new(),
@@ -1877,6 +1896,7 @@ impl TypeResolver {
         type_map.decl_exp_types = self.decl_exp_types.clone();
         type_map.type_aliases = self.type_aliases.clone();
         type_map.type_checks = self.type_checks.clone();
+        type_map.check_predicates = Rc::clone(&self.check_predicates);
 
         // A record whose modifiers were never desugared, because the
         // fields of its base never became known. morel-java's
@@ -2522,6 +2542,11 @@ impl TypeResolver {
                     // it abbreviates: the value has not yet been admitted
                     // to the checked type, so the constraint may not be
                     // assumed of it.
+                    // The conditions are deduced in this pass, not in a
+                    // nested one, so that the types of their nodes reach
+                    // the type map: `Resolver` converts a condition to
+                    // Core in order to insert the check it calls for.
+                    let mut deduced = Vec::with_capacity(tb.checks.len());
                     for check in &tb.checks {
                         let bool_type = TypeKind::Id("bool".to_string())
                             .spanned(&check.span);
@@ -2538,12 +2563,18 @@ impl TypeResolver {
                             Box::new(cond_type),
                         )
                         .spanned(&decl.span);
-                        self.decl_exp_type(env, &annotated);
+                        let v = self.variable();
+                        let annotated2 =
+                            self.deduce_expr_type(env, &annotated, &v)?;
+                        // Keep the condition, not the annotation wrapped
+                        // around it to type it.
+                        match annotated2.kind {
+                            ExprKind::Annotated(e, _) => deduced.push(*e),
+                            _ => deduced.push(annotated2),
+                        }
                     }
-                    self.type_checks.insert(
-                        tb.name.clone(),
-                        Checks::new(tb.checks.clone()),
-                    );
+                    self.type_checks
+                        .insert(tb.name.clone(), Checks::new(deduced));
                 }
                 for tb in type_binds {
                     // An alias is a type function; remember how many
