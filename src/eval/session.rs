@@ -228,6 +228,8 @@ impl Session {
         // in the next can both refer to the alias.
         type_resolver.type_aliases = self.type_aliases.clone();
         type_resolver.check_predicates = Rc::clone(&self.check_predicates);
+        type_resolver.user_bindings =
+            self.type_bindings.keys().cloned().collect();
         type_resolver.alias_arities = self.alias_arities.clone();
         // Same for user-declared datatype arities (built-ins live
         // in `library`, queried on demand).

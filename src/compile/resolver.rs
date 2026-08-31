@@ -29,10 +29,12 @@ use crate::compile::core::{
 };
 use crate::compile::expander;
 use crate::compile::expander::and_all;
+use crate::compile::free_finder::free_names_in;
 use crate::compile::from_builder::FromBuilder;
 use crate::compile::inliner::Env;
 use crate::compile::library;
 use crate::compile::library::{BuiltIn, BuiltInFunction};
+use crate::compile::pat_coverage;
 use crate::compile::postfix::{PostfixKind, peel_type, postfix_dispatch};
 use crate::compile::record_modifiers::{self, Source};
 use crate::compile::span::Span;
@@ -45,8 +47,9 @@ use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
 use crate::syntax::ast::{
     DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunMatch, Literal,
-    LiteralKind, Match, Modifier, Pat, PatField, PatKind, Step as AstStep,
-    StepKind as AstStepKind, Type as AstType, TypeBind, TypeKind, ValBind,
+    LiteralKind, Match, Modifier, Pat, PatField, PatKind, Span as AstSpan,
+    Step as AstStep, StepKind as AstStepKind, Type as AstType, TypeBind,
+    TypeKind, ValBind,
 };
 use crate::syntax::parser;
 use crate::unify::unifier::Var;
@@ -761,6 +764,68 @@ impl<'a> Resolver<'a> {
         })
     }
 
+    /// Makes a condition total, by appending `_ => false` if it does not
+    /// already match every value.
+    ///
+    /// A condition need not be exhaustive: `type z = int check 0 =>
+    /// true` says that zero is the only value of the type, and reads
+    /// better than spelling out the other case. Without this the
+    /// condition would fail to match any other value, rather than
+    /// rejecting it.
+    ///
+    /// The appended branch is not part of the type as it was written,
+    /// so it reaches only the compiled condition, never the display.
+    fn make_total(&self, predicate: CoreExpr, ast: &Expr) -> CoreExpr {
+        let CoreExpr::Fn(t, matches, span) = predicate else {
+            return predicate;
+        };
+        let ExprKind::Fn(ast_matches) = &ast.kind else {
+            return CoreExpr::Fn(t, matches, span);
+        };
+        if pat_coverage::is_exhaustive(ast_matches, self.type_map) {
+            return CoreExpr::Fn(t, matches, span);
+        }
+        let arg_type = matches[0].pat.type_();
+        let mut matches = matches;
+        matches.push(CoreMatch {
+            pat: CorePat::Wildcard(arg_type),
+            expr: CoreExpr::Literal(
+                Rc::new(Type::Primitive(PrimitiveType::Bool)),
+                Val::Bool(false),
+            ),
+        });
+        CoreExpr::Fn(t, matches, span)
+    }
+
+    /// Reports an error if a condition refers to anything but the value
+    /// it is given and the standard basis.
+    ///
+    /// That is what lets a checked type be interned like any other type
+    /// -- two are the same type when their conditions are textually
+    /// equal, which would not follow if a condition could also depend on
+    /// an environment -- and it settles what a condition means when the
+    /// names it used are re-bound, by making the question not arise.
+    ///
+    /// Closedness is decided by the binding rather than the name, so
+    /// shadowing a basis name does not smuggle an environment in.
+    fn check_closed(&self, name: &str, predicate: &CoreExpr, span: &Span) {
+        for free in free_names_in(predicate) {
+            if self.type_map.user_bindings.contains(&free)
+                || library::lookup(&free).is_none()
+            {
+                self.errors.borrow_mut().push((
+                    format!(
+                        "condition of checked type '{}' is not closed; \
+                         it refers to '{}'",
+                        name, free
+                    ),
+                    span.clone(),
+                ));
+                return;
+            }
+        }
+    }
+
     /// Records function names whose first parameter is `self`, so
     /// postfix calls against receivers of matching types can be
     /// rewritten into direct applications. Called from `resolve_decl`
@@ -845,7 +910,7 @@ impl<'a> Resolver<'a> {
             DeclKind::Type(type_binds) => CoreDecl::Type(
                 type_binds
                     .iter()
-                    .map(|tb| self.resolve_type_bind(tb))
+                    .map(|tb| self.resolve_type_bind(tb, &decl.span))
                     .collect(),
             ),
             DeclKind::Val(rec, _overload, val_binds) => {
@@ -2255,7 +2320,11 @@ impl<'a> Resolver<'a> {
     /// alias's right-hand side is converted to a core type via
     /// the same simple-shape recogniser used by the type-resolver.
     /// Unsupported shapes fall back to `unit`.
-    fn resolve_type_bind(&self, type_bind: &TypeBind) -> CoreTypeBind {
+    fn resolve_type_bind(
+        &self,
+        type_bind: &TypeBind,
+        decl_span: &AstSpan,
+    ) -> CoreTypeBind {
         // Prefer the type resolver's expansion, which resolves names against
         // the aliases in scope before the declaration.
         let core_type = self
@@ -2271,8 +2340,21 @@ impl<'a> Resolver<'a> {
         // usually a later statement, whose type map knows nothing of
         // them.
         if !checks.is_empty() {
-            let predicates =
-                checks.fns.iter().map(|f| self.resolve_expr(f)).collect();
+            // The declaration is what is at fault when a condition is
+            // not closed, so it is what the error blames.
+            let span = Span::from_pest_span(
+                &decl_span.to(&type_bind.span).trim_end().to_pest_span(),
+                self.base_line,
+            );
+            let predicates = checks
+                .fns
+                .iter()
+                .map(|f| {
+                    let predicate = self.make_total(self.resolve_expr(f), f);
+                    self.check_closed(&type_bind.name, &predicate, &span);
+                    predicate
+                })
+                .collect();
             self.type_map
                 .check_predicates
                 .borrow_mut()
