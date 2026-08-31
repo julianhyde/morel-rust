@@ -1863,6 +1863,17 @@ pub enum BuiltInFunction {
     #[strum(props(name = "$check"))]
     #[strum(props(type = "forall 1 bool * 'a * string * string -> 'a"))]
     ZCheck,
+    /// Internal operator that enforces a checked type on a component of
+    /// a value.
+    ///
+    /// It takes the same arguments as [`Self::ZCheck`] but returns
+    /// `true` rather than the value, so that it can be a conjunct of
+    /// the condition of the value that contains it. That is what lets a
+    /// message name the component that failed, and quote the component
+    /// rather than the whole.
+    #[strum(props(name = "$require"))]
+    #[strum(props(type = "forall 1 bool * 'a * string * string -> bool"))]
+    ZRequire,
 }
 
 impl BuiltInFunction {

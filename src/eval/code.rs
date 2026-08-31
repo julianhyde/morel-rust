@@ -417,6 +417,21 @@ pub enum Code {
     ValidatePartialArg1(BuiltInFunction, Box<Code>, Span),
 }
 
+/// Which of the three checking operators a [`Code::Check`] is.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum CheckKind {
+    /// `$check` returns the value, and raises if the condition does not
+    /// hold.
+    Check,
+    /// `$require` returns `true`, so that a check on a component can be
+    /// a conjunct of the condition of the value that contains it, and
+    /// raises if the condition does not hold.
+    Require,
+    /// `$attempt` returns the condition's result, so that `asOpt` can
+    /// answer `NONE`. It raises only if evaluating the condition did.
+    Attempt,
+}
+
 /// What a [`Code::Check`] needs: the value being claimed, the condition
 /// it must satisfy, and what to say if it does not.
 #[derive(Clone, PartialEq, Debug)]
@@ -435,10 +450,9 @@ pub struct CheckCode {
     pub blame: String,
     /// Where the claim is made.
     pub span: Span,
-    /// Whether a value that fails the condition raises, or answers
-    /// false. `asOpt` asks rather than claims, so a condition that is
-    /// false is an answer.
-    pub raising: bool,
+    /// What the operator returns when the condition holds, and whether
+    /// it raises when it does not.
+    pub kind: CheckKind,
 }
 
 impl CheckCode {
@@ -957,13 +971,14 @@ impl Code {
                     }
                 };
                 if holds {
-                    return Ok(if check.raising {
-                        value
-                    } else {
-                        Val::Bool(true)
+                    return Ok(match check.kind {
+                        CheckKind::Check => value,
+                        CheckKind::Require | CheckKind::Attempt => {
+                            Val::Bool(true)
+                        }
                     });
                 }
-                if !check.raising {
+                if check.kind == CheckKind::Attempt {
                     // `asOpt` asks rather than claims, so a value that
                     // does not have the type is an answer, not a
                     // failure.
@@ -2450,6 +2465,7 @@ pub enum Eager0 {
     WordWordSize,
     ZAttempt,
     ZCheck,
+    ZRequire,
 }
 
 impl Eager0 {
@@ -2556,7 +2572,7 @@ impl Eager0 {
             // compiler turns an application of it into the check itself,
             // because it needs the value's type to quote it in the
             // message. The registry still wants an implementation.
-            ZAttempt | ZCheck => Val::Unit,
+            ZAttempt | ZCheck | ZRequire => Val::Unit,
         }
     }
 
@@ -5592,6 +5608,7 @@ fn build_library() -> Lib {
     Eager2::WordXorb.implements(&mut b, WordXorb);
     Eager0::ZAttempt.implements(&mut b, ZAttempt);
     Eager0::ZCheck.implements(&mut b, ZCheck);
+    Eager0::ZRequire.implements(&mut b, ZRequire);
 
     b.build()
 }

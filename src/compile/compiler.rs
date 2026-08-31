@@ -793,10 +793,8 @@ impl<'a> Compiler<'a> {
                     // compiled rather than applied. Its argument is
                     // always a quadruple: the condition, the value, the
                     // name of the checked type, and what the value is of.
-                    if matches!(
-                        *f,
-                        BuiltInFunction::ZCheck | BuiltInFunction::ZAttempt
-                    ) && let Expr::Tuple(_, args) = a.as_ref()
+                    if let Some(kind) = check_kind(*f)
+                        && let Expr::Tuple(_, args) = a.as_ref()
                         && args.len() == 4
                         && let Expr::Literal(_, Val::String(name)) = &args[2]
                         && let Expr::Literal(_, Val::String(blame)) = &args[3]
@@ -808,7 +806,7 @@ impl<'a> Compiler<'a> {
                             name: name.to_string(),
                             blame: blame.to_string(),
                             span: span.clone(),
-                            raising: *f == BuiltInFunction::ZCheck,
+                            kind,
                         }));
                     }
                     // For 1-arg functions (E1, EF1), always compile the
@@ -2892,5 +2890,15 @@ impl CompiledStatement for CompiledStatementImpl {
         for action in &self.actions {
             action.apply(&mut eval_env, &mut frame);
         }
+    }
+}
+
+/// Which checking operator a built-in is, if it is one.
+fn check_kind(f: BuiltInFunction) -> Option<code::CheckKind> {
+    match f {
+        BuiltInFunction::ZAttempt => Some(code::CheckKind::Attempt),
+        BuiltInFunction::ZCheck => Some(code::CheckKind::Check),
+        BuiltInFunction::ZRequire => Some(code::CheckKind::Require),
+        _ => None,
     }
 }
