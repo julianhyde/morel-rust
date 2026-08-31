@@ -435,6 +435,10 @@ pub struct CheckCode {
     pub blame: String,
     /// Where the claim is made.
     pub span: Span,
+    /// Whether a value that fails the condition raises, or answers
+    /// false. `asOpt` asks rather than claims, so a condition that is
+    /// false is an answer.
+    pub raising: bool,
 }
 
 impl CheckCode {
@@ -953,7 +957,17 @@ impl Code {
                     }
                 };
                 if holds {
-                    return Ok(value);
+                    return Ok(if check.raising {
+                        value
+                    } else {
+                        Val::Bool(true)
+                    });
+                }
+                if !check.raising {
+                    // `asOpt` asks rather than claims, so a value that
+                    // does not have the type is an answer, not a
+                    // failure.
+                    return Ok(Val::Bool(false));
                 }
                 Err(MorelError::Described(
                     BuiltInExn::Constraint,
@@ -2434,6 +2448,7 @@ pub enum Eager0 {
     WeekdayTue,
     WeekdayWed,
     WordWordSize,
+    ZAttempt,
     ZCheck,
 }
 
@@ -2541,7 +2556,7 @@ impl Eager0 {
             // compiler turns an application of it into the check itself,
             // because it needs the value's type to quote it in the
             // message. The registry still wants an implementation.
-            ZCheck => Val::Unit,
+            ZAttempt | ZCheck => Val::Unit,
         }
     }
 
@@ -5575,6 +5590,7 @@ fn build_library() -> Lib {
     Eager1::WordToString.implements(&mut b, WordToString);
     Eager0::WordWordSize.implements(&mut b, WordWordSize);
     Eager2::WordXorb.implements(&mut b, WordXorb);
+    Eager0::ZAttempt.implements(&mut b, ZAttempt);
     Eager0::ZCheck.implements(&mut b, ZCheck);
 
     b.build()

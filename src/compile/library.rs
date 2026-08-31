@@ -1850,6 +1850,16 @@ pub enum BuiltInFunction {
     /// It is never written in code, and it is compiled rather than
     /// applied, because the message quotes the value and so needs its
     /// type.
+    /// Internal operator that tests a checked type.
+    ///
+    /// It takes the same arguments as [`Self::ZCheck`] but returns the
+    /// result of the condition rather than raising when it does not
+    /// hold, so that `asOpt` can answer `NONE`. It still raises
+    /// `Constraint` if evaluating the condition raised, because then
+    /// the question has no answer.
+    #[strum(props(name = "$attempt"))]
+    #[strum(props(type = "forall 1 bool * 'a * string * string -> bool"))]
+    ZAttempt,
     #[strum(props(name = "$check"))]
     #[strum(props(type = "forall 1 bool * 'a * string * string -> 'a"))]
     ZCheck,

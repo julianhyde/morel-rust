@@ -358,6 +358,15 @@ pub enum ExprKind<SubExpr> {
 
     // Type annotation
     Annotated(Box<SubExpr>, Box<Type>),
+    /// `Cast(kind, e, t)` converts a value to a type whose conditions
+    /// may not hold of it: `e as t` raises `Constraint` if they do not,
+    /// `e asOpt t` answers `NONE`.
+    ///
+    /// Both are well-typed if the erasure of `t` unifies with the type
+    /// of `e`; because erasure deletes conditions, every type built over
+    /// `int` may be converted to every other. A conversion between
+    /// different erasures is an ordinary type error.
+    Cast(CastKind, Box<SubExpr>, Box<Type>),
 }
 
 impl ExprKind<Expr> {
@@ -396,6 +405,7 @@ impl ExprKind<Expr> {
             ExprKind::Apply(..) => Op::APPLY,
             ExprKind::Caret(..) => Op::CARET,
             ExprKind::Case(..) => Op::LOW_EXPR,
+            ExprKind::Cast(..) => Op::ANNOTATED_EXP,
             ExprKind::Compose(..) => Op::COMPOSE,
             ExprKind::Cons(..) => Op::CONS,
             ExprKind::Current => Op::ATOM,
@@ -482,6 +492,12 @@ impl ExprKind<Expr> {
                     write!(f, "{} => {}", match_.pat, match_.expr)?;
                 }
                 Ok(())
+            }
+            ExprKind::Cast(kind, e, typ) => {
+                let op = Op::ANNOTATED_EXP;
+                write_sub(f, e, left, op.left)?;
+                write!(f, " {} ", kind)?;
+                write!(f, "{}", typ)
             }
             ExprKind::Compose(a0, a1) => {
                 infix(f, a0, Op::COMPOSE, a1, left, right)
@@ -808,6 +824,25 @@ pub struct Attribute {
     /// Possibly dotted name, e.g. `"warning"`, `"foo.bar"`.
     pub name: String,
     pub payload: Option<AttributePayload>,
+}
+
+/// How a conversion reports a value that does not satisfy the type it
+/// is converted to.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum CastKind {
+    /// `e as t` raises `Constraint`.
+    As,
+    /// `e asOpt t` answers `NONE`; it asks rather than claims.
+    AsOpt,
+}
+
+impl Display for CastKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.write_str(match self {
+            CastKind::As => "as",
+            CastKind::AsOpt => "asOpt",
+        })
+    }
 }
 
 /// Label within a record expression or record pattern.
