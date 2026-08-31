@@ -687,19 +687,27 @@ impl<'a> Resolver<'a> {
     /// condition left to check.
     fn claimed_type(&self, pat: &Pat) -> Option<(String, Vec<CoreExpr>)> {
         match &pat.kind {
-            PatKind::Annotated(_, t) => match &t.kind {
-                TypeKind::Id(name) => self
-                    .type_map
-                    .check_predicates
-                    .borrow()
-                    .get(name)
-                    .filter(|predicates| !predicates.is_empty())
-                    .map(|predicates| (name.clone(), predicates.clone())),
-                _ => None,
-            },
+            PatKind::Annotated(_, t) => self.claimed_ast_type(t),
             PatKind::As(_, inner) => self.claimed_type(inner),
             _ => None,
         }
+    }
+
+    /// The checked type a written type names, and the conditions it
+    /// carries, or none if it claims nothing.
+    fn claimed_ast_type(
+        &self,
+        ast_type: &AstType,
+    ) -> Option<(String, Vec<CoreExpr>)> {
+        let TypeKind::Id(name) = &ast_type.kind else {
+            return None;
+        };
+        self.type_map
+            .check_predicates
+            .borrow()
+            .get(name)
+            .filter(|predicates| !predicates.is_empty())
+            .map(|predicates| (name.clone(), predicates.clone()))
     }
 
     /// Returns an expression that gives the value of `expr` if the
@@ -1035,7 +1043,18 @@ impl<'a> Resolver<'a> {
             ExprKind::AndAlso(a0, a1) => {
                 self.call2(t, BuiltInFunction::BoolAndAlso, &span, a0, a1)
             }
-            ExprKind::Annotated(expr, _) => self.resolve_expr(expr),
+            ExprKind::Annotated(inner, ann) => {
+                // An ascription is a claim, like a binding, so it is
+                // checked wherever it appears -- not only where its
+                // value is bound.
+                let value = self.resolve_expr(inner);
+                match self.claimed_ast_type(ann) {
+                    Some((name, predicates)) => {
+                        self.checked(value, &name, &predicates, &span)
+                    }
+                    None => value,
+                }
+            }
             ExprKind::Append(a0, a1) => {
                 self.call2(t, BuiltInFunction::ListAt, &span, a0, a1)
             }
@@ -2413,9 +2432,49 @@ impl<'a> Resolver<'a> {
 
     /// Resolves an AST match to a core match.
     fn resolve_match(&self, ast_match: &Match) -> CoreMatch {
+        let pat = self.resolve_pat(&ast_match.pat);
+        let expr = self.resolve_expr(&ast_match.expr);
+        // Entering a branch whose pattern claims a type is where a value
+        // flows into the claim, so that is where the check goes. A
+        // branch is what a function's parameter and a `case` have in
+        // common, so both are checked here, and a function of several
+        // branches is checked in whichever branch claims -- the
+        // parameter of the function as a whole claims nothing, because
+        // another branch may match instead.
+        //
+        //   (n: nat) => e
+        //
+        // becomes
+        //
+        //   v => let val n = $check (c v, v, "nat", "") in e end
+        //
+        // rather than checking and discarding, which an optimizer would
+        // be entitled to remove: the body reads the name the check
+        // binds. It is inside the function, so it travels with the
+        // function value and fires however the function is called --
+        // including from polymorphic code that knows nothing of the
+        // checked type.
+        let Some((name, predicates)) = self.claimed_type(&ast_match.pat) else {
+            return CoreMatch { pat, expr };
+        };
+        let CorePat::Identifier(t, _) = &pat else {
+            return CoreMatch { pat, expr };
+        };
+        let span = Span::from_pest_span(
+            &ast_match
+                .pat
+                .span
+                .union(&ast_match.expr.span)
+                .to_pest_span(),
+            self.base_line,
+        );
+        let raw_name = self.temp_name();
+        let raw = CorePat::Identifier(t.clone(), raw_name.clone());
+        let value = CoreExpr::Identifier(t.clone(), raw_name);
+        let checked = self.checked(value, &name, &predicates, &span);
         CoreMatch {
-            pat: self.resolve_pat(&ast_match.pat),
-            expr: self.resolve_expr(&ast_match.expr),
+            pat: raw,
+            expr: self.core_let(pat, checked, expr, &span),
         }
     }
 
