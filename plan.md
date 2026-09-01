@@ -359,7 +359,16 @@ described in M4.4, which stay divergent until morel-java commits its own
 fix. Record them as a known divergence, with the reason, rather than
 copying java's weakened types to make the gate green.
 
-## Where this stands (branch `239-check`, 14 commits)
+## Where this stands
+
+The grounding fixes are on branch **`grounding`**, off `origin/main`, so
+that they can go ahead of the checked-types work; `239-check` is
+rebased onto it.
+
+morel-java's `main` has moved past `06f806b2`: `fa512393` and `028cdbc2`
+are checked-types follow-ups that morel-rust already satisfies,
+`9d10a8c9` is a grounding test that is propagated here, and `927cf86d`
+is unrelated.
 
 Done, each green under `cargo test` + clippy + lint:
 
@@ -454,9 +463,12 @@ is the question being asked. M2 built the grounding half already.
 3. **A condition that does not typecheck** reports `int vs bool` where
    morel-java says `bool vs int` -- the operand-order divergence #459
    left behind.
-4. **A conversion's type** is morel-rust's corrected behaviour, not
-   morel-java's; see M4.4 above. Six `check.smli` lines differ until
-   morel-java commits its fix.
+4. ~~**A conversion's type.**~~ **Settled.** morel-java committed the
+   fix as `fa512393`, "A conversion should display the type it converts
+   to"; morel-rust already agreed, including the cases that commit adds
+   (`val n = i as nat` is a `nat`, `[i as nat, 0]` a `nat list`,
+   `i asOpt nat` a `nat option`). `028cdbc2`, which pins that a chained
+   conversion checks every step, also passes unchanged.
 
 ## Working rules
 
