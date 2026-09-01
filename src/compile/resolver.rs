@@ -720,6 +720,19 @@ impl<'a> Resolver<'a> {
         Some(claimed)
     }
 
+    /// The type a name means, as its declaration wrote it, if it means
+    /// anything that carries a condition.
+    fn named_type(&self, name: &str) -> Option<Type> {
+        let body = self.type_map.type_aliases.get(name)?;
+        let claimed = Type::Alias(
+            name.to_string(),
+            Rc::new(body.clone()),
+            vec![],
+            self.type_map.checks_of(name),
+        );
+        self.has_check(&claimed).then_some(claimed)
+    }
+
     /// A written type, as written: keeping the aliases that say where
     /// the conditions are, so that a claim can be walked.
     ///
@@ -2155,7 +2168,31 @@ impl<'a> Resolver<'a> {
             ExprKind::Record(with_base, fields, modifiers) => {
                 match with_base {
                     Some(base) if !modifiers.is_empty() => {
-                        self.to_core_modified(base, modifiers, &span)
+                        let built =
+                            self.to_core_modified(base, modifiers, &span);
+                        // A chain that leaves the record's shape alone
+                        // gives back the type it was given, and the
+                        // type resolver says so by giving the two the
+                        // same type. That is the chain claiming it: the
+                        // field keeps its declared type, so the value
+                        // assigned to it must have it, and the claim is
+                        // checked here because nobody else wrote the
+                        // type down.
+                        let claimed = self
+                            .type_map
+                            .claiming_records
+                            .get(&expr.span.extent())
+                            .and_then(|name| self.named_type(name));
+                        // The deduced type has been met with what was
+                        // assigned to each field, so it is the alias's
+                        // name that says what was claimed, and the
+                        // declaration that says what the name means.
+                        match claimed {
+                            Some(claimed) => {
+                                self.checked(built, &claimed, &span)
+                            }
+                            None => built,
+                        }
                     }
                     None => {
                         // Plain record `{a=e1, b=e2}`: resolve each field in

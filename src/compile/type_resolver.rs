@@ -178,6 +178,15 @@ pub struct TypeMap {
     /// and to the standard basis, and this is how a reference to
     /// something the user declared is told from one to a built-in.
     pub user_bindings: HashSet<String>,
+    /// The records with modifiers whose chain leaves the shape alone,
+    /// and so claims the type of the record it modifies: the extent of
+    /// the record's span, and the name of the type it claims.
+    /// `Resolver` checks the claim.
+    ///
+    /// The name is what has to be carried: a Core type is erased, so by
+    /// the time `Resolver` sees the record its type says `{empno:int,
+    /// ...}` and no longer says which type was claimed.
+    pub claiming_records: HashMap<(usize, usize), String>,
     /// Overload constraints that were still unresolved when unification
     /// finished: `(name, type term, candidate instance terms)`. They become
     /// the predicates of a qualified type; see
@@ -218,6 +227,7 @@ impl TypeMap {
             type_checks: HashMap::new(),
             check_predicates: Rc::new(RefCell::new(HashMap::new())),
             user_bindings: HashSet::new(),
+            claiming_records: HashMap::new(),
             predicate_terms: Vec::new(),
             var_alias_map: HashMap::new(),
             datatype_constructors: HashMap::new(),
@@ -960,6 +970,12 @@ pub struct TypeResolver {
     pub check_predicates: Rc<RefCell<CheckPredicates>>,
     /// The names the user has bound; see [`TypeMap::user_bindings`].
     pub user_bindings: HashSet<String>,
+    /// See [`TypeMap::claiming_records`].
+    claiming_records: HashMap<(usize, usize), String>,
+    /// The fields a record with modifiers ends up with, keyed by the
+    /// extent of its span. A `yield` step binds them; the record's own
+    /// term may be the operand's, which says nothing about them.
+    modifier_result_fields: HashMap<(usize, usize), Vec<(String, Var)>>,
     /// The argument type of each datatype constructor this statement
     /// declares, as written -- keeping the aliases that say where the
     /// conditions are.
@@ -1679,6 +1695,8 @@ impl TypeResolver {
             type_checks: HashMap::new(),
             check_predicates: Rc::new(RefCell::new(HashMap::new())),
             user_bindings: HashSet::new(),
+            claiming_records: HashMap::new(),
+            modifier_result_fields: HashMap::new(),
             datatype_arg_types: HashMap::new(),
             alias_arities: HashMap::new(),
             expanded_type_binds: HashMap::new(),
@@ -1912,6 +1930,7 @@ impl TypeResolver {
         type_map.type_checks = self.type_checks.clone();
         type_map.check_predicates = Rc::clone(&self.check_predicates);
         type_map.user_bindings = self.user_bindings.clone();
+        type_map.claiming_records = self.claiming_records.clone();
 
         // A record whose modifiers were never desugared, because the
         // fields of its base never became known. morel-java's
@@ -4376,18 +4395,28 @@ impl TypeResolver {
             }
             // Clone the sequence to avoid holding an immutable borrow
             // of `self` while binding.
-            let seq = v.and_then(|v| {
-                self.terms
-                    .iter()
-                    .find(|vt| vt.0 == *v)
-                    .and_then(|vt| match &vt.1 {
-                        Term::Sequence(seq) => Some(seq.clone()),
-                        Term::Variable(_) => None,
-                    })
-            });
+            // A record with modifiers binds the fields the modifiers
+            // gave it. Its own term may be the operand's -- that is what
+            // a chain that claims the operand's type means -- and that
+            // term says nothing about which fields came out.
+            let modifier_fields = (!modifiers.is_empty())
+                .then(|| {
+                    self.modifier_result_fields
+                        .get(&yielded.span.extent())
+                        .cloned()
+                })
+                .flatten();
+            let seq = v.and_then(|v| self.linked_sequence(v));
             // The fields are read from the record's type, not from the
             // expression: a record with modifiers has none of its own.
-            if let Some(seq) = seq.and_then(|seq| self.unalias_sequence(seq))
+            if let Some(modifier_fields) = modifier_fields {
+                field_vars.clear();
+                for (label, var) in modifier_fields {
+                    field_vars.push((label.clone(), var));
+                    envs.push(label, Term::Variable(var));
+                }
+            } else if let Some(seq) =
+                seq.and_then(|seq| self.unalias_sequence(seq))
                 && let Some(labels) = self.term_field_names(&seq)
             {
                 field_vars.clear();
@@ -7059,6 +7088,25 @@ impl TypeResolver {
         (1..=size).map(|i| i.to_string()).collect()
     }
 
+    /// The name a variable's type is displayed under, if it is an
+    /// alias.
+    ///
+    /// The term carries the alias where it survives unification; the
+    /// side table carries it where the alias is on the expression.
+    fn alias_name_of(&mut self, v: &Var) -> Option<String> {
+        if let Some(name) = self.var_alias_map.get(v) {
+            return Some(name.clone());
+        }
+        let term = self.resolve_during_deduce(v)?;
+        let Term::Sequence(seq) = term else {
+            return None;
+        };
+        self.unifier
+            .op_name(&seq.op)
+            .strip_prefix(ALIAS_PREFIX)
+            .map(str::to_string)
+    }
+
     /// The conditions of the checked type `name`, or none if the name
     /// is not a checked type.
     fn checks_of(&self, name: &str) -> Checks {
@@ -7208,6 +7256,14 @@ impl TypeResolver {
         let mut fields = self.field_variables(operands, 0);
         let mut modifiers2 = Vec::new();
         let mut all = 0;
+        // A modifier that assigns claims the type of the record it
+        // modifies: the field keeps its declared type, so the value must
+        // have it. One that adds, removes or renames cannot, because the
+        // result has a different shape; nor can a `lenient` one, which
+        // says the field need not keep its type. Every modifier in a
+        // chain must leave the shape alone for the chain to claim
+        // anything.
+        let mut claims = true;
         for modifier in modifiers {
             let all_fields = match modifier {
                 Modifier::All(..) => {
@@ -7229,6 +7285,17 @@ impl TypeResolver {
                 .collect();
             let env2 = env.bind_all(&bindings);
 
+            match modifier {
+                Modifier::Assign(_, lenient, _)
+                | Modifier::All(_, lenient, _) => {
+                    if *lenient {
+                        claims = false;
+                    }
+                }
+                Modifier::Remove(..) | Modifier::Rename(..) => {
+                    claims = false;
+                }
+            }
             let mut fields2: BTreeMap<Label, Var> = BTreeMap::new();
             let mut assigned: Vec<(String, Expr)> = Vec::new();
             for (label, source) in &sources {
@@ -7275,13 +7342,38 @@ impl TypeResolver {
                 all,
                 &assigned,
             )?);
+            if fields2.keys().ne(fields.keys()) {
+                claims = false;
+            }
             fields = fields2;
         }
-        let terms: BTreeMap<Label, Term> = fields
-            .iter()
-            .map(|(label, var)| (label.clone(), Term::Variable(*var)))
-            .collect();
-        self.record_term(&terms, v);
+        self.modifier_result_fields.insert(
+            expr.span.extent(),
+            fields
+                .iter()
+                .map(|(label, var)| (label.to_string(), *var))
+                .collect(),
+        );
+        if claims {
+            // Only a named type is worth claiming: an unnamed record
+            // claims nothing that its fields do not claim for
+            // themselves.
+            if let Some(name) = self.alias_name_of(&operands.variables[0]) {
+                self.claiming_records.insert(expr.span.extent(), name);
+            }
+            // The record the chain gives back is the one it was given,
+            // so its type comes back with it -- alias, conditions and
+            // all. Building a record from the fields' variables would
+            // give the meet of each field with what was assigned to it,
+            // which is how the name was lost.
+            self.equiv(&Term::Variable(operands.variables[0]), v);
+        } else {
+            let terms: BTreeMap<Label, Term> = fields
+                .iter()
+                .map(|(label, var)| (label.clone(), Term::Variable(*var)))
+                .collect();
+            self.record_term(&terms, v);
+        }
         let x = ExprKind::Record(
             Some(Box::new(operands.exprs[0].clone())),
             Vec::new(),
@@ -7449,6 +7541,26 @@ impl TypeResolver {
                 retry_requested: Rc::clone(&self.retry_requested),
             }),
         ));
+    }
+
+    /// As [`Self::variable_to_sequence`], following a chain of
+    /// variables.
+    ///
+    /// A record with modifiers whose chain claims the type it was given
+    /// is that type -- the two are one variable -- so the sequence is a
+    /// link or two away.
+    fn linked_sequence(&self, v: &Var) -> Option<Sequence> {
+        let mut v = *v;
+        for _ in 0..100 {
+            if let Some(seq) = self.variable_to_sequence(&v) {
+                return Some(seq);
+            }
+            v = self.terms.iter().rev().find_map(|(var, term)| match term {
+                Term::Variable(w) if *var == v => Some(*w),
+                _ => None,
+            })?;
+        }
+        None
     }
 
     fn variable_to_sequence(&self, v: &Var) -> Option<Sequence> {
