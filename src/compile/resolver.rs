@@ -695,17 +695,85 @@ impl<'a> Resolver<'a> {
     /// that say where the conditions are -- or none if it claims
     /// nothing.
     fn claimed_ast_type(&self, ast_type: &AstType) -> Option<Type> {
-        let TypeKind::Id(name) = &ast_type.kind else {
+        let claimed = self.written_type(ast_type)?;
+        if !self.has_check(&claimed) {
             return None;
-        };
-        let body = self.type_map.type_aliases.get(name)?;
-        let claimed = Type::Alias(
-            name.clone(),
-            Rc::new(body.clone()),
-            vec![],
-            self.type_map.checks_of(name),
-        );
-        self.has_check(&claimed).then_some(claimed)
+        }
+        // A check on a value is made when the value is made, and a
+        // function value is not a value its type can be checked
+        // against: to check `nat -> nat` every argument it is ever
+        // given and every result it ever returns would have to be
+        // checked, which means replacing the function with a proxy.
+        // Rather than do that silently, or accept the claim and check
+        // nothing, the claim is rejected.
+        if claims_function(&claimed) {
+            self.errors.borrow_mut().push((
+                format!("cannot claim a checked function type '{}'", claimed),
+                Span::from_pest_span(
+                    &ast_type.span.trim_end().to_pest_span(),
+                    self.base_line,
+                ),
+            ));
+            return None;
+        }
+        Some(claimed)
+    }
+
+    /// A written type, as written: keeping the aliases that say where
+    /// the conditions are, so that a claim can be walked.
+    ///
+    /// Unlike the syntactic conversion, a name that is an alias stays
+    /// one; unlike the deduced type, nothing has been expanded or met
+    /// with anything.
+    fn written_type(&self, ast_type: &AstType) -> Option<Type> {
+        match &ast_type.kind {
+            TypeKind::Id(name) => match self.type_map.type_aliases.get(name) {
+                Some(body) => Some(Type::Alias(
+                    name.clone(),
+                    Rc::new(body.clone()),
+                    vec![],
+                    self.type_map.checks_of(name),
+                )),
+                None => ast_type_to_core_type(ast_type),
+            },
+            TypeKind::Fn(a, b) => Some(Type::Fn(
+                Rc::new(self.written_type(a)?),
+                Rc::new(self.written_type(b)?),
+            )),
+            TypeKind::Tuple(types) => {
+                let args: Vec<Rc<Type>> = types
+                    .iter()
+                    .map(|t| self.written_type(t).map(Rc::new))
+                    .collect::<Option<_>>()?;
+                Some(Type::Tuple(args))
+            }
+            TypeKind::Record(fields) => {
+                let mut map = BTreeMap::new();
+                for field in fields {
+                    map.insert(
+                        Label::from(field.label.name.as_str()),
+                        Rc::new(self.written_type(&field.type_)?),
+                    );
+                }
+                Some(types::record_type(map))
+            }
+            TypeKind::App(args, head) => {
+                let TypeKind::Id(name) = &head.kind else {
+                    return ast_type_to_core_type(ast_type);
+                };
+                let flat = AstType::flatten(args);
+                let args: Vec<Rc<Type>> = flat
+                    .iter()
+                    .map(|t| self.written_type(t).map(Rc::new))
+                    .collect::<Option<_>>()?;
+                Some(match (name.as_str(), args.len()) {
+                    ("list", 1) => Type::List(args[0].clone()),
+                    ("bag", 1) => Type::Bag(args[0].clone()),
+                    _ => Type::Data(name.clone(), args),
+                })
+            }
+            _ => ast_type_to_core_type(ast_type),
+        }
     }
 
     /// Whether a type, or any type within it, carries a condition.
@@ -719,6 +787,10 @@ impl<'a> Resolver<'a> {
             }
             Type::Tuple(types) => types.iter().any(|t| self.has_check(t)),
             Type::List(elem) | Type::Bag(elem) => self.has_check(elem),
+            // A function's parameter and result are looked at so that a
+            // claim on them can be rejected; `deep_condition` builds no
+            // condition for a function, so nothing reaches Core.
+            Type::Fn(a, b) => self.has_check(a) || self.has_check(b),
             _ => false,
         }
     }
@@ -3768,5 +3840,45 @@ fn append_blame(blame: &str, segment: &str) -> String {
             Some(ordinal) => format!("{}.{}", blame, ordinal),
             None => format!("{} {}", blame, segment),
         },
+    }
+}
+
+/// Whether a type claims a condition on a function's parameter or
+/// result, at any depth.
+///
+/// A condition on the function type itself is not this: it is given the
+/// function value, and is checked like any other. Where the condition
+/// lands is decided by parenthesization, so `int -> int check c => ...`
+/// is allowed and `(int check c => ...) -> int` is not.
+fn claims_function(claimed: &Type) -> bool {
+    match claimed {
+        Type::Fn(a, b) => {
+            has_condition(a)
+                || has_condition(b)
+                || claims_function(a)
+                || claims_function(b)
+        }
+        Type::Alias(_, body, _, _) => claims_function(body),
+        Type::Record(_, fields) => fields.values().any(|t| claims_function(t)),
+        Type::Tuple(types) => types.iter().any(|t| claims_function(t)),
+        Type::List(elem) | Type::Bag(elem) => claims_function(elem),
+        _ => false,
+    }
+}
+
+/// Whether a type, or any type within it, carries a condition.
+///
+/// The free counterpart of [`Resolver::has_check`], for the checks that
+/// do not need the type map.
+fn has_condition(t: &Type) -> bool {
+    match t {
+        Type::Alias(_, body, _, checks) => {
+            !checks.is_empty() || has_condition(body)
+        }
+        Type::Record(_, fields) => fields.values().any(|t| has_condition(t)),
+        Type::Tuple(types) => types.iter().any(|t| has_condition(t)),
+        Type::List(elem) | Type::Bag(elem) => has_condition(elem),
+        Type::Fn(a, b) => has_condition(a) || has_condition(b),
+        _ => false,
     }
 }
