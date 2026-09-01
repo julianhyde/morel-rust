@@ -359,6 +359,105 @@ described in M4.4, which stay divergent until morel-java commits its own
 fix. Record them as a known divergence, with the reason, rather than
 copying java's weakened types to make the gate green.
 
+## Where this stands (branch `239-check`, 14 commits)
+
+Done, each green under `cargo test` + clippy + lint:
+
+| commit | what |
+| --- | --- |
+| `28f66022` | **M1** a modified record is typed as written |
+| `b3157c1a` | **M2** a record variable is grounded from its fields |
+| `c93be349` | **M4.1** a type declaration may carry `check` conditions |
+| `c7199b49` | **M4.2** a binding at a checked type is checked |
+| `4be5b399` | **M4.3** a condition must be closed, and need not be exhaustive |
+| `475883c1` | **M4.4a** a parameter and an ascription are checked |
+| `3fa82274` | **M4.4b** `as` and `asOpt` |
+| `586894f7` | **M4.5** composites: records, tuples, collections |
+| `1446c56d` | a constructor's argument resolves against the aliases in scope |
+| `70c3ef87` | **M4.5b** applying a constructor is a construction site |
+| `2e20cd1f` | **M4.6** a claim written in full; a checked function type is rejected |
+| `c95b855b` | a condition reached through a datatype is checked |
+
+Everything probed against morel-java matches byte for byte -- messages,
+blame paths and spans -- except the divergences listed below.
+
+`etc/check-convergence.py` fails on `check.smli` (+1370), `type.smli`
+(+15) and `type-alias.smli` (+7), which is expected until M4.9.
+`built-in/sys.smli` and `datatype.smli` **converged** on the way.
+
+## What is left
+
+### M4.7 -- record modifiers
+
+Two halves. The first is four statements that differ today:
+
+```
+{e replace empno = ~1};            (*) java raises; rust does not check
+{e replace empno = 2};             (*) java `: employee`; rust `: {empno:int, ...}`
+{e replace all {empno = ~1}};      (*) java raises; rust does not check
+{e replace or skip hired = true};  (*) java `: employee`; rust `: {empno:nat, ...}`
+```
+
+A modifier that **assigns** claims the type of the record it modifies --
+the field keeps its declared type, so the value must have it -- and the
+claim is checked at the modifier, because nobody else wrote the type
+down. `lenient` says the field need not keep its type, so nothing is
+claimed. A modifier that adds, removes or renames cannot claim the type,
+because the result has a different shape, and needs no check either:
+every value it carries over was checked when it was put there. Every
+modifier in a chain must leave the shape alone for the chain to claim
+anything.
+
+In morel-rust the shape-preserving case should give the result the
+*base's* type variable rather than a record built from field variables,
+so the alias survives; the assigned value is then checked against the
+field's declared type rather than weakening it.
+
+The second half is "a modifier inherits the record's own condition",
+java's `Conditions`: a condition is carried across a change of shape
+when every field it depends on survives, rewritten to name them as the
+result names them. It needs **anonymous checked types to be first
+class**, because the result is a checked type with no name:
+
+```
+{v0 extend c = 5};
+> val it = {a=1,b=2,c=5} : {a:int, b:nat, c:int} check r => #a r < 10
+```
+
+That is the risk this plan recorded at M4.1 and never had to face: the
+`check_predicates` map is keyed by *type name*, and an inherited
+condition has none. Settle that before starting -- either key it by the
+rendered condition text (which is already what `Checks` compares by), or
+carry the compiled predicate on the type.
+
+### M4.8 -- the planner
+
+A scan over a checked type conjoins the type's condition into the query.
+The one site whose condition does not raise: which values the type has
+is the question being asked. M2 built the grounding half already.
+
+### M4.9 -- `check.smli`, and the divergences below
+
+## Divergences to close
+
+1. **An operator must drop the condition.** `fun decr (n: nat) = n - 1`
+   is `nat -> nat` in morel-rust, `int -> int` in morel-java. An
+   operator computes a value the type has not been shown to contain, so
+   it drops the condition whatever it was applied to, and a unary
+   operator drops it too. morel-rust's overloaded arithmetic carries the
+   alias through. Affects `n + 1`, `~n`, `abs n`, `s * s`, `dbl`. A
+   wrong displayed type, not an unenforced claim.
+2. **A parameter's check is blamed a few characters late.** morel-java
+   blames the whole `fun` clause (`f (n: nat) = n`, 1.5-1.19), morel-rust
+   the match (1.8-1.19); and for `fn (n: nat) => ...` morel-java starts
+   at the `(`. Same family as the #422 fix, for patterns.
+3. **A condition that does not typecheck** reports `int vs bool` where
+   morel-java says `bool vs int` -- the operand-order divergence #459
+   left behind.
+4. **A conversion's type** is morel-rust's corrected behaviour, not
+   morel-java's; see M4.4 above. Six `check.smli` lines differ until
+   morel-java commits its fix.
+
 ## Working rules
 
 From `AGENTS.md` and prior propagations:
