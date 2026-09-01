@@ -960,6 +960,10 @@ pub struct TypeResolver {
     pub check_predicates: Rc<RefCell<CheckPredicates>>,
     /// The names the user has bound; see [`TypeMap::user_bindings`].
     pub user_bindings: HashSet<String>,
+    /// The argument type of each datatype constructor this statement
+    /// declares, as written -- keeping the aliases that say where the
+    /// conditions are.
+    datatype_arg_types: HashMap<String, Type>,
     /// Number of parameters of each type alias, e.g. 1 for
     /// `type 'a my_list = 'a list`. An alias is a type function,
     /// and must be applied to exactly this many arguments.
@@ -1675,6 +1679,7 @@ impl TypeResolver {
             type_checks: HashMap::new(),
             check_predicates: Rc::new(RefCell::new(HashMap::new())),
             user_bindings: HashSet::new(),
+            datatype_arg_types: HashMap::new(),
             alias_arities: HashMap::new(),
             expanded_type_binds: HashMap::new(),
             user_datatype_arities: HashMap::new(),
@@ -2065,10 +2070,21 @@ impl TypeResolver {
                 // printer (e.g. record arguments).
                 for con in &db.constructors {
                     if let Some(ast_type) = &con.type_ {
-                        if let Some(arg_type) = ast_type_to_core_type_with_vars(
-                            ast_type,
-                            &db.type_vars,
-                        ) {
+                        // The type as the declaration resolved it, which
+                        // keeps its aliases; the syntactic conversion is
+                        // the fallback for a constructor the deduction
+                        // did not reach.
+                        if let Some(arg_type) = self
+                            .datatype_arg_types
+                            .get(&con.name)
+                            .cloned()
+                            .or_else(|| {
+                                ast_type_to_core_type_with_vars(
+                                    ast_type,
+                                    &db.type_vars,
+                                )
+                            })
+                        {
                             type_map
                                 .constructor_arg_types
                                 .insert(con.name.clone(), arg_type);
@@ -2923,14 +2939,32 @@ impl TypeResolver {
                     // `BOX of typeof e`: the argument's type is the
                     // expression's, deduced on its own as for a `type`
                     // declaration.
-                    let arg_core = if let TypeKind::Expression(expr) =
-                        &ast_type.kind
-                    {
-                        self.decl_exp_type(env, expr)
-                    } else {
-                        ast_type_to_core_type_with_vars(ast_type, &db.type_vars)
-                            .unwrap_or(Type::Primitive(PrimitiveType::Unit))
-                    };
+                    let arg_core =
+                        if let TypeKind::Expression(expr) = &ast_type.kind {
+                            self.decl_exp_type(env, expr)
+                        } else {
+                            // Resolve names against the aliases in scope, so
+                            // that `datatype b = B of myInt` holds the alias
+                            // rather than a datatype named `myInt` that
+                            // nothing can unify with. An alias keeps its
+                            // name, which is where a `check` lives.
+                            let aliases = self.type_aliases.clone();
+                            self.expand_ast_type(
+                                env,
+                                ast_type,
+                                &aliases,
+                                &db.type_vars,
+                            )
+                            .unwrap_or_else(|_| {
+                                ast_type_to_core_type_with_vars(
+                                    ast_type,
+                                    &db.type_vars,
+                                )
+                                .unwrap_or(Type::Primitive(PrimitiveType::Unit))
+                            })
+                        };
+                    self.datatype_arg_types
+                        .insert(con.name.clone(), arg_core.clone());
                     Type::Fn(Rc::new(arg_core), Rc::new(data_type.clone()))
                 } else {
                     data_type.clone()
