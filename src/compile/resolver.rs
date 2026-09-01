@@ -882,36 +882,33 @@ impl<'a> Resolver<'a> {
     /// The `let` is what stops the expression being evaluated twice,
     /// once for the condition and once for the result.
     fn checked(&self, expr: CoreExpr, claimed: &Type, span: &Span) -> CoreExpr {
-        self.checked_as(expr, claimed, BuiltInFunction::ZCheck, span)
+        self.checked_blamed(expr, claimed, "", span)
     }
 
-    /// As [`Self::checked`], with the operator to enforce with.
-    fn checked_as(
+    /// As [`Self::checked`], but says what the value is of, for a value
+    /// that is a component of something -- the argument of a
+    /// constructor, say.
+    fn checked_blamed(
         &self,
         expr: CoreExpr,
         claimed: &Type,
-        operator: BuiltInFunction,
+        blame: &str,
         span: &Span,
     ) -> CoreExpr {
         self.let_value(expr, span, |id| {
             let erased = id.type_();
             let Some(condition) =
-                self.deep_condition(claimed, &erased, id, "", span)
+                self.deep_condition(claimed, &erased, id, blame, span)
             else {
                 return id.clone();
-            };
-            let result_t = if operator == BuiltInFunction::ZCheck {
-                erased
-            } else {
-                Rc::new(Type::Primitive(PrimitiveType::Bool))
             };
             self.apply_check(
                 condition,
                 id,
                 &type_moniker(claimed),
-                operator,
-                result_t,
-                "",
+                BuiltInFunction::ZCheck,
+                erased,
+                blame,
                 span,
             )
         })
@@ -1356,6 +1353,33 @@ impl<'a> Resolver<'a> {
                 self.call2(t, BuiltInFunction::ListAt, &span, a0, a1)
             }
             ExprKind::Apply(func, arg) => {
+                // Applying a datatype constructor is a construction
+                // site, like a binding: `Box ~1` claims that `~1` is a
+                // `nat`, because that is what `Box` was declared to
+                // hold.
+                if let ExprKind::Identifier(name) = &func.kind
+                    && let Some(arg_type) =
+                        self.type_map.constructor_arg_types.get(name)
+                    && self.has_check(arg_type)
+                {
+                    let arg_type = arg_type.clone();
+                    let core_arg = self.resolve_expr(arg);
+                    let blame = format!("argument of {}", name);
+                    // The constructor is what claims the type, so it is
+                    // what the message blames -- not the application.
+                    let fn_span = Span::from_pest_span(
+                        &func.span.to_pest_span(),
+                        self.base_line,
+                    );
+                    let checked = self
+                        .checked_blamed(core_arg, &arg_type, &blame, &fn_span);
+                    return CoreExpr::Apply(
+                        t,
+                        Box::new(self.resolve_expr(func)),
+                        Box::new(checked),
+                        span.clone(),
+                    );
+                }
                 // Safe navigation `e?.f`: lower to a projection through the
                 // receiver's functor layers.
                 if let ExprKind::SafeRecordSelector(name) = &func.kind {
@@ -3740,6 +3764,9 @@ fn append_blame(blame: &str, segment: &str) -> String {
     // `field lead.field empno`.
     match segment.strip_prefix("field ") {
         Some(field) => format!("{}.{}", blame, field),
-        None => format!("{} {}", blame, segment),
+        None => match segment.strip_prefix("component ") {
+            Some(ordinal) => format!("{}.{}", blame, ordinal),
+            None => format!("{} {}", blame, segment),
+        },
     }
 }
