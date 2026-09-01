@@ -154,6 +154,21 @@ end;
 from j where j elem [1 .. 3];
 > val it = [1,2,3] : int list
 
+(* A pattern whose type is a name is grounded like the type the name
+ * abbreviates: an alias is transparent, so the strategies that ask what
+ * kind of type a pattern has look through it. The name survives into
+ * the result, because that is the type the pattern was written at. *)
+type smallInt = int;
+> type smallInt = int
+from n: smallInt where n elem [1 .. 3];
+> val it = [1,2,3] : smallInt list
+from n: smallInt where n > 0 andalso n < 4;
+> val it = [1,2,3] : smallInt list
+type intPair = int * int;
+> type intPair = int * int
+from p: intPair where p >= (0, 1) andalso p <= (0, 3);
+> val it = [(0,1),(0,2),(0,3)] : intPair list
+
 (*) 'elem' over a range whose bounds depend on an earlier variable.
 from i, j where i elem [1, 2] andalso j elem [i + 1 .. i + 2];
 > i j

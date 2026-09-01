@@ -86,6 +86,12 @@ pub fn maybe_generator_with_scope(
     outer_scope: &BTreeSet<String>,
     unbounded_siblings: &BTreeSet<String>,
 ) -> bool {
+    // The structural tests below ask what kind of type this is, and an
+    // alias is whatever it abbreviates. The pattern's own type is kept
+    // for the values that are built, so that a scan over a named type
+    // gives back that name.
+    let peeled = peel_type(pat_type);
+
     // Phase A: classify each conjunct.
     let mut elem_match: Option<&Expr> = None;
     let mut elem_collection: Option<&Expr> = None;
@@ -148,7 +154,7 @@ pub fn maybe_generator_with_scope(
             has_bounds = true;
         }
         if prefix_match.is_none()
-            && matches!(pat_type, Type::Primitive(PrimitiveType::String))
+            && matches!(peeled, Type::Primitive(PrimitiveType::String))
             && let Some(s) = is_string_prefix_call(c, pat_name)
         {
             prefix_match = Some(c);
@@ -174,7 +180,7 @@ pub fn maybe_generator_with_scope(
     if let (Some(c), Some(value)) = (point_match, point_value) {
         return create_point_generator(cache, pat, pat_name, value, c);
     }
-    if has_bounds && matches!(pat_type, Type::Primitive(PrimitiveType::Int)) {
+    if has_bounds && matches!(peeled, Type::Primitive(PrimitiveType::Int)) {
         return create_range_generator(
             cache,
             pat,
@@ -184,7 +190,7 @@ pub fn maybe_generator_with_scope(
             unbounded_siblings,
         );
     }
-    if matches!(pat_type, Type::Tuple(_))
+    if matches!(peeled, Type::Tuple(_))
         && create_tuple_range_generator(
             cache,
             pat,
@@ -451,8 +457,8 @@ fn create_tuple_range_generator(
     ordered: bool,
     constraints: &[Expr],
 ) -> bool {
-    // Separate component types.
-    let component_types: Vec<Type> = match pat_type {
+    // Separate component types. An alias is whatever it abbreviates.
+    let component_types: Vec<Type> = match peel_type(pat_type) {
         Type::Tuple(ts) => ts.iter().map(|t| (**t).clone()).collect(),
         _ => return false,
     };
