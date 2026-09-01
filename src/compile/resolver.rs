@@ -43,7 +43,8 @@ use crate::compile::type_resolver::{
     ast_type_to_core_type_with_vars,
 };
 use crate::compile::types;
-use crate::compile::types::{Label, PrimitiveType, Type};
+use crate::compile::types::{Label, PrimitiveType, Type, instantiate};
+use crate::eval::code::LIBRARY;
 use crate::eval::val::Val;
 use crate::syntax::ast::{
     CastKind, DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunMatch, Literal,
@@ -787,6 +788,9 @@ impl<'a> Resolver<'a> {
             }
             Type::Tuple(types) => types.iter().any(|t| self.has_check(t)),
             Type::List(elem) | Type::Bag(elem) => self.has_check(elem),
+            // A datatype carries a condition if one of the types it was
+            // given does; the walk finds where the constructors put it.
+            Type::Data(_, args) => args.iter().any(|t| self.has_check(t)),
             // A function's parameter and result are looked at so that a
             // claim on them can be rejected; `deep_condition` builds no
             // condition for a function, so nothing reaches Core.
@@ -823,10 +827,37 @@ impl<'a> Resolver<'a> {
         blame: &str,
         span: &Span,
     ) -> Option<CoreExpr> {
+        self.deep_condition_walking(
+            claimed,
+            erased,
+            value,
+            blame,
+            span,
+            &mut Vec::new(),
+        )
+    }
+
+    /// As [`Self::deep_condition`], carrying the datatypes whose walk is
+    /// in progress.
+    ///
+    /// A datatype may contain itself, so walking one cannot be an
+    /// expansion. morel-java builds a function for each and calls it
+    /// where the datatype recurs; morel-rust stops instead, which
+    /// claims less and never more.
+    fn deep_condition_walking(
+        &self,
+        claimed: &Type,
+        erased: &Rc<Type>,
+        value: &CoreExpr,
+        blame: &str,
+        span: &Span,
+        walking: &mut Vec<(String, String)>,
+    ) -> Option<CoreExpr> {
         match claimed {
             Type::Alias(name, body, _, checks) => {
-                let inner =
-                    self.deep_condition(body, erased, value, blame, span);
+                let inner = self.deep_condition_walking(
+                    body, erased, value, blame, span, walking,
+                );
                 if checks.is_empty() {
                     return inner;
                 }
@@ -862,12 +893,13 @@ impl<'a> Resolver<'a> {
                     let erased_field = erased_fields.values().nth(i)?;
                     let field_value =
                         self.select_slot(value, i, erased_field.clone(), span);
-                    if let Some(c) = self.deep_condition(
+                    if let Some(c) = self.deep_condition_walking(
                         field_type,
                         erased_field,
                         &field_value,
                         &append_blame(blame, &field_blame(claimed, label)),
                         span,
+                        walking,
                     ) {
                         conditions.push(c);
                     }
@@ -887,12 +919,13 @@ impl<'a> Resolver<'a> {
                 let name = self.temp_name();
                 let element =
                     CoreExpr::Identifier(erased_elem.clone(), name.clone());
-                let condition = self.deep_condition(
+                let condition = self.deep_condition_walking(
                     elem,
                     &erased_elem,
                     &element,
                     &append_blame(blame, "[_]"),
                     span,
+                    walking,
                 )?;
                 let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
                 let predicate = CoreExpr::Fn(
@@ -925,8 +958,177 @@ impl<'a> Resolver<'a> {
                     span.clone(),
                 ))
             }
+            Type::Data(name, args) => self.datatype_condition(
+                name, args, erased, value, blame, span, walking,
+            ),
             _ => None,
         }
+    }
+
+    /// Returns a condition that holds if every value a datatype's
+    /// constructors carry satisfies the conditions its type arguments
+    /// carry.
+    ///
+    /// Without this a condition under a type parameter is claimed and
+    /// never checked: `val w: nat option = SOME ~1` printed `nat option`
+    /// and held a value that is not one. Records and collections were
+    /// already walked; a datatype is the remaining way to reach a type.
+    #[allow(clippy::too_many_arguments)]
+    fn datatype_condition(
+        &self,
+        name: &str,
+        args: &[Rc<Type>],
+        erased: &Rc<Type>,
+        value: &CoreExpr,
+        blame: &str,
+        span: &Span,
+        walking: &mut Vec<(String, String)>,
+    ) -> Option<CoreExpr> {
+        let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
+        // A datatype met again is called rather than expanded.
+        if let Some((_, predicate)) = walking.iter().find(|(n, _)| n == name) {
+            let fn_t = Rc::new(Type::Fn(erased.clone(), bool_t.clone()));
+            return Some(CoreExpr::Apply(
+                bool_t,
+                Box::new(CoreExpr::Identifier(fn_t, predicate.clone())),
+                Box::new(value.clone()),
+                span.clone(),
+            ));
+        }
+        let constructors =
+            self.type_map.datatype_constructors.get(name)?.clone();
+        let erased_args = match erased.as_ref() {
+            Type::Data(_, erased_args) => erased_args.clone(),
+            _ => return None,
+        };
+        // The condition is a function, applied to the value, because a
+        // datatype may contain itself. A recursive datatype calls the
+        // function being built; one that does not recurse builds it all
+        // the same, and the inliner takes it away.
+        let predicate_name = self.temp_name();
+        let param_name = self.temp_name();
+        let param = CoreExpr::Identifier(erased.clone(), param_name.clone());
+        let t = erased.clone();
+        walking.push((name.to_string(), predicate_name.clone()));
+        let mut matches = Vec::new();
+        let mut any = false;
+        for constructor in &constructors {
+            // A constructor that carries nothing has nothing to check.
+            let arg_type = self.constructor_arg_type(constructor);
+            let arm = match &arg_type {
+                None => None,
+                Some(arg_type) => {
+                    let claimed_arg = instantiate(arg_type, args);
+                    let erased_arg =
+                        Rc::new(instantiate(arg_type, &erased_args));
+                    if self.has_check(&claimed_arg) {
+                        let arg_name = self.temp_name();
+                        let arg_value = CoreExpr::Identifier(
+                            erased_arg.clone(),
+                            arg_name.clone(),
+                        );
+                        self.deep_condition_walking(
+                            &claimed_arg,
+                            &erased_arg,
+                            &arg_value,
+                            &append_blame(blame, constructor),
+                            span,
+                            walking,
+                        )
+                        .map(|condition| {
+                            (
+                                CorePat::Identifier(erased_arg, arg_name),
+                                condition,
+                            )
+                        })
+                    } else {
+                        None
+                    }
+                }
+            };
+            let (pat, expr) = match arm {
+                Some((arg_pat, condition)) => {
+                    any = true;
+                    (Some(Box::new(arg_pat)), condition)
+                }
+                None => (
+                    arg_type.map(|arg_type| {
+                        Box::new(CorePat::Wildcard(Rc::new(instantiate(
+                            &arg_type,
+                            &erased_args,
+                        ))))
+                    }),
+                    CoreExpr::Literal(bool_t.clone(), Val::Bool(true)),
+                ),
+            };
+            matches.push(CoreMatch {
+                pat: CorePat::Constructor(t.clone(), constructor.clone(), pat),
+                expr,
+            });
+        }
+        walking.pop();
+        if !any {
+            return None;
+        }
+        let body = CoreExpr::Case(
+            bool_t.clone(),
+            Box::new(param),
+            matches,
+            span.clone(),
+        );
+        let fn_t = Rc::new(Type::Fn(erased.clone(), bool_t.clone()));
+        let predicate = CoreExpr::Fn(
+            fn_t.clone(),
+            vec![CoreMatch {
+                pat: CorePat::Identifier(erased.clone(), param_name),
+                expr: body,
+            }],
+            span.clone(),
+        );
+        let decl = CoreDecl::RecVal(vec![CoreValBind {
+            pat: CorePat::Identifier(fn_t.clone(), predicate_name.clone()),
+            t: (*fn_t).clone(),
+            expr: predicate,
+            overload_pat: None,
+            span: None,
+        }]);
+        Some(CoreExpr::Let(
+            bool_t.clone(),
+            vec![decl],
+            Box::new(CoreExpr::Apply(
+                bool_t,
+                Box::new(CoreExpr::Identifier(fn_t, predicate_name)),
+                Box::new(value.clone()),
+                span.clone(),
+            )),
+        ))
+    }
+
+    /// The type of a constructor's argument, or none if it carries
+    /// nothing.
+    ///
+    /// A user-declared constructor's is recorded by its declaration; a
+    /// built-in one's is read from the type the library gives it.
+    fn constructor_arg_type(&self, constructor: &str) -> Option<Type> {
+        if let Some(t) = self.type_map.constructor_arg_types.get(constructor) {
+            return Some(t.clone());
+        }
+        LIBRARY.with(|lib| {
+            let BuiltIn::Fn(f) = lib.lookup(constructor)? else {
+                return None;
+            };
+            if !f.is_constructor() {
+                return None;
+            }
+            let mut t = lib.fn_type(f).as_ref();
+            while let Type::Forall(inner, _) = t {
+                t = inner;
+            }
+            match t {
+                Type::Fn(arg, _) => Some((**arg).clone()),
+                _ => None,
+            }
+        })
     }
 
     /// Returns an expression that selects the `i`th field of a record.
@@ -3878,6 +4080,7 @@ fn has_condition(t: &Type) -> bool {
         Type::Record(_, fields) => fields.values().any(|t| has_condition(t)),
         Type::Tuple(types) => types.iter().any(|t| has_condition(t)),
         Type::List(elem) | Type::Bag(elem) => has_condition(elem),
+        Type::Data(_, args) => args.iter().any(|t| has_condition(t)),
         Type::Fn(a, b) => has_condition(a) || has_condition(b),
         _ => false,
     }
