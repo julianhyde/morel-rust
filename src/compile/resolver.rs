@@ -3247,9 +3247,19 @@ impl<'a> Resolver<'a> {
         let raw = CorePat::Identifier(t.clone(), raw_name.clone());
         let value = CoreExpr::Identifier(t.clone(), raw_name);
         let checked = self.checked(value, &claimed, &span);
+        // A `case` rather than a `let`, because a body that never reads
+        // the name the check binds would leave the binding unused, and
+        // an optimizer that reasons about values alone is entitled to
+        // drop an unused binding. A scrutinee is evaluated whatever the
+        // branch does with it, and raising is a check's only effect.
         CoreMatch {
             pat: raw,
-            expr: self.core_let(pat, checked, expr, &span),
+            expr: CoreExpr::Case(
+                expr.type_(),
+                Box::new(checked),
+                vec![CoreMatch { pat, expr }],
+                span.clone(),
+            ),
         }
     }
 
