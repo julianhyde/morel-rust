@@ -746,7 +746,21 @@ impl Pretty {
     fn type_doc(&self, type_ref: &Type, left: u8, right: u8) -> Doc {
         match type_ref {
             // lint: sort until '#}' where '##Type::'
-            Type::Alias(name, _inner, _args, _checks) => text(name),
+            // An alias is written by its name. One that has no name of
+            // its own -- a checked type a record modifier derived --
+            // has only its body and its conditions to be written by, so
+            // it is written in full. A generated name begins with `$`,
+            // which a user cannot write.
+            Type::Alias(name, inner, _args, checks) => {
+                if name.starts_with('$') {
+                    beside(
+                        self.type_doc(inner, left, right),
+                        text(&checks.to_string()),
+                    )
+                } else {
+                    text(name)
+                }
+            }
             Type::Bag(element_type) => self.collection_type_doc(
                 type_ref,
                 left,

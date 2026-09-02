@@ -361,10 +361,19 @@ impl Type {
     ) -> fmt::Result {
         match self {
             // lint: sort until '#}' where '##Type::'
-            Type::Alias(name, _ty, _args, _checks) => {
+            Type::Alias(name, ty, _args, checks) => {
                 // An alias is displayed under its own name; that is the
-                // point of it surviving inference.
-                f.write_str(name)
+                // point of it surviving inference. One that has no name
+                // -- a checked type a record modifier derived, say --
+                // has only its body and its conditions to be written by,
+                // so it is written in full. A generated name begins with
+                // `$`, which a user cannot write.
+                if name.starts_with('$') {
+                    ty.describe(f, left, right)?;
+                    write!(f, "{}", checks)
+                } else {
+                    f.write_str(name)
+                }
             }
             Type::Bag(elem_type) => {
                 const OP: Op = Op::APPLY;
