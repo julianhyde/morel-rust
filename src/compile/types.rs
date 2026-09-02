@@ -950,6 +950,8 @@ impl Display for Subst {
 /// record with no fields, so both answer rather than failing.
 pub fn record_fields(t: &Type) -> BTreeMap<Label, Rc<Type>> {
     match t {
+        // An alias is whatever it abbreviates.
+        Type::Alias(_, body, _, _) => record_fields(body),
         Type::Record(_, fields) => fields.clone(),
         Type::Tuple(types) => types
             .iter()

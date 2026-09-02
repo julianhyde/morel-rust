@@ -847,6 +847,28 @@ impl<'a> Resolver<'a> {
             blame,
             span,
             &mut Vec::new(),
+            true,
+        )
+    }
+
+    /// As [`Self::deep_condition`], for a condition that asks rather
+    /// than claims: a component that fails answers false instead of
+    /// raising for itself.
+    fn deep_condition_asking(
+        &self,
+        claimed: &Type,
+        erased: &Rc<Type>,
+        value: &CoreExpr,
+        span: &Span,
+    ) -> Option<CoreExpr> {
+        self.deep_condition_walking(
+            claimed,
+            erased,
+            value,
+            "",
+            span,
+            &mut Vec::new(),
+            false,
         )
     }
 
@@ -865,11 +887,12 @@ impl<'a> Resolver<'a> {
         blame: &str,
         span: &Span,
         walking: &mut Vec<(String, String)>,
+        raising: bool,
     ) -> Option<CoreExpr> {
         match claimed {
             Type::Alias(name, body, _, checks) => {
                 let inner = self.deep_condition_walking(
-                    body, erased, value, blame, span, walking,
+                    body, erased, value, blame, span, walking, raising,
                 );
                 if checks.is_empty() {
                     return inner;
@@ -880,7 +903,7 @@ impl<'a> Resolver<'a> {
                     .borrow()
                     .get(name)
                     .cloned()?;
-                let own = if blame.is_empty() {
+                let own = if blame.is_empty() || !raising {
                     and_all(self.conditions(value, &predicates, span))
                 } else {
                     self.check_call(
@@ -913,6 +936,7 @@ impl<'a> Resolver<'a> {
                         &append_blame(blame, &field_blame(claimed, label)),
                         span,
                         walking,
+                        raising,
                     ) {
                         conditions.push(c);
                     }
@@ -939,6 +963,7 @@ impl<'a> Resolver<'a> {
                     &append_blame(blame, "[_]"),
                     span,
                     walking,
+                    raising,
                 )?;
                 let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
                 let predicate = CoreExpr::Fn(
@@ -972,7 +997,7 @@ impl<'a> Resolver<'a> {
                 ))
             }
             Type::Data(name, args) => self.datatype_condition(
-                name, args, erased, value, blame, span, walking,
+                name, args, erased, value, blame, span, walking, raising,
             ),
             _ => None,
         }
@@ -996,6 +1021,7 @@ impl<'a> Resolver<'a> {
         blame: &str,
         span: &Span,
         walking: &mut Vec<(String, String)>,
+        raising: bool,
     ) -> Option<CoreExpr> {
         let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
         // A datatype met again is called rather than expanded.
@@ -1047,6 +1073,7 @@ impl<'a> Resolver<'a> {
                             &append_blame(blame, constructor),
                             span,
                             walking,
+                            raising,
                         )
                         .map(|condition| {
                             (
@@ -1415,6 +1442,104 @@ impl<'a> Resolver<'a> {
                 span.clone(),
             )
         })
+    }
+
+    /// The condition of the checked type a scan is over, or none if it
+    /// is not over one.
+    ///
+    /// A scan over a checked type enumerates the values of that type,
+    /// so the type's condition belongs in the scan's filter, where the
+    /// planner can use it to generate the values rather than generate
+    /// and reject them. It does not raise: which values the type has is
+    /// the question being asked, not something already claimed of a
+    /// value in hand.
+    fn scan_type_condition(
+        &self,
+        pat: &Pat,
+        core_pat: &CorePat,
+        span: &Span,
+    ) -> Option<CoreExpr> {
+        let PatKind::Annotated(_, ast_type) = &pat.kind else {
+            return None;
+        };
+        let claimed = self.claimed_ast_type(ast_type)?;
+        // The erased type comes from the value, not the pattern: a
+        // record pattern reaches Core as a tuple, whose fields are
+        // named 1, 2.
+        let value = self.row_value(core_pat, &claimed)?;
+        let erased = value.type_();
+        self.deep_condition_asking(&claimed, &erased, &value, span)
+    }
+
+    /// An expression for the row a scan's pattern binds, or none if the
+    /// pattern is one this does not know how to reassemble.
+    fn row_value(
+        &self,
+        core_pat: &CorePat,
+        claimed: &Type,
+    ) -> Option<CoreExpr> {
+        match core_pat {
+            CorePat::Identifier(t, name) => {
+                Some(CoreExpr::Identifier(t.clone(), name.clone()))
+            }
+            CorePat::Record(_, pat_fields, _) => {
+                // A record pattern binds its fields by name.
+                let fields = types::record_fields(claimed);
+                let mut values = Vec::with_capacity(fields.len());
+                for label in fields.keys() {
+                    let name = label.to_string();
+                    let bound = pat_fields.iter().find_map(|f| match f {
+                        CorePatField::Labeled(l, p) if *l == name => {
+                            Some(p.as_ref())
+                        }
+                        _ => None,
+                    })?;
+                    let CorePat::Identifier(t, bound_name) = bound else {
+                        return None;
+                    };
+                    values.push(CoreExpr::Identifier(
+                        t.clone(),
+                        bound_name.clone(),
+                    ));
+                }
+                let types_: BTreeMap<Label, Rc<Type>> = fields
+                    .keys()
+                    .cloned()
+                    .zip(values.iter().map(CoreExpr::type_))
+                    .collect();
+                Some(CoreExpr::Tuple(
+                    Rc::new(types::record_type(types_)),
+                    values,
+                ))
+            }
+            CorePat::Tuple(_, args) => {
+                // A record pattern, `{i, j}`, reaches Core as a tuple of
+                // the fields in field order, so the names -- and the
+                // types the condition is written against -- come from
+                // the type the user wrote, not from the pattern.
+                let fields = types::record_fields(claimed);
+                if fields.len() != args.len() {
+                    return None;
+                }
+                let mut values = Vec::with_capacity(args.len());
+                for arg in args {
+                    let CorePat::Identifier(t, name) = arg else {
+                        return None;
+                    };
+                    values.push(CoreExpr::Identifier(t.clone(), name.clone()));
+                }
+                let types_: BTreeMap<Label, Rc<Type>> = fields
+                    .keys()
+                    .cloned()
+                    .zip(values.iter().map(CoreExpr::type_))
+                    .collect();
+                Some(CoreExpr::Tuple(
+                    Rc::new(types::record_type(types_)),
+                    values,
+                ))
+            }
+            _ => None,
+        }
     }
 
     /// Records function names whose first parameter is `self`, so
@@ -3284,12 +3409,21 @@ impl<'a> Resolver<'a> {
 
                 // Add the scan step, preserving the join type (inner / left
                 // / right / full).
+                let span = Span::from_pest_span(
+                    &pat.span.to_pest_span(),
+                    self.base_line,
+                );
                 builder.scan_with_join(
                     *join_type,
-                    resolved_pat,
+                    resolved_pat.clone(),
                     resolved_expr,
                     resolved_condition,
                 );
+                if let Some(condition) =
+                    self.scan_type_condition(pat, &resolved_pat, &span)
+                {
+                    builder.where_(condition);
+                }
             }
             AstStepKind::ScanEq(pat, expr) => {
                 // `join pat = expr` is a cross join with a singleton list.
@@ -3328,8 +3462,16 @@ impl<'a> Resolver<'a> {
                     &pat.span.to_pest_span(),
                     self.base_line,
                 );
-                let extent = CoreExpr::Extent(extent_type, span);
-                builder.scan_with_condition(resolved_pat, extent, None);
+                let extent = CoreExpr::Extent(extent_type, span.clone());
+                builder.scan_with_condition(resolved_pat.clone(), extent, None);
+                // The type's condition becomes a step of its own rather
+                // than part of the scan's condition, which only a join
+                // reads.
+                if let Some(condition) =
+                    self.scan_type_condition(pat, &resolved_pat, &span)
+                {
+                    builder.where_(condition);
+                }
             }
             AstStepKind::Skip(expr) => {
                 let resolved_expr = self.resolve_expr(expr);
