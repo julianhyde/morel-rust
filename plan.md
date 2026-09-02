@@ -425,19 +425,43 @@ field's declared type rather than weakening it.
 The second half is "a modifier inherits the record's own condition",
 java's `Conditions`: a condition is carried across a change of shape
 when every field it depends on survives, rewritten to name them as the
-result names them. It needs **anonymous checked types to be first
-class**, because the result is a checked type with no name:
+result names them.
 
 ```
 {v0 extend c = 5};
 > val it = {a=1,b=2,c=5} : {a:int, b:nat, c:int} check r => #a r < 10
+{v0 remove a};      > val it = {b=2} : {b:nat}
+{v0 remove b};      > val it = {a=1} : {a:int} check r => #a r < 10
+{v0 rename z = a};  > val it = {b=2,z=1} : {b:nat, z:int} check r => #z r < 10
 ```
 
-That is the risk this plan recorded at M4.1 and never had to face: the
-`check_predicates` map is keyed by *type name*, and an inherited
-condition has none. Settle that before starting -- either key it by the
-rendered condition text (which is already what `Checks` compares by), or
-carry the compiled predicate on the type.
+**The anonymous-checked-type plumbing is cheaper than this plan feared,
+and was tried.** The `check_predicates` keying is not the obstacle: the
+alias term's body comes from the *term*, not from `type_aliases`, so an
+anonymous checked type needs only a generated name (`$check1`, which a
+user cannot write) in `type_checks`, an `alias_term` over the record's
+term, and a `Display` arm that writes body-plus-conditions when the name
+begins with `$`. That much builds.
+
+**The obstacle is that morel-rust has no AST walker.** Deciding whether
+a condition can be carried over is java's `Conditions.selectsOnly`: every
+use of the record must be a selection of a surviving field. That is a
+read-only walk over an arbitrary expression, and `ExprKind` has some
+forty variants with no `visit`. A *partial* walker is not an option: one
+that misses a bare use of the record would carry a condition over that
+does not hold of the new record, which claims more rather than less.
+`rename` needs a shuttle as well, to rewrite `#a r` to `#z r`, and the
+destructuring form needs one to build the `let` that java's
+`Conditions.select` builds.
+
+So the order of work is: an AST visitor and shuttle first (useful well
+beyond this), then `selectsOnly`, then the two rewrites. `extend` and
+`remove` need only the visitor; `rename` and a destructuring condition
+need the shuttle.
+
+A partial attempt is on `stash@{0}` (`m47b-partial`): the `Display` arm,
+the generated-name counter, and `inherited_checks` down to the point
+where the walker is needed.
 
 ### M4.8 -- the planner
 
