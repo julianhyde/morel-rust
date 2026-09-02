@@ -2834,8 +2834,22 @@ impl TypeResolver {
             expr = x.spanned(&span);
         }
 
-        for var in vars.iter().rev() {
-            let pat = var.clone();
+        // A `fun` clause is one match, and what is at fault in it is the
+        // clause, not the parameter: an error in `f (n: nat) = n` quotes
+        // the whole of it. The clause's span goes on the outermost
+        // parameter, which is the one the match is built around.
+        let clause_span = if fun_bind.matches.len() == 1 {
+            Some(fun_bind.matches[0].span.clone())
+        } else {
+            None
+        };
+        for (i, var) in vars.iter().enumerate().rev() {
+            let mut pat = var.clone();
+            if i == 0
+                && let Some(clause_span) = &clause_span
+            {
+                pat.span = clause_span.clone();
+            }
             let kind = ExprKind::Fn(vec![Match { pat, expr }]);
             expr = kind.spanned(&span);
         }
@@ -7817,17 +7831,24 @@ impl TypeResolver {
         term_map: &mut Vec<(String, Term)>,
         v: &Var,
     ) -> Pat {
+        // A type's span runs on into the whitespace before what
+        // follows it, and an error that quotes a pattern should stop
+        // where the pattern does.
+        let outer_span = pat.span.trim_end();
         match &pat.kind {
             // lint: sort until '#}' where '##PatKind::[^ ]* =>'
             PatKind::Annotated(pat, type_) => {
                 let pat2 = self.deduce_pat_type(env, pat, term_map, &v);
                 let type2 = self.deduce_type_type(env, type_, &v);
+                // The annotated pattern's own span, not the span of the
+                // pattern inside it: `(n: nat)` is what the user wrote,
+                // and an error about the annotation should quote it.
                 self.reg_pat(
                     &PatKind::Annotated(
                         Box::new(pat2.clone()),
                         Box::new(type2),
                     ),
-                    &pat2.span,
+                    &outer_span,
                     pat2.id,
                     &v,
                 )
