@@ -972,6 +972,11 @@ pub struct TypeResolver {
     pub user_bindings: HashSet<String>,
     /// See [`TypeMap::claiming_records`].
     claiming_records: HashMap<(usize, usize), String>,
+    /// Variables whose condition an operator dropped; see
+    /// [`Self::erase_alias`]. An annotation that reaches the display
+    /// through `var_alias_map` must not put back what the operator took
+    /// away.
+    erased_vars: Vec<Var>,
     /// The fields a record with modifiers ends up with, keyed by the
     /// extent of its span. A `yield` step binds them; the record's own
     /// term may be the operand's, which says nothing about them.
@@ -1696,6 +1701,7 @@ impl TypeResolver {
             check_predicates: Rc::new(RefCell::new(HashMap::new())),
             user_bindings: HashSet::new(),
             claiming_records: HashMap::new(),
+            erased_vars: Vec::new(),
             modifier_result_fields: HashMap::new(),
             datatype_arg_types: HashMap::new(),
             alias_arities: HashMap::new(),
@@ -2065,6 +2071,31 @@ impl TypeResolver {
         // Transfer alias mappings from the resolver (before collecting
         // bindings, which needs alias info for Type::Alias wrapping).
         type_map.var_alias_map = self.var_alias_map.clone();
+
+        // An annotation reaches the display through `var_alias_map`
+        // even when the substitution weakened the alias away, which is
+        // right for `val x = 6 : myInt` -- the pattern's own variable
+        // never held an alias term -- and wrong where an operator
+        // dropped the condition. `fun decr (n: nat) = n - 1` is an
+        // `int -> int`: the body computed a value that is not shown to
+        // be a `nat`, and the parameter is one variable with it.
+        let erased_terms: Vec<Term> = self
+            .erased_vars
+            .iter()
+            .filter_map(|v| type_map.var_term_map.get(v).cloned())
+            .collect();
+        if !erased_terms.is_empty() {
+            let erased = |w: &Var| match type_map.var_term_map.get(w) {
+                Some(t) => erased_terms.contains(t),
+                None => false,
+            };
+            type_map.var_alias_map.retain(|w, _| !erased(w));
+            // The term the annotation was written with wins over the
+            // substitution, which is what makes `val n: nat = 5` a
+            // `nat`; here it would put back a condition the operator
+            // dropped.
+            type_map.var_pre_term_map.retain(|w, _| !erased(w));
+        }
 
         // Extract bindings from the declaration
         let mut bindings = Vec::new();
@@ -7134,6 +7165,7 @@ impl TypeResolver {
                 ));
             }
         }
+        self.erased_vars.push(*v);
         self.actions.push((*v, Rc::new(EraseAlias)));
     }
 
