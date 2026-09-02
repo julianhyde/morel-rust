@@ -2654,23 +2654,14 @@ impl TypeResolver {
                             Box::new(bool_type),
                         )
                         .spanned(&check.span);
-                        // The declaration is what is at fault when a
-                        // condition does not typecheck, so it is what the
-                        // error blames.
-                        let annotated = ExprKind::Annotated(
-                            Box::new(check.clone()),
-                            Box::new(cond_type),
-                        )
-                        .spanned(&decl.span);
+                        // The type the condition must have is deduced
+                        // first, so that a conflict names what was
+                        // expected before what was found: a condition
+                        // that gives an `int` is a `bool vs int`.
                         let v = self.variable();
-                        let annotated2 =
-                            self.deduce_expr_type(env, &annotated, &v)?;
-                        // Keep the condition, not the annotation wrapped
-                        // around it to type it.
-                        match annotated2.kind {
-                            ExprKind::Annotated(e, _) => deduced.push(*e),
-                            _ => deduced.push(annotated2),
-                        }
+                        self.deduce_type_type(env, &cond_type, &v);
+                        let check2 = self.deduce_expr_type(env, check, &v)?;
+                        deduced.push(check2);
                     }
                     self.type_checks
                         .insert(tb.name.clone(), Checks::new(deduced));
