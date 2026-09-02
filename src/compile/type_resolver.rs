@@ -366,13 +366,36 @@ impl TypeMap {
         }
     }
 
+    /// Whether a term is a function type.
+    fn is_fn_term(&self, term: &Term) -> bool {
+        match term {
+            Term::Sequence(seq) => self.op_defs[seq.op.0 as usize].name == "fn",
+            Term::Variable(_) => false,
+        }
+    }
+
     fn get_type_inner(&self, id: i32, with_alias: bool) -> Option<Rc<Type>> {
         if let Some(var) = self.node_var_map.get(&id) {
             // The alias as it was written wins over the substitution; see
             // `var_alias_term_map`.
             let written = self.var_pre_term_map.get(var);
             let term = match written {
-                Some(t) if with_alias && self.reaches_alias(t, 20) => t.clone(),
+                // A function's type is the one inference gives it, not
+                // the one its parameter was written with. The body may
+                // weaken the parameter -- `fun decr (n: nat) = n - 1` is
+                // an `int -> int`, and `fun branches (i: nat) = if false
+                // then i else 0` is too -- and the term the parameter
+                // was written with would put the condition back. Where
+                // nothing weakened it, the substitution has the alias
+                // anyway, so `fun f (n: nat) = n` is still a
+                // `nat -> nat`.
+                Some(t)
+                    if with_alias
+                        && self.reaches_alias(t, 20)
+                        && !self.is_fn_term(t) =>
+                {
+                    t.clone()
+                }
                 _ => self
                     .var_term_map
                     .get(var)
