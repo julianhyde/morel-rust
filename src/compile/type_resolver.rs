@@ -23,12 +23,16 @@
 // as future-use surface.
 #![allow(dead_code)]
 
-use crate::compile::core::Expr as CoreExpr;
+use crate::compile::core::{
+    Expr as CoreExpr, Match as CoreMatch, Pat as CorePat,
+};
 use crate::compile::expander::DatatypeMap;
+use crate::compile::free_finder::free_names_in;
 use crate::compile::library;
 use crate::compile::pat_coverage::check_coverage;
 use crate::compile::postfix::{PostfixKind, peel_type, postfix_dispatch};
 use crate::compile::record_modifiers::{self, Source};
+use crate::compile::replacer;
 use crate::compile::type_env::{BindType, SchemeTypeEnv, TypeEnv};
 use crate::compile::types;
 use crate::compile::types::{
@@ -995,6 +999,10 @@ pub struct TypeResolver {
     pub user_bindings: HashSet<String>,
     /// See [`TypeMap::claiming_records`].
     claiming_records: HashMap<(usize, usize), String>,
+    /// How many anonymous checked types have been named. A modifier
+    /// that changes a record's shape derives a checked type that has no
+    /// name of its own.
+    anon_checks: usize,
     /// Variables whose condition an operator dropped; see
     /// [`Self::erase_alias`]. An annotation that reaches the display
     /// through `var_alias_map` must not put back what the operator took
@@ -1724,6 +1732,7 @@ impl TypeResolver {
             check_predicates: Rc::new(RefCell::new(HashMap::new())),
             user_bindings: HashSet::new(),
             claiming_records: HashMap::new(),
+            anon_checks: 0,
             erased_vars: Vec::new(),
             modifier_result_fields: HashMap::new(),
             datatype_arg_types: HashMap::new(),
@@ -7216,6 +7225,59 @@ impl TypeResolver {
             .map(str::to_string)
     }
 
+    /// The conditions of the record a chain of modifiers was applied
+    /// to, carried over to the record it produced.
+    ///
+    /// A condition is typed against the exact record it was written
+    /// for, because records are not width-subtyped, so it can be
+    /// carried over only if it still holds of the new record: every
+    /// field it depends on must have survived under the same name. A
+    /// condition that is dropped claims less, which is sound.
+    fn inherited_checks(
+        &mut self,
+        operands: &Operands,
+        fields: &BTreeMap<Label, Var>,
+    ) -> Vec<Expr> {
+        let Some(name) = self.alias_name_of(&operands.variables[0]) else {
+            return Vec::new();
+        };
+        let Some(checks) = self.type_checks.get(&name).cloned() else {
+            return Vec::new();
+        };
+        // The conditions were compiled where the type was declared, so
+        // the test is asked of the compiled form; the written form is
+        // what the new type carries, for the display and for the
+        // checks the record's own modification will need.
+        let predicates =
+            match self.check_predicates.borrow().get(&name).cloned() {
+                Some(predicates) => predicates,
+                None => return Vec::new(),
+            };
+        if predicates.len() != checks.fns.len() {
+            return Vec::new();
+        }
+        // A field survives if the result has one of the same name; its
+        // slot is the one it had in the record the condition was
+        // written for.
+        let surviving: Vec<usize> = self
+            .type_aliases
+            .get(&name)
+            .map(types::record_fields)
+            .unwrap_or_default()
+            .keys()
+            .enumerate()
+            .filter(|(_, label)| fields.contains_key(*label))
+            .map(|(slot, _)| slot)
+            .collect();
+        checks
+            .fns
+            .iter()
+            .zip(predicates.iter())
+            .filter(|(_, predicate)| selects_only(predicate, &surviving))
+            .map(|(f, _)| f.clone())
+            .collect()
+    }
+
     /// The conditions of the checked type `name`, or none if the name
     /// is not a checked type.
     fn checks_of(&self, name: &str) -> Checks {
@@ -7481,7 +7543,23 @@ impl TypeResolver {
                 .iter()
                 .map(|(label, var)| (label.clone(), Term::Variable(*var)))
                 .collect();
-            self.record_term(&terms, v);
+            // A modifier that changes the record's shape cannot claim
+            // its type, but the type's own conditions need not be lost
+            // with the name. One is carried over if every field it
+            // depends on was left alone; the result is a checked type
+            // that has no name.
+            let inherited = self.inherited_checks(operands, &fields);
+            if inherited.is_empty() {
+                self.record_term(&terms, v);
+            } else {
+                let v_rec = self.variable();
+                self.record_term(&terms, &v_rec);
+                self.anon_checks += 1;
+                let name = format!("$check{}", self.anon_checks);
+                self.type_checks
+                    .insert(name.clone(), Checks::new(inherited));
+                self.alias_term(&name, Term::Variable(v_rec), v);
+            }
         }
         let x = ExprKind::Record(
             Some(Box::new(operands.exprs[0].clone())),
@@ -8942,4 +9020,49 @@ impl Operands {
 /// The names of a record's fields, in label order.
 fn label_strings(fields: &BTreeMap<Label, Var>) -> Vec<String> {
     fields.keys().map(Label::to_string).collect()
+}
+
+/// Whether a compiled condition uses the record it is given only by
+/// selecting fields that survived.
+///
+/// A condition is typed against the exact record it was written for,
+/// because records are not width-subtyped, so it holds of the new
+/// record only if every field it depends on is still there under the
+/// same name. One that uses the record as a whole does not: a record of
+/// another shape is not that record.
+///
+/// The question is asked of free variables. Replace each surviving
+/// field's selection with a value of that field's type; if the record's
+/// own name is still free, some use of it was not one of those
+/// selections. Shadowing takes care of itself, because a name the
+/// condition rebinds is not free either -- and a use under the shadow
+/// is not the record.
+fn selects_only(predicate: &CoreExpr, surviving: &[usize]) -> bool {
+    let CoreExpr::Fn(_, matches, _) = predicate else {
+        return false;
+    };
+    let [CoreMatch { pat, expr }] = matches.as_slice() else {
+        return false;
+    };
+    let CorePat::Identifier(t, name) = pat else {
+        return false;
+    };
+    let fields = types::record_fields(peel_type(t));
+    let slots: HashMap<usize, CoreExpr> = surviving
+        .iter()
+        .filter_map(|slot| {
+            let field_type = fields.values().nth(*slot)?;
+            // Any value of the field's type will do; nothing reads it,
+            // and only whether the name survives is asked.
+            Some((
+                *slot,
+                CoreExpr::Identifier(
+                    field_type.clone(),
+                    format!("$field{}", slot),
+                ),
+            ))
+        })
+        .collect();
+    let rewritten = replacer::substitute_selections(expr, name, &slots);
+    !free_names_in(&rewritten).contains(name)
 }
