@@ -3302,12 +3302,14 @@ impl TypeResolver {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op div", left, right, v)?;
                 self.preferred_vars.push(*v);
+                self.erase_alias(v);
                 let x = ExprKind::Div(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Divide(left, right) => {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op /", left, right, v)?;
+                self.erase_alias(v);
                 let x = ExprKind::Divide(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
@@ -3456,6 +3458,9 @@ impl TypeResolver {
                     );
                     self.equiv(&Term::Sequence(fn_seq), v);
                     self.preferred_vars.push(v_elem);
+                    // `abs` is an operator too: it computes a value the
+                    // argument's type has not been shown to contain.
+                    self.erase_alias(&v_elem);
                 }
                 self.reg_expr(&expr.kind, &expr.span, expr.id, v)
             }
@@ -3592,6 +3597,7 @@ impl TypeResolver {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op -", left, right, v)?;
                 self.preferred_vars.push(*v);
+                self.erase_alias(v);
                 let x = ExprKind::Minus(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
@@ -3599,6 +3605,7 @@ impl TypeResolver {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op mod", left, right, v)?;
                 self.preferred_vars.push(*v);
+                self.erase_alias(v);
                 let x = ExprKind::Mod(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
@@ -3606,6 +3613,7 @@ impl TypeResolver {
                 let e2 =
                     self.deduce_call1_type(env, "op ~", e, &expr.span, v)?;
                 self.preferred_vars.push(*v);
+                self.erase_alias(v);
                 let x = ExprKind::Negate(Box::new(e2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
@@ -3713,6 +3721,7 @@ impl TypeResolver {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op +", left, right, v)?;
                 self.preferred_vars.push(*v);
+                self.erase_alias(v);
                 let x = ExprKind::Plus(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
@@ -3830,6 +3839,7 @@ impl TypeResolver {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op *", left, right, v)?;
                 self.preferred_vars.push(*v);
+                self.erase_alias(v);
                 let x = ExprKind::Times(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
@@ -7086,6 +7096,45 @@ impl TypeResolver {
     /// Generates ordinal names for tuple fields: ["1", "2", "3", ...]
     fn tuple_ordinal_names(size: usize) -> Vec<String> {
         (1..=size).map(|i| i.to_string()).collect()
+    }
+
+    /// Records that the value a variable stands for is one its type has
+    /// not been shown to contain, so any condition on that type is
+    /// dropped.
+    ///
+    /// What drops a condition is the operator, not the operands.
+    /// `n - 1` loses it because the `1` is an `int` that the `nat` has
+    /// to meet, and a meet takes the weaker of the two; but an operator
+    /// applied to operands of its own type has nothing to meet.
+    /// `n + n` computes a value that is not shown to be a `nat` any
+    /// more than `n - 1` is, so the condition goes either way.
+    fn erase_alias(&mut self, v: &Var) {
+        struct EraseAlias;
+        impl Action for EraseAlias {
+            fn accept(
+                &self,
+                variable: &Var,
+                term: &Term,
+                substitution: &Substitution,
+                op_defs: &[OpDef],
+                term_pairs: &mut Vec<(Term, Term)>,
+            ) {
+                let Term::Sequence(seq) = term else {
+                    return;
+                };
+                if !op_defs[seq.op.0 as usize].name.starts_with(ALIAS_PREFIX) {
+                    return;
+                }
+                // Meeting the alias with the type it abbreviates is
+                // what weakens it: the unifier has to expand the alias
+                // to unify, and records that it did.
+                term_pairs.push((
+                    substitution.resolve_term(&Term::Variable(*variable)),
+                    substitution.resolve_term(&seq.terms[0]),
+                ));
+            }
+        }
+        self.actions.push((*v, Rc::new(EraseAlias)));
     }
 
     /// The name a variable's type is displayed under, if it is an
