@@ -43,7 +43,9 @@ use crate::compile::type_resolver::{
     ast_type_to_core_type_with_vars,
 };
 use crate::compile::types;
-use crate::compile::types::{Label, PrimitiveType, Type, instantiate};
+use crate::compile::types::{
+    Checks, Label, PrimitiveType, Type, TypeVariable, instantiate,
+};
 use crate::eval::code::LIBRARY;
 use crate::eval::val::Val;
 use crate::syntax::ast::{
@@ -53,7 +55,7 @@ use crate::syntax::ast::{
     TypeKind, ValBind,
 };
 use crate::syntax::parser;
-use crate::unify::unifier::Var;
+use crate::unify::unifier::{ANON_CHECK_PREFIX, Var};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::rc::Rc;
@@ -741,6 +743,27 @@ impl<'a> Resolver<'a> {
     /// with anything.
     fn written_type(&self, ast_type: &AstType) -> Option<Type> {
         match &ast_type.kind {
+            TypeKind::Checked(t, checks) => {
+                // A condition written where a type is used claims what a
+                // declared type's condition claims. The type has no name
+                // of its own, so it takes the one its conditions give it.
+                //
+                // The body may be a type variable standing for whatever
+                // inference gives the expression, which is how a condition
+                // written on an expression rather than on a type is said.
+                // Nothing is claimed of the body -- only the conditions
+                // are -- so a variable will do where it is not written.
+                let checks = Checks::new(checks.clone());
+                let body = self
+                    .written_type(t)
+                    .unwrap_or(Type::Variable(TypeVariable::new(0)));
+                Some(Type::Alias(
+                    checks.anon_name(),
+                    Rc::new(body),
+                    vec![],
+                    checks,
+                ))
+            }
             TypeKind::Id(name) => match self.type_map.type_aliases.get(name) {
                 Some(body) => Some(Type::Alias(
                     name.clone(),
@@ -897,12 +920,25 @@ impl<'a> Resolver<'a> {
                 if checks.is_empty() {
                     return inner;
                 }
-                let predicates = self
+                let predicates = match self
                     .type_map
                     .check_predicates
                     .borrow()
                     .get(name)
-                    .cloned()?;
+                    .cloned()
+                {
+                    Some(predicates) => predicates,
+                    // A checked type that has no name was never declared,
+                    // so nothing compiled its conditions when a
+                    // declaration would have. Compile them here; they are
+                    // in hand, on the type itself.
+                    None if name.starts_with(ANON_CHECK_PREFIX) => checks
+                        .fns
+                        .iter()
+                        .map(|f| self.make_total(self.resolve_expr(f), f))
+                        .collect(),
+                    None => return None,
+                };
                 let own = if blame.is_empty() || !raising {
                     and_all(self.conditions(value, &predicates, span))
                 } else {
@@ -4205,7 +4241,14 @@ fn label_names(fields: &BTreeMap<Label, Rc<Type>>) -> Vec<String> {
 /// How a claimed type is written, for a message.
 fn type_moniker(claimed: &Type) -> String {
     match claimed {
-        Type::Alias(name, body, _, _) if name.is_empty() => body.to_string(),
+        // A checked type that has no name is not named in the message
+        // either. Its made-up name would be no use to a reader, and its
+        // conditions are already written where the value was claimed.
+        Type::Alias(name, _, _, _)
+            if name.is_empty() || name.starts_with(ANON_CHECK_PREFIX) =>
+        {
+            "value".to_string()
+        }
         _ => claimed.to_string(),
     }
 }

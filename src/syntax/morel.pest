@@ -224,14 +224,26 @@ expr = { expr_annotated }
 // at the loosest level, which is why they are looser than every
 // operator: `int * int` is a legal type and `... * int` a legal
 // expression, and only the loosest reading is unambiguous.
-expr_annotated = { expr_implies ~ conversion* }
+// A `check` may be written on an expression, as it may on a type: the
+// expression claims a type of its own, made of the type inference gives
+// it and the conditions written here.
+expr_annotated = { expr_implies ~ conversion* ~ expr_checks? }
+expr_checks = { check_clause+ }
 conversion = { conversion_op ~ type_ }
 conversion_op = { ":" | _as_opt | _as }
 // A `check` clause: `check <match list>`. A match's body is an
 // expression, which does not itself extend over a following `check`, so
 // the first condition of `int check i => i >= 1 check j => j <= 12`
 // ends where the second begins.
-check_clause = { _check ~ match_list }
+check_clause = { _check ~ check_match_list }
+// A match in a condition ends where a `check` begins, which is what lets a
+// type carry several conditions: the first condition of `int check i => i
+// >= 1 check j => j <= 12` ends at the second `check` rather than
+// swallowing it. So its body is an expression that does not itself take a
+// `check`.
+check_match_list = { check_match ~ ("|" ~ check_match)* }
+check_match = { pat ~ "=>" ~ check_body }
+check_body = { expr_implies ~ conversion* }
 
 // Precedence 0: implies
 expr_implies = { expr_orelse ~ expr_implies_arg* }

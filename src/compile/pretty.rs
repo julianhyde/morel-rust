@@ -752,14 +752,16 @@ impl Pretty {
             // it is written in full. A generated name begins with `$`,
             // which a user cannot write.
             Type::Alias(name, inner, _args, checks) => {
-                if name.starts_with('$') {
-                    beside(
-                        self.type_doc(inner, left, right),
-                        text(&checks.to_string()),
-                    )
-                } else {
-                    text(name)
+                if !name.starts_with('$') {
+                    return text(name);
                 }
+                if wraps(Op::CHECKED, left, right) {
+                    return parenthesize(self.type_doc(type_ref, 0, 0));
+                }
+                beside(
+                    self.type_doc(inner, left, Op::CHECKED.left),
+                    text(&checks.to_string()),
+                )
             }
             Type::Bag(element_type) => self.collection_type_doc(
                 type_ref,

@@ -999,10 +999,6 @@ pub struct TypeResolver {
     pub user_bindings: HashSet<String>,
     /// See [`TypeMap::claiming_records`].
     claiming_records: HashMap<(usize, usize), String>,
-    /// How many anonymous checked types have been named. A modifier
-    /// that changes a record's shape derives a checked type that has no
-    /// name of its own.
-    anon_checks: usize,
     /// Variables whose condition an operator dropped; see
     /// [`Self::erase_alias`]. An annotation that reaches the display
     /// through `var_alias_map` must not put back what the operator took
@@ -1732,7 +1728,6 @@ impl TypeResolver {
             check_predicates: Rc::new(RefCell::new(HashMap::new())),
             user_bindings: HashSet::new(),
             claiming_records: HashMap::new(),
-            anon_checks: 0,
             erased_vars: Vec::new(),
             modifier_result_fields: HashMap::new(),
             datatype_arg_types: HashMap::new(),
@@ -7554,10 +7549,9 @@ impl TypeResolver {
             } else {
                 let v_rec = self.variable();
                 self.record_term(&terms, &v_rec);
-                self.anon_checks += 1;
-                let name = format!("$check{}", self.anon_checks);
-                self.type_checks
-                    .insert(name.clone(), Checks::new(inherited));
+                let checks = Checks::new(inherited);
+                let name = checks.anon_name();
+                self.type_checks.insert(name.clone(), checks);
                 self.alias_term(&name, Term::Variable(v_rec), v);
             }
         }
@@ -8610,6 +8604,56 @@ impl<'a> TypeToTermConverter<'a> {
                 } else {
                     panic!("{:?}", type_node.kind)
                 }
+            }
+            TypeKind::Checked(t, checks) => {
+                // A condition written where a type is used, rather than on
+                // a declaration, gives a checked type that has no name.
+                // One is made for it, so that the term can carry the
+                // conditions the way a declared type's does; it is not a
+                // name anything can write, and the type displays as its
+                // body and its conditions.
+                let v_inner = self.type_resolver.variable();
+                let inner = self.type_term(t, subst, &v_inner);
+                // A condition is a function from the type it constrains to
+                // `bool`, and is deduced here rather than in a pass of its
+                // own, so that the types of its nodes reach the type map:
+                // `Resolver` converts a condition to Core in order to
+                // insert the check it calls for.
+                let mut deduced = Vec::with_capacity(checks.len());
+                for check in checks {
+                    let v_bool = self.type_resolver.variable();
+                    self.type_resolver
+                        .primitive_term(&PrimitiveType::Bool, &v_bool);
+                    let v_cond = self.type_resolver.variable();
+                    self.type_resolver.fn_term(&v_inner, &v_bool, &v_cond);
+                    match self
+                        .type_resolver
+                        .deduce_expr_type(self.env, check, &v_cond)
+                    {
+                        Ok(check2) => deduced.push(check2),
+                        Err(Error::Compile(msg, span)) => {
+                            self.type_resolver
+                                .field_errors
+                                .borrow_mut()
+                                .push((msg, span));
+                            deduced.push(check.clone());
+                        }
+                        Err(_) => deduced.push(check.clone()),
+                    }
+                }
+                let checks2 = Checks::new(deduced.clone());
+                let name = checks2.anon_name();
+                self.type_resolver.type_checks.insert(name.clone(), checks2);
+                self.type_resolver.alias_term(
+                    &name,
+                    Term::Variable(v_inner),
+                    v,
+                );
+                self.type_resolver.reg_type(
+                    &TypeKind::Checked(Box::new(inner), deduced),
+                    &type_node.span,
+                    v,
+                )
             }
             TypeKind::Composite(_) => {
                 // `(t1, ..., tn)` is only valid as the argument list of
