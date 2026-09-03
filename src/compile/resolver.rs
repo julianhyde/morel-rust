@@ -735,6 +735,23 @@ impl<'a> Resolver<'a> {
         self.has_check(&claimed).then_some(claimed)
     }
 
+    /// The type a checked type that has no name means, if the name is
+    /// one.
+    ///
+    /// A named type says what it means through its declaration; this one
+    /// has none, so its body is the type of the value that claims it, and
+    /// its conditions are the ones its name was derived from.
+    fn anon_checked_type(&self, name: &str, value: &CoreExpr) -> Option<Type> {
+        if !name.starts_with(ANON_CHECK_PREFIX) {
+            return None;
+        }
+        let checks = self.type_map.checks_of(name);
+        if checks.is_empty() {
+            return None;
+        }
+        Some(Type::Alias(name.to_string(), value.type_(), vec![], checks))
+    }
+
     /// A written type, as written: keeping the aliases that say where
     /// the conditions are, so that a claim can be walked.
     ///
@@ -2343,7 +2360,11 @@ impl<'a> Resolver<'a> {
                             .type_map
                             .claiming_records
                             .get(&expr.span.extent())
-                            .and_then(|name| self.named_type(name));
+                            .and_then(|name| {
+                                self.named_type(name).or_else(|| {
+                                    self.anon_checked_type(name, &built)
+                                })
+                            });
                         // The deduced type has been met with what was
                         // assigned to each field, so it is the alias's
                         // name that says what was claimed, and the
