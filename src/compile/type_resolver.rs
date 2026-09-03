@@ -7231,13 +7231,15 @@ impl TypeResolver {
     fn inherited_checks(
         &mut self,
         operands: &Operands,
-        fields: &BTreeMap<Label, Var>,
-    ) -> Vec<Expr> {
+        carried: &BTreeMap<String, String>,
+        new_fields: &BTreeMap<Label, Var>,
+    ) -> (Vec<Expr>, Vec<CoreExpr>) {
+        let none = || (Vec::new(), Vec::new());
         let Some(name) = self.alias_name_of(&operands.variables[0]) else {
-            return Vec::new();
+            return none();
         };
         let Some(checks) = self.type_checks.get(&name).cloned() else {
-            return Vec::new();
+            return none();
         };
         // The conditions were compiled where the type was declared, so
         // the test is asked of the compiled form; the written form is
@@ -7246,31 +7248,44 @@ impl TypeResolver {
         let predicates =
             match self.check_predicates.borrow().get(&name).cloned() {
                 Some(predicates) => predicates,
-                None => return Vec::new(),
+                None => return none(),
             };
         if predicates.len() != checks.fns.len() {
-            return Vec::new();
+            return none();
         }
-        // A field survives if the result has one of the same name; its
-        // slot is the one it had in the record the condition was
-        // written for.
-        let surviving: Vec<usize> = self
+        // A field survives if the chain carried it over under the name it
+        // had; its slot is the one it had in the record the condition was
+        // written for. A field carried over under another name survives
+        // too, but the condition would have to be rewritten to say so,
+        // which is not done yet, so it is not counted.
+        let base_fields = self
             .type_aliases
             .get(&name)
             .map(types::record_fields)
-            .unwrap_or_default()
-            .keys()
-            .enumerate()
-            .filter(|(_, label)| fields.contains_key(*label))
-            .map(|(slot, _)| slot)
-            .collect();
+            .unwrap_or_default();
+        let mut surviving: Vec<usize> = Vec::new();
+        for (slot, label) in base_fields.keys().enumerate() {
+            if carried.get(&label.to_string()) != Some(&label.to_string()) {
+                continue;
+            }
+            // A condition is compiled once and carried from statement to
+            // statement, so it selects by slot. A field that moved -- the
+            // chain added a field that sorts before it -- would need the
+            // compiled form rewritten, which is not done yet, so the
+            // condition is dropped rather than left selecting the wrong
+            // field.
+            if new_fields.keys().position(|l| l == label) != Some(slot) {
+                continue;
+            }
+            surviving.push(slot);
+        }
         checks
             .fns
             .iter()
             .zip(predicates.iter())
             .filter(|(_, predicate)| selects_only(predicate, &surviving))
-            .map(|(f, _)| f.clone())
-            .collect()
+            .map(|(f, p)| (f.clone(), p.clone()))
+            .unzip()
     }
 
     /// The conditions of the checked type `name`, or none if the name
@@ -7430,6 +7445,15 @@ impl TypeResolver {
         // chain must leave the shape alone for the chain to claim
         // anything.
         let mut claims = true;
+        // Which of the base record's fields the chain has carried over
+        // unchanged, and under what label. A condition is written against
+        // the base, so only these are still there to be depended on: one
+        // the chain assigned to holds a value that was never shown to
+        // satisfy anything, and one it removed is not there at all.
+        let mut carried: BTreeMap<String, String> = fields
+            .keys()
+            .map(|label| (label.to_string(), label.to_string()))
+            .collect();
         for modifier in modifiers {
             let all_fields = match modifier {
                 Modifier::All(..) => {
@@ -7462,6 +7486,20 @@ impl TypeResolver {
                     claims = false;
                 }
             }
+            // Follow each carried field to the label it now has, and
+            // forget one this modifier did not keep.
+            carried = carried
+                .iter()
+                .filter_map(|(base, label)| {
+                    sources.iter().find_map(|(label2, source)| match source {
+                        Source::Kept(field) if field == label => {
+                            Some((base.clone(), label2.clone()))
+                        }
+                        _ => None,
+                    })
+                })
+                .collect();
+
             let mut fields2: BTreeMap<Label, Var> = BTreeMap::new();
             let mut assigned: Vec<(String, Expr)> = Vec::new();
             for (label, source) in &sources {
@@ -7543,7 +7581,8 @@ impl TypeResolver {
             // with the name. One is carried over if every field it
             // depends on was left alone; the result is a checked type
             // that has no name.
-            let inherited = self.inherited_checks(operands, &fields);
+            let (inherited, predicates) =
+                self.inherited_checks(operands, &carried, &fields);
             if inherited.is_empty() {
                 self.record_term(&terms, v);
             } else {
@@ -7552,6 +7591,12 @@ impl TypeResolver {
                 let checks = Checks::new(inherited);
                 let name = checks.anon_name();
                 self.type_checks.insert(name.clone(), checks);
+                // The compiled conditions go under the new name too: a
+                // condition is compiled where its type is declared, and
+                // this type is not declared anywhere.
+                self.check_predicates
+                    .borrow_mut()
+                    .insert(name.clone(), predicates);
                 self.alias_term(&name, Term::Variable(v_rec), v);
             }
         }
