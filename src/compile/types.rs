@@ -17,7 +17,7 @@
 
 use crate::syntax::ast::{Expr, checks_text};
 use crate::syntax::parser::append_id;
-use crate::unify::unifier::{COLLECTION_OP_NAME, Term, Var};
+use crate::unify::unifier::{ANON_CHECK_PREFIX, COLLECTION_OP_NAME, Term, Var};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Display, Formatter};
@@ -722,6 +722,13 @@ impl Op {
     /// that appears before the type application `(int, string) tree`.
     pub const LIST: Op = Op::bracketed(8, "(", ",", ")", true);
 
+    /// A `check` condition binds more loosely than anything else in a type,
+    /// because a condition is an expression and extends as far right as it
+    /// can. So a checked type is parenthesized wherever it is not the whole
+    /// type: `(int check i => i >= 0) list`, not `int check i => i >= 0
+    /// list`, which would read the `list` as part of the condition.
+    pub const CHECKED: Op = Op::new(11, 10, "(", " check ", ")", false);
+
     /// The function arrow "->" is right-associative and has a lower precedence
     /// than the tuple constructor "*".
     pub const FN: Op = Op::new(13, 12, "(", " -> ", ")", false);
@@ -1022,6 +1029,16 @@ impl Checks {
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.fns.is_empty()
+    }
+
+    /// The name of a checked type that has no name of its own.
+    ///
+    /// A term identifies a type by its name, and this type has none, so it
+    /// is given one derived from its conditions -- which is what it has to
+    /// be known by. Deriving it means every part that meets the same
+    /// conditions agrees on the name without having to be told it.
+    pub fn anon_name(&self) -> String {
+        format!("{ANON_CHECK_PREFIX}{}", self.text)
     }
 }
 

@@ -305,26 +305,18 @@ impl MorelParser {
 
     fn expr_annotated(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [expr_implies(e), conversion(cs)..] => {
-                // `:`, `as` and `asOpt` chain left to right, so
-                // `i as nat as int` is `(i as nat) as int`.
-                cs.fold(e, |e, (kind, t)| {
-                    let span = e.span.union(&t.span).trim_end();
-                    match kind {
-                        None => ExprKind::Annotated(
-                            Box::new(e),
-                            Box::new(t),
-                        )
-                        .spanned(&span),
-                        Some(kind) => ExprKind::Cast(
-                            kind,
-                            Box::new(e),
-                            Box::new(t),
-                        )
-                        .spanned(&span),
-                    }
-                })
+            [expr_implies(e), conversion(cs)..] => converted(e, cs),
+            [expr_implies(e), conversion(cs).., expr_checks(checks)] => {
+                checked_exp(converted(e, cs), checks)
             },
+        ))
+    }
+
+    /// The body of a condition: an expression that does not itself take a
+    /// `check`, so that a match ends where the next condition begins.
+    fn check_body(input: ParseInput) -> ParseResult<Expr> {
+        Ok(match_nodes!(input.children();
+            [expr_implies(e), conversion(cs)..] => converted(e, cs),
         ))
     }
 
@@ -1995,11 +1987,29 @@ impl MorelParser {
 
     /// A `check` clause: the condition it states, as a function from a
     /// value of the type to `bool`.
+    fn expr_checks(input: ParseInput) -> ParseResult<Vec<Expr>> {
+        Ok(match_nodes!(input.children();
+            [check_clause(checks)..] => checks.collect(),
+        ))
+    }
+
     fn check_clause(input: ParseInput) -> ParseResult<Expr> {
         Ok(match_nodes!(input.children();
-            [_check(_), match_list(matches)] => {
+            [_check(_), check_match_list(matches)] => {
                 ExprKind::Fn(matches).wrap(input)
             },
+        ))
+    }
+
+    fn check_match_list(input: ParseInput) -> ParseResult<Vec<Match>> {
+        Ok(match_nodes!(input.children();
+            [check_match(matches)..] => matches.collect(),
+        ))
+    }
+
+    fn check_match(input: ParseInput) -> ParseResult<Match> {
+        Ok(match_nodes!(input.children();
+            [pat(p), check_body(e)] => Match { pat: p, expr: e },
         ))
     }
 
@@ -2546,6 +2556,44 @@ fn fold_heterogeneous(
         let span = acc.span.union(&e.span);
         f(op, Box::new(acc), Box::new(e.clone())).spanned(&span)
     })
+}
+
+/// Folds `: t`, `as t` and `asOpt t` onto an expression. They chain left
+/// to right, so `i as nat as int` is `(i as nat) as int`.
+fn converted(
+    e: Expr,
+    cs: impl Iterator<Item = (Option<CastKind>, Type)>,
+) -> Expr {
+    cs.fold(e, |e, (kind, t)| {
+        let span = e.span.union(&t.span).trim_end();
+        match kind {
+            None => {
+                ExprKind::Annotated(Box::new(e), Box::new(t)).spanned(&span)
+            }
+            Some(kind) => {
+                ExprKind::Cast(kind, Box::new(e), Box::new(t)).spanned(&span)
+            }
+        }
+    })
+}
+
+/// An expression with `check` conditions written on it.
+///
+/// A condition may be written on an expression as it may on a type. The
+/// type it claims is the one inference gives the expression, and the
+/// conditions written here; so it is an annotation whose type is a type
+/// variable that appears nowhere else, and unifies with whatever the
+/// expression turns out to be. The variable is named for where the
+/// conditions were written, which is unique within a statement, so that
+/// two such expressions are not forced to have one type.
+fn checked_exp(e: Expr, checks: Vec<Expr>) -> Expr {
+    if checks.is_empty() {
+        return e;
+    }
+    let span = e.span.union(&checks[checks.len() - 1].span).trim_end();
+    let var = TypeKind::Var(format!("$c{}", span.start_pos())).spanned(&span);
+    let type_ = TypeKind::Checked(Box::new(var), checks).spanned(&span);
+    ExprKind::Annotated(Box::new(e), Box::new(type_)).spanned(&span)
 }
 
 /// Given quoted identifier `abc` returns abc. Converts any
