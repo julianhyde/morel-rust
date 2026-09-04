@@ -1026,7 +1026,7 @@ impl<'a> Resolver<'a> {
                 } else {
                     self.check_call(
                         value,
-                        name,
+                        &type_moniker(claimed),
                         &predicates,
                         BuiltInFunction::ZRequire,
                         Rc::new(Type::Primitive(PrimitiveType::Bool)),
@@ -3308,11 +3308,66 @@ impl<'a> Resolver<'a> {
                 .borrow_mut()
                 .insert(type_bind.name.clone(), predicates);
         }
+        // A condition written inside the declaration -- on a field, on a
+        // component, on an element -- belongs to a checked type that has
+        // no name of its own, and no declaration of its own to compile it.
+        // This is that declaration, so it is compiled here; the
+        // conditions are carried from statement to statement compiled,
+        // and the type will be met again where nothing can deduce them.
+        self.register_nested_checks(&core_type);
         CoreTypeBind {
             type_vars: type_bind.type_vars.clone(),
             name: type_bind.name.clone(),
             type_: core_type,
             checks,
+        }
+    }
+
+    /// Compiles the conditions of every checked type that has no name
+    /// within a type, and registers them under the name its conditions
+    /// gave it.
+    fn register_nested_checks(&self, type_: &Type) {
+        match type_ {
+            Type::Alias(name, body, args, checks) => {
+                if name.starts_with(ANON_CHECK_PREFIX)
+                    && !checks.is_empty()
+                    && !self
+                        .type_map
+                        .check_predicates
+                        .borrow()
+                        .contains_key(name)
+                    && checks
+                        .fns
+                        .iter()
+                        .all(|f| f.get_type(self.type_map).is_some())
+                {
+                    let predicates = checks
+                        .fns
+                        .iter()
+                        .map(|f| self.make_total(self.resolve_expr(f), f))
+                        .collect();
+                    self.type_map
+                        .check_predicates
+                        .borrow_mut()
+                        .insert(name.clone(), predicates);
+                }
+                self.register_nested_checks(body);
+                args.iter().for_each(|t| self.register_nested_checks(t));
+            }
+            Type::Record(_, fields) => {
+                fields.values().for_each(|t| self.register_nested_checks(t));
+            }
+            Type::Tuple(types) | Type::Data(_, types) => {
+                types.iter().for_each(|t| self.register_nested_checks(t));
+            }
+            Type::List(t) | Type::Bag(t) | Type::Forall(t, _) => {
+                self.register_nested_checks(t);
+            }
+            Type::Fn(a, b) => {
+                self.register_nested_checks(a);
+                self.register_nested_checks(b);
+            }
+            _ => {}
         }
     }
 

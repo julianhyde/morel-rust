@@ -1455,6 +1455,38 @@ impl TypeResolver {
         Some((*type_).clone())
     }
 
+    /// Deduces the conditions of a checked type against the type they
+    /// constrain.
+    ///
+    /// A condition sees the type as the type it abbreviates: the value
+    /// has not yet been admitted to the checked type, so the condition
+    /// may not be assumed of it.
+    fn deduce_checks(
+        &mut self,
+        env: &dyn TypeEnv,
+        base: &Type,
+        checks: &[Expr],
+    ) -> Vec<Expr> {
+        let mut deduced = Vec::with_capacity(checks.len());
+        for check in checks {
+            let v_base = self.variable();
+            self.type_term(base, &Subst::Empty, &v_base);
+            let v_bool = self.variable();
+            self.primitive_term(&PrimitiveType::Bool, &v_bool);
+            let v = self.variable();
+            self.fn_term(&v_base, &v_bool, &v);
+            match self.deduce_expr_type(env, check, &v) {
+                Ok(check2) => deduced.push(check2),
+                Err(Error::Compile(msg, span)) => {
+                    self.field_errors.borrow_mut().push((msg, span));
+                    deduced.push(check.clone());
+                }
+                Err(_) => deduced.push(check.clone()),
+            }
+        }
+        deduced
+    }
+
     /// Expands an AST type to a core type, resolving every named type
     /// against `aliases` (the aliases and datatypes in scope) and the
     /// built-in type constructors. A type alias is transparent, so it is
@@ -1476,13 +1508,16 @@ impl TypeResolver {
                 // on a declaration, gives an anonymous checked type. It
                 // has only its body and its conditions to be known by.
                 let inner = self.expand_ast_type(env, t, aliases, type_vars)?;
-                let checks = Checks::new(checks.clone());
-                Ok(Type::Alias(
-                    checks.anon_name(),
-                    Rc::new(inner),
-                    vec![],
-                    checks,
-                ))
+                // A condition is a function from the type it constrains
+                // to `bool`, and is deduced here, where the type is, so
+                // that the types of its nodes reach the type map:
+                // `Resolver` converts a condition to Core in order to
+                // insert the check it calls for.
+                let deduced = self.deduce_checks(env, &inner, checks);
+                let checks = Checks::new(deduced);
+                let name = checks.anon_name();
+                self.type_checks.insert(name.clone(), checks.clone());
+                Ok(Type::Alias(name, Rc::new(inner), vec![], checks))
             }
             TypeKind::Expression(expr) => {
                 // `typeof e`. A type declaration is elaborated before
