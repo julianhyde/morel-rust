@@ -674,7 +674,7 @@ impl<'a> Resolver<'a> {
     /// it. Everywhere else the name has reduced to the type it
     /// abbreviates, so nothing is claimed and nothing need be checked.
     fn with_checks(&self, expr: CoreExpr, pat: &Pat, span: &Span) -> CoreExpr {
-        match self.claimed_type(pat) {
+        match self.claimed_type(pat, &expr.type_()) {
             Some(claimed) => self.checked(expr, &claimed, span),
             None => expr,
         }
@@ -686,10 +686,63 @@ impl<'a> Resolver<'a> {
     /// deduced. The two differ: inference gives the meet, which for a
     /// checked type is the type it abbreviates, so a deduced type has no
     /// condition left to check.
-    fn claimed_type(&self, pat: &Pat) -> Option<Type> {
+    fn claimed_type(&self, pat: &Pat, erased: &Type) -> Option<Type> {
         match &pat.kind {
             PatKind::Annotated(_, t) => self.claimed_ast_type(t),
-            PatKind::As(_, inner) => self.claimed_type(inner),
+            PatKind::As(_, inner) => self.claimed_type(inner, erased),
+            // A pattern that destructures claims per component: an
+            // annotation on one of them claims that one, and the rest
+            // claim nothing. The shape is the value's, not the
+            // pattern's, so that a record pattern which does not mention
+            // every field still lines up with the value.
+            PatKind::Tuple(pats) => {
+                let fields = types::record_fields(erased);
+                if pats.len() != fields.len() {
+                    return None;
+                }
+                let claims: Vec<Option<Type>> = pats
+                    .iter()
+                    .zip(fields.values())
+                    .map(|(p, t)| self.claimed_type(p, t))
+                    .collect();
+                if claims.iter().all(Option::is_none) {
+                    return None;
+                }
+                Some(Type::Tuple(
+                    claims
+                        .into_iter()
+                        .zip(fields.values())
+                        .map(|(c, t)| {
+                            Rc::new(c.unwrap_or_else(|| (**t).clone()))
+                        })
+                        .collect(),
+                ))
+            }
+            PatKind::Record(pat_fields, _) => {
+                let fields = types::record_fields(erased);
+                let mut claims: BTreeMap<String, Type> = BTreeMap::new();
+                for pat_field in pat_fields {
+                    let (label, p) = match pat_field {
+                        PatField::Labeled(_, name, p) => (name.clone(), p),
+                        PatField::Anonymous(_, p) => (implicit_label(p)?, p),
+                    };
+                    let t = fields.get(&Label::from(label.as_str()))?;
+                    if let Some(c) = self.claimed_type(p, t) {
+                        claims.insert(label, c);
+                    }
+                }
+                if claims.is_empty() {
+                    return None;
+                }
+                let mut map = BTreeMap::new();
+                for (label, t) in &fields {
+                    let claim = claims
+                        .remove(&label.to_string())
+                        .unwrap_or_else(|| (**t).clone());
+                    map.insert(label.clone(), Rc::new(claim));
+                }
+                Some(types::record_type(map))
+            }
             _ => None,
         }
     }
@@ -1008,7 +1061,37 @@ impl<'a> Resolver<'a> {
                 }
                 (!conditions.is_empty()).then(|| and_all(conditions))
             }
-            Type::List(elem) | Type::Bag(elem) => {
+            Type::List(elem) | Type::Bag(elem) => self.element_condition(
+                elem, erased, value, blame, span, walking, raising,
+            ),
+            // A vector's elements are walked like a collection's.
+            Type::Data(name, args) if name == "vector" && args.len() == 1 => {
+                self.element_condition(
+                    &args[0], erased, value, blame, span, walking, raising,
+                )
+            }
+            Type::Data(name, args) => self.datatype_condition(
+                name, args, erased, value, blame, span, walking, raising,
+            ),
+            _ => None,
+        }
+    }
+
+    /// A condition that holds if every element of a collection or vector
+    /// satisfies the element type's condition.
+    #[allow(clippy::too_many_arguments)]
+    fn element_condition(
+        &self,
+        elem: &Rc<Type>,
+        erased: &Rc<Type>,
+        value: &CoreExpr,
+        blame: &str,
+        span: &Span,
+        walking: &mut Vec<(String, String)>,
+        raising: bool,
+    ) -> Option<CoreExpr> {
+        {
+            {
                 if !self.has_check(elem) {
                     return None;
                 }
@@ -1016,6 +1099,9 @@ impl<'a> Resolver<'a> {
                 // condition, so the collection is walked.
                 let erased_elem = match erased.as_ref() {
                     Type::List(e) | Type::Bag(e) => e.clone(),
+                    Type::Data(n, args) if n == "vector" && args.len() == 1 => {
+                        args[0].clone()
+                    }
                     _ => return None,
                 };
                 let name = self.temp_name();
@@ -1039,11 +1125,14 @@ impl<'a> Resolver<'a> {
                     }],
                     span.clone(),
                 );
-                // A bag is walked by `Bag.all`, a list by `List.all`.
-                let all = if matches!(erased.as_ref(), Type::Bag(_)) {
-                    BuiltInFunction::BagAll
-                } else {
-                    BuiltInFunction::ListAll
+                // A bag is walked by `Bag.all`, a list by `List.all`,
+                // a vector by `Vector.all`.
+                let all = match erased.as_ref() {
+                    Type::Bag(_) => BuiltInFunction::BagAll,
+                    Type::Data(n, _) if n == "vector" => {
+                        BuiltInFunction::VectorAll
+                    }
+                    _ => BuiltInFunction::ListAll,
                 };
                 let all_t = Rc::new(Type::Fn(
                     predicate.type_(),
@@ -1061,10 +1150,6 @@ impl<'a> Resolver<'a> {
                     span.clone(),
                 ))
             }
-            Type::Data(name, args) => self.datatype_condition(
-                name, args, erased, value, blame, span, walking, raising,
-            ),
-            _ => None,
         }
     }
 
@@ -3298,12 +3383,11 @@ impl<'a> Resolver<'a> {
         // function value and fires however the function is called --
         // including from polymorphic code that knows nothing of the
         // checked type.
-        let Some(claimed) = self.claimed_type(&ast_match.pat) else {
+        let Some(claimed) = self.claimed_type(&ast_match.pat, &pat.type_())
+        else {
             return CoreMatch { pat, expr };
         };
-        let CorePat::Identifier(t, _) = &pat else {
-            return CoreMatch { pat, expr };
-        };
+        let t = &pat.type_();
         let span = Span::from_pest_span(
             &ast_match
                 .pat
@@ -4286,6 +4370,17 @@ fn type_moniker(claimed: &Type) -> String {
     }
 }
 
+/// The label an anonymous field of a record pattern gives its value:
+/// `{x, y}` names its fields `x` and `y`, and `{x: nat}` names its `x`.
+fn implicit_label(pat: &Pat) -> Option<String> {
+    match &pat.kind {
+        PatKind::Identifier(name) => Some(name.clone()),
+        PatKind::Annotated(inner, _) => implicit_label(inner),
+        PatKind::As(name, _) => Some(name.clone()),
+        _ => None,
+    }
+}
+
 /// What a component of a value is of: `field empno`, `component 2`.
 fn field_blame(record: &Type, label: &Label) -> String {
     match record {
@@ -4305,6 +4400,11 @@ fn append_blame(blame: &str, segment: &str) -> String {
         Some(field) => format!("{}.{}", blame, field),
         None => match segment.strip_prefix("component ") {
             Some(ordinal) => format!("{}.{}", blame, ordinal),
+            // An element is written as a subscript, so it joins what it
+            // is an element of without a space: `[_][_]`, `emps[_].sal`.
+            None if segment.starts_with('[') => {
+                format!("{}{}", blame, segment)
+            }
             None => format!("{} {}", blame, segment),
         },
     }
