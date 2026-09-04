@@ -82,22 +82,25 @@ fn visit_expr(
             Box::new(visit_expr(e2, map, shadow, selections)),
             s.clone(),
         ),
-        Expr::Apply(t, f, a, span)
+        Expr::Apply(t, f, a, span) => {
+            // A selection of the record on a slot that is being
+            // substituted, and not under a binding of the record's name,
+            // is replaced by what stands for that slot.
             if let Expr::RecordSelector(_, slot) = f.as_ref()
                 && let Expr::Identifier(_, n) = a.as_ref()
                 && n == selections.name
                 && !shadow.contains(n)
-                && let Some(replacement) = selections.slots.get(slot) =>
-        {
-            let _ = (t, span);
-            replacement.clone()
+                && let Some(replacement) = selections.slots.get(slot)
+            {
+                return replacement.clone();
+            }
+            Expr::Apply(
+                t.clone(),
+                Box::new(visit_expr(f, map, shadow, selections)),
+                Box::new(visit_expr(a, map, shadow, selections)),
+                span.clone(),
+            )
         }
-        Expr::Apply(t, f, a, span) => Expr::Apply(
-            t.clone(),
-            Box::new(visit_expr(f, map, shadow, selections)),
-            Box::new(visit_expr(a, map, shadow, selections)),
-            span.clone(),
-        ),
         Expr::Case(t, subject, arms, span) => Expr::Case(
             t.clone(),
             Box::new(visit_expr(subject, map, shadow, selections)),
