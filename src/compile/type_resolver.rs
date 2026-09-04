@@ -1476,11 +1476,12 @@ impl TypeResolver {
                 // on a declaration, gives an anonymous checked type. It
                 // has only its body and its conditions to be known by.
                 let inner = self.expand_ast_type(env, t, aliases, type_vars)?;
+                let checks = Checks::new(checks.clone());
                 Ok(Type::Alias(
-                    String::new(),
+                    checks.anon_name(),
                     Rc::new(inner),
                     vec![],
-                    Checks::new(checks.clone()),
+                    checks,
                 ))
             }
             TypeKind::Expression(expr) => {

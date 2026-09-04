@@ -201,8 +201,9 @@ pub enum Type {
     /// `type nat = int check i => i >= 0`.
     ///
     /// A checked type is erased. Its representation is that of the type
-    /// it abbreviates, and the condition does not survive
-    /// [`unalias`], so everything that examines a type structurally --
+    /// it abbreviates, and the condition does not survive the peeling
+    /// that reads a type structurally ([`crate::compile::postfix::peel_type`]
+    /// and the like), so everything that examines a type that way --
     /// choosing an overload, aggregating, printing -- behaves as it does
     /// for the base type. That is what makes widening free and
     /// narrowing checked.
@@ -368,12 +369,17 @@ impl Type {
                 // has only its body and its conditions to be written by,
                 // so it is written in full. A generated name begins with
                 // `$`, which a user cannot write.
-                if name.starts_with('$') {
-                    ty.describe(f, left, right)?;
-                    write!(f, "{}", checks)
-                } else {
-                    f.write_str(name)
+                if !name.starts_with('$') {
+                    return f.write_str(name);
                 }
+                const OP: Op = Op::CHECKED;
+                if left > OP.left || right > OP.right {
+                    write!(f, "(")?;
+                    self.describe(f, 0, 0)?;
+                    return write!(f, ")");
+                }
+                ty.describe(f, left, OP.left)?;
+                write!(f, "{}", checks)
             }
             Type::Bag(elem_type) => {
                 const OP: Op = Op::APPLY;
@@ -1003,8 +1009,9 @@ pub fn record_type(fields: BTreeMap<Label, Rc<Type>>) -> Type {
 ///
 /// A condition is part of the type's identity -- two checked types are
 /// the same type when their conditions are textually equal -- but it
-/// does not survive [`unalias`], so nothing that examines a type
-/// structurally sees it.
+/// does not survive the peeling that reads a type structurally
+/// ([`crate::compile::postfix::peel_type`] and the like), so nothing
+/// that examines a type that way sees it.
 #[derive(Clone, Debug, Default)]
 pub struct Checks {
     /// One [`crate::syntax::ast::ExprKind::Fn`] per clause. Read by

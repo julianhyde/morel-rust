@@ -949,11 +949,23 @@ impl<'a> Resolver<'a> {
                     // so nothing compiled its conditions when a
                     // declaration would have. Compile them here; they are
                     // in hand, on the type itself.
-                    None if name.starts_with(ANON_CHECK_PREFIX) => checks
-                        .fns
-                        .iter()
-                        .map(|f| self.make_total(self.resolve_expr(f), f))
-                        .collect(),
+                    //
+                    // Unless they were never deduced -- a condition
+                    // written inside a type declaration, on a field say,
+                    // is not yet -- and then there is nothing to compile
+                    // them from, so the condition is dropped.
+                    None if name.starts_with(ANON_CHECK_PREFIX)
+                        && checks
+                            .fns
+                            .iter()
+                            .all(|f| f.get_type(self.type_map).is_some()) =>
+                    {
+                        checks
+                            .fns
+                            .iter()
+                            .map(|f| self.make_total(self.resolve_expr(f), f))
+                            .collect()
+                    }
                     None => return None,
                 };
                 let own = if blame.is_empty() || !raising {
