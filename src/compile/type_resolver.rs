@@ -3386,6 +3386,10 @@ impl TypeResolver {
                     TypeKind::Id(name)
                         if self.type_aliases.contains_key(name) =>
                     {
+                        // A conversion is written on the operand's
+                        // result, so it stands where an operator dropped
+                        // a condition: `i - 1 as nat` is a `nat`.
+                        self.note_claim(&v_exp);
                         self.var_alias_map.insert(v_exp, name.clone());
                     }
                     _ => {
