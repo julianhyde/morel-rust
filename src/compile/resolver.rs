@@ -2239,13 +2239,16 @@ impl<'a> Resolver<'a> {
                 // However, if the identifier is locally bound (e.g.
                 // as a function parameter or let binding), the local
                 // binding shadows the built-in.
-                let is_shadowed =
-                    if let Some(local_type) = expr.get_type(self.type_map) {
-                        // If the local type differs from the built-in's
-                        // type, the identifier is shadowed by a local
-                        // binding. A simple heuristic: if the built-in
-                        // is a function type but the local type is not,
-                        // it's shadowed.
+                // A name the user has bound is the user's, whatever it
+                // is: `val not = fn b => true` declares a value of their
+                // own, and `not` afterwards means that one. Whether a
+                // reference is to the basis is decided by the binding,
+                // not by the name.
+                let is_shadowed = self.type_map.user_bindings.contains(name)
+                    || if let Some(local_type) = expr.get_type(self.type_map) {
+                        // A local binding of a basis name shadows it too.
+                        // This does not see one whose type is the same as
+                        // the built-in's, which the binding above does.
                         !matches!(local_type.as_ref(), Type::Fn(_, _))
                             && library::lookup(name).is_some()
                     } else {
