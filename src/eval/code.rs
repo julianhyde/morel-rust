@@ -457,6 +457,12 @@ pub struct CheckCode {
     pub blame: String,
     /// Where the claim is made.
     pub span: Span,
+    /// The datatypes in scope, so that the message can name a
+    /// constructor rather than give its ordinal. Shared, not copied:
+    /// every check in a program would otherwise carry its own.
+    pub constructor_arg_types: Rc<HashMap<String, Type>>,
+    /// See [`Self::constructor_arg_types`].
+    pub datatype_constructors: Rc<HashMap<String, Vec<String>>>,
     /// What the operator returns when the condition holds, and whether
     /// it raises when it does not.
     pub kind: CheckKind,
@@ -476,8 +482,8 @@ impl CheckCode {
             Prop::PrintDepth.default_value().as_int(),
             Prop::StringDepth.default_value().as_int(),
             0,
-            HashMap::new(),
-            HashMap::new(),
+            (*self.constructor_arg_types).clone(),
+            (*self.datatype_constructors).clone(),
         );
         let mut buf = String::new();
         let _ = pretty.pretty(&mut buf, &self.type_, value);

@@ -824,6 +824,12 @@ impl<'a> Compiler<'a> {
                             blame: blame.to_string(),
                             span: span.clone(),
                             kind,
+                            constructor_arg_types: Rc::new(
+                                self.type_map.constructor_arg_types.clone(),
+                            ),
+                            datatype_constructors: Rc::new(
+                                self.type_map.datatype_constructors.clone(),
+                            ),
                         }));
                     }
                     // For 1-arg functions (E1, EF1), always compile the

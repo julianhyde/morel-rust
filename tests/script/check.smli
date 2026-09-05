@@ -134,6 +134,58 @@ val pp2: partPair = (~1, 2);
 > uncaught exception Constraint [~1 is not a valid value: component 1]
 >   raised at: stdIn:1.5-1.28
 
+(* --- A condition that reaches through a datatype ---------------- *)
+
+(* A schema is a record of collections, and its condition may follow a
+ * datatype into another of them: every picture must refer to a row that
+ * exists. *)
+type emp = {empno: int, ename: string};
+> type emp = {empno:int, ename:string}
+type product = {sku: string, name: string};
+> type product = {name:string, sku:string}
+datatype ref = EMP of int | PRODUCT of string;
+> datatype ref = EMP of int | PRODUCT of string
+type picture = {ref: ref, bytes: word vector};
+> type picture = {bytes:word vector, ref:ref}
+
+type schema = {
+  emps: emp bag,
+  products: product bag,
+  pictures: picture bag
+}
+check s =>
+  forall p in s.pictures
+    require case p.ref of
+      EMP (empno) => (exists e in s.emps where e.empno = empno)
+    | PRODUCT (sku) => exists p in s.products where p.sku = sku;
+> type schema = {emps:emp bag, pictures:picture bag, products:product bag} check s => forall p in #pictures s require case #ref p of EMP empno => exists e in #emps s where #empno e = empno | PRODUCT sku => exists p in #products s where #sku p = sku
+
+(*) A schema whose every picture refers to a row that exists.
+val s0: schema = {
+  emps = bag [{empno = 1, ename = "Fred"}],
+  products = bag [{sku = "A1", name = "Anvil"}],
+  pictures = bag [{ref = EMP 1, bytes = Vector.fromList [0w1]},
+                  {ref = PRODUCT "A1", bytes = Vector.fromList [0w2]}]};
+> val s0 =
+>   {emps=[{empno=1,ename="Fred"}],
+>    pictures=[{bytes=#[0wx1],ref=EMP 1},{bytes=#[0wx2],ref=PRODUCT "A1"}],
+>    products=[{name="Anvil",sku="A1"}]} : schema
+
+(*) Adding a picture that refers to nothing breaks it.
+val sBadEmp: schema = {s0 replace pictures = from p in s0.pictures
+  union [{ref = EMP 99, bytes = Vector.fromList [0w3]}]};
+> uncaught exception Constraint [{emps=[{empno=1,ename="Fred"}],pictures=[{bytes=#[0wx1],ref=EMP 1},{bytes=#[0wx2],ref=PRODUCT "A1"},{bytes=#[0wx3],ref=EMP 99}],products=[{name="Anvil",sku="A1"}]} is not a valid schema]
+>   raised at: stdIn:1.23-2.57
+val sBadProduct: schema = {s0 replace pictures = from p in s0.pictures
+  union [{ref = PRODUCT "Z9", bytes = Vector.fromList [0w4]}]};
+> uncaught exception Constraint [{emps=[{empno=1,ename="Fred"}],pictures=[{bytes=#[0wx1],ref=EMP 1},{bytes=#[0wx2],ref=PRODUCT "A1"},{bytes=#[0wx4],ref=PRODUCT "Z9"}],products=[{name="Anvil",sku="A1"}]} is not a valid schema]
+>   raised at: stdIn:1.27-2.63
+
+(*) Deleting the employee breaks it from the other side.
+val sNoEmp: schema = {s0 replace emps = from e in s0.emps where e.empno <> 1};
+> uncaught exception Constraint [{emps=[],pictures=[{bytes=#[0wx1],ref=EMP 1},{bytes=#[0wx2],ref=PRODUCT "A1"}],products=[{name="Anvil",sku="A1"}]} is not a valid schema]
+>   raised at: stdIn:1.22-1.78
+
 (* --- A modifier inherits the record's own condition ------------- *)
 
 (* A modifier that changes the record's shape cannot claim its type, but the
