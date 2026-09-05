@@ -834,6 +834,14 @@ impl<'a> Resolver<'a> {
                     checks,
                 ))
             }
+            // `typeof e` names the type `e` was shown to have, conditions
+            // and all, so an annotation that writes it claims what that
+            // type claims.
+            TypeKind::Expression(expr) => self
+                .type_map
+                .decl_exp_types
+                .get(&expr.span.extent())
+                .cloned(),
             TypeKind::Id(name) => match self.type_map.type_aliases.get(name) {
                 Some(body) => Some(Type::Alias(
                     name.clone(),
@@ -990,13 +998,11 @@ impl<'a> Resolver<'a> {
                 if checks.is_empty() {
                     return inner;
                 }
-                let predicates = match self
-                    .type_map
-                    .check_predicates
-                    .borrow()
-                    .get(name)
-                    .cloned()
-                {
+                // The borrow ends here: compiling the conditions may
+                // register them, which borrows again.
+                let compiled =
+                    self.type_map.check_predicates.borrow().get(name).cloned();
+                let predicates = match compiled {
                     Some(predicates) => predicates,
                     // A checked type that has no name was never declared,
                     // so nothing compiled its conditions when a
@@ -1013,11 +1019,20 @@ impl<'a> Resolver<'a> {
                             .iter()
                             .all(|f| f.get_type(self.type_map).is_some()) =>
                     {
-                        checks
+                        let predicates: Vec<CoreExpr> = checks
                             .fns
                             .iter()
                             .map(|f| self.make_total(self.resolve_expr(f), f))
-                            .collect()
+                            .collect();
+                        // Keep them: a later statement that meets this
+                        // type again -- through `typeof`, say -- cannot
+                        // compile them, because the conditions were
+                        // deduced in this one.
+                        self.type_map
+                            .check_predicates
+                            .borrow_mut()
+                            .insert(name.clone(), predicates.clone());
+                        predicates
                     }
                     None => return None,
                 };

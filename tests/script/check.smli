@@ -69,6 +69,39 @@ val {x = ellipsisX: nat, ...} = {x = ~1, y = 2};
 > uncaught exception Constraint [~1 is not a valid nat: field x]
 >   raised at: stdIn:1.5-1.48
 
+(* --- 'typeof' names the type it was shown, conditions and all --- *)
+
+(* 'typeof e' names the type 'e' was shown to have, conditions and all, so an
+ * annotation that uses it claims what that type claims. *)
+val n: nat = 5;
+> val n = 5 : nat
+val fromTypeof: typeof n = 5;
+> val fromTypeof = 5 : nat
+val fromTypeofBad: typeof n = ~5;
+> uncaught exception Constraint [~5 is not a valid nat]
+>   raised at: stdIn:1.5-1.33
+(~5 : typeof n);
+> uncaught exception Constraint [~5 is not a valid nat]
+>   raised at: stdIn:1.1-1.16
+
+(*) The same, where what the expression claims has no name.
+val bounded = 5 check i => i < 100;
+> val bounded = 5 : int check i => i < 100
+val boundedOk: typeof bounded = 7;
+> val boundedOk = 7 : int check i => i < 100
+val boundedHigh: typeof bounded = 200;
+> uncaught exception Constraint [200 is not a valid value]
+>   raised at: stdIn:1.5-1.38
+
+(* A condition written on a 'typeof' is not supported. A condition is typed
+ * against its base, and the base has to be materialized to do that, which a
+ * 'typeof' cannot be at the point a type is converted. A 'typeof' in a type
+ * or datatype declaration does work, because there the expression it names
+ * can be deduced on its own. *)
+(5 : (typeof n check i => i < 100));
+> stdIn:1.7-1.15 Error: 'typeof' is not supported here
+>   raised at: stdIn:1.7-1.15
+
 (* --- Conditions on types that are not named --------------------- *)
 
 (* A type may carry a condition wherever it is written, not only where it is

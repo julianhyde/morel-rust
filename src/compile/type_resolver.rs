@@ -8696,6 +8696,22 @@ impl<'a> TypeToTermConverter<'a> {
                 // conditions the way a declared type's does; it is not a
                 // name anything can write, and the type displays as its
                 // body and its conditions.
+                // A condition is typed against its base, and the base has
+                // to be materialized to do that, which a `typeof` cannot
+                // be at the point a type is converted. One in a `type` or
+                // `datatype` declaration does work, because there the
+                // expression it names can be deduced on its own.
+                if matches!(t.kind, TypeKind::Expression(_)) {
+                    self.type_resolver.field_errors.borrow_mut().push((
+                        "'typeof' is not supported here".to_string(),
+                        t.span.trim_end(),
+                    ));
+                    return self.type_resolver.reg_type(
+                        &type_node.kind,
+                        &type_node.span,
+                        v,
+                    );
+                }
                 let v_inner = self.type_resolver.variable();
                 let inner = self.type_term(t, subst, &v_inner);
                 // A condition is a function from the type it constrains to
