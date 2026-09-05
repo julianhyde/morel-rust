@@ -196,17 +196,19 @@ val w0: whole = {i = 1, j = 2};
  * type. *)
 val y = 1;
 > val y = 1 : int
-(* TODO The condition should reach the binding: morel-java gives
- * 'val small = 2 : int check i => i < 100'. The type a term carries loses
- * a nameless alias where an expression is annotated, though a named one
- * survives, so the condition is checked but not displayed. *)
+(* TODO morel-java gives 'val small = 2 : int check i => i < 100'. An
+ * operator drops the condition of its operands, and the variable it
+ * drops it on is the one the condition written here lands on, so this
+ * condition is dropped with it. It is dropped for a named type too:
+ * '(y + 1) : positive' is an 'int' here and a 'positive' in morel-java.
+ * The condition is still checked; only the type displayed loses it. *)
 val small = y + 1 check i => i < 100;
 > val small = 2 : int
 val big = y + 1 check i => i < 2;
 > uncaught exception Constraint [2 is not a valid value]
 >   raised at: stdIn:1.11-1.33
 val nonEmpty = "ab" check s => String.size s > 1;
-> val nonEmpty = "ab" : string
+> val nonEmpty = "ab" : string check s => #size String s > 1
 
 (*) Arithmetic drops it, as it drops a named one: the meet is the body.
 val sum = small + 1;

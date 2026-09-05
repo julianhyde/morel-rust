@@ -965,6 +965,64 @@ impl Display for Subst {
     }
 }
 
+/// Collapses an alias of itself.
+///
+/// A type may reach the display carrying the same alias twice -- the
+/// term carries it, and the side table that says which variable the
+/// alias was written on says it again -- and `Alias(n, Alias(n, t))`
+/// means no more than `Alias(n, t)`. A name hides the repetition,
+/// because a named alias is written by its name; a nameless one does
+/// not, and would say its conditions once for every layer.
+pub fn collapse_aliases(type_: &Rc<Type>) -> Rc<Type> {
+    match type_.as_ref() {
+        Type::Alias(name, body, args, checks) => {
+            let body = collapse_aliases(body);
+            if let Type::Alias(name2, body2, args2, _) = body.as_ref()
+                && name2 == name
+                && args2 == args
+            {
+                return Rc::new(Type::Alias(
+                    name.clone(),
+                    body2.clone(),
+                    args.clone(),
+                    checks.clone(),
+                ));
+            }
+            Rc::new(Type::Alias(
+                name.clone(),
+                body,
+                args.clone(),
+                checks.clone(),
+            ))
+        }
+        Type::Bag(t) => Rc::new(Type::Bag(collapse_aliases(t))),
+        Type::Data(name, args) => Rc::new(Type::Data(
+            name.clone(),
+            args.iter().map(collapse_aliases).collect(),
+        )),
+        Type::Fn(a, b) => {
+            Rc::new(Type::Fn(collapse_aliases(a), collapse_aliases(b)))
+        }
+        Type::Forall(t, n) => Rc::new(Type::Forall(collapse_aliases(t), *n)),
+        Type::List(t) => Rc::new(Type::List(collapse_aliases(t))),
+        Type::Named(args, name) => Rc::new(Type::Named(
+            args.iter().map(collapse_aliases).collect(),
+            name.clone(),
+        )),
+        Type::Record(progressive, fields) => Rc::new(Type::Record(
+            *progressive,
+            fields
+                .iter()
+                .map(|(l, t)| (l.clone(), collapse_aliases(t)))
+                .collect(),
+        )),
+        Type::Tuple(types) => {
+            Rc::new(Type::Tuple(types.iter().map(collapse_aliases).collect()))
+        }
+        _ => type_.clone(),
+    }
+}
+
 /// Returns the fields of a record-like type -- a record, a tuple, or
 /// `unit` -- keyed by label.
 ///

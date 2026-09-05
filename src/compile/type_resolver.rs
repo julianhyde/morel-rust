@@ -426,13 +426,16 @@ impl TypeMap {
             // Check if this node's var has a top-level alias.
             if with_alias {
                 if let Some(alias_name) = self.var_alias_map.get(var) {
-                    return Some(Rc::new(Type::Alias(
-                        alias_name.clone(),
-                        type_,
-                        vec![],
-                        self.checks_of(alias_name),
+                    return Some(types::collapse_aliases(&Rc::new(
+                        Type::Alias(
+                            alias_name.clone(),
+                            type_,
+                            vec![],
+                            self.checks_of(alias_name),
+                        ),
                     )));
                 }
+                return Some(types::collapse_aliases(&type_));
             }
             return Some(type_);
         }
@@ -8730,6 +8733,7 @@ impl<'a> TypeToTermConverter<'a> {
                     Term::Variable(v_inner),
                     v,
                 );
+                self.type_resolver.var_alias_map.insert(*v, name.clone());
                 self.type_resolver.reg_type(
                     &TypeKind::Checked(Box::new(inner), deduced),
                     &type_node.span,
