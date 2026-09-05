@@ -1002,6 +1002,15 @@ pub struct TypeResolver {
     pub user_bindings: HashSet<String>,
     /// See [`TypeMap::claiming_records`].
     claiming_records: HashMap<(usize, usize), String>,
+    /// Variables an annotation claimed a type of after an operator had
+    /// dropped one. An operator drops the condition of its operands, and
+    /// the variable it drops it on is the one an annotation written on
+    /// the operator's result lands on; the two are told apart by which
+    /// came first. `fun decr (n: nat) = n - 1` annotates the parameter,
+    /// which is deduced before the body, so the drop stands; `(n - 1) :
+    /// nat` annotates the result, and its claim is not the operand's
+    /// condition being put back.
+    claimed_after_erasure: HashSet<Var>,
     /// Variables whose condition an operator dropped; see
     /// [`Self::erase_alias`]. An annotation that reaches the display
     /// through `var_alias_map` must not put back what the operator took
@@ -1767,6 +1776,7 @@ impl TypeResolver {
             check_predicates: Rc::new(RefCell::new(HashMap::new())),
             user_bindings: HashSet::new(),
             claiming_records: HashMap::new(),
+            claimed_after_erasure: HashSet::new(),
             erased_vars: Vec::new(),
             modifier_result_fields: HashMap::new(),
             datatype_arg_types: HashMap::new(),
@@ -2155,12 +2165,17 @@ impl TypeResolver {
                 Some(t) => erased_terms.contains(t),
                 None => false,
             };
-            type_map.var_alias_map.retain(|w, _| !erased(w));
+            let claimed = &self.claimed_after_erasure;
+            type_map
+                .var_alias_map
+                .retain(|w, _| claimed.contains(w) || !erased(w));
             // The term the annotation was written with wins over the
             // substitution, which is what makes `val n: nat = 5` a
             // `nat`; here it would put back a condition the operator
             // dropped.
-            type_map.var_pre_term_map.retain(|w, _| !erased(w));
+            type_map
+                .var_pre_term_map
+                .retain(|w, _| claimed.contains(w) || !erased(w));
         }
 
         // Extract bindings from the declaration
@@ -7240,6 +7255,16 @@ impl TypeResolver {
         self.actions.push((*v, Rc::new(EraseAlias)));
     }
 
+    /// Records that an annotation claimed a type of `v`. If an operator
+    /// had already dropped a condition on `v`, the claim is written on
+    /// the operator's result and stands; see
+    /// [`Self::claimed_after_erasure`].
+    fn note_claim(&mut self, v: &Var) {
+        if self.erased_vars.contains(v) {
+            self.claimed_after_erasure.insert(*v);
+        }
+    }
+
     /// The name a variable's type is displayed under, if it is an
     /// alias.
     ///
@@ -8749,6 +8774,7 @@ impl<'a> TypeToTermConverter<'a> {
                     Term::Variable(v_inner),
                     v,
                 );
+                self.type_resolver.note_claim(v);
                 self.type_resolver.var_alias_map.insert(*v, name.clone());
                 self.type_resolver.reg_type(
                     &TypeKind::Checked(Box::new(inner), deduced),
@@ -8863,6 +8889,7 @@ impl<'a> TypeToTermConverter<'a> {
                     // unification; this side table still carries it where
                     // the alias is on the expression, and the pattern's
                     // own variable never holds an alias term.
+                    self.type_resolver.note_claim(v);
                     self.type_resolver.var_alias_map.insert(*v, name.clone());
                     return self.type_resolver.reg_type(
                         &type_node.kind,
