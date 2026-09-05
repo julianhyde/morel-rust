@@ -2094,6 +2094,19 @@ impl<'a> Resolver<'a> {
                     }
                 }
             }
+            ExprKind::Check(e, checks) => {
+                // A condition written on an expression is a claim, like
+                // an ascription, so it is checked where it is written.
+                let checks = Checks::new(checks.clone());
+                let value = self.resolve_expr(e);
+                let claimed = Type::Alias(
+                    checks.anon_name(),
+                    value.type_(),
+                    vec![],
+                    checks,
+                );
+                self.checked(value, &claimed, &span)
+            }
             ExprKind::Cons(a0, a1) => {
                 self.call2(t, BuiltInFunction::ListCons, &span, a0, a1)
             }

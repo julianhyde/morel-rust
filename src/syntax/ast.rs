@@ -358,6 +358,12 @@ pub enum ExprKind<SubExpr> {
 
     // Type annotation
     Annotated(Box<SubExpr>, Box<Type>),
+    /// `Check(e, conditions)` is `e check m`: the expression `e`, at a
+    /// type that is `e`'s own with those conditions added. It claims
+    /// them, so they are checked, and the type it gives back carries
+    /// them -- the counterpart of `as` for a type that is not named.
+    Check(Box<SubExpr>, Vec<Expr>),
+
     /// `Cast(kind, e, t)` converts a value to a type whose conditions
     /// may not hold of it: `e as t` raises `Constraint` if they do not,
     /// `e asOpt t` answers `NONE`.
@@ -406,6 +412,7 @@ impl ExprKind<Expr> {
             ExprKind::Caret(..) => Op::CARET,
             ExprKind::Case(..) => Op::LOW_EXPR,
             ExprKind::Cast(..) => Op::ANNOTATED_EXP,
+            ExprKind::Check(..) => Op::CHECK_EXP,
             ExprKind::Compose(..) => Op::COMPOSE,
             ExprKind::Cons(..) => Op::CONS,
             ExprKind::Current => Op::ATOM,
@@ -498,6 +505,16 @@ impl ExprKind<Expr> {
                 write_sub(f, e, left, op.left)?;
                 write!(f, " {} ", kind)?;
                 write!(f, "{}", typ)
+            }
+            ExprKind::Check(e, checks) => {
+                let op = Op::CHECK_EXP;
+                if left > op.left || right > op.right {
+                    f.write_str("(")?;
+                    self.unparse(f, 0, 0)?;
+                    return f.write_str(")");
+                }
+                write_sub(f, e, left, op.left)?;
+                f.write_str(&checks_text(checks))
             }
             ExprKind::Compose(a0, a1) => {
                 infix(f, a0, Op::COMPOSE, a1, left, right)

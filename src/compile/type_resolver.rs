@@ -3412,6 +3412,40 @@ impl TypeResolver {
                 let x = ExprKind::Cast(*kind, Box::new(e2), Box::new(t2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
+            ExprKind::Check(e, checks) => {
+                // The type is the expression's own, with these
+                // conditions added.
+                //
+                // A condition is typed against the type the expression's
+                // conditions are typed against -- the type they
+                // abbreviate -- because typing it against a checked type
+                // would make the alias meet its body, and the meet would
+                // take away the condition that made it one.
+                let v_e = self.variable();
+                let e2 = self.deduce_expr_type(env, e, &v_e)?;
+                let mut deduced = Vec::with_capacity(checks.len());
+                for check in checks {
+                    let v_bool = self.variable();
+                    self.primitive_term(&PrimitiveType::Bool, &v_bool);
+                    let v_cond = self.variable();
+                    self.fn_term(&v_e, &v_bool, &v_cond);
+                    deduced.push(self.deduce_expr_type(env, check, &v_cond)?);
+                }
+                let checks2 = Checks::new(deduced.clone());
+                let name = checks2.anon_name();
+                self.type_checks.insert(name.clone(), checks2);
+                // The alias goes on the variable, not into the term: a
+                // type inference deduces is not a claim, so a condition
+                // written on an expression is seen where it was written
+                // and does not travel into a type built around it. `fn i
+                // => (i check j => j > 0)` is an `int -> int`, and
+                // `[1 check c => c > 0]` an `int list`.
+                self.equiv(&Term::Variable(v_e), v);
+                self.note_claim(v);
+                self.var_alias_map.insert(*v, name);
+                let x = ExprKind::Check(Box::new(e2), deduced);
+                self.reg_expr(&x, &expr.span, expr.id, v)
+            }
             ExprKind::Cons(left, right) => {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op ::", left, right, v)?;

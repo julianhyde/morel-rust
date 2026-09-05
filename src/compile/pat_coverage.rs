@@ -540,6 +540,12 @@ fn visit_expr(
             }
         }
 
+        ExprKind::Check(e, checks) => {
+            visit_expr(e, type_map, warnings)?;
+            for c in checks {
+                visit_expr(c, type_map, warnings)?;
+            }
+        }
         ExprKind::Fn(matches) => {
             if !matches.is_empty() {
                 check_matches(matches, &expr.span, type_map, warnings)?;

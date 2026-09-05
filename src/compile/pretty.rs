@@ -759,7 +759,7 @@ impl Pretty {
                     return parenthesize(self.type_doc(type_ref, 0, 0));
                 }
                 beside(
-                    self.type_doc(inner, left, Op::CHECKED.left),
+                    self.type_doc(inner, left, Op::CHECKED.right),
                     text(&checks.to_string()),
                 )
             }

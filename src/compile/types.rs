@@ -378,7 +378,7 @@ impl Type {
                     self.describe(f, 0, 0)?;
                     return write!(f, ")");
                 }
-                ty.describe(f, left, OP.left)?;
+                ty.describe(f, left, OP.right)?;
                 write!(f, "{}", checks)
             }
             Type::Bag(elem_type) => {
@@ -727,6 +727,11 @@ impl Op {
     /// The list operator has a low precedence. An example is `(int, string)`
     /// that appears before the type application `(int, string) tree`.
     pub const LIST: Op = Op::bracketed(8, "(", ",", ")", true);
+
+    /// `e check m`: a condition written on an expression. It binds as
+    /// loosely as an annotation, and the condition extends as far right
+    /// as it can, so anything tighter that follows is part of it.
+    pub const CHECK_EXP: Op = Op::left_assoc(0, " check ");
 
     /// A `check` condition binds more loosely than anything else in a type,
     /// because a condition is an expression and extends as far right as it

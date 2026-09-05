@@ -206,6 +206,10 @@ fn test_each_expr_kind() {
     k.check_kind("1 as int");
     k.check_kind("1 asOpt int");
 
+    // A condition written on an expression.
+    k.check_kind("1 check c => c > 0");
+    k.check_kind("1 check c => c > 0 check c => c < 9");
+
     // Control flow: if, case, let, fn, raise.
     k.check_kind("if x then 1 else 2");
     k.check_kind("case x of 1 => \"a\" | _ => \"b\"");

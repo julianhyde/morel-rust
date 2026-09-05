@@ -2579,21 +2579,24 @@ fn converted(
 
 /// An expression with `check` conditions written on it.
 ///
-/// A condition may be written on an expression as it may on a type. The
-/// type it claims is the one inference gives the expression, and the
-/// conditions written here; so it is an annotation whose type is a type
-/// variable that appears nowhere else, and unifies with whatever the
-/// expression turns out to be. The variable is named for where the
-/// conditions were written, which is unique within a statement, so that
-/// two such expressions are not forced to have one type.
+/// The conditions belong to the expression, all of them: nesting them
+/// would put each in the type of the last, and only the last would be
+/// seen.
 fn checked_exp(e: Expr, checks: Vec<Expr>) -> Expr {
     if checks.is_empty() {
         return e;
     }
     let span = e.span.union(&checks[checks.len() - 1].span).trim_end();
-    let var = TypeKind::Var(format!("$c{}", span.start_pos())).spanned(&span);
-    let type_ = TypeKind::Checked(Box::new(var), checks).spanned(&span);
-    ExprKind::Annotated(Box::new(e), Box::new(type_)).spanned(&span)
+    // Several conditions belong to one expression, however they were
+    // written: '(e check c1) check c2' says what 'e check c1 check c2'
+    // says. Nesting them would put each in the type of the last, and
+    // only the last would be seen.
+    if let ExprKind::Check(inner, inner_checks) = e.kind {
+        let mut all = inner_checks;
+        all.extend(checks);
+        return ExprKind::Check(inner, all).spanned(&span);
+    }
+    ExprKind::Check(Box::new(e), checks).spanned(&span)
 }
 
 /// Given quoted identifier `abc` returns abc. Converts any

@@ -29,7 +29,7 @@
 use crate::syntax::ast::{
     Attribute, AttributePayload, Decl, DeclKind, Expr, ExprKind, LabeledExpr,
     Literal, LiteralKind, Match, Pat, PatField, PatKind, RangeItem, Statement,
-    StatementKind, Type, TypeKind, ValBind,
+    StatementKind, Type, TypeKind, ValBind, checks_text,
 };
 
 /// Returns an S-expression dump of the statement. Wraps with
@@ -111,6 +111,12 @@ fn dump_expr_kind(b: &mut String, e: &ExprKind<Expr>) {
             dump_expr(b, e);
             b.push(' ');
             dump_type(b, t);
+            b.push(')');
+        }
+        ExprKind::Check(e, checks) => {
+            b.push_str("(check_exp ");
+            b.push_str(&format!("{}", e));
+            b.push_str(&checks_text(checks));
             b.push(')');
         }
         ExprKind::Compose(a, c) => infix(b, "compose", a, c),
