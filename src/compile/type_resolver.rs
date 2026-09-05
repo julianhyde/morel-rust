@@ -1010,6 +1010,12 @@ pub struct TypeResolver {
     pub user_bindings: HashSet<String>,
     /// See [`TypeMap::claiming_records`].
     claiming_records: HashMap<(usize, usize), String>,
+    /// Whether a node being deduced should be given a fresh id even if
+    /// it has one. A condition carried over from another statement was
+    /// deduced there, and its ids are that statement's; reusing them
+    /// here would overwrite what this statement's own nodes recorded
+    /// under the same numbers.
+    fresh_ids: bool,
     /// Variables an annotation claimed a type of after an operator had
     /// dropped one. An operator drops the condition of its operands, and
     /// the variable it drops it on is the one an annotation written on
@@ -1785,6 +1791,7 @@ impl TypeResolver {
             user_bindings: HashSet::new(),
             claiming_records: HashMap::new(),
             claimed_after_erasure: HashSet::new(),
+            fresh_ids: false,
             erased_vars: Vec::new(),
             modifier_result_fields: HashMap::new(),
             datatype_arg_types: HashMap::new(),
@@ -7306,9 +7313,11 @@ impl TypeResolver {
     /// condition that is dropped claims less, which is sound.
     fn inherited_checks(
         &mut self,
+        env: &dyn TypeEnv,
         operands: &Operands,
         carried: &BTreeMap<String, String>,
         new_fields: &BTreeMap<Label, Var>,
+        v_rec: &Var,
     ) -> (Vec<Expr>, Vec<CoreExpr>) {
         let none = || (Vec::new(), Vec::new());
         let Some(name) = self.alias_name_of(&operands.variables[0]) else {
@@ -7355,6 +7364,31 @@ impl TypeResolver {
             }
             surviving.push(slot);
         }
+        // A condition written by destructuring is rewritten to select
+        // instead, so that it holds of a record with fields its pattern
+        // does not mention. Otherwise whether a condition could be
+        // inherited would depend on how it happened to be written.
+        //
+        // The rewrite is deduced here, against the record's own
+        // variable, so its nodes have types; it has no compiled form
+        // yet, and `Resolver` makes one where it meets it. Only a type
+        // with one condition is rewritten: a compiled condition and a
+        // rewritten one cannot be carried in the same list.
+        if checks.fns.len() == 1
+            && let Some(f) = self.destructured_check(&checks.fns[0], carried)
+        {
+            let v_bool = self.variable();
+            self.primitive_term(&PrimitiveType::Bool, &v_bool);
+            let v_cond = self.variable();
+            self.fn_term(v_rec, &v_bool, &v_cond);
+            self.fresh_ids = true;
+            let deduced = self.deduce_expr_type(env, &f, &v_cond);
+            self.fresh_ids = false;
+            return match deduced {
+                Ok(f2) => (vec![f2], Vec::new()),
+                Err(_) => none(),
+            };
+        }
         checks
             .fns
             .iter()
@@ -7362,6 +7396,68 @@ impl TypeResolver {
             .filter(|(_, predicate)| selects_only(predicate, &surviving))
             .map(|(f, p)| (f.clone(), p.clone()))
             .unzip()
+    }
+
+    /// A condition written by destructuring -- `{i, j} => i mod 2 = j mod
+    /// 2` -- rewritten to select from the record instead:
+    ///
+    /// ```sml
+    /// $r => let val i = #i $r and j = #j $r in i mod 2 = j mod 2 end
+    /// ```
+    ///
+    /// Returns none if the condition is not of that shape, or if a field
+    /// the pattern names was not carried over under its own name, or if a
+    /// sub-pattern is refutable -- one that decides by not matching,
+    /// where a `val` that does not match raises `Bind` rather than
+    /// answering false.
+    fn destructured_check(
+        &self,
+        f: &Expr,
+        carried: &BTreeMap<String, String>,
+    ) -> Option<Expr> {
+        let ExprKind::Fn(matches) = &f.kind else {
+            return None;
+        };
+        let [m] = matches.as_slice() else {
+            return None;
+        };
+        let PatKind::Record(fields, false) = &m.pat.kind else {
+            return None;
+        };
+        let span = &m.pat.span;
+        let record = ExprKind::Identifier(RECORD.to_string()).spanned(span);
+        let mut binds = Vec::new();
+        for field in fields {
+            let (label, pat) = match field {
+                PatField::Labeled(_, name, pat) => (name.clone(), pat),
+                PatField::Anonymous(_, pat) => (pat_name(pat)?, pat),
+            };
+            if !matches!(pat.kind, PatKind::Identifier(_) | PatKind::Wildcard) {
+                return None;
+            }
+            if carried.get(&label) != Some(&label) {
+                return None;
+            }
+            let selector = ExprKind::RecordSelector(label).spanned(span);
+            let select =
+                ExprKind::Apply(Box::new(selector), Box::new(record.clone()))
+                    .spanned(span);
+            binds.push(ValBind::of(pat, None, &select));
+        }
+        let body = if binds.is_empty() {
+            // The pattern binds nothing, so the condition does not
+            // depend on any field and holds of any record.
+            m.expr.clone()
+        } else {
+            let decl = Decl {
+                kind: DeclKind::Val(false, false, binds),
+                span: span.clone(),
+                id: None,
+            };
+            ExprKind::Let(vec![decl], Box::new(m.expr.clone())).spanned(span)
+        };
+        let pat = PatKind::Identifier(RECORD.to_string()).spanned(span);
+        Some(ExprKind::Fn(vec![Match { pat, expr: body }]).spanned(&f.span))
     }
 
     /// The conditions of the checked type `name`, or none if the name
@@ -7657,22 +7753,28 @@ impl TypeResolver {
             // with the name. One is carried over if every field it
             // depends on was left alone; the result is a checked type
             // that has no name.
+            // The record's own variable is made first: a condition that
+            // has to be rewritten is deduced against it.
+            let v_rec = self.variable();
+            self.record_term(&terms, &v_rec);
             let (inherited, predicates) =
-                self.inherited_checks(operands, &carried, &fields);
+                self.inherited_checks(env, operands, &carried, &fields, &v_rec);
             if inherited.is_empty() {
                 self.record_term(&terms, v);
             } else {
-                let v_rec = self.variable();
-                self.record_term(&terms, &v_rec);
                 let checks = Checks::new(inherited);
                 let name = checks.anon_name();
                 self.type_checks.insert(name.clone(), checks);
                 // The compiled conditions go under the new name too: a
                 // condition is compiled where its type is declared, and
-                // this type is not declared anywhere.
-                self.check_predicates
-                    .borrow_mut()
-                    .insert(name.clone(), predicates);
+                // this type is not declared anywhere. A rewritten one has
+                // none yet -- it was deduced just now, and `Resolver`
+                // compiles it where it meets it.
+                if !predicates.is_empty() {
+                    self.check_predicates
+                        .borrow_mut()
+                        .insert(name.clone(), predicates);
+                }
                 self.alias_term(&name, Term::Variable(v_rec), v);
             }
         }
@@ -7926,7 +8028,10 @@ impl TypeResolver {
         id: Option<i32>,
         v: &Var,
     ) -> Expr {
-        let id2 = id.unwrap_or_else(|| self.next_id());
+        let id2 = match id {
+            Some(id) if !self.fresh_ids => id,
+            _ => self.next_id(),
+        };
         self.node_var_map.insert(id2, *v);
         Expr {
             kind: kind.clone(),
@@ -7944,7 +8049,10 @@ impl TypeResolver {
         id: Option<i32>,
         v: &Var,
     ) -> Pat {
-        let id2 = id.unwrap_or_else(|| self.next_id());
+        let id2 = match id {
+            Some(id) if !self.fresh_ids => id,
+            _ => self.next_id(),
+        };
         self.node_var_map.insert(id2, *v);
         Pat {
             kind: kind.clone(),
@@ -9198,6 +9306,20 @@ impl Operands {
     /// Whether every operand's field names are known.
     fn complete(&self) -> bool {
         self.names.iter().all(Option::is_some)
+    }
+}
+
+/// The name a condition's record is rebound to when it is rewritten to
+/// select rather than destructure. It begins with `$`, which no user
+/// name may, so it cannot capture anything the condition already names.
+const RECORD: &str = "$r";
+
+/// The name a pattern binds, if it binds exactly one.
+fn pat_name(pat: &Pat) -> Option<String> {
+    match &pat.kind {
+        PatKind::Identifier(name) => Some(name.clone()),
+        PatKind::As(name, _) => Some(name.clone()),
+        _ => None,
     }
 }
 

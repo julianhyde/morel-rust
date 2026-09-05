@@ -95,6 +95,11 @@ pub fn resolve_with_session_fns_rec(
     rec_session_fns: &expander::FnEnv,
 ) -> (CoreDecl, expander::FnEnv, Vec<(String, Span)>) {
     let resolver = Resolver::new(&resolved.type_map, resolved.base_line);
+    // A checked type that has no name may have been made in this very
+    // statement -- a record modifier gives one -- and its conditions were
+    // deduced here, so here is where they can be compiled. A later
+    // statement that meets the type again could not.
+    resolver.register_anon_checks();
     let pre_decl = resolver.resolve_decl(&resolved.decl);
     let mut pre_fn_env = expander::FnEnv::new();
     expander::collect_session_fn_bindings(&pre_decl, &mut pre_fn_env);
@@ -3339,6 +3344,46 @@ impl<'a> Resolver<'a> {
             type_: core_type,
             checks,
         }
+    }
+
+    /// Compiles the conditions of every checked type that has no name
+    /// and was made in this statement, so that a later statement which
+    /// meets the type again finds them ready.
+    fn register_anon_checks(&self) {
+        let names: Vec<String> = self
+            .type_map
+            .type_checks
+            .keys()
+            .filter(|name| name.starts_with(ANON_CHECK_PREFIX))
+            .cloned()
+            .collect();
+        for name in names {
+            let checks = self.type_map.checks_of(&name);
+            self.register_checks(&name, &checks);
+        }
+    }
+
+    /// Compiles the conditions of a checked type that has no name, if
+    /// they were deduced in this statement and are not compiled already.
+    fn register_checks(&self, name: &str, checks: &Checks) {
+        if checks.is_empty()
+            || self.type_map.check_predicates.borrow().contains_key(name)
+            || !checks
+                .fns
+                .iter()
+                .all(|f| f.get_type(self.type_map).is_some())
+        {
+            return;
+        }
+        let predicates = checks
+            .fns
+            .iter()
+            .map(|f| self.make_total(self.resolve_expr(f), f))
+            .collect();
+        self.type_map
+            .check_predicates
+            .borrow_mut()
+            .insert(name.to_string(), predicates);
     }
 
     /// Compiles the conditions of every checked type that has no name

@@ -250,20 +250,25 @@ val s1 = {s0 extend a = 0};
 {s1 replace b = 20};
 > val it = {a=0,b=20,c=2} : {a:int, b:int, c:int}
 
-(* TODO A condition written by destructuring should be rewritten to select
- * instead, so that it holds of a record with fields its pattern does not
- * mention: morel-java gives '$r => let val i = #i $r and j = #j $r in
- * i mod 2 = j mod 2 end'. That rewrite needs the written form walked too. *)
+(* A condition written by destructuring is rewritten to select instead, so
+ * that it holds of a record with fields its pattern does not mention.
+ * Otherwise whether a condition could be inherited would depend on how it
+ * happened to be written. *)
 type parity = {i: int, j: int} check {i, j} => i mod 2 = j mod 2;
 > type parity = {i:int, j:int} check {i = i, j = j} => i mod 2 = j mod 2
 val p0: parity = {i = 2, j = 4};
 > val p0 = {i=2,j=4} : parity
 val p1 = {p0 extend k = 1};
-> val p1 = {i=2,j=4,k=1} : {i:int, j:int, k:int}
+> val p1 = {i=2,j=4,k=1}
+>   : {i:int, j:int,
+>       k:int} check $r => let val i = #i $r and j = #j $r in i mod 2 = j mod 2 end
 {p1 replace i = 4};
-> val it = {i=4,j=4,k=1} : {i:int, j:int, k:int}
+> val it = {i=4,j=4,k=1}
+>   : {i:int, j:int,
+>       k:int} check $r => let val i = #i $r and j = #j $r in i mod 2 = j mod 2 end
 {p1 replace i = 3};
-> val it = {i=3,j=4,k=1} : {i:int, j:int, k:int}
+> uncaught exception Constraint [{i=3,j=4,k=1} is not a valid value]
+>   raised at: stdIn:1.1-1.19
 
 (* A condition that uses the record as a whole, rather than by selecting
  * fields from it, is dropped: a record of another shape is not that record. *)
