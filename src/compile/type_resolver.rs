@@ -59,9 +59,9 @@ use crate::syntax::ast::{
 };
 use crate::syntax::parser;
 use crate::unify::unifier::{
-    ALIAS_PREFIX, Action, COLLECTION_OP_NAME, Constraint, ConstraintAction,
-    NullTracer, ORDERED_OP_NAME, Op, OpDef, Sequence, Substitution, Term,
-    UNORDERED_OP_NAME, Unifier, Var,
+    ALIAS_PREFIX, ANON_CHECK_PREFIX, Action, COLLECTION_OP_NAME, Constraint,
+    ConstraintAction, NullTracer, ORDERED_OP_NAME, Op, OpDef, Sequence,
+    Substitution, Term, UNORDERED_OP_NAME, Unifier, Var,
 };
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -876,6 +876,14 @@ impl<'a> TermToTypeConverter<'a> {
         let v_term = self.resolve_to_concrete(v);
         for (alias_var, name) in &self.type_map.var_alias_map {
             if alias_var == v {
+                continue;
+            }
+            // A checked type that has no name is known by its
+            // conditions, not by its shape, so another variable that
+            // happens to erase to the same thing is not that type.
+            // `fn i => (i check j => j > 0)` is an `int -> int`: the
+            // condition is a claim about the body, not about `i`.
+            if name.starts_with(ANON_CHECK_PREFIX) {
                 continue;
             }
             let alias_term = self.resolve_to_concrete(alias_var);

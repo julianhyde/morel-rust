@@ -293,6 +293,23 @@ val nonEmpty = "ab" check s => String.size s > 1;
 val sum = small + 1;
 > val sum = 3 : int
 
+(* The same rule means an expression-level condition inside a match must be
+ * parenthesized, since otherwise the match would have ended. *)
+val guarded = (fn i => (i check j => j > 0)) 3;
+> val guarded = 3 : int
+val guardedBad = (fn i => (i check j => j > 0)) ~3;
+> uncaught exception Constraint [~3 is not a valid value]
+>   raised at: stdIn:1.27-1.47
+
+(* Several conditions belong to one expression, as they do to one type
+ * declaration. Nesting them would put each in the type of the last, and only
+ * the last would be seen. *)
+val twiceChecked = y + 1 check i => i > 0 check i => i < 100;
+> val twiceChecked = 2 : int check i => i > 0 check i => i < 100
+val failsFirst = y + 1 check i => i > 5 check i => i < 100;
+> uncaught exception Constraint [2 is not a valid value]
+>   raised at: stdIn:1.18-1.59
+
 (* A condition binds more loosely than anything else in a type, so it is
  * parenthesized wherever it is not the whole type. *)
 fun keepSmall (n: (int check i => i < 100)) = n;
