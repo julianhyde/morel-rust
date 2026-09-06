@@ -5489,7 +5489,7 @@ impl TypeResolver {
             let v_rec = self.variable();
             let v_field = self.variable();
             self.deduce_record_selector_type(
-                env, name, &arg.span, &v_rec, &v_field,
+                env, name, &arg.span, &arg.span, &v_rec, &v_field,
             );
             self.fn_term(&v_rec, &v_field, &v_arg);
             self.reg_expr(&arg.kind, &arg.span, arg.id, &v_arg)
@@ -5503,7 +5503,9 @@ impl TypeResolver {
             // "arg" has type "v_arg".
             // When we resolve "v_arg", we can then deduce "v".
             let span = fun.span.union(&arg.span);
-            self.deduce_record_selector_type(env, name, &span, &v_arg, v_result)
+            self.deduce_record_selector_type(
+                env, name, &span, &fun.span, &v_arg, v_result,
+            )
         } else if let ExprKind::SafeRecordSelector(name) = &fun.kind {
             // Safe navigation "arg?.field": tunnel through the receiver's
             // functor layers (option, list, bag, vector) to the record,
@@ -5836,6 +5838,7 @@ impl TypeResolver {
         _env: &dyn TypeEnv,
         field_name: &str,
         span: &Span,
+        field_span: &Span,
         v_rec: &Var,
         v_field: &Var,
     ) -> Expr {
@@ -5845,6 +5848,10 @@ impl TypeResolver {
 
         struct ActionImpl {
             field_name: String,
+            /// Where the field was named. A record that has no such
+            /// field is at fault in the name, not in the whole
+            /// selection.
+            field_span: Span,
             v_field: Var,
             errors: Rc<RefCell<Vec<(String, Span)>>>,
             span: Span,
@@ -5928,13 +5935,14 @@ impl TypeResolver {
                                 format!(
                                     "no field '{}' in type '{}'",
                                     self.field_name,
-                                    TypeResolver::type_name(
+                                    TypeResolver::type_name_of(
                                         op_defs,
+                                        substitution,
                                         sequence,
                                         &field_list,
                                     )
                                 ),
-                                self.span.clone(),
+                                self.field_span.clone(),
                             ));
                         }
                     }
@@ -6035,6 +6043,7 @@ impl TypeResolver {
             *v_rec,
             Rc::new(ActionImpl {
                 field_name: field_name.to_string(),
+                field_span: field_span.clone(),
                 v_field: *v_field,
                 errors: self.field_errors.clone(),
                 span: span.clone(),
@@ -7243,6 +7252,90 @@ impl TypeResolver {
 
     /// Inverse of [TypeResolver::record_label_from_set]. Extracts field names
     /// from a sequence.
+    /// Renders a term as a Morel type, for a message.
+    ///
+    /// A term names a type by an operator whose name is an internal one
+    /// -- `$collection` for a collection whose orderedness is not
+    /// settled, `record:a:b` for a record -- so it is written out rather
+    /// than named. A variable is resolved through the substitution; one
+    /// that resolves to nothing is written `'a`, having nothing else to
+    /// be written by.
+    fn term_type_name(
+        op_defs: &[OpDef],
+        substitution: &Substitution,
+        term: &Term,
+    ) -> String {
+        let term = substitution.resolve_term(term);
+        let Term::Sequence(seq) = &term else {
+            return "'a".to_string();
+        };
+        let arg = |i: usize| {
+            Self::term_type_name(op_defs, substitution, &seq.terms[i])
+        };
+        let op_name = &op_defs[seq.op.0 as usize].name;
+        // An alias is transparent here: a message says what the type is,
+        // and the name it was written under is not what the reader is
+        // being told about.
+        if op_name.starts_with(ALIAS_PREFIX) && seq.terms.len() == 1 {
+            return arg(0);
+        }
+        if let Some(fields) = Self::field_list(op_defs, seq) {
+            return Self::type_name_of(op_defs, substitution, seq, &fields);
+        }
+        match op_name.as_str() {
+            COLLECTION_OP_NAME if seq.terms.len() == 2 => {
+                // A collection is a bag until something decides
+                // otherwise, so it is written exactly as one.
+                let ordered = matches!(
+                    &substitution.resolve_term(&seq.terms[1]),
+                    Term::Sequence(o)
+                        if op_defs[o.op.0 as usize].name == ORDERED_OP_NAME
+                );
+                format!("{} {}", arg(0), if ordered { "list" } else { "bag" })
+            }
+            "fn" if seq.terms.len() == 2 => {
+                format!("{} -> {}", arg(0), arg(1))
+            }
+            _ if seq.terms.is_empty() => op_name.clone(),
+            _ if seq.terms.len() == 1 => format!("{} {}", arg(0), op_name),
+            _ => {
+                let args: Vec<String> = (0..seq.terms.len()).map(arg).collect();
+                format!("({}) {}", args.join(","), op_name)
+            }
+        }
+    }
+
+    /// Renders a record or tuple term as a Morel type, for a message.
+    fn type_name_of(
+        op_defs: &[OpDef],
+        substitution: &Substitution,
+        sequence: &Sequence,
+        field_list: &[String],
+    ) -> String {
+        let is_tuple = field_list.len() >= 2
+            && field_list
+                .iter()
+                .enumerate()
+                .all(|(i, l)| l == &(i + 1).to_string());
+        let parts: Vec<String> = field_list
+            .iter()
+            .zip(sequence.terms.iter())
+            .map(|(label, term)| {
+                let t = Self::term_type_name(op_defs, substitution, term);
+                if is_tuple {
+                    t
+                } else {
+                    format!("{}:{}", label, t)
+                }
+            })
+            .collect();
+        if is_tuple {
+            parts.join(" * ")
+        } else {
+            format!("{{{}}}", parts.join(", "))
+        }
+    }
+
     fn field_list(
         op_defs: &[OpDef],
         sequence: &Sequence,
