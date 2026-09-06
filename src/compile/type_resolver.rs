@@ -3544,6 +3544,23 @@ impl TypeResolver {
                 let mut matches2 = Vec::new();
                 let v_param = self.variable();
                 let v_result = self.variable();
+                // Where the context already says what the parameter is
+                // -- a condition is a function from the type it
+                // constrains to `bool` -- take it before the clauses are
+                // deduced, so the body is read with the parameter known.
+                // A method is chosen by its receiver's type, and
+                // `ds.length ()` can only be answered once `ds` is known
+                // to be a bag. The result is left until after, because
+                // the body's type and a result annotation have to meet,
+                // and the meet is what makes `fun neg () : nat = ~1` a
+                // `unit -> int`.
+                if let Some(Term::Sequence(seq)) = self.resolve_during_deduce(v)
+                    && self.unifier.op_defs[seq.op.0 as usize].name == "fn"
+                    && seq.terms.len() == 2
+                {
+                    let param = seq.terms[0].clone();
+                    self.equiv(&param, &v_param);
+                }
                 for match_ in matches {
                     matches2.push(
                         self.deduce_match_type(

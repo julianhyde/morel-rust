@@ -790,7 +790,15 @@ impl Display for LiteralKind {
             // lint: sort until '#}' where '##LiteralKind::'
             LiteralKind::Bool(b) => write!(f, "{}", b)?,
             LiteralKind::Char(s) => write!(f, "{}", s)?,
-            LiteralKind::Fn(built_in) => write!(f, "{:?}", built_in)?,
+            // A built-in function value can only have got into an
+            // expression by a rewrite -- a postfix call becomes a call
+            // to the function it dispatched to -- so it is written the
+            // way the user would have written it: `#length Bag`, not the
+            // name of an internal variant.
+            LiteralKind::Fn(built_in) => match built_in.package() {
+                Some(p) => write!(f, "#{} {}", built_in.name(), p)?,
+                None => write!(f, "{}", built_in.name())?,
+            },
             LiteralKind::Int(s) => write!(f, "{}", s)?,
             LiteralKind::Real(s) => write!(f, "{}", s)?,
             LiteralKind::String(s) => write!(f, "{}", s)?,
