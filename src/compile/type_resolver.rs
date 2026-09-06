@@ -3441,7 +3441,18 @@ impl TypeResolver {
                     self.fn_term(&v_e, &v_bool, &v_cond);
                     deduced.push(self.deduce_expr_type(env, check, &v_cond)?);
                 }
-                let checks2 = Checks::new(deduced.clone());
+                // The conditions the expression's own type already
+                // carries are part of what this type claims: `one check
+                // i => i < 100`, where `one` is a `positive`, claims
+                // both. Without them the claim would be the weaker one,
+                // and a value that fails only the type's own condition
+                // would be let through.
+                let mut all = match self.alias_name_of(&v_e) {
+                    Some(inner) => self.checks_of(&inner).fns.clone(),
+                    None => Vec::new(),
+                };
+                all.extend(deduced.iter().cloned());
+                let checks2 = Checks::new(all);
                 let name = checks2.anon_name();
                 self.type_checks.insert(name.clone(), checks2);
                 // The alias goes on the variable, not into the term: a

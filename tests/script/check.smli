@@ -124,6 +124,28 @@ val boundedHigh: typeof bounded = 200;
 > stdIn:1.7-1.15 Error: 'typeof' is not supported here
 >   raised at: stdIn:1.7-1.15
 
+(* A condition written on an expression whose type carries conditions
+ * already claims both. Without them the claim would be the weaker one, and
+ * a value that fails only the type's own condition would be let through.
+ *
+ * TODO morel-java writes the type 'positive check i => i < 100', naming
+ * the type the conditions came from; here the conditions are stacked and
+ * the name is not kept. What is claimed is the same. *)
+type positive = int check i => i >= 1;
+> type positive = int check i => i >= 1
+val one: positive = 1;
+> val one = 1 : positive
+val bounded = one check i => i < 100;
+> val bounded = 1 : int check i => i >= 1 check i => i < 100
+val boundedOk: typeof bounded = 7;
+> val boundedOk = 7 : int check i => i >= 1 check i => i < 100
+val boundedLow: typeof bounded = 0;
+> uncaught exception Constraint [0 is not a valid value]
+>   raised at: stdIn:1.5-1.35
+val boundedHigh: typeof bounded = 200;
+> uncaught exception Constraint [200 is not a valid value]
+>   raised at: stdIn:1.5-1.38
+
 (* --- Conditions on types that are not named --------------------- *)
 
 (* A type may carry a condition wherever it is written, not only where it is
