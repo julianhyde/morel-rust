@@ -3250,7 +3250,7 @@ mod test {
 
         // Test signature with value spec
         ml("signature STACK = sig val empty : 'a stack end").assert_statement(
-            is("signature STACK = sig val empty : stack<'a> end"),
+            is("signature STACK = sig val empty : 'a stack end"),
         );
 
         // Test the full STACK signature from the example
@@ -3315,9 +3315,9 @@ mod test {
     #[test]
     fn test_parse_signature_statement() {
         // Test that we can parse a complete signature as a statement
-        // Note: Type applications are printed as 'stack<'a>' not ''a stack'
+        // A type application is printed as Morel writes it, ''a stack'.
         ml("signature STACK = sig val empty : 'a stack end").assert_statement(
-            is("signature STACK = sig val empty : stack<'a> end"),
+            is("signature STACK = sig val empty : 'a stack end"),
         );
 
         // Test signature with multiple specs

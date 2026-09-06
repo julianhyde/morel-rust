@@ -731,7 +731,11 @@ impl Op {
     /// `e check m`: a condition written on an expression. It binds as
     /// loosely as an annotation, and the condition extends as far right
     /// as it can, so anything tighter that follows is part of it.
-    pub const CHECK_EXP: Op = Op::left_assoc(0, " check ");
+    /// Its left operand binds tighter than an annotation, because a
+    /// condition written after one is part of the type: `e : int check c
+    /// => c > 0` says the type is `int check ...`, so writing the
+    /// condition on the annotated expression instead needs parentheses.
+    pub const CHECK_EXP: Op = Op::new(2, 1, "(", " check ", ")", false);
 
     /// A `check` condition binds more loosely than anything else in a type,
     /// because a condition is an expression and extends as far right as it

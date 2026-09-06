@@ -1715,6 +1715,20 @@ impl TypeBind {
 }
 
 /// The `check` clauses of a type, rendered as they are written.
+/// Renders `e check m ...` as it is written, parenthesizing `e` where a
+/// reader would need it: a condition binds as loosely as an annotation,
+/// so `(e : int) check c => c > 0` needs its parentheses to be read the
+/// way it was written.
+pub fn check_exp_text(e: &Expr, checks: &[Expr]) -> String {
+    struct Sub<'a>(&'a Expr);
+    impl Display for Sub<'_> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+            write_sub(f, self.0, 0, Op::CHECK_EXP.left)
+        }
+    }
+    format!("{}{}", Sub(e), checks_text(checks))
+}
+
 pub fn checks_text(checks: &[Expr]) -> String {
     struct Rendered<'a>(&'a [Expr]);
     impl Display for Rendered<'_> {
@@ -2169,12 +2183,12 @@ impl Type {
         match &self.kind {
             // lint: sort until '#}' where '##TypeKind::'
             TypeKind::App(args, t) => {
-                let args_str = args
-                    .iter()
-                    .map(|a| format!("{}", a))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "{}<{}>", t, args_str)
+                // A type application is written as Morel writes it, the
+                // argument first: `int list`, `(int, string) either`.
+                for a in args {
+                    write!(f, "{} ", a)?;
+                }
+                write!(f, "{}", t)
             }
             TypeKind::Checked(t, checks) => {
                 write!(f, "{}", t)?;
@@ -2208,12 +2222,13 @@ impl Type {
                 write!(f, "{{{}}}", fields_str)
             }
             TypeKind::Tuple(types) => {
+                // A tuple type is a product: `int * string`.
                 let types_str = types
                     .iter()
                     .map(|t| format!("{}", t))
                     .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "({})", types_str)
+                    .join(" * ");
+                write!(f, "{}", types_str)
             }
             TypeKind::Unit => write!(f, "()"),
             TypeKind::Var(name) => write!(f, "{}", name),

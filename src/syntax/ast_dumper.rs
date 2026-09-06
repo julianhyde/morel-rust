@@ -29,7 +29,7 @@
 use crate::syntax::ast::{
     Attribute, AttributePayload, Decl, DeclKind, Expr, ExprKind, LabeledExpr,
     Literal, LiteralKind, Match, Pat, PatField, PatKind, RangeItem, Statement,
-    StatementKind, Type, TypeKind, ValBind, checks_text,
+    StatementKind, Type, TypeKind, ValBind, check_exp_text, checks_text,
 };
 
 /// Returns an S-expression dump of the statement. Wraps with
@@ -115,8 +115,7 @@ fn dump_expr_kind(b: &mut String, e: &ExprKind<Expr>) {
         }
         ExprKind::Check(e, checks) => {
             b.push_str("(check_exp ");
-            b.push_str(&format!("{}", e));
-            b.push_str(&checks_text(checks));
+            b.push_str(&check_exp_text(e, checks));
             b.push(')');
         }
         ExprKind::Compose(a, c) => infix(b, "compose", a, c),
@@ -409,12 +408,12 @@ fn dump_type_kind(b: &mut String, t: &Type) {
             b.push(')');
         }
         TypeKind::Checked(t, checks) => {
-            b.push_str("(checkedType ");
-            dump_type(b, t);
-            for c in checks {
-                b.push(' ');
-                dump_expr(b, c);
-            }
+            // A condition is written as it was written, not as a tree:
+            // it is an expression, and its shape is not what a reader of
+            // the type is being shown.
+            b.push_str("(checked_type ");
+            b.push_str(&format!("{}", t));
+            b.push_str(&checks_text(checks));
             b.push(')');
         }
         TypeKind::Composite(ts) => list(b, "composite", ts.iter(), dump_type),
