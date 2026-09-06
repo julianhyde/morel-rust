@@ -23,6 +23,7 @@
 // as future-use surface.
 #![allow(dead_code)]
 
+use crate::compile::conditions;
 use crate::compile::core::{
     Expr as CoreExpr, Match as CoreMatch, Pat as CorePat,
 };
@@ -7539,9 +7540,24 @@ impl TypeResolver {
         // yet, and `Resolver` makes one where it meets it. Only a type
         // with one condition is rewritten: a compiled condition and a
         // rewritten one cannot be carried in the same list.
-        if checks.fns.len() == 1
-            && let Some(f) = self.destructured_check(&checks.fns[0], carried)
-        {
+        //
+        // A condition on a field the chain renamed is rewritten the same
+        // way: where it selects the field, it is made to name what the
+        // result calls it.
+        let renamed = carried.iter().any(|(a, b)| a != b);
+        let rewritten = if checks.fns.len() == 1 {
+            self.destructured_check(&checks.fns[0], carried)
+                .or_else(|| {
+                    if renamed {
+                        conditions::rename_selections(&checks.fns[0], carried)
+                    } else {
+                        None
+                    }
+                })
+        } else {
+            None
+        };
+        if let Some(f) = rewritten {
             let v_bool = self.variable();
             self.primitive_term(&PrimitiveType::Bool, &v_bool);
             let v_cond = self.variable();

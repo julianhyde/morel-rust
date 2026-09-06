@@ -255,12 +255,9 @@ val v0: crate = {a = 1, b = 2};
 {v0 remove b};
 > val it = {a=1} : {a:int} check r => #a r < 10
 
-(* TODO 'rename' should carry the condition over with the field renamed
- * inside it: morel-java gives '{b:nat, z:int} check r => #z r < 10'.
- * Rewriting the condition needs the written form walked, which is not done
- * yet, so it is dropped, which claims less. *)
+(*) 'rename' carries the condition over with the field renamed inside it.
 {v0 rename z = a};
-> val it = {b=2,z=1} : {b:nat, z:int}
+> val it = {b=2,z=1} : {b:nat, z:int} check r => #z r < 10
 
 (* The condition is carried into the type, not just displayed on it, so it is
  * enforced where the derived record is modified again. This is what the
