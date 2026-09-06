@@ -2894,8 +2894,18 @@ impl TypeResolver {
         }
 
         if let Some(type_) = type_annotation {
+            // A result annotation is a claim about what the clauses
+            // compute, so a check it calls for is blamed on them and not
+            // on the whole declaration: `fun neg () : nat = ~1` is at
+            // fault in `~1`.
+            let body_span = fun_bind
+                .matches
+                .iter()
+                .map(|m| m.expr.span.clone())
+                .reduce(|a, b| a.union(&b))
+                .unwrap_or_else(|| span.clone());
             let x = ExprKind::Annotated(Box::new(expr), type_);
-            expr = x.spanned(&span);
+            expr = x.spanned(&body_span);
         }
 
         // A `fun` clause is one match, and what is at fault in it is the
