@@ -183,6 +183,11 @@ pub struct TypeMap {
     /// and to the standard basis, and this is how a reference to
     /// something the user declared is told from one to a built-in.
     pub user_bindings: HashSet<String>,
+    /// The name of the alias a checked type that has no name was written
+    /// on, by the name it was given: `one check i => i < 100`, where
+    /// `one` is a `positive`, is a `positive` with a condition added. The
+    /// term does not keep the `positive`, so this does.
+    pub anon_check_base: HashMap<String, String>,
     /// The records with modifiers whose chain leaves the shape alone,
     /// and so claims the type of the record it modifies: the extent of
     /// the record's span, and the name of the type it claims.
@@ -232,6 +237,7 @@ impl TypeMap {
             type_checks: HashMap::new(),
             check_predicates: Rc::new(RefCell::new(HashMap::new())),
             user_bindings: HashSet::new(),
+            anon_check_base: HashMap::new(),
             claiming_records: HashMap::new(),
             predicate_terms: Vec::new(),
             var_alias_map: HashMap::new(),
@@ -427,10 +433,28 @@ impl TypeMap {
             // Check if this node's var has a top-level alias.
             if with_alias {
                 if let Some(alias_name) = self.var_alias_map.get(var) {
+                    // A checked type that has no name was written on a
+                    // type that may have had one, and the term does not
+                    // keep that name, so it is put back here.
+                    let body = match self.anon_check_base.get(alias_name) {
+                        Some(inner)
+                            if !matches!(
+                                &*type_, Type::Alias(n, ..) if n == inner
+                            ) =>
+                        {
+                            Rc::new(Type::Alias(
+                                inner.clone(),
+                                type_,
+                                vec![],
+                                self.checks_of(inner),
+                            ))
+                        }
+                        _ => type_,
+                    };
                     return Some(types::collapse_aliases(&Rc::new(
                         Type::Alias(
                             alias_name.clone(),
-                            type_,
+                            body,
                             vec![],
                             self.checks_of(alias_name),
                         ),
@@ -1011,6 +1035,8 @@ pub struct TypeResolver {
     pub user_bindings: HashSet<String>,
     /// See [`TypeMap::claiming_records`].
     claiming_records: HashMap<(usize, usize), String>,
+    /// See [`TypeMap::anon_check_base`].
+    anon_check_base: HashMap<String, String>,
     /// Whether a node being deduced should be given a fresh id even if
     /// it has one. A condition carried over from another statement was
     /// deduced there, and its ids are that statement's; reusing them
@@ -1791,6 +1817,7 @@ impl TypeResolver {
             check_predicates: Rc::new(RefCell::new(HashMap::new())),
             user_bindings: HashSet::new(),
             claiming_records: HashMap::new(),
+            anon_check_base: HashMap::new(),
             claimed_after_erasure: HashSet::new(),
             fresh_ids: false,
             erased_vars: Vec::new(),
@@ -2028,6 +2055,7 @@ impl TypeResolver {
         type_map.type_checks = self.type_checks.clone();
         type_map.check_predicates = Rc::clone(&self.check_predicates);
         type_map.user_bindings = self.user_bindings.clone();
+        type_map.anon_check_base = self.anon_check_base.clone();
         type_map.claiming_records = self.claiming_records.clone();
 
         // A record whose modifiers were never desugared, because the
@@ -3442,20 +3470,33 @@ impl TypeResolver {
                     self.fn_term(&v_e, &v_bool, &v_cond);
                     deduced.push(self.deduce_expr_type(env, check, &v_cond)?);
                 }
-                // The conditions the expression's own type already
-                // carries are part of what this type claims: `one check
-                // i => i < 100`, where `one` is a `positive`, claims
-                // both. Without them the claim would be the weaker one,
-                // and a value that fails only the type's own condition
-                // would be let through.
-                let mut all = match self.alias_name_of(&v_e) {
-                    Some(inner) => self.checks_of(&inner).fns.clone(),
-                    None => Vec::new(),
+                // The type the expression was shown to have is the body
+                // of this one, name and all: `one check i => i < 100`,
+                // where `one` is a `positive`, is a `positive` with a
+                // condition added. Keeping the name is what makes the
+                // conditions it carries part of what this type claims --
+                // the walk that inserts the checks goes through the body
+                // -- and what lets the type be written as morel-java
+                // writes it.
+                //
+                // The name is derived from the conditions, so the body's
+                // name is part of it: two types with the same conditions
+                // and different bodies are not the same type.
+                let base = self.alias_name_of(&v_e).filter(|inner| {
+                    !inner.starts_with(ANON_CHECK_PREFIX)
+                        && !self.checks_of(inner).is_empty()
+                });
+                let checks2 = Checks::new(deduced.clone());
+                let name = match &base {
+                    Some(inner) => {
+                        format!("{}:{}", checks2.anon_name(), inner)
+                    }
+                    None => checks2.anon_name(),
                 };
-                all.extend(deduced.iter().cloned());
-                let checks2 = Checks::new(all);
-                let name = checks2.anon_name();
                 self.type_checks.insert(name.clone(), checks2);
+                if let Some(inner) = base {
+                    self.anon_check_base.insert(name.clone(), inner);
+                }
                 // The alias goes on the variable, not into the term: a
                 // type inference deduces is not a claim, so a condition
                 // written on an expression is seen where it was written
