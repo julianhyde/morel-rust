@@ -2187,6 +2187,21 @@ impl Type {
         }
     }
 
+    /// Renders this type where it is not the whole type, parenthesizing
+    /// it if it needs to be.
+    ///
+    /// A condition extends as far right as it can, so a checked type
+    /// written inside another swallows what follows it unless it is
+    /// bracketed: `(int check c => c >= 0) * int` is a pair, and
+    /// `int check c => c >= 0 * int` is an `int` whose condition
+    /// compares `c >= 0 * int`.
+    fn display_nested(&self, f: &mut Formatter<'_>) -> FmtResult {
+        if matches!(self.kind, TypeKind::Checked(..)) {
+            return write!(f, "({})", self);
+        }
+        write!(f, "{}", self)
+    }
+
     fn kind_display(&self, f: &mut Formatter<'_>) -> FmtResult {
         match &self.kind {
             // lint: sort until '#}' where '##TypeKind::'
@@ -2194,7 +2209,8 @@ impl Type {
                 // A type application is written as Morel writes it, the
                 // argument first: `int list`, `(int, string) either`.
                 for a in args {
-                    write!(f, "{} ", a)?;
+                    a.display_nested(f)?;
+                    write!(f, " ")?;
                 }
                 write!(f, "{}", t)
             }
@@ -2208,6 +2224,8 @@ impl Type {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
+                    // The brackets and commas delimit, so a condition
+                    // written here needs no parentheses of its own.
                     write!(f, "{}", t)?;
                 }
                 write!(f, ")")
@@ -2215,7 +2233,8 @@ impl Type {
             TypeKind::Con(name) => write!(f, "{}", name),
             TypeKind::Expression(expr) => write!(f, "<expr:{}>", expr),
             TypeKind::Fn(t1, t2) => {
-                write!(f, "{} -> ", t1)?;
+                t1.display_nested(f)?;
+                write!(f, " -> ")?;
                 t2.display_paren_if_attributed(f)
             }
             TypeKind::Id(name) => write!(f, "{}", name),
@@ -2231,12 +2250,13 @@ impl Type {
             }
             TypeKind::Tuple(types) => {
                 // A tuple type is a product: `int * string`.
-                let types_str = types
-                    .iter()
-                    .map(|t| format!("{}", t))
-                    .collect::<Vec<_>>()
-                    .join(" * ");
-                write!(f, "{}", types_str)
+                for (i, t) in types.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " * ")?;
+                    }
+                    t.display_nested(f)?;
+                }
+                Ok(())
             }
             TypeKind::Unit => write!(f, "()"),
             TypeKind::Var(name) => write!(f, "{}", name),
