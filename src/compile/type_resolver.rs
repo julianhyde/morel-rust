@@ -128,6 +128,11 @@ pub struct TypeMap {
     /// Maps unifier variables to type alias names. Used during
     /// type reconstruction to wrap resolved types in `Type::Alias`.
     pub var_alias_map: HashMap<Var, String>,
+    /// Names a query's elements take from the type its scan was written
+    /// with, keyed by the query's own variable. A scan names the type of
+    /// what it scans, and inference reduces it to the type it abbreviates,
+    /// so what was written is recorded here instead.
+    pub element_alias_map: HashMap<Var, String>,
     /// Maps a unifier variable to the alias term it was bound to before
     /// unification, for those variables bound to one.
     ///
@@ -241,6 +246,7 @@ impl TypeMap {
             claiming_records: HashMap::new(),
             predicate_terms: Vec::new(),
             var_alias_map: HashMap::new(),
+            element_alias_map: HashMap::new(),
             datatype_constructors: HashMap::new(),
             constructor_arg_types: HashMap::new(),
         }
@@ -356,6 +362,26 @@ impl TypeMap {
     /// Whether the term a variable was written with reaches a type alias,
     /// following the written terms rather than the substitution. Bounded,
     /// because the written equations may be cyclic.
+    /// Returns the term a node's type was written with, following
+    /// variable-to-variable links to find it.
+    ///
+    /// A node's own variable often holds no term of its own -- a value
+    /// binding's variable is linked to the expression's, not equated with a
+    /// term -- and what was written is recorded against whichever variable
+    /// in the chain the annotation was deduced into.
+    fn written_term(&self, v: &Var) -> Option<&Term> {
+        let mut current = *v;
+        loop {
+            if let Some(t) = self.var_pre_term_map.get(&current) {
+                return Some(t);
+            }
+            match self.var_term_map.get(&current) {
+                Some(Term::Variable(next)) => current = *next,
+                _ => return None,
+            }
+        }
+    }
+
     fn reaches_alias(&self, term: &Term, depth: u32) -> bool {
         if depth == 0 {
             return false;
@@ -389,7 +415,7 @@ impl TypeMap {
         if let Some(var) = self.node_var_map.get(&id) {
             // The alias as it was written wins over the substitution; see
             // `var_alias_term_map`.
-            let written = self.var_pre_term_map.get(var);
+            let written = self.written_term(var);
             let term = match written {
                 // A function's type is the one inference gives it, not
                 // the one its parameter was written with. The body may
@@ -430,6 +456,26 @@ impl TypeMap {
                 };
                 c.term_type(&term)
             });
+            // A query's elements may take the name its scan was written
+            // with; inference reduced it to the type it abbreviates.
+            let type_ = match self.element_alias_map.get(var) {
+                Some(name) if with_alias => {
+                    let alias = |t: &Rc<Type>| {
+                        Rc::new(Type::Alias(
+                            name.clone(),
+                            t.clone(),
+                            vec![],
+                            self.checks_of(name),
+                        ))
+                    };
+                    match &*type_ {
+                        Type::List(t) => Rc::new(Type::List(alias(t))),
+                        Type::Bag(t) => Rc::new(Type::Bag(alias(t))),
+                        _ => type_,
+                    }
+                }
+                _ => type_,
+            };
             // Check if this node's var has a top-level alias.
             if with_alias {
                 if let Some(alias_name) = self.var_alias_map.get(var) {
@@ -1104,6 +1150,9 @@ pub struct TypeResolver {
     /// through `var_alias_map` must not put back what the operator took
     /// away.
     erased_vars: Vec<Var>,
+    /// Names a query's elements take from the type its scan was written
+    /// with; see [`Self::scan_type_name`].
+    element_alias_map: HashMap<Var, String>,
     /// The fields a record with modifiers ends up with, keyed by the
     /// extent of its span. A `yield` step binds them; the record's own
     /// term may be the operand's, which says nothing about them.
@@ -1380,6 +1429,27 @@ fn join_source_walk(
 
 /// Collects the names bound by a pattern. Unlike
 /// [`Pat::for_each_id_pat`](crate::syntax::ast::Pat::for_each_id_pat), it does
+/// Returns whether a step leaves a query's elements the values the scan
+/// produced, so that a name written on them is still theirs. `name` is what
+/// the scan bound them to.
+fn step_preserves_elements(step: &Step, name: &str) -> bool {
+    match &step.kind {
+        StepKind::Distinct
+        | StepKind::Order(_)
+        | StepKind::Require(_)
+        | StepKind::Skip(_)
+        | StepKind::Take(_)
+        | StepKind::Unorder
+        | StepKind::Where(_) => true,
+        // Yielding the scanned value itself is not computing a new one.
+        StepKind::Yield(binder, e) => {
+            binder.is_none()
+                && matches!(&e.kind, ExprKind::Identifier(n) if n == name)
+        }
+        _ => false,
+    }
+}
+
 /// not need frame-slot ids (which are not assigned during type resolution).
 fn join_source_pat_names(pat: &Pat, out: &mut Vec<String>) {
     match &pat.kind {
@@ -1868,6 +1938,7 @@ impl TypeResolver {
             claimed_after_erasure: HashSet::new(),
             fresh_ids: false,
             erased_vars: Vec::new(),
+            element_alias_map: HashMap::new(),
             modifier_result_fields: HashMap::new(),
             datatype_arg_types: HashMap::new(),
             alias_arities: HashMap::new(),
@@ -2238,6 +2309,7 @@ impl TypeResolver {
         // Transfer alias mappings from the resolver (before collecting
         // bindings, which needs alias info for Type::Alias wrapping).
         type_map.var_alias_map = self.var_alias_map.clone();
+        type_map.element_alias_map = self.element_alias_map.clone();
 
         // An annotation reaches the display through `var_alias_map`
         // even when the substitution weakened the alias away, which is
@@ -3412,8 +3484,13 @@ impl TypeResolver {
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
             ExprKind::Annotated(e, t) => {
-                let e2 = self.deduce_expr_type(env, e, v)?;
+                // The type is deduced first, so that the term it was written
+                // with is the one recorded for each part of it. Deducing the
+                // expression first lets what inference gives its parts get
+                // there instead, and `[1] : nat list` would be an `int list`
+                // -- with the claim still checked, but not displayed.
                 let t2 = self.deduce_type_type(env, &t, v);
+                let e2 = self.deduce_expr_type(env, e, v)?;
                 let x = ExprKind::Annotated(Box::new(e2), Box::new(t2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
@@ -3679,6 +3756,9 @@ impl TypeResolver {
             }
             ExprKind::From(steps) => {
                 let steps2 = self.deduce_query_type(env, expr, steps, v)?;
+                if let Some(name) = self.scan_type_name(env, steps) {
+                    self.element_alias_map.insert(*v, name);
+                }
                 let x = ExprKind::From(steps2);
                 self.reg_expr(&x, &expr.span, expr.id, v)
             }
@@ -4408,6 +4488,81 @@ impl TypeResolver {
         }
     }
 
+    /// Returns the name a query's first scan gives the type of what it
+    /// scans, if it gives one and the query's elements are still those
+    /// values.
+    ///
+    /// Either half of the scan may name it: the pattern, as in `from n: nat
+    /// in [1, 2]`, or the source, as in `from n in ([1] : nat list)`.
+    ///
+    /// The name is the elements' only while they are still the values the
+    /// scan produced. A step that computes new ones -- a `group`, an `into`,
+    /// a `yield` of anything but the scanned value itself -- gives the query
+    /// a different element type, and the name is not about it. An operator
+    /// drops a condition here as it does anywhere, so `yield n` keeps the
+    /// name and `yield n + 0` does not.
+    fn scan_type_name(
+        &mut self,
+        env: &dyn TypeEnv,
+        steps: &[Step],
+    ) -> Option<String> {
+        let StepKind::Scan(_, pat, source, _) = &steps.first()?.kind else {
+            return None;
+        };
+        // A pattern that destructures binds parts, and it is the parts that
+        // have types; no one name covers the whole value.
+        let bound = match &pat.kind {
+            PatKind::Annotated(inner, type_) => match &inner.kind {
+                PatKind::Identifier(name) => Some((name.clone(), Some(type_))),
+                _ => return None,
+            },
+            PatKind::Identifier(name) => Some((name.clone(), None)),
+            _ => None,
+        };
+        let (name, written) = bound?;
+        let type_name = if let Some(t) = written {
+            self.type_alias_name(env, t)?
+        } else {
+            // The pattern says nothing, so the source may.
+            let ExprKind::Annotated(_, t) = &source.kind else {
+                return None;
+            };
+            let TypeKind::App(args, ctor) = &t.kind else {
+                return None;
+            };
+            if !matches!(&ctor.kind, TypeKind::Id(c) if c == "list"
+                || c == "bag")
+            {
+                return None;
+            }
+            let flat = AstType::flatten(args);
+            let [element] = flat.as_slice() else {
+                return None;
+            };
+            self.type_alias_name(env, element)?
+        };
+        for step in &steps[1..] {
+            if !step_preserves_elements(step, &name) {
+                return None;
+            }
+        }
+        Some(type_name)
+    }
+
+    /// Returns the alias name a written type names, if it names one.
+    fn type_alias_name(
+        &mut self,
+        _env: &dyn TypeEnv,
+        type_: &AstType,
+    ) -> Option<String> {
+        match &type_.kind {
+            TypeKind::Id(name) if self.type_aliases.contains_key(name) => {
+                Some(name.clone())
+            }
+            _ => None,
+        }
+    }
+
     /// Deduces a Scan step's type.
     ///
     /// Examples:
@@ -4447,15 +4602,19 @@ impl TypeResolver {
         if !eq {
             self.is_collection_of(&c0, &v0);
         }
+        // The pattern is deduced before the source, so that a type written
+        // on it is the one recorded as written for the values the scan
+        // produces. A scan names the type of what it scans, and the source's
+        // elements would otherwise get there first and take the name away:
+        // `from n: myInt in [1, 2]` scans `myInt`s, and displaying them as
+        // `int`s would be reporting what inference reduced them to.
+        let mut term_map = Vec::new();
+        let pat2 = self.deduce_pat_type(&*p.env, pat, &mut term_map, &v0);
         let expr2 = self.deduce_expr_type(
             &*p.env,
             expr.unwrap(),
             if eq { &v0 } else { &c0 },
         )?;
-
-        // Deduce the type of the pattern and bind variables.
-        let mut term_map = Vec::new();
-        let pat2 = self.deduce_pat_type(&*p.env, pat, &mut term_map, &v0);
 
         // Build a new environment with pattern bindings.
         let mut env_builder = p.env.builder();
