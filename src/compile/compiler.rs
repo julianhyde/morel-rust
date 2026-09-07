@@ -21,6 +21,7 @@ use crate::compile::core::{
     StepEnv, StepKind, TypeBind, ValBind,
 };
 use crate::compile::library::{self, BuiltInExn, BuiltInFunction, name_to_rec};
+use crate::compile::postfix::peel_type;
 use crate::compile::pretty::Pretty;
 use crate::compile::span::Span;
 use crate::compile::type_env::{Binding, Id};
@@ -539,7 +540,10 @@ impl<'a> Compiler<'a> {
                 // emit the sub-pattern code or Wildcard if not mentioned.
                 // A tuple is a record whose labels are the ordinals
                 // `1`, `2`, ..., so a record pattern matches one.
-                let labels: Vec<Label> = match type_.as_ref() {
+                // The type may be written under a name -- `val {i, j}: pp
+                // = ...` -- and a name is not a shape, so it is peeled to
+                // find the fields to match.
+                let labels: Vec<Label> = match peel_type(type_) {
                     Type::Record(_, type_fields) => {
                         type_fields.keys().cloned().collect()
                     }

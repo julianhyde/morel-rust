@@ -15,6 +15,7 @@
 // language governing permissions and limitations under the
 // License.
 
+use crate::compile::postfix::peel_type;
 use crate::compile::span::Span;
 use crate::compile::type_env::Id;
 use crate::compile::types::{Checks, Label, Type};
@@ -785,7 +786,9 @@ impl Pat {
                 // A tuple is a record whose labels are ordinals, so a
                 // record pattern matches one: `{1=a}` takes the first
                 // field of a pair.
-                let labels: Option<Vec<Label>> = match t.as_ref() {
+                // A name is not a shape, so a type written under one --
+                // `val {i, j}: pp = ...` -- is peeled to find the fields.
+                let labels: Option<Vec<Label>> = match peel_type(t) {
                     Type::Record(_, type_fields) => {
                         Some(type_fields.keys().cloned().collect())
                     }
@@ -913,7 +916,7 @@ impl Display for Pat {
                 // listing every field of the record type (with `_` for
                 // any field not bound by the pattern), so that the
                 // unparser output matches morel-java.
-                let labels: Vec<&Label> = match t.as_ref() {
+                let labels: Vec<&Label> = match peel_type(t) {
                     Type::Record(_, fs) => fs.keys().collect(),
                     _ => Vec::new(),
                 };

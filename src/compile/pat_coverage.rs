@@ -23,6 +23,7 @@
 //!
 //! Ported from morel-java: `PatternCoverageChecker.java`.
 
+use crate::compile::postfix::peel_type;
 use crate::compile::sat::{Formula, Sat};
 use crate::compile::type_resolver::{TypeMap, Warning};
 use crate::compile::types::{Label, PrimitiveType, Type};
@@ -215,11 +216,14 @@ impl<'a> CoverageChecker<'a> {
                 // Anonymous fields and ellipses don't constrain the value
                 // beyond the others. Unknown record types are treated as
                 // exhaustive (Formula::True).
-                let labels: Vec<&Label> = match type_ {
+                // A name is not a shape, so a record type written under
+                // one is peeled to find its fields.
+                let peeled = peel_type(type_);
+                let labels: Vec<&Label> = match peeled {
                     Type::Record(_, fs) => fs.keys().collect(),
                     _ => return Formula::True,
                 };
-                let field_types: Vec<Type> = match type_ {
+                let field_types: Vec<Type> = match peeled {
                     Type::Record(_, fs) => {
                         fs.values().map(|t| (**t).clone()).collect()
                     }
