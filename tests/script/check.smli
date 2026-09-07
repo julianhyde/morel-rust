@@ -375,9 +375,10 @@ val thirteen: twice = 13;
  * type is declared: in an annotation, or on a parameter. Parentheses are
  * needed, because a condition extends as far right as it can and would
  * otherwise swallow what follows. *)
-(*) morel-java gives 'val direct = [1] : int list'.
 val direct: (int check i => i >= 0) list = [1];
 > val direct = [1] : (int check i => i >= 0) list
+val pair: (int check i => i >= 0) * int = (1, 2);
+> val pair = (1,2) : (int check i => i >= 0) * int
 val notNat: (int check i => i >= 0) = ~1;
 > uncaught exception Constraint [~1 is not a valid value]
 >   raised at: stdIn:1.5-1.41

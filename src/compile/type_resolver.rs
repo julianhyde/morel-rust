@@ -534,7 +534,16 @@ impl TypeMap {
                                     for (alias_var, alias_term) in
                                         alias_concrete
                                     {
-                                        if concrete == alias_term {
+                                        // The same shape is not the same
+                                        // type: two components of one type
+                                        // are different slots that often
+                                        // erase to the same thing, and an
+                                        // alias on one says nothing about
+                                        // the other. The second half of
+                                        // `nat * int` is a plain `int`.
+                                        if concrete == alias_term
+                                            && self.linked(v, alias_var)
+                                        {
                                             return Term::Variable(*alias_var);
                                         }
                                     }
@@ -550,6 +559,27 @@ impl TypeMap {
                 })
             }
             _ => term.clone(),
+        }
+    }
+
+    /// Returns whether two variables stand for the same type: one
+    /// reaches the other by following variable-to-variable links.
+    fn linked(&self, v1: &Var, v2: &Var) -> bool {
+        self.reaches(v1, v2) || self.reaches(v2, v1)
+    }
+
+    /// Returns whether `from` reaches `to` by following
+    /// variable-to-variable links.
+    fn reaches(&self, from: &Var, to: &Var) -> bool {
+        let mut current = *from;
+        loop {
+            if current == *to {
+                return true;
+            }
+            match self.var_term_map.get(&current) {
+                Some(Term::Variable(next)) => current = *next,
+                _ => return false,
+            }
         }
     }
 
@@ -894,11 +924,16 @@ impl<'a> TermToTypeConverter<'a> {
             }
             current = *next;
         }
-        // Resolve v to its concrete term and check if any alias var
-        // resolves to the same term. This handles cases where the
-        // unifier resolved both v and the alias var to the same
-        // concrete term without linking them.
-        let v_term = self.resolve_to_concrete(v);
+        // An alias variable that stands for the same type as `v` names
+        // it, even though the chain from `v` does not reach it: the
+        // alias may chain to `v` rather than the other way about.
+        //
+        // Standing for the same type means ending at the same variable,
+        // not merely resolving to the same shape. Two components of one
+        // type are different slots that often have the same shape, and
+        // an alias on one says nothing about the other: the second half
+        // of `(int check i => i >= 0) * int` is a plain `int`.
+        let v_end = self.chain_end(v);
         for (alias_var, name) in &self.type_map.var_alias_map {
             if alias_var == v {
                 continue;
@@ -911,12 +946,24 @@ impl<'a> TermToTypeConverter<'a> {
             if name.starts_with(ANON_CHECK_PREFIX) {
                 continue;
             }
-            let alias_term = self.resolve_to_concrete(alias_var);
-            if v_term == alias_term {
+            if self.chain_end(alias_var) == v_end {
                 return Some(name.clone());
             }
         }
         None
+    }
+
+    /// Follows a variable's chain of variable-to-variable links to the
+    /// variable it ends at. Two variables that end at the same one stand
+    /// for the same type.
+    fn chain_end(&self, v: &Var) -> Var {
+        let mut current = *v;
+        while let Some(Term::Variable(next)) =
+            self.type_map.var_term_map.get(&current)
+        {
+            current = *next;
+        }
+        current
     }
 
     /// Resolves a var to its concrete (non-Variable) term.
