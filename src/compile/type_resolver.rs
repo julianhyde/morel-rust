@@ -5881,7 +5881,7 @@ impl TypeResolver {
                 // Orderedness that is not yet settled is not a bag. A query
                 // decides its own when its steps are typed, and dispatching
                 // before then would settle it here, on a guess.
-                Some(Rc::new(if self.orderedness_of(&seq.terms[1])? {
+                Some(Rc::new(if self.orderedness_eager(&seq.terms[1])? {
                     Type::List(element)
                 } else {
                     Type::Bag(element)
@@ -6829,6 +6829,40 @@ impl TypeResolver {
                 None
             }
         }
+    }
+
+    /// As [`orderedness_of`](Self::orderedness_of), but solves the
+    /// equations gathered so far before giving up.
+    ///
+    /// `self.terms` is a list of equations, not a solved substitution, so
+    /// an orderedness that a scan shares with its source -- `same_orderedness`
+    /// puts one variable in both collection terms -- is not found by the
+    /// linear scan: that variable is never on the left of an equation, only
+    /// inside a term on the right. Solving the equations links it to the
+    /// source's, which is how `(from d in ds).length ()` knows which
+    /// `length` to call when `ds` is a variable rather than a literal.
+    ///
+    /// An orderedness that the equations leave open is a bag, as everywhere
+    /// else: a query says which kind it is, and one that never says is
+    /// unordered. Returns `None` only if the equations do not solve, which
+    /// is a type error the caller will report by another route.
+    fn orderedness_eager(&self, term: &Term) -> Option<bool> {
+        if let Some(ordered) = self.orderedness_of(term) {
+            return Some(ordered);
+        }
+        let term_pairs: Vec<(Term, Term)> = self
+            .terms
+            .iter()
+            .map(|(var, t)| (t.clone(), Term::Variable(*var)))
+            .collect();
+        let subst = self
+            .unifier
+            .unify(term_pairs.as_ref(), &NullTracer, self.actions.as_ref())
+            .ok()?;
+        Some(match subst.resolve_term(term) {
+            Term::Sequence(seq) => seq.op == self.ordered_op,
+            Term::Variable(_) => false,
+        })
     }
 
     /// As [`orderedness_of`](Self::orderedness_of), but an orderedness that
