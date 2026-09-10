@@ -27,12 +27,24 @@
 //!
 //! False negatives (where the values are equivalent but we can't
 //! deduce it) are fine; false positives are not.
+//!
+//! A string value may be written as a raw string literal, `{|...|}` or
+//! `{tag|...|tag}` where the tag consists of lower-case letters `a` to
+//! `z` and underscores, whose content is verbatim (no escape
+//! processing, and newlines are real newlines), except that if the tag
+//! starts with an underscore, a newline right after the opening fence
+//! is not content. A raw literal is equivalent to the regular literal
+//! with the same content. Raw literals are a feature of the script
+//! format, not of the Morel language; [`to_raw_strings`] writes them.
 
 use crate::compile::type_parser;
 use crate::compile::types::{Label, Type};
+use crate::syntax::parser;
+use regex::Regex;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::str::from_utf8;
+use std::sync::LazyLock;
 
 /// Compares two output strings modulo whitespace and bag reordering.
 ///
@@ -163,6 +175,18 @@ pub fn equivalent_with_type(
 /// Extracts the type string from `VALUE : TYPE`: everything after
 /// the last top-level ` : `. Returns `None` if missing.
 fn extract_type(s: &str) -> Option<String> {
+    let start = last_top_level_colon(s)? + 2;
+    if start > s.len() {
+        return None;
+    }
+    Some(s[start..].trim().to_string())
+}
+
+/// Returns the position of the last top-level ` : `, the separator
+/// between a value and its type. Brackets, string literals and raw
+/// string literals are skipped, so that a colon inside a value is not
+/// mistaken for the separator.
+fn last_top_level_colon(s: &str) -> Option<usize> {
     let bytes = s.as_bytes();
     let n = bytes.len();
     let mut depth: i32 = 0;
@@ -182,6 +206,10 @@ fn extract_type(s: &str) -> Option<String> {
         }
         match c {
             '"' => in_string = true,
+            '{' if raw_fence_length(bytes, i) > 0 => {
+                i = raw_end(bytes, i);
+                continue;
+            }
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth -= 1,
             ':' if depth == 0
@@ -196,11 +224,7 @@ fn extract_type(s: &str) -> Option<String> {
         }
         i += 1;
     }
-    let start = last_colon? + 2;
-    if start > n {
-        return None;
-    }
-    Some(s[start..].trim().to_string())
+    last_colon
 }
 
 /// Compares two value strings (no `val x =` prefix, no `: type`
@@ -373,9 +397,6 @@ enum Parsed {
 /// portion. Returns `None` if the top-level ` : ` separator is
 /// missing.
 fn extract_prefix_and_value(s: &str) -> Option<(String, String)> {
-    let bytes = s.as_bytes();
-    let n = bytes.len();
-
     // Optional `val NAME = ` prefix. Strict pattern (whitespace*
     // `val` whitespace+ ident whitespace* `=` whitespace*) — the
     // old substring check accepted `value queens =` because
@@ -383,38 +404,7 @@ fn extract_prefix_and_value(s: &str) -> Option<(String, String)> {
     let value_start = parse_val_prefix(s).unwrap_or(0);
 
     // Find end of value: last top-level ` : `.
-    let mut depth: i32 = 0;
-    let mut in_string = false;
-    let mut last_colon: Option<usize> = None;
-    let mut i = 0;
-    while i < n {
-        let c = bytes[i] as char;
-        if in_string {
-            if c == '"' {
-                in_string = false;
-            } else if c == '\\' {
-                i += 1;
-            }
-            i += 1;
-            continue;
-        }
-        match c {
-            '"' => in_string = true,
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            ':' if depth == 0
-                && i > 0
-                && bytes[i - 1] as char == ' '
-                && i + 1 < n
-                && bytes[i + 1] as char == ' ' =>
-            {
-                last_colon = Some(i);
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    let end = last_colon? - 1;
+    let end = last_top_level_colon(s)? - 1;
     if end < value_start {
         return None;
     }
@@ -507,6 +497,18 @@ fn normalize_whitespace(s: &str) -> String {
                 }
                 buf.push(c);
                 in_string = true;
+                last_was_space = false;
+            }
+            '{' if raw_fence_length(bytes, i) > 0 => {
+                // Copy a raw string literal verbatim, newlines
+                // included. (If the literal is not closed, `raw_end`
+                // is past the end; copy to the end.)
+                let end = raw_end(bytes, i).min(n);
+                if last_was_space && !buf.is_empty() {
+                    buf.push(' ');
+                }
+                buf.push_str(&s[i..end]);
+                i = end - 1;
                 last_was_space = false;
             }
             ' ' | '\n' | '\r' | '\t' => {
@@ -711,7 +713,7 @@ fn parse_atom(sc: &mut Scanner) -> Option<String> {
         sc.consume_str("#")?;
         let s = sc.consume_string()?;
         Some(format!("#{}", s))
-    } else if c == '"' {
+    } else if c == '"' || (c == '{' && sc.at_raw_fence()) {
         sc.consume_string()
     } else if c == '~' || c.is_ascii_digit() {
         sc.consume_number()
@@ -838,6 +840,197 @@ fn bag_equal(elem_type: &Type, a: &Parsed, b: &Parsed) -> bool {
     true
 }
 
+// ---- Raw string literals ----
+
+/// A top-level string value in a statement's output: `val name = "..."
+/// : string`, the literal and the type possibly wrapped onto following
+/// lines.
+static TOP_LEVEL_STRING: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?m)^(val \S+ =)(\s+)("(?:[^"\\]|\\.)*")\s+: string$"#)
+        .unwrap()
+});
+
+/// Separator used when the printer wrapped a value onto the next line.
+const WRAPPED_INDENT: &str = "\n  ";
+
+/// Returns the length of the opening fence of a raw string literal
+/// starting at `pos`: 2 for `{|`, or 2 + n for `{tag|` where the tag
+/// has n characters, each a lower-case letter or underscore; or 0 if
+/// there is no raw literal there.
+fn raw_fence_length(s: &[u8], pos: usize) -> usize {
+    if s.get(pos) != Some(&b'{') {
+        return 0;
+    }
+    let mut i = pos + 1;
+    while s.get(i).copied().is_some_and(is_tag_char) {
+        i += 1;
+    }
+    if s.get(i) == Some(&b'|') {
+        i + 1 - pos
+    } else {
+        0
+    }
+}
+
+/// Returns whether a byte may appear in a raw literal's tag: a
+/// lower-case letter `a` to `z`, or an underscore.
+fn is_tag_char(b: u8) -> bool {
+    b.is_ascii_lowercase() || b == b'_'
+}
+
+/// Returns the position just after the closing fence of the raw string
+/// literal that starts at `pos`; if the literal is not closed, returns
+/// a position beyond the end of the string.
+fn raw_end(s: &[u8], pos: usize) -> usize {
+    let fence = raw_fence_length(s, pos);
+    let mut closing = Vec::with_capacity(fence);
+    closing.push(b'|');
+    closing.extend_from_slice(&s[pos + 1..pos + fence - 1]);
+    closing.push(b'}');
+    match find_bytes(s, &closing, pos + fence) {
+        Some(i) => i + closing.len(),
+        None => s.len() + 1,
+    }
+}
+
+/// Returns the position of the first occurrence of `needle` in `s` at
+/// or after `from`.
+fn find_bytes(s: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    if needle.len() > s.len() {
+        return None;
+    }
+    (from..=s.len() - needle.len()).find(|&i| &s[i..i + needle.len()] == needle)
+}
+
+/// Rewrites the output of a statement so that each top-level string
+/// value that contains a newline, and has no space or tab before a
+/// newline, is a raw string literal.
+///
+/// A top-level string value is a line `val name = "..." : string`, the
+/// literal and the type possibly wrapped onto following lines. It is
+/// replaced by `val name = {|...|} : string`, the content verbatim, its
+/// lines after the first starting at column 0, and the type following
+/// the closing fence. If the printer had wrapped the literal onto the
+/// line after `val name =`, the raw literal starts there too, indented
+/// by two spaces. A trailing newline in the content leaves the closing
+/// fence alone on the last line. If the content contains `|}`, the
+/// fences carry the shortest tag that does not occur in it. See
+/// [`raw_literal`] for the `{_|` form, whose content starts on the line
+/// after the opening fence.
+///
+/// Strings without a newline, strings with trailing whitespace on a
+/// line, and strings inside collections and records, are unchanged.
+pub fn to_raw_strings(output: &str) -> String {
+    let mut buf: Option<String> = None;
+    let mut last = 0;
+    for caps in TOP_LEVEL_STRING.captures_iter(output) {
+        let whole = caps.get(0).unwrap();
+        let content = match parser::unquote_string(&caps[3]) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        if !wants_raw(&content) {
+            continue;
+        }
+        let b = buf.get_or_insert_with(String::new);
+        b.push_str(&output[last..whole.start()]);
+        b.push_str(&caps[1]);
+        // Keep the printer's layout: if it wrapped the value onto the
+        // next line, the raw literal starts on the next line too.
+        b.push_str(if caps[2].contains('\n') {
+            WRAPPED_INDENT
+        } else {
+            " "
+        });
+        b.push_str(&raw_literal(&content));
+        b.push_str(" : string");
+        last = whole.end();
+    }
+    match buf {
+        None => output.to_string(),
+        Some(mut b) => {
+            b.push_str(&output[last..]);
+            b
+        }
+    }
+}
+
+/// Returns whether a string is written as a raw literal: it contains a
+/// newline; every other character is printable ASCII (so no tab,
+/// carriage return, control character or non-ASCII character, which
+/// would be invisible or fragile in the script, and a tab would fail
+/// the linter); and no line ends with a space (which is invisible, and
+/// easily lost by editors).
+fn wants_raw(content: &str) -> bool {
+    let bytes = content.as_bytes();
+    let mut newline = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'\n' {
+            newline = true;
+            if i > 0 && bytes[i - 1] == b' ' {
+                return false;
+            }
+        } else if !(b' '..=b'~').contains(&b) {
+            return false;
+        }
+    }
+    newline
+}
+
+/// Writes a string as a raw literal whose fences do not occur in it.
+///
+/// If the content's second line starts with a space, the content starts
+/// on the line after the opening fence, so that its lines line up in
+/// the script; the tag then starts with `_`, which tells the reader to
+/// discard the newline after the fence: the literal reads `{_|`, a
+/// newline, the content, `|_}`. Otherwise the content starts right
+/// after the opening fence, `{|`, and every newline in the literal is
+/// content.
+pub fn raw_literal(content: &str) -> String {
+    let next_line = starts_on_next_line(content);
+    let prefix = if next_line { "_" } else { "" };
+    let mut tag = prefix.to_string();
+    let mut i = 1;
+    while content.contains(&format!("|{}}}", tag)) {
+        tag = format!("{}{}", prefix, identifier(i));
+        i += 1;
+    }
+    let mut b = String::new();
+    b.push('{');
+    b.push_str(&tag);
+    b.push('|');
+    if next_line {
+        b.push('\n');
+    }
+    b.push_str(content);
+    b.push('|');
+    b.push_str(&tag);
+    b.push('}');
+    b
+}
+
+/// Returns whether a raw literal's content starts on the line after the
+/// opening fence: when its second line starts with a space, so that the
+/// lines line up in the script.
+fn starts_on_next_line(content: &str) -> bool {
+    match content.find('\n') {
+        Some(i) if i > 0 => content.as_bytes().get(i + 1) == Some(&b' '),
+        _ => false,
+    }
+}
+
+/// Returns the i-th tag in the sequence a, b, ..., z, aa, ab, ...
+fn identifier(i: usize) -> String {
+    let mut b = Vec::new();
+    let mut i = i;
+    while i > 0 {
+        b.push(b'a' + ((i - 1) % 26) as u8);
+        i = (i - 1) / 26;
+    }
+    b.reverse();
+    String::from_utf8(b).unwrap()
+}
+
 // ---- Scanner ----
 
 /// Simple scanner over whitespace-normalized text.
@@ -895,8 +1088,40 @@ impl<'a> Scanner<'a> {
             .map(ToString::to_string)
     }
 
+    fn at_raw_fence(&mut self) -> bool {
+        self.skip_spaces();
+        raw_fence_length(self.s, self.pos) > 0
+    }
+
+    /// Consumes a string literal, regular or raw, and returns its
+    /// content in a canonical form: a double-quote followed by the
+    /// unescaped content. Thus a regular literal and a raw literal
+    /// with the same content are equal, and no string is equal to a
+    /// word or a number.
     fn consume_string(&mut self) -> Option<String> {
         self.skip_spaces();
+        let fence = raw_fence_length(self.s, self.pos);
+        if fence > 0 {
+            let end = raw_end(self.s, self.pos);
+            if end > self.s.len() {
+                return None; // unterminated raw literal
+            }
+            let mut start = self.pos + fence;
+            if fence > 2
+                && self.s[self.pos + 1] == b'_'
+                && start < end - fence
+                && self.s[start] == b'\n'
+            {
+                // The tag starts with "_": the content starts on the
+                // next line, and the newline right after the opening
+                // fence is not content.
+                start += 1;
+            }
+            let content = from_utf8(&self.s[start..end - fence]).ok()?;
+            let canonical = format!("\"{}", content);
+            self.pos = end;
+            return Some(canonical);
+        }
         if self.s.get(self.pos) != Some(&b'"') {
             return None;
         }
@@ -905,9 +1130,10 @@ impl<'a> Scanner<'a> {
         while let Some(&b) = self.s.get(self.pos) {
             if b == b'"' {
                 self.pos += 1;
-                return from_utf8(&self.s[start..self.pos])
+                let literal = from_utf8(&self.s[start..self.pos]).ok()?;
+                return parser::unquote_string(literal)
                     .ok()
-                    .map(ToString::to_string);
+                    .map(|content| format!("\"{}", content));
             }
             if b == b'\\' {
                 self.pos += 1;
@@ -974,6 +1200,9 @@ mod tests {
     }
     fn int_bag() -> Type {
         Type::Bag(Rc::new(int()))
+    }
+    fn string_list() -> Type {
+        Type::List(Rc::new(string()))
     }
     fn int_list() -> Type {
         Type::List(Rc::new(int()))
@@ -1370,5 +1599,216 @@ mod tests {
                  raised at: stdIn:1.6";
         assert!(equivalent(e, e));
         assert!(!equivalent(&e.replace("1.6", "2.7"), e));
+    }
+    /// A raw string literal is equivalent to the regular literal with
+    /// the same content; the content is verbatim, so escapes are not
+    /// processed.
+    #[test]
+    fn raw_string_equivalent_to_escaped() {
+        let ab = "{|a\nb|}";
+        assert!(code_equal(&string(), r#""a\nb""#, ab));
+        assert!(code_equal(&string(), r#""a\nb""#, "{x|a\nb|x}"));
+        assert!(code_equal(&string(), ab, ab));
+        assert!(!code_equal(&string(), r#""a\nc""#, ab));
+        assert!(code_equal(&string(), r#""a\\nb""#, r"{|a\nb|}"));
+        assert!(!code_equal(&string(), r#""a\nb""#, r"{|a\nb|}"));
+        assert!(code_equal(
+            &string(),
+            r#""say \"hi\"\n""#,
+            "{|say \"hi\"\n|}"
+        ));
+        assert!(code_equal(&string(), r#""a|}\nb""#, "{q|a|}\nb|q}"));
+        assert!(!code_equal(&string(), r#""1""#, "1"));
+        assert!(!code_equal(&string(), "{|1|}", "1"));
+    }
+
+    /// An unterminated fence, even in the prefix, gives "not
+    /// equivalent" rather than a panic.
+    #[test]
+    fn unterminated_raw_fence_is_not_equivalent() {
+        assert!(!code_equal(&string(), "{a|x", r#""x""#));
+        let s = "{a| val it = \"x\" : string";
+        assert!(!equivalent_with_type(&string(), s, s));
+    }
+
+    /// If the tag starts with "_", a newline right after the opening
+    /// fence is not content; otherwise it is.
+    #[test]
+    fn raw_string_content_on_next_line() {
+        assert!(code_equal(&string(), r#""a\nb""#, "{_|\na\nb|_}"));
+        assert!(code_equal(&string(), r#""a\nb""#, "{_x|\na\nb|_x}"));
+        assert!(code_equal(&string(), r#""\na\nb""#, "{|\na\nb|}"));
+        assert!(!code_equal(&string(), r#""a\nb""#, "{|\na\nb|}"));
+        assert!(code_equal(&string(), r#""\na""#, "{_|\n\na|_}"));
+    }
+
+    /// A tag consists of lower-case letters and underscores; anything
+    /// else is not a fence.
+    #[test]
+    fn raw_string_tag_characters() {
+        assert!(code_equal(&string(), r#""x""#, "{a_b|x|a_b}"));
+        assert!(!code_equal(&string(), r#""x""#, "{A|x|A}"));
+        assert!(!code_equal(&string(), r#""x""#, "{a1|x|a1}"));
+        assert!(!code_equal(&string(), r#""x""#, "{a-b|x|a-b}"));
+    }
+
+    /// A fence inside a regular literal is just text, and a raw literal
+    /// may contain a fence with a different tag.
+    #[test]
+    fn raw_string_fence_as_text() {
+        assert!(code_equal(&string(), r#""{ab|x|ab}""#, "{|{ab|x|ab}|}"));
+        assert!(code_equal(&string(), r#""{|x|}""#, "{a|{|x|}|a}"));
+        assert!(code_equal(&string(), r#""{ab|x|ab}""#, r#""{ab|x|ab}""#));
+        assert!(code_equal(
+            &string_list(),
+            r#"["{|a|}", "b"]"#,
+            r#"[ "{|a|}",  "b" ]"#
+        ));
+        let s = r#"val it = "{ab| : |ab}" : string"#;
+        assert!(equivalent_with_type(&string(), s, s));
+    }
+
+    /// Whole output lines, including the `val name =` prefix and the
+    /// type suffix.
+    #[test]
+    fn raw_string_whole_lines() {
+        assert!(equivalent_with_type(
+            &string(),
+            r#"val it = "a : b\nc" : string"#,
+            "val it = {|a : b\nc|} : string"
+        ));
+        assert!(!equivalent_with_type(
+            &string(),
+            r#"val it = "a\nc" : string"#,
+            "val it = {|a\nb|} : string"
+        ));
+        assert!(!equivalent_with_type(
+            &string(),
+            r#"val it = "a\nb" : string"#,
+            "val x = {|a\nb|} : string"
+        ));
+        assert!(code_equal(
+            &string_list(),
+            r#"["a\nb", "c"]"#,
+            "[{|a\nb|}, \"c\"]"
+        ));
+    }
+
+    /// A string is left alone if it has no newline, if a line ends in
+    /// whitespace, or if it is not a top-level string value.
+    #[test]
+    fn to_raw_strings_leaves_alone() {
+        for s in [
+            r#"val it = "ab" : string"#,
+            r#"val it = "a\\nb" : string"#,
+            r#"val it = "a \nb" : string"#,
+            r#"val it = "a\t\nb" : string"#,
+            r#"val it = ["a\nb"] : string list"#,
+            r#"val it = "a\nb" : string variant"#,
+            // A tab, carriage return, control character or non-ASCII
+            // character anywhere would be invisible or fragile.
+            r#"val s = "a\n\tb" : string"#,
+            r#"val s = "a\r\nb" : string"#,
+            r#"val s = "a\^Lb\nc" : string"#,
+            r#"val s = "a\252\nb" : string"#,
+        ] {
+            assert_eq!(to_raw_strings(s), s);
+        }
+    }
+
+    /// A newline makes a raw literal; quotes and backslashes become
+    /// verbatim.
+    #[test]
+    fn to_raw_strings_converts() {
+        assert_eq!(
+            to_raw_strings(r#"val it = "a\nb" : string"#),
+            "val it = {|a\nb|} : string"
+        );
+        assert_eq!(
+            to_raw_strings(r#"val s = "say \"hi\"\n\\bye" : string"#),
+            "val s = {|say \"hi\"\n\\bye|} : string"
+        );
+        // A space at the very end is visible (the fence follows it).
+        assert_eq!(
+            to_raw_strings(r#"val it = "a\nb " : string"#),
+            "val it = {|a\nb |} : string"
+        );
+        // A trailing newline leaves the closing fence alone on the last
+        // line.
+        assert_eq!(
+            to_raw_strings(r#"val it = "a\n" : string"#),
+            "val it = {|a\n|} : string"
+        );
+        // Several bindings, and surrounding lines, in one output.
+        assert_eq!(
+            to_raw_strings(concat!(
+                "val a = \"x\\ny\" : string\n",
+                "val b = 1 : int\n",
+                "val c = \"p\\nq\" : string"
+            )),
+            "val a = {|x\ny|} : string\nval b = 1 : int\nval c = {|p\nq|} : string"
+        );
+    }
+
+    /// If the printer wrapped the literal onto the next line, the raw
+    /// literal starts on the next line too, indented; the type suffix
+    /// may also have been wrapped, and follows the closing fence.
+    #[test]
+    fn to_raw_strings_keeps_line_break() {
+        assert_eq!(
+            to_raw_strings("val program =\n  \"a\\nb\" : string"),
+            "val program =\n  {|a\nb|} : string"
+        );
+        assert_eq!(
+            to_raw_strings("val program =\n  \"a\\nb\"\n  : string"),
+            "val program =\n  {|a\nb|} : string"
+        );
+        assert_eq!(
+            to_raw_strings("val it = \"a\\nb\"\n  : string"),
+            "val it = {|a\nb|} : string"
+        );
+    }
+
+    /// The fences carry a tag if the content contains "|}".
+    #[test]
+    fn to_raw_strings_chooses_tag() {
+        assert_eq!(
+            to_raw_strings(r#"val it = "a|}\nb" : string"#),
+            "val it = {a|a|}\nb|a} : string"
+        );
+        assert_eq!(
+            to_raw_strings(r#"val it = "|}|a}\n" : string"#),
+            "val it = {b||}|a}\n|b} : string"
+        );
+        assert_eq!(raw_literal("x"), "{|x|}");
+        let mut content = String::from("|}");
+        for c in 'a'..='z' {
+            content.push('|');
+            content.push(c);
+            content.push('}');
+        }
+        assert_eq!(raw_literal(&content), format!("{{aa|{}|aa}}", content));
+    }
+
+    /// If the second line starts with a space, the content starts on
+    /// the line after the "{_|" fence; content that starts with a
+    /// newline does not need that, because a newline after "{|" is
+    /// content.
+    #[test]
+    fn to_raw_strings_starts_on_next_line() {
+        assert_eq!(
+            to_raw_strings(r#"val it = "a\n  b" : string"#),
+            "val it = {_|\na\n  b|_} : string"
+        );
+        assert_eq!(
+            to_raw_strings(r#"val it = "\na" : string"#),
+            "val it = {|\na|} : string"
+        );
+        assert_eq!(
+            to_raw_strings(r#"val it = "a\nb\n  c" : string"#),
+            "val it = {|a\nb\n  c|} : string"
+        );
+        assert_eq!(raw_literal("a\n b"), "{_|\na\n b|_}");
+        assert_eq!(raw_literal("a|_}\n b"), "{_a|\na|_}\n b|_a}");
     }
 }

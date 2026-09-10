@@ -32,7 +32,19 @@ other.
 Read the commit message, the code changes, and especially the test
 changes in `src/test/resources/script/*.smli` — those tests are
 shared between the two projects, so the morel-rust test files are
-the same `.smli` format and often the same content.
+the same `.smli` format and often the same content. The format, the
+harness and output matching are described in
+[docs/script-format.md](docs/script-format.md).
+
+In expected output, a top-level string value that contains a newline,
+has no space before a newline, and is otherwise printable ASCII is
+written as a raw string literal, `{|...|}` (or `{tag|...|tag}` if the
+content contains `|}`, the tag being lower-case letters and
+underscores), with verbatim content; the `{_|` form, whose tag starts
+with an underscore and whose content starts on the next line (the
+newline after the fence is not content), is used when the second line
+starts with a space. The harness generates these forms, and
+`output_matcher` treats them as equivalent to the escaped literal.
 
 ### Implementing the feature
 
