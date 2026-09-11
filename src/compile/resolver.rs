@@ -1996,6 +1996,22 @@ impl<'a> Resolver<'a> {
                         }
                     }
                 }
+                // `Sys.planOf e` is the plan of `e`, and `e` is not
+                // evaluated. Expanded here, where the argument's core is
+                // to hand. Expanding it later would be worse than
+                // inconvenient: the rewrite passes run to a fixed point,
+                // so the answer would depend on when the inliner reached
+                // the call, and a plan's text must depend on the query
+                // and nothing else.
+                if is_structure_member(func, "Sys", "planOf")
+                    && !self.type_map.user_bindings.contains("Sys")
+                {
+                    let core_arg = self.resolve_expr(arg);
+                    return CoreExpr::Literal(
+                        t,
+                        Val::String(plan_of(&core_arg).into()),
+                    );
+                }
                 // Dispatch `Relational.sum coll` to sum$int/sum$real by the
                 // element type, so plans read `Relational.sum$int` as in
                 // morel-java. The bare-identifier `sum` is handled by
@@ -4236,6 +4252,30 @@ impl<'a> Resolver<'a> {
             _ => todo!("overloaded operator '{}' not supported", op_name),
         }
     }
+}
+
+/// Returns whether `exp` is the member `member` of structure
+/// `structure`, which is written `Structure.member` and parses as a
+/// record selector applied to the structure.
+fn is_structure_member(exp: &Expr, structure: &str, member: &str) -> bool {
+    match &exp.kind {
+        ExprKind::Apply(sel, recv) => matches!(
+            (&sel.kind, &recv.kind),
+            (ExprKind::RecordSelector(m), ExprKind::Identifier(s))
+                if m == member && s == structure
+        ),
+        _ => false,
+    }
+}
+
+/// Renders the plan of `exp`, for `Sys.planOf`.
+///
+/// Provisional: it prints the core expression, which for a query is the
+/// step list. `spec.md` §6 says a query prints as a relational tree, and
+/// this becomes that once the tree can be built and printed (plan.md,
+/// milestones R2 to R6).
+fn plan_of(exp: &CoreExpr) -> String {
+    format!("{}", exp)
 }
 
 /// Returns whether any of the expressions in `exps` references any of

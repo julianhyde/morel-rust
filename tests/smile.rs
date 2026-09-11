@@ -336,6 +336,11 @@ fn regex_example() {
 }
 
 #[test]
+fn rel_tree() {
+    run_script("tests/script/rel-tree.smli");
+}
+
+#[test]
 fn relational() {
     run_script("tests/script/relational.smli");
 }

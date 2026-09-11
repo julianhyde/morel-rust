@@ -1467,6 +1467,16 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Sys", name = "planEx"))]
     #[strum(props(type = "string -> string"))]
     SysPlanEx,
+    /// `Sys.planOf e` is the plan of `e`, and `e` is not evaluated.
+    /// The resolver expands it into a string literal; see
+    /// `resolver::plan_of`. This implementation runs only where
+    /// `Sys.planOf` is used as a value rather than applied to an
+    /// expression -- passed to `map`, say -- which it cannot serve,
+    /// because by then the expression is gone and only its value
+    /// remains.
+    #[strum(props(p = "Sys", name = "planOf"))]
+    #[strum(props(type = "forall 1 'a -> string"))]
+    SysPlanOf,
     #[strum(props(p = "Sys", name = "set", global = true))]
     #[strum(props(type = "forall 1 string * 'a -> unit", throws = "Fail"))]
     SysSet,

@@ -2867,6 +2867,7 @@ pub enum EagerF1 {
     StringFromString,
     SysParseTree,
     SysPlanEx,
+    SysPlanOf,
     SysShow,
     SysUnset,
     TimeFromReal,
@@ -3049,6 +3050,15 @@ impl EagerF1 {
                         .unwrap_or_default(),
                 };
                 Ok(Val::String((s).into()))
+            }
+            SysPlanOf => {
+                // `Sys.planOf e` is expanded by the resolver, where the
+                // expression is still to hand. This runs only where it
+                // is used as a value rather than applied -- passed to
+                // `map`, say -- and by then the expression is gone.
+                Ok(Val::String(
+                    "Sys.planOf must be applied to an expression".into(),
+                ))
             }
             SysShow => {
                 // Return SOME(value) or NONE for the given property.
@@ -5589,6 +5599,7 @@ fn build_library() -> Lib {
     EagerF1::SysParseTree.implements(&mut b, SysParseTree);
     EagerF0::SysPlan.implements(&mut b, SysPlan);
     EagerF1::SysPlanEx.implements(&mut b, SysPlanEx);
+    EagerF1::SysPlanOf.implements(&mut b, SysPlanOf);
     EagerF2::SysSet.implements(&mut b, SysSet);
     EagerF1::SysShow.implements(&mut b, SysShow);
     EagerF0::SysShowAll.implements(&mut b, SysShowAll);

@@ -1,0 +1,46 @@
+(*
+ * Licensed to Julian Hyde under one or more contributor license
+ * agreements.  See the NOTICE file distributed with this work
+ * for additional information regarding copyright ownership.
+ * Julian Hyde licenses this file to you under the Apache
+ * License, Version 2.0 (the "License"); you may not use this
+ * file except in compliance with the License.  You may obtain a
+ * copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+ * either express or implied.  See the License for the specific
+ * language governing permissions and limitations under the
+ * License.
+ *
+ * Conformance suite for the relational tree.
+ *
+ * A placeholder. morel-java's suite of the same name is the
+ * cross-implementation contract, and replaces this file at milestone
+ * R6 of plan.md. Until the tree can be built and printed, what can be
+ * tested is that `Sys.planOf` reaches its argument as an expression
+ * and does not evaluate it.
+ *)
+
+(*) `Sys.planOf e` returns the plan of `e`.
+Sys.planOf (from i in [1, 2, 3] where i > 1);
+> val it = "from i in [1, 2, 3] where i > 1" : string
+
+(* `e` is not evaluated. `List.hd []` raises `Empty`, and a plan of it
+ * does not. *)
+List.hd [];
+> uncaught exception Empty
+>   raised at: stdIn:1.1-1.11
+Sys.planOf (List.hd []);
+> val it = "#hd List ([])" : string
+
+(* Applied to an expression is the only way it can work: used as a
+ * value, the expression is gone by the time it runs and only the
+ * value remains. *)
+List.map Sys.planOf [1];
+> val it = ["Sys.planOf must be applied to an expression"] : string list
+
+(*) End rel-tree.smli

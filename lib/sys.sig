@@ -74,6 +74,13 @@ sig
    *)
   val planEx : string -> string [@@prototype "planEx phase"]
 
+  (**
+   * returns the plan of the expression `e`, which is not evaluated. Unlike
+   * `planEx`, which re-plans the previous statement, this takes the expression
+   * itself, so that a query and its plan are one statement rather than two.
+   *)
+  val planOf : 'a -> string [@@prototype "planOf e"]
+
   (** sets the value of `property` to `value`. *)
   val set : string * 'a -> unit
       [@@prototype "set (property, value)"]
