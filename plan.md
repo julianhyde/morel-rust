@@ -244,6 +244,18 @@ reader tells a continuation from a grandchild. Nothing else moves: the
 nodes, the indentation and every number are the same at any width. The
 golden plans are all at 78.
 
+**R4b and R4c come after R5**, decided 2026-09-12 on reading what they
+need. Both are about byte-exact output, which only R6 requires, while
+the shadow in R5 finds disagreements without printing anything at all.
+And wrapping is not the small piece it looks like: the golden text
+breaks a line at the syntactic points of the *expression* -- after a
+record's comma, before an `andalso` -- so it needs a document-based
+expression renderer, which is what morel-java's "The writer builds a
+document, not a string" did. Ours renders an expression straight to a
+string, so this is a change to how every expression prints, and it
+should be made when its output is being checked against the golden
+files rather than before.
+
 *R4c, fragments.* A relation reached from inside an expression cannot
 print where it stands, because an operator must be the first
 non-whitespace on its line. It prints as `r$0` and its block follows
@@ -340,7 +352,25 @@ Worth reading before repeating them.
 Disagreements between morel-rust, morel-java and `spec.md`. One line
 each, with the query, what each produced, and which we think is wrong.
 
-Two already, from reading `spec.md` alone:
+Two in morel-rust, found by building the tree beside the step list.
+Neither is fixed here: this branch is not for `main`, and a fix made on
+it would hide the bug rather than report it.
+
+1. **`union distinct` re-plans as `union all`.** The step flag holds
+   *distinct*, and `core::write_set_step` names its parameter `all` and
+   prints the word when the flag is set. So `from i in [1, 2] union
+   distinct [3]` prints as `from i in [1, 2] union all [3]`: the plan
+   says the opposite of the query, and re-running the plan would change
+   the answer. Found because translating the flag into a node inverted
+   it, which sent me to look at what the flag means.
+2. **A `where true` step is dropped, and morel-java keeps it.** For
+   `from where true yield 1`, morel-java's golden text is
+   `project [1]` over `filter [true]` over `[()]`, and ours has no
+   filter, because the step is gone before the tree is built. One of
+   the two is wrong about what a plan should show; the spec does not
+   say.
+
+And two in `spec.md`, from reading it alone:
 
 1. **§6.3's grammar contradicts its prose and examples.** The `defn`
    production spells a fragment head with brackets, `'r' '[' int ']'

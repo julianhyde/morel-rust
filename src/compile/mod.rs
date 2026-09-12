@@ -34,6 +34,7 @@ pub mod pretty;
 pub mod progressive_widen;
 pub mod record_modifiers;
 pub mod rel_printer;
+pub mod rel_translator;
 pub mod rel_validator;
 pub mod replacer;
 pub mod resolver;

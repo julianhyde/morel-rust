@@ -308,6 +308,7 @@ mod tests {
     use crate::compile::span::Span;
     use crate::compile::types::{Label, PrimitiveType, Type};
     use crate::eval::val::Val;
+    use std::collections::BTreeMap;
     use std::rc::Rc;
 
     fn int() -> Rc<Type> {
@@ -333,7 +334,7 @@ mod tests {
 
     /// A record type wide enough to need a reference.
     fn dept() -> Rc<Type> {
-        let mut fields = std::collections::BTreeMap::new();
+        let mut fields = BTreeMap::new();
         fields.insert(Label::String("deptno".to_string()), int());
         fields.insert(
             Label::String("dname".to_string()),

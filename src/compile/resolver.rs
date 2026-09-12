@@ -37,6 +37,9 @@ use crate::compile::library::{BuiltIn, BuiltInFunction};
 use crate::compile::pat_coverage;
 use crate::compile::postfix::{PostfixKind, peel_type, postfix_dispatch};
 use crate::compile::record_modifiers::{self, Source};
+use crate::compile::rel_printer;
+use crate::compile::rel_translator;
+use crate::compile::rel_validator;
 use crate::compile::span::Span;
 use crate::compile::type_resolver::{
     Resolved, TypeMap, Typed, ast_type_to_core_type,
@@ -4270,11 +4273,24 @@ fn is_structure_member(exp: &Expr, structure: &str, member: &str) -> bool {
 
 /// Renders the plan of `exp`, for `Sys.planOf`.
 ///
-/// Provisional: it prints the core expression, which for a query is the
-/// step list. `spec.md` §6 says a query prints as a relational tree, and
-/// this becomes that once the tree can be built and printed (plan.md,
-/// milestones R2 to R6).
+/// A query prints as a relational tree, which is `spec.md` §6 and the
+/// cross-implementation contract. Where the translator declines -- it
+/// does not guess -- the core expression is printed instead, which for
+/// a query is the step list that runs it.
 fn plan_of(exp: &CoreExpr) -> String {
+    if let CoreExpr::From(_, steps) = exp
+        && let Some(tree) = rel_translator::translate(steps, &exp.type_())
+    {
+        // Every tree we print is validated, and a complaint goes into
+        // the text rather than into a log: a plan nobody reads is not
+        // a check, and a tree that fails an invariant is a finding
+        // whichever implementation is wrong.
+        let mut text = rel_printer::plan(&tree, true);
+        for error in rel_validator::validate(&tree) {
+            text.push_str(&format!("INVALID: {}\n", error));
+        }
+        return text;
+    }
     format!("{}", exp)
 }
 

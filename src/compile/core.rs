@@ -288,6 +288,7 @@ impl Display for Expr {
                 // `#flatten Range ([OPEN (0, 10)])`.
                 match arg.as_ref() {
                     Expr::Identifier(_, _)
+                    | Expr::Input(_, _)
                     | Expr::Literal(_, _)
                     | Expr::Tuple(_, _) => write!(f, "{} {}", fx, arg),
                     _ => write!(f, "{} ({})", fx, arg),
