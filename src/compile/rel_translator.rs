@@ -48,15 +48,29 @@ use crate::compile::span::Span;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
 use crate::syntax::ast::JoinType;
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
 /// Translates the query `from steps`, whose type is `query_type`, into
 /// a tree; or returns `None` where it declines.
 pub fn translate(steps: &[Step], query_type: &Rc<Type>) -> Option<Expr> {
+    translate_with(steps, query_type, BTreeMap::new(), Rc::new(Cell::new(0)))
+}
+
+/// Translates a query whose expressions may read the names in `outer`,
+/// which is how a nested tree reads the row that encloses it.
+fn translate_with(
+    steps: &[Step],
+    query_type: &Rc<Type>,
+    outer: BTreeMap<String, Expr>,
+    counter: Rc<Cell<usize>>,
+) -> Option<Expr> {
     let mut t = Translator {
         tree: None,
         bindings: Vec::new(),
+        outer,
+        counter,
     };
     for step in steps {
         t.step(step)?;
@@ -107,18 +121,27 @@ impl Path {
     /// two inputs' elements, where every other expression sees only
     /// `$0`.
     fn read_at(&self, elem: &Rc<Type>, index: usize) -> Option<Expr> {
-        let input = Expr::Input(elem.clone(), index);
+        self.read_from(Expr::Input(elem.clone(), index))
+    }
+
+    /// Returns the expression that reads this path out of `base`, which
+    /// names an element. A dependent join's binder names the left
+    /// element by an ordinary variable, and its right input reads the
+    /// left binders through that.
+    fn read_from(&self, base: Expr) -> Option<Expr> {
+        let elem = base.type_();
+        let input = base;
         match self {
             Path::Whole => Some(input),
             Path::Component(i) => {
-                let Type::Tuple(types) = peel(elem) else {
+                let Type::Tuple(types) = peel(&elem) else {
                     return None;
                 };
                 let t = types.get(i - 1)?.clone();
                 Some(selector(input, i - 1, t))
             }
             Path::Field(label) => {
-                let Type::Record(_, fields) = peel(elem) else {
+                let Type::Record(_, fields) = peel(&elem) else {
                     return None;
                 };
                 let slot = fields.keys().position(|l| l.matches(label))?;
@@ -138,6 +161,16 @@ struct Translator {
     /// Where each binder's value is in the current element, in the
     /// order the query bound them.
     bindings: Vec<(String, Path)>,
+    /// Names bound outside this tree that its expressions may read:
+    /// the binder that a dependent join carries, resolved to what it
+    /// names in the left element. A nested tree reads its enclosing row
+    /// only this way, because `$0` is its own (spec.md §2 rule 3).
+    outer: BTreeMap<String, Expr>,
+    /// Supplies the names for the binders the translation invents.
+    /// Shared with the translators of nested trees, so that no two
+    /// binders in one statement have the same name; uniqueness is all
+    /// allocation owes, because the printer renumbers what it prints.
+    counter: Rc<Cell<usize>>,
 }
 
 impl Translator {
@@ -226,10 +259,31 @@ impl Translator {
             }
             Some(left) => {
                 // A scan that reads an earlier binder is a dependent
-                // join, which carries a binder; that is declined.
+                // join: the join carries a binder, and its right input
+                // reads the left element through it. Dependence is not
+                // a mode of the node -- it is the free occurrence of
+                // that binder, which is why decorrelation is dropping
+                // the binder rather than rewriting one node into
+                // another.
+                let mut binder = None;
+                let right;
                 if reads_a_binding(source, &self.bindings) {
-                    self.tree = Some(left);
-                    return None;
+                    // A correlated outer join, or one carrying a
+                    // condition as well, is more than this does.
+                    if condition.is_some() || join_type != JoinType::Inner {
+                        self.tree = Some(left);
+                        return None;
+                    }
+                    let name = self.new_binder();
+                    if let Some(tree) = self.correlated(source, &left, &name) {
+                        binder = Some(name);
+                        right = tree;
+                    } else {
+                        self.tree = Some(left);
+                        return None;
+                    }
+                } else {
+                    right = source.clone();
                 }
                 let n = components_of(&left) + 1;
                 // The condition sees the two inputs' elements as `$0`
@@ -258,10 +312,10 @@ impl Translator {
                 };
                 let join = Rel::Join(
                     kind,
-                    None,
+                    binder,
                     Box::new(condition),
                     Box::new(left),
-                    Box::new(source.clone()),
+                    Box::new(right),
                 );
                 let tree = node(join)?;
                 // The components concatenate, so a binder that was the
@@ -307,6 +361,39 @@ impl Translator {
         Some(())
     }
 
+    /// Returns a fresh name for a binder the translation invents.
+    fn new_binder(&self) -> String {
+        let i = self.counter.get();
+        self.counter.set(i + 1);
+        format!("v${}", i)
+    }
+
+    /// Translates the right input of a dependent join: the scan's
+    /// source, with the left binders read through `name`, which the
+    /// join binds to the left element.
+    fn correlated(
+        &self,
+        source: &Expr,
+        left: &Expr,
+        name: &str,
+    ) -> Option<Expr> {
+        let left_elem = element_type(&left.type_())?;
+        let binder = Expr::Identifier(left_elem, name.to_string());
+        let mut outer = self.outer.clone();
+        for (bound, path) in &self.bindings {
+            outer.insert(bound.clone(), path.read_from(binder.clone())?);
+        }
+        match source {
+            // The source is a query of its own, so it is a tree of its
+            // own, whose `$0` is its own element.
+            Expr::From(t, steps) => {
+                translate_with(steps, t, outer, Rc::clone(&self.counter))
+            }
+            // Otherwise it is a leaf, and only its names change.
+            leaf => substitute(leaf, &outer),
+        }
+    }
+
     /// Rewrites a join's `on` condition. The binders the left input
     /// bound read `$0`, its element; the binder the scan introduces
     /// reads `$1`, the right element.
@@ -319,7 +406,7 @@ impl Translator {
     ) -> Option<Expr> {
         let left_elem = element_type(&left.type_())?;
         let right_elem = element_type(&right.type_())?;
-        let mut map = BTreeMap::new();
+        let mut map = self.outer.clone();
         for (bound, path) in &self.bindings {
             map.insert(bound.clone(), path.read_at(&left_elem, 0)?);
         }
@@ -441,7 +528,7 @@ impl Translator {
     /// `$0`.
     fn rewrite(&self, e: &Expr) -> Option<Expr> {
         let elem = element_type(&self.tree.as_ref()?.type_())?;
-        let mut map = BTreeMap::new();
+        let mut map = self.outer.clone();
         for (name, path) in &self.bindings {
             map.insert(name.clone(), path.read(&elem)?);
         }
