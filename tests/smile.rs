@@ -72,12 +72,18 @@ fn run_script_with(file_name: &str, stack_size: Option<usize>) {
         let shadow = take_shadow();
         assert!(
             shadow.invalid.is_empty(),
-            "{}: {} invalid trees, of {} translated and {} declined:\n{}",
+            "{}: {} invalid trees, of {} translated and {} declined.\n{}\n\nDeclines:\n{}",
             file_name,
             shadow.invalid.len(),
             shadow.translated,
             shadow.declined,
-            shadow.invalid.join("\n")
+            shadow.invalid.join("\n"),
+            shadow
+                .reasons
+                .iter()
+                .map(|(reason, n)| format!("{:5}  {}", n, reason))
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 }

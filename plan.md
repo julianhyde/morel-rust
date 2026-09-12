@@ -10,10 +10,10 @@ reason about after the fact.
 `rel-tree.smli` at tag `449-tree.3` is copied across and passes, and
 its fifteen plans are morel-java's text byte for byte except in two
 places, both of which are morel-rust bugs on `main` and neither of
-which is fixed here. The shadow translates 958 of the corpus's queries
-and declines 804, with no tree failing the validator. What is left is
-below under "Later, not now": the lowering, and grounding on the
-tree.
+which is fixed here. The shadow translates 1,246 of the corpus's
+queries and declines 516, with no tree failing the validator. What is
+left is below under "Later, not now": the lowering, and grounding on
+the tree.
 
 ## What morel-java did
 
@@ -339,10 +339,41 @@ normalizes.
 *R5c, the shadow.* Done 2026-09-12. The resolver builds the tree for
 every query it resolves, in a debug build only, and records what
 happened; each script test then asserts that no tree failed the
-validator. Over the 67 scripts it translates 958 queries and declines
-804. The type equality is inside `translate`, which returns nothing
-where the tree's type is not the query's, so a failure there shows up
-as a decline rather than as a fault.
+validator. The type equality is inside `translate`, which returns
+nothing where the tree's type is not the query's, so a failure there
+shows up as a decline rather than as a fault.
+
+*R5d, the decline reasons.* A count of declines says how much coverage
+is missing and nothing about what. So a decline says why, at the point
+the decision is taken, and the shadow keeps the tally and the first
+query for each reason. The *first* reason stands, not the last: an
+outer caller sees the `None` too, and a coarse reason written there
+buries the exact one underneath it. One attempt is forgotten on
+purpose -- an expression holding a query declines the plain
+substitution and succeeds through the `let` -- because what it said is
+about a path not taken.
+
+Reading the tally bought seven translations in an afternoon, and the
+count went from 804 declines out of 1762 queries to 516 out of 1762:
+
+| what it bought | what it was |
+| -------------- | ----------- |
+| `distinct` | a group on every binder with no aggregate, which is what the compiler makes of it |
+| a `let`, `case` or `fn` in an expression | substitution stops at a name the construct binds |
+| any scan pattern that cannot fail | a path is a list of hops, so a pattern nests as deep as it likes |
+| a tuple pattern over a record | a record has components too: its fields in label order |
+| a record or wildcard scan pattern | the same walk |
+| `group ()` | a group on nothing, which is one group |
+| `from` with no steps | the unit leaf, which is what `from` evaluates to |
+
+What is left divides in two. About 300 are queries with nothing to
+build -- `exists` short-circuits into a boolean, and `ordinal` and
+`current` are the row's place and the row itself, and none of §3's
+eleven constructors carries any of the three. The rest are real gaps,
+and the largest are a query whose row is not a record (`group ()`
+again, from the other side), a scan pattern that can fail, and a
+handful that say a node's type did not derive, which is a finding
+rather than a gap.
 
 It paid for itself on its first run, on a query nothing else looked
 at:

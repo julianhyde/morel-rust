@@ -40,7 +40,8 @@
 #![allow(dead_code)]
 
 use crate::compile::core::{
-    Decl, Expr, JoinKind, Pat, Rel, Step, StepKind, ValBind, element_type,
+    Decl, Expr, JoinKind, Match, Pat, PatField, Rel, Step, StepKind, ValBind,
+    element_type,
 };
 use crate::compile::free_finder::free_names_in;
 use crate::compile::postfix::peel_type;
@@ -56,7 +57,35 @@ use std::rc::Rc;
 /// Translates the query `from steps`, whose type is `query_type`, into
 /// a tree; or returns `None` where it declines.
 pub fn translate(steps: &[Step], query_type: &Rc<Type>) -> Option<Expr> {
+    DECLINE.with(|cell| cell.set(None));
     translate_with(steps, query_type, BTreeMap::new(), Rc::new(Cell::new(0)))
+}
+
+thread_local! {
+    /// Why the translation in progress declined, if it has.
+    static DECLINE: Cell<Option<&'static str>> = const { Cell::new(None) };
+}
+
+/// Records why the translator is declining, and declines.
+///
+/// It declines rather than guesses, and saying why is what turns the
+/// count of declines into a list of what to build next. A reason is
+/// written where the decision is taken, and the *first* one stands: an
+/// outer caller sees the `None` too, and a coarse reason written there
+/// would bury the exact one underneath it.
+fn decline<T>(reason: &'static str) -> Option<T> {
+    DECLINE.with(|cell| {
+        if cell.get().is_none() {
+            cell.set(Some(reason));
+        }
+    });
+    None
+}
+
+/// Forgets the reason, for a decline that was only an attempt: what it
+/// says is about a path not taken.
+fn forget_decline() {
+    DECLINE.with(|cell| cell.set(None));
 }
 
 /// Translates a query whose expressions may read the names in `outer`,
@@ -76,7 +105,12 @@ fn translate_with(
     for step in steps {
         t.step(step)?;
     }
-    let tree = t.tree.take()?;
+    // A query with no steps iterates over one unit row, and `[()]` is
+    // that row: `from` is `[()]`, and the leaf its author did not
+    // write is the whole of why the answer has one row rather than
+    // none. Only a step asks for the leaf, so a query with no steps
+    // asks here.
+    let tree = t.tree.take().unwrap_or_else(unit_leaf);
     if tree.type_() == *query_type {
         return Some(tree);
     }
@@ -87,8 +121,13 @@ fn translate_with(
     // come back. This is also the check: if the projection does not
     // give the query's own type, the translation is wrong and declines
     // rather than printing a plan for a different query.
+    // `name_the_components` says why it could not, which is exact
+    // where a reason written here would be coarse.
     let tree = t.name_the_components(tree, query_type)?;
-    (tree.type_() == *query_type).then_some(tree)
+    if tree.type_() != *query_type {
+        return decline("a tree whose type is not the query's");
+    }
+    Some(tree)
 }
 
 thread_local! {
@@ -105,6 +144,14 @@ pub struct Shadow {
     /// declines rather than guesses. The count is the coverage we do
     /// not have yet.
     pub declined: usize,
+    /// How many declined for each reason, which is what says where the
+    /// coverage is worth buying next. A decline with no reason is
+    /// itself a finding: something returned `None` without saying so.
+    pub reasons: BTreeMap<&'static str, usize>,
+    /// The first query to decline for each reason. A count says how
+    /// much, and this says what: a reason on its own is not enough to
+    /// go and look.
+    pub examples: BTreeMap<&'static str, String>,
     /// Trees the validator complained about, each with the query it
     /// came from. Every one is a bug -- here, or in morel-java, or in
     /// what `spec.md` meant -- and the query is enough to find it.
@@ -134,10 +181,19 @@ pub fn take_shadow() -> Shadow {
 
 fn shadow_query(exp: &Expr, steps: &[Step]) {
     let tree = translate(steps, &exp.type_());
+    let reason = DECLINE.with(Cell::get);
     SHADOW.with(|cell| {
         let mut shadow = cell.borrow_mut();
         match &tree {
-            None => shadow.declined += 1,
+            None => {
+                shadow.declined += 1;
+                let reason = reason.unwrap_or("unsaid");
+                *shadow.reasons.entry(reason).or_default() += 1;
+                shadow
+                    .examples
+                    .entry(reason)
+                    .or_insert_with(|| format!("{}", exp));
+            }
             Some(tree) => {
                 shadow.translated += 1;
                 for error in rel_validator::validate(tree) {
@@ -267,6 +323,14 @@ impl Path {
         Path(hops)
     }
 
+    /// Returns this path followed by one more hop, which is what a
+    /// pattern does as it nests.
+    fn then(&self, hop: Hop) -> Path {
+        let mut hops = self.0.clone();
+        hops.push(hop);
+        Path(hops)
+    }
+
     /// Returns the expression that reads this path out of the element
     /// of the node's only input, `$0`.
     fn read(&self, elem: &Rc<Type>) -> Option<Expr> {
@@ -298,21 +362,43 @@ impl Hop {
     /// Returns the expression that takes this step out of `base`.
     fn read_from(&self, base: Expr) -> Option<Expr> {
         let elem = base.type_();
+        // A path that does not fit the element it is read out of is a
+        // bookkeeping mistake rather than a gap, so it says so: a
+        // binder's place was recorded against one element and read
+        // against another.
         match self {
+            // A record has components too, and they are its fields in
+            // label order: `from (dno, name, loc) in scott.depts`
+            // takes a record apart with a tuple pattern, and the
+            // pattern is positional where the element is not.
             Hop::Component(i) => {
-                let Type::Tuple(types) = peel(&elem) else {
-                    return None;
+                let types: Vec<Rc<Type>> = match peel(&elem) {
+                    Type::Tuple(types) => types.clone(),
+                    Type::Record(_, fields) => {
+                        fields.values().cloned().collect()
+                    }
+                    _ => {
+                        return decline(
+                            "a component of an element that has none",
+                        );
+                    }
                 };
-                let t = types.get(i - 1)?.clone();
-                Some(selector(base, i - 1, t))
+                match types.get(i - 1) {
+                    None => decline("a component the element does not have"),
+                    Some(t) => Some(selector(base, i - 1, t.clone())),
+                }
             }
             Hop::Field(label) => {
                 let Type::Record(_, fields) = peel(&elem) else {
-                    return None;
+                    return decline("a field of an element that has none");
                 };
-                let slot = fields.keys().position(|l| l.matches(label))?;
-                let t = fields.values().nth(slot)?.clone();
-                Some(selector(base, slot, t))
+                match fields.keys().position(|l| l.matches(label)) {
+                    None => decline("a field the element does not have"),
+                    Some(slot) => {
+                        let t = fields.values().nth(slot)?.clone();
+                        Some(selector(base, slot, t))
+                    }
+                }
             }
         }
     }
@@ -389,11 +475,14 @@ impl Translator {
             // the single element that the enclosing expression
             // performs.
             StepKind::Compute(aggregates) => self.group_of(vec![], aggregates),
-            // `distinct` is a group keyed on the whole element, and the
-            // conformance suite does not pin its text, so guessing what
-            // it prints would risk diverging on something nothing
-            // checks.
-            _ => None,
+            // `distinct` is a group on every binder with no aggregate,
+            // which is what the compiler makes of it too, so it needs
+            // no node of its own.
+            StepKind::Distinct => self.distinct(),
+            // `exists` short-circuits a query into a boolean, and none
+            // of `spec.md` §3's eleven constructors does that. It is
+            // not missing coverage; there is nothing to build.
+            StepKind::Exists => decline("a query that tests for existence"),
         }
     }
 
@@ -409,14 +498,16 @@ impl Translator {
         // Where each name the pattern binds sits in the element. A
         // pattern that can fail becomes a filter and a projection, and
         // is more than this does.
-        let paths = binder_paths(pat)?;
+        let Some(paths) = binder_paths(pat) else {
+            return decline("a scan pattern that is not a name or a tuple");
+        };
         match self.tree.take() {
             None => {
                 // The first scan is the tree's leaf, and has nothing to
                 // join against, so neither a condition nor an outer
                 // kind can mean anything here.
                 if condition.is_some() || join_type != JoinType::Inner {
-                    return None;
+                    return decline("a first scan with a condition or a kind");
                 }
                 self.tree = Some(self.source_tree(source)?);
                 self.bindings = paths;
@@ -436,7 +527,7 @@ impl Translator {
                     // condition as well, is more than this does.
                     if condition.is_some() || join_type != JoinType::Inner {
                         self.tree = Some(left);
-                        return None;
+                        return decline("a correlated outer join");
                     }
                     let name = self.new_binder();
                     if let Some(tree) = self.correlated(source, &left, &name) {
@@ -465,7 +556,7 @@ impl Translator {
                     // than joined on the wrong terms.
                     Some(None) => {
                         self.tree = Some(left);
-                        return None;
+                        return decline("a join condition");
                     }
                 };
                 let kind = match join_type {
@@ -538,7 +629,10 @@ impl Translator {
                 self.outer.clone(),
                 Rc::clone(&self.counter),
             ),
-            leaf => substitute(leaf, &self.outer),
+            leaf => match substitute(leaf, &self.outer) {
+                None => decline("a scan source over the enclosing row"),
+                some => some,
+            },
         }
     }
 
@@ -600,14 +694,27 @@ impl Translator {
     /// Translates a `group`: the keys and the aggregates, each a list
     /// of labelled expressions over `$0`.
     fn group(&mut self, keys: &Expr, aggregates: Option<&Expr>) -> Option<()> {
-        let keys = labelled_parts(keys)?;
+        let Some(keys) = labelled_parts(keys) else {
+            return decline("a group's keys");
+        };
         match aggregates {
             None => self.group_parts(keys, vec![]),
-            Some(aggregates) => {
-                let aggregates = labelled_parts(aggregates)?;
-                self.group_parts(keys, aggregates)
-            }
+            Some(aggregates) => match labelled_parts(aggregates) {
+                None => decline("a group's aggregates"),
+                Some(aggregates) => self.group_parts(keys, aggregates),
+            },
         }
+    }
+
+    /// Translates `distinct`: a group on every binder, with no
+    /// aggregate.
+    fn distinct(&mut self) -> Option<()> {
+        let elem = element_type(&self.tree.as_ref()?.type_())?;
+        let mut keys = Vec::with_capacity(self.bindings.len());
+        for (name, path) in &self.bindings {
+            keys.push((Label::String(name.clone()), path.read(&elem)?));
+        }
+        self.group_parts(keys, vec![])
     }
 
     /// Translates a group whose aggregates are an expression and whose
@@ -617,7 +724,9 @@ impl Translator {
         keys: Vec<(Label, Expr)>,
         aggregates: &Expr,
     ) -> Option<()> {
-        let aggregates = labelled_parts(aggregates)?;
+        let Some(aggregates) = labelled_parts(aggregates) else {
+            return decline("a compute's aggregates");
+        };
         self.group_parts(keys, aggregates)
     }
 
@@ -698,16 +807,19 @@ impl Translator {
     ) -> Option<Expr> {
         let row = element_type(query_type)?;
         let Type::Record(_, fields) = peel(&row) else {
-            return None;
+            return decline("a query whose row is not a record");
         };
         let elem = element_type(&tree.type_())?;
         let mut values = Vec::with_capacity(fields.len());
         for label in fields.keys() {
             let Label::String(name) = label else {
-                return None;
+                return decline("a query whose row has an ordinal label");
             };
-            let (_, path) =
-                self.bindings.iter().find(|(bound, _)| bound == name)?;
+            let Some((_, path)) =
+                self.bindings.iter().find(|(bound, _)| bound == name)
+            else {
+                return decline("a query whose row names an unbound binder");
+            };
             values.push(path.read(&elem)?);
         }
         let value = Expr::Tuple(row, values);
@@ -716,7 +828,9 @@ impl Translator {
 
     /// Replaces the tree with a node built over it.
     fn wrap(&mut self, f: impl FnOnce(Box<Expr>) -> Rel) -> Option<()> {
-        let input = self.tree.take()?;
+        let Some(input) = self.tree.take() else {
+            return decline("a step with nothing under it");
+        };
         self.tree = Some(node(f(Box::new(input)))?);
         Some(())
     }
@@ -740,6 +854,10 @@ impl Translator {
         if let Some(plain) = substitute(e, &map) {
             return Some(plain);
         }
+        // That was an attempt, not a decision: an expression holding a
+        // query declines here and succeeds below, so whatever it said
+        // is about a path not taken.
+        forget_decline();
         let name = self.new_binder();
         let binder = Expr::Identifier(elem.clone(), name.clone());
         let mut outer = self.outer.clone();
@@ -747,9 +865,11 @@ impl Translator {
             outer.insert(bound.clone(), path.read_from(binder.clone())?);
         }
         let counter = Rc::clone(&self.counter);
-        let body = substitute_with(e, &map, &mut |t, steps| {
+        let Some(body) = substitute_with(e, &map, &mut |t, steps| {
             translate_with(steps, t, outer.clone(), Rc::clone(&counter))
-        })?;
+        }) else {
+            return decline("an expression over the binders");
+        };
         Some(let_binding(name, Expr::Input(elem, 0), body))
     }
 }
@@ -819,6 +939,11 @@ fn peel(t: &Rc<Type>) -> &Type {
 /// `group i` rather than `group {i = i}` -- so the name comes from the
 /// expression, the way the query's own `yield` takes it.
 fn labelled_parts(e: &Expr) -> Option<Vec<(Label, Expr)>> {
+    // `group ()` groups on nothing, which is one group, and is how
+    // `compute` is written when it is written as a `group`.
+    if matches!(e, Expr::Tuple(_, items) if items.is_empty()) {
+        return Some(vec![]);
+    }
     let Expr::Tuple(t, items) = e else {
         let name = e.implicit_label()?;
         return Some(vec![(Label::String(name), e.clone())]);
@@ -843,8 +968,12 @@ fn unit_leaf() -> Expr {
 
 /// Builds the expression for a node, with the type it derives.
 fn node(rel: Rel) -> Option<Expr> {
-    let t = rel.derive_type()?;
-    Some(Expr::Rel(t, Box::new(rel)))
+    match rel.derive_type() {
+        // A node whose type does not derive is one the datatype's own
+        // rules reject, which is a finding rather than a gap.
+        None => decline("a node whose type does not derive"),
+        Some(t) => Some(Expr::Rel(t, Box::new(rel))),
+    }
 }
 
 /// Returns where each name a scan's pattern binds sits in the element
@@ -853,20 +982,42 @@ fn node(rel: Rel) -> Option<Expr> {
 /// in the projection that ends the tree, where the tree itself carries
 /// none.
 fn binder_paths(pat: &Pat) -> Option<Vec<(String, Path)>> {
+    let mut paths = Vec::new();
+    collect_paths(pat, &Path::whole(), &mut paths)?;
+    Some(paths)
+}
+
+/// Adds where each name `pat` binds sits, given where `pat` itself
+/// sits in the element.
+fn collect_paths(
+    pat: &Pat,
+    at: &Path,
+    paths: &mut Vec<(String, Path)>,
+) -> Option<()> {
     match pat {
-        Pat::Identifier(_, name) => Some(vec![(name.clone(), Path::whole())]),
-        Pat::Tuple(_, pats) => pats
-            .iter()
-            .enumerate()
-            .map(|(i, p)| match p {
-                Pat::Identifier(_, name) => {
-                    Some((name.clone(), Path::component(i + 1)))
-                }
-                _ => None,
-            })
-            .collect(),
-        _ => None,
+        Pat::Identifier(_, name) => paths.push((name.clone(), at.clone())),
+        // A wildcard binds nothing, and nothing needs to read it.
+        Pat::Wildcard(_) => {}
+        Pat::Tuple(_, pats) => {
+            for (i, p) in pats.iter().enumerate() {
+                collect_paths(p, &at.then(Hop::Component(i + 1)), paths)?;
+            }
+        }
+        Pat::Record(_, fields, _) => {
+            for field in fields {
+                let (label, p) = match field {
+                    PatField::Labeled(label, p) => (label.clone(), p),
+                    // `{y}` names the field by the pattern in it.
+                    PatField::Anonymous(p) => (p.name()?, p),
+                };
+                collect_paths(p, &at.then(Hop::Field(label)), paths)?;
+            }
+        }
+        // A pattern that can fail becomes a filter and a projection,
+        // which is more than this does.
+        _ => return None,
     }
+    Some(())
 }
 
 /// Returns whether `source` reads any of the query's binders, which
@@ -903,6 +1054,18 @@ fn substitute_with(
         | Expr::RecordSelector(_, _)
         | Expr::Input(_, _)
         | Expr::Extent(_, _) => e.clone(),
+        // `ordinal` and `current` are the row's position and the row
+        // itself, and none of `spec.md` §3's eleven constructors
+        // carries either. There is nothing to build, so this is not
+        // missing coverage.
+        Expr::Current(_) | Expr::Ordinal(_) => {
+            return decline("a query that reads `ordinal` or `current`");
+        }
+        // A query that tests for existence short-circuits into a
+        // boolean, which no node does either.
+        Expr::Exists(_, _) | Expr::Forall(_, _) => {
+            return decline("a query that tests for existence");
+        }
         Expr::Apply(t, f, a, span) => {
             let f = substitute_with(f, map, nested)?;
             let a = substitute_with(a, map, nested)?;
@@ -934,10 +1097,77 @@ fn substitute_with(
         // A query in an expression is a tree of its own; `nested` is
         // what makes one, and declines where nothing is expecting it.
         Expr::From(t, steps) => nested(t, steps)?,
-        // A construct that binds names of its own needs more care than
-        // this: a `let` or a `case` may shadow a binder.
+        // A `let` binds names of its own, and a name it binds is not
+        // the binder it happens to share a spelling with, so the
+        // substitution stops at it. Each declaration is in the scope
+        // the ones before it made, which is why the map narrows as the
+        // list is walked.
+        Expr::Let(t, decls, body) => {
+            let mut scope = map.clone();
+            let mut bound = Vec::with_capacity(decls.len());
+            for decl in decls {
+                // A `fun` is in scope in its own body, and a type or a
+                // datatype is not a value at all.
+                let Decl::NonRecVal(b) = decl else {
+                    return None;
+                };
+                let mut bind = b.as_ref().clone();
+                bind.expr = substitute_with(&b.expr, &scope, nested)?;
+                bound.push(Decl::NonRecVal(Box::new(bind)));
+                for name in bound_by(&b.pat) {
+                    scope.remove(&name);
+                }
+            }
+            let body = substitute_with(body, &scope, nested)?;
+            Expr::Let(t.clone(), bound, Box::new(body))
+        }
+        // An arm's pattern binds for that arm alone, so each is
+        // substituted in a scope of its own.
+        Expr::Case(t, subject, arms, span) => {
+            let subject = substitute_with(subject, map, nested)?;
+            Expr::Case(
+                t.clone(),
+                Box::new(subject),
+                substitute_arms(arms, map, nested)?,
+                span.clone(),
+            )
+        }
+        Expr::Fn(t, arms, span) => Expr::Fn(
+            t.clone(),
+            substitute_arms(arms, map, nested)?,
+            span.clone(),
+        ),
         _ => return None,
     })
+}
+
+/// Substitutes in the arms of a `case` or a `fn`, each in the scope its
+/// own pattern leaves.
+fn substitute_arms(
+    arms: &[Match],
+    map: &BTreeMap<String, Expr>,
+    nested: &mut Nested<'_>,
+) -> Option<Vec<Match>> {
+    arms.iter()
+        .map(|arm| {
+            let mut scope = map.clone();
+            for name in bound_by(&arm.pat) {
+                scope.remove(&name);
+            }
+            Some(Match {
+                pat: arm.pat.clone(),
+                expr: substitute_with(&arm.expr, &scope, nested)?,
+            })
+        })
+        .collect()
+}
+
+/// Returns the names a pattern binds, which a substitution must not
+/// reach past.
+fn bound_by(pat: &Pat) -> Vec<String> {
+    let mut names = Vec::new();
+    pat.for_each_id_pat(&mut |(_, name)| names.push(name.to_string()));
+    names
 }
 
 #[cfg(test)]
@@ -1039,13 +1269,16 @@ mod tests {
     /// step list.
     #[test]
     fn it_declines_what_it_cannot_translate() {
-        // A pattern that nests is more than this does: a binder's path
-        // through the element is one hop deeper than the components a
-        // join concatenates, and nothing yet says which is which.
-        assert_eq!(tree_of("from (i, (j, k)) in [(1, (2, 3))]"), None);
-        // `distinct` is a group keyed on the whole element, and the
-        // conformance suite does not pin its text.
-        assert_eq!(tree_of("from i in [1, 2] distinct"), None);
+        // A pattern that can fail would take a filter as well as a
+        // projection, which is more than this does.
+        assert_eq!(tree_of("from (x, 20) in [(1, 10), (2, 20)]"), None);
+        // `exists` short-circuits a query into a boolean, and none of
+        // `spec.md` §3's eleven constructors does that. There is
+        // nothing to build, so this decline is permanent.
+        assert_eq!(
+            tree_of("from i in [1, 2] where exists (from j in [i])"),
+            None
+        );
     }
 
     /// A `group` whose single key is not written as a record takes its

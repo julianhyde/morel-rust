@@ -419,11 +419,12 @@ Sys.planOf (
  * go at the end so that the two stay easy to tell apart.
  *)
 
-(* A scan whose pattern destructures binds one name per component, and
- * the projection that ends the tree is where the names come back. A
- * pattern that nests is more than the translator does, and where it
- * declines -- it does not guess -- the plan is the step list that runs
- * the query.
+(* A scan's pattern says where in the element each name it binds sits,
+ * however deep it nests, and the projection that ends the tree is
+ * where the names come back. A pattern that can *fail* is more than
+ * the translator does -- it would take a filter as well as a
+ * projection -- and where the translator declines, it does not guess:
+ * the plan is the step list that runs the query.
  *
  * A single key is not written as a record, so its name comes off the
  * expression; and the projection that follows builds the element it
@@ -435,7 +436,15 @@ Sys.planOf (from (i, j) in [(1, 2)]);
 >   [(1, 2)] : (int * int) list
 > |_} : string
 Sys.planOf (from (i, (j, k)) in [(1, (2, 3))]);
-> val it = "from (i, (j, k)) in [(1, (2, 3))]" : string
+> val it =
+>   {_|
+> project [{i = #1 $0, j = #1 (#2 $0), k = #2 (#2 $0)}] : t$0
+>   [(1, (2, 3))] : (int * (int * int)) list
+>
+> t$0 {i:int, j:int, k:int} list
+> |_} : string
+Sys.planOf (from (1, j) in [(1, 2), (3, 4)]);
+> val it = "from (1, j) in [(1, 2), (3, 4)]" : string
 Sys.planOf (from i in [1, 2] group j = i);
 > val it =
 >   {_|
