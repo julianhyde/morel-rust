@@ -6,6 +6,15 @@ second one against the same written contract: where the two disagree,
 one of them is wrong, and the disagreement is cheap to find and dear to
 reason about after the fact.
 
+**Status, 2026-09-12: R1 to R6 are done.** morel-java's
+`rel-tree.smli` at tag `449-tree.3` is copied across and passes, and
+its fifteen plans are morel-java's text byte for byte except in two
+places, both of which are morel-rust bugs on `main` and neither of
+which is fixed here. The shadow translates 958 of the corpus's queries
+and declines 804, with no tree failing the validator. What is left is
+below under "Later, not now": the lowering, and grounding on the
+tree.
+
 ## What morel-java did
 
 `julianhyde/449-tree` in `~/dev/morel.4`, tag `449-tree.3`
