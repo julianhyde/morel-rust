@@ -320,6 +320,29 @@ query's type, and that the validator accepts it. Java ran that over
 against the step list; java tried and explains why it cannot work, as
 the translation normalizes.
 
+*R5b, a query inside an expression, and a scan that destructures.*
+Done 2026-09-12, and the two together are what make R4c reachable from
+a script: morel-java's own fragment cases are
+`where nonEmpty (from (a, b) in pairs where a = x)`, which needs both.
+
+A nested query is a tree of its own and its `$0` is its own element, so
+it cannot read the row the expression is about that way. The expression
+is wrapped in a `let` that gives the row a name, and the nested tree
+reads the binders through the name; the `let` appears only where there
+is a nested tree to want it. `substitute` grew a hook for it rather
+than a second copy of itself.
+
+A scan's pattern binds one name per component, so `Path` became a list
+of hops rather than one. A join then prepends a component to every
+binder its left input had, where before it rewrote a whole-element
+binder into the first component -- the same thing when the path is one
+hop, and the right thing when it is two. A pattern that nests is still
+declined: two hops mean two different things there, and nothing yet
+says which is which.
+
+Both of morel-java's fragment cases now print its text byte for byte
+except where a node's own line folds, which is R4d.
+
 **R6 — the conformance suite.** Copy `rel-tree.smli` across unchanged
 and make it pass. Every difference is a finding: a bug here, a bug
 there, or a place where `spec.md` does not say what it meant. Write it

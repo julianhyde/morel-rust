@@ -40,7 +40,7 @@
 #![allow(dead_code)]
 
 use crate::compile::core::{
-    Expr, JoinKind, Pat, Rel, Step, StepKind, element_type,
+    Decl, Expr, JoinKind, Pat, Rel, Step, StepKind, ValBind, element_type,
 };
 use crate::compile::free_finder::free_names_in;
 use crate::compile::postfix::peel_type;
@@ -100,16 +100,42 @@ fn translate_with(
 /// keeps every binder right after each step, where holding the
 /// expression would leave the earlier ones stale.
 #[derive(Clone, Debug)]
-enum Path {
-    /// The element itself, `$0`.
-    Whole,
-    /// Component `i` of the element, 1-based as the source writes it.
+struct Path(Vec<Hop>);
+
+/// One step of a [`Path`].
+#[derive(Clone, Debug)]
+enum Hop {
+    /// Component `i` of a tuple, 1-based as the source writes it.
     Component(usize),
-    /// Field `label` of the element, which a `yield` of a record makes.
+    /// Field `label` of a record, which a `yield` of a record makes.
     Field(String),
 }
 
 impl Path {
+    /// The element itself, `$0`.
+    fn whole() -> Path {
+        Path(Vec::new())
+    }
+
+    /// Component `i` of the element.
+    fn component(i: usize) -> Path {
+        Path(vec![Hop::Component(i)])
+    }
+
+    /// Field `label` of the element.
+    fn field(label: &str) -> Path {
+        Path(vec![Hop::Field(label.to_string())])
+    }
+
+    /// Returns this path read from inside component `i` instead of
+    /// from the element, which is what a join does to the paths its
+    /// inputs' binders had.
+    fn under(&self, i: usize) -> Path {
+        let mut hops = vec![Hop::Component(i)];
+        hops.extend(self.0.iter().cloned());
+        Path(hops)
+    }
+
     /// Returns the expression that reads this path out of the element
     /// of the node's only input, `$0`.
     fn read(&self, elem: &Rc<Type>) -> Option<Expr> {
@@ -129,24 +155,33 @@ impl Path {
     /// element by an ordinary variable, and its right input reads the
     /// left binders through that.
     fn read_from(&self, base: Expr) -> Option<Expr> {
+        let mut e = base;
+        for hop in &self.0 {
+            e = hop.read_from(e)?;
+        }
+        Some(e)
+    }
+}
+
+impl Hop {
+    /// Returns the expression that takes this step out of `base`.
+    fn read_from(&self, base: Expr) -> Option<Expr> {
         let elem = base.type_();
-        let input = base;
         match self {
-            Path::Whole => Some(input),
-            Path::Component(i) => {
+            Hop::Component(i) => {
                 let Type::Tuple(types) = peel(&elem) else {
                     return None;
                 };
                 let t = types.get(i - 1)?.clone();
-                Some(selector(input, i - 1, t))
+                Some(selector(base, i - 1, t))
             }
-            Path::Field(label) => {
+            Hop::Field(label) => {
                 let Type::Record(_, fields) = peel(&elem) else {
                     return None;
                 };
                 let slot = fields.keys().position(|l| l.matches(label))?;
                 let t = fields.values().nth(slot)?.clone();
-                Some(selector(input, slot, t))
+                Some(selector(base, slot, t))
             }
         }
     }
@@ -240,12 +275,10 @@ impl Translator {
         condition: Option<&Expr>,
         join_type: JoinType,
     ) -> Option<()> {
-        // Only a variable pattern for now. A pattern that destructures
-        // becomes a projection, and one that can fail becomes a filter
-        // and a projection; both are more than this does.
-        let Pat::Identifier(_, name) = pat else {
-            return None;
-        };
+        // Where each name the pattern binds sits in the element. A
+        // pattern that can fail becomes a filter and a projection, and
+        // is more than this does.
+        let paths = binder_paths(pat)?;
         match self.tree.take() {
             None => {
                 // The first scan is the tree's leaf, and has nothing to
@@ -255,7 +288,7 @@ impl Translator {
                     return None;
                 }
                 self.tree = Some(source.clone());
-                self.bindings = vec![(name.clone(), Path::Whole)];
+                self.bindings = paths;
             }
             Some(left) => {
                 // A scan that reads an earlier binder is a dependent
@@ -292,7 +325,7 @@ impl Translator {
                 // absent. So it is rewritten against the inputs, not
                 // against the row the join produces.
                 let condition = match condition
-                    .map(|c| self.join_condition(c, &left, source, name))
+                    .map(|c| self.join_condition(c, &left, &right, &paths))
                 {
                     None => true_literal(),
                     Some(Some(c)) => c,
@@ -318,15 +351,18 @@ impl Translator {
                     Box::new(right),
                 );
                 let tree = node(join)?;
-                // The components concatenate, so a binder that was the
-                // whole element becomes the first of them, and one that
-                // was a component keeps its index.
-                for (_, path) in &mut self.bindings {
-                    if matches!(path, Path::Whole) {
-                        *path = Path::Component(1);
+                // The components concatenate, so a tree that had one
+                // component becomes the first of them and its binders
+                // read through it; one that was a join already has its
+                // binders addressed by component, and keeps them.
+                if n == 2 {
+                    for (_, path) in &mut self.bindings {
+                        *path = path.under(1);
                     }
                 }
-                self.bindings.push((name.clone(), Path::Component(n)));
+                for (bound, path) in paths {
+                    self.bindings.push((bound, path.under(n)));
+                }
                 self.tree = Some(tree);
             }
         }
@@ -348,13 +384,13 @@ impl Translator {
                 .keys()
                 .filter_map(|label| match label {
                     Label::String(name) => {
-                        Some((name.clone(), Path::Field(name.clone())))
+                        Some((name.clone(), Path::field(name)))
                     }
                     Label::Ordinal(_) => None,
                 })
                 .collect(),
             _ => match e.implicit_label() {
-                Some(name) => vec![(name, Path::Whole)],
+                Some(name) => vec![(name, Path::whole())],
                 None => Vec::new(),
             },
         };
@@ -402,7 +438,7 @@ impl Translator {
         condition: &Expr,
         left: &Expr,
         right: &Expr,
-        name: &str,
+        paths: &[(String, Path)],
     ) -> Option<Expr> {
         let left_elem = element_type(&left.type_())?;
         let right_elem = element_type(&right.type_())?;
@@ -410,7 +446,9 @@ impl Translator {
         for (bound, path) in &self.bindings {
             map.insert(bound.clone(), path.read_at(&left_elem, 0)?);
         }
-        map.insert(name.to_string(), Expr::Input(right_elem, 1));
+        for (bound, path) in paths {
+            map.insert(bound.clone(), path.read_at(&right_elem, 1)?);
+        }
         substitute(condition, &map)
     }
 
@@ -466,9 +504,9 @@ impl Translator {
             .iter()
             .filter_map(|label| match label {
                 Label::String(name) if names.len() > 1 => {
-                    Some((name.clone(), Path::Field(name.clone())))
+                    Some((name.clone(), Path::field(name)))
                 }
-                Label::String(name) => Some((name.clone(), Path::Whole)),
+                Label::String(name) => Some((name.clone(), Path::whole())),
                 Label::Ordinal(_) => None,
             })
             .collect();
@@ -526,14 +564,52 @@ impl Translator {
 
     /// Rewrites an expression over the query's binders into one over
     /// `$0`.
+    ///
+    /// A query nested inside the expression is a tree of its own, and
+    /// its `$0` is its own element (`spec.md` §2 rule 3), so it cannot
+    /// read this row that way. The expression is then wrapped in a
+    /// `let` that gives the row a name, and the nested tree reads the
+    /// binders through that name. The `let` appears only where there is
+    /// a nested tree to want it: an expression that substitutes
+    /// straight through is left as it was.
     fn rewrite(&self, e: &Expr) -> Option<Expr> {
         let elem = element_type(&self.tree.as_ref()?.type_())?;
         let mut map = self.outer.clone();
         for (name, path) in &self.bindings {
             map.insert(name.clone(), path.read(&elem)?);
         }
-        substitute(e, &map)
+        if let Some(plain) = substitute(e, &map) {
+            return Some(plain);
+        }
+        let name = self.new_binder();
+        let binder = Expr::Identifier(elem.clone(), name.clone());
+        let mut outer = self.outer.clone();
+        for (bound, path) in &self.bindings {
+            outer.insert(bound.clone(), path.read_from(binder.clone())?);
+        }
+        let counter = Rc::clone(&self.counter);
+        let body = substitute_with(e, &map, &mut |t, steps| {
+            translate_with(steps, t, outer.clone(), Rc::clone(&counter))
+        })?;
+        Some(let_binding(name, Expr::Input(elem, 0), body))
     }
+}
+
+/// Builds `let val name = value in body end`, which is how a row gets
+/// the name a tree nested in one of its expressions reads it by.
+fn let_binding(name: String, value: Expr, body: Expr) -> Expr {
+    let value_type = value.type_();
+    Expr::Let(
+        body.type_(),
+        vec![Decl::NonRecVal(Box::new(ValBind {
+            pat: Pat::Identifier(value_type.clone(), name),
+            t: (*value_type).clone(),
+            expr: value,
+            overload_pat: None,
+            span: None,
+        }))],
+        Box::new(body),
+    )
 }
 
 /// Returns how many components an expression's element has: a join's
@@ -607,6 +683,28 @@ fn node(rel: Rel) -> Option<Expr> {
     Some(Expr::Rel(t, Box::new(rel)))
 }
 
+/// Returns where each name a scan's pattern binds sits in the element
+/// it matches. A variable names the whole of it, and a tuple of
+/// variables names its components -- which is how the names come back
+/// in the projection that ends the tree, where the tree itself carries
+/// none.
+fn binder_paths(pat: &Pat) -> Option<Vec<(String, Path)>> {
+    match pat {
+        Pat::Identifier(_, name) => Some(vec![(name.clone(), Path::whole())]),
+        Pat::Tuple(_, pats) => pats
+            .iter()
+            .enumerate()
+            .map(|(i, p)| match p {
+                Pat::Identifier(_, name) => {
+                    Some((name.clone(), Path::component(i + 1)))
+                }
+                _ => None,
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
 /// Returns whether `source` reads any of the query's binders, which
 /// makes a scan dependent.
 fn reads_a_binding(source: &Expr, bindings: &[(String, Path)]) -> bool {
@@ -618,6 +716,20 @@ fn reads_a_binding(source: &Expr, bindings: &[(String, Path)]) -> bool {
 /// to, and declines where an expression is not one it knows how to
 /// walk.
 fn substitute(e: &Expr, map: &BTreeMap<String, Expr>) -> Option<Expr> {
+    substitute_with(e, map, &mut |_, _| None)
+}
+
+/// Translates a query nested inside an expression into a tree of its
+/// own, or declines.
+type Nested<'a> = dyn FnMut(&Rc<Type>, &[Step]) -> Option<Expr> + 'a;
+
+/// Substitutes as [`substitute`] does, and hands a nested query to
+/// `nested`, which translates it into a tree of its own or declines.
+fn substitute_with(
+    e: &Expr,
+    map: &BTreeMap<String, Expr>,
+    nested: &mut Nested<'_>,
+) -> Option<Expr> {
     Some(match e {
         Expr::Identifier(_, name) => match map.get(name) {
             Some(replacement) => replacement.clone(),
@@ -627,38 +739,39 @@ fn substitute(e: &Expr, map: &BTreeMap<String, Expr>) -> Option<Expr> {
         | Expr::RecordSelector(_, _)
         | Expr::Input(_, _)
         | Expr::Extent(_, _) => e.clone(),
-        Expr::Apply(t, f, a, span) => Expr::Apply(
-            t.clone(),
-            Box::new(substitute(f, map)?),
-            Box::new(substitute(a, map)?),
-            span.clone(),
-        ),
-        Expr::Aggregate(t, a, b, span) => Expr::Aggregate(
-            t.clone(),
-            Box::new(substitute(a, map)?),
-            Box::new(substitute(b, map)?),
-            span.clone(),
-        ),
+        Expr::Apply(t, f, a, span) => {
+            let f = substitute_with(f, map, nested)?;
+            let a = substitute_with(a, map, nested)?;
+            Expr::Apply(t.clone(), Box::new(f), Box::new(a), span.clone())
+        }
+        Expr::Aggregate(t, a, b, span) => {
+            let a1 = substitute_with(a, map, nested)?;
+            let b1 = substitute_with(b, map, nested)?;
+            Expr::Aggregate(t.clone(), Box::new(a1), Box::new(b1), span.clone())
+        }
         Expr::Tuple(t, items) => Expr::Tuple(
             t.clone(),
             items
                 .iter()
-                .map(|i| substitute(i, map))
+                .map(|i| substitute_with(i, map, nested))
                 .collect::<Option<Vec<_>>>()?,
         ),
         Expr::List(t, items) => Expr::List(
             t.clone(),
             items
                 .iter()
-                .map(|i| substitute(i, map))
+                .map(|i| substitute_with(i, map, nested))
                 .collect::<Option<Vec<_>>>()?,
         ),
         Expr::Raise(t, a, span) => {
-            Expr::Raise(t.clone(), Box::new(substitute(a, map)?), span.clone())
+            let a = substitute_with(a, map, nested)?;
+            Expr::Raise(t.clone(), Box::new(a), span.clone())
         }
-        // A construct that binds names of its own, or that is a query
-        // in its own right, needs more care than this: a `let` or a
-        // `case` may shadow a binder, and a nested query rebinds `$0`.
+        // A query in an expression is a tree of its own; `nested` is
+        // what makes one, and declines where nothing is expecting it.
+        Expr::From(t, steps) => nested(t, steps)?,
+        // A construct that binds names of its own needs more care than
+        // this: a `let` or a `case` may shadow a binder.
         _ => return None,
     })
 }
@@ -758,14 +871,30 @@ mod tests {
         );
     }
 
-    /// It declines rather than guesses. A `group` is more than this
-    /// does, and the plan falls back to the step list.
+    /// It declines rather than guesses, and the plan falls back to the
+    /// step list.
     #[test]
     fn it_declines_what_it_cannot_translate() {
         assert_eq!(tree_of("from i in [1, 2] group j = i"), None);
-        // A scan whose pattern destructures becomes a projection, which
-        // is more than this does.
-        assert_eq!(tree_of("from (i, j) in [(1, 2)]"), None);
+        // A pattern that nests is more than this does: a binder's path
+        // through the element is one hop deeper than the components a
+        // join concatenates, and nothing yet says which is which.
+        assert_eq!(tree_of("from (i, (j, k)) in [(1, (2, 3))]"), None);
+        // `distinct` is a group keyed on the whole element, and the
+        // conformance suite does not pin its text.
+        assert_eq!(tree_of("from i in [1, 2] distinct"), None);
+    }
+
+    /// A scan whose pattern destructures binds one name per component,
+    /// and the projection that ends the tree is where the names come
+    /// back.
+    #[test]
+    fn a_scan_may_destructure() {
+        assert_eq!(
+            tree_of("from (i, j) in [(1, 2)]").unwrap(),
+            "project [{i = #1 $0, j = #2 $0}] : {i:int, j:int} list\n  \
+             [(1, 2)] : (int * int) list\n"
+        );
     }
 
     /// Every tree the translator builds passes the validator.
