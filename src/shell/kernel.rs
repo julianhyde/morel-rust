@@ -1001,7 +1001,8 @@ impl Kernel {
     /// the storage logic in `evaluate_node`, but is a separate entry
     /// point used when evaluation is skipped due to a compile error.
     fn record_decls_for_planex(&mut self, resolved: &Resolved) {
-        let (decl, resolve_errors) = resolver::resolve(resolved);
+        let line_width = self.config.line_width.unwrap_or(79) as usize;
+        let (decl, resolve_errors) = resolver::resolve(resolved, line_width);
         if !resolve_errors.is_empty() {
             return;
         }
@@ -1074,6 +1075,7 @@ impl Kernel {
                 resolved,
                 &session_fns,
                 &rec_session_fns,
+                self.config.line_width.unwrap_or(79) as usize,
             );
         if let Some((msg, span)) = resolve_errors.first() {
             return Ok(format!(

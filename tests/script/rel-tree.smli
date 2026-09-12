@@ -52,6 +52,62 @@ Sys.planOf (from i in [1, 2], j in [3, 4] where i < j yield {i, j});
 >       [3, 4] : int list
 > |_} : string
 
+(* A join concatenates its inputs' components and carries no yield;
+ * the projection above it is where the components are named. The
+ * filter's line does not fit, so it folds before the `andalso`, four
+ * from the node. This is morel-java's text byte for byte. *)
+Sys.set ("lineWidth", 78);
+> val it = () : unit
+useSilently "scott.smli";
+> [opening scott.smli]
+> val it = () : unit
+Sys.planOf (
+  from d in scott.depts, e in scott.emps
+    where e.deptno = d.deptno andalso e.job = "PRESIDENT"
+    yield {dname = d.dname, ename = e.ename});
+> val it =
+>   {_|
+> project [{dname = #dname (#1 $0), ename = #ename (#2 $0)}] : t$0
+>   filter [#deptno (#2 $0) = #deptno (#1 $0)
+>       andalso #job (#2 $0) = "PRESIDENT"] : t$1
+>     join : t$1
+>       #depts scott : t$2
+>       #emps scott : t$3
+>
+> t$0 {dname:string, ename:string} bag
+> t$1 ({deptno:int, dname:string, loc:string} * {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real}) bag
+> t$2 {deptno:int, dname:string, loc:string} bag
+> t$3 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
+> |_} : string
+
+(* Three inputs. The joins nest to the left and the components stay
+ * flat, read as `#1`, `#2`, `#3`; the record's fields fold after each
+ * comma. *)
+Sys.planOf (
+  from d in scott.depts, e in scott.emps, b in scott.bonuses
+    where e.deptno = d.deptno andalso b.ename = e.ename
+    yield {d.dname, e.ename, b.comm});
+> val it =
+>   {_|
+> project [{comm = #comm (#3 $0),
+>     dname = #dname (#1 $0),
+>     ename = #ename (#2 $0)}] : t$0
+>   filter [#deptno (#2 $0) = #deptno (#1 $0)
+>       andalso #ename (#3 $0) = #ename (#2 $0)] : t$1
+>     join : t$1
+>       join : t$2
+>         #depts scott : t$3
+>         #emps scott : t$4
+>       #bonuses scott : t$5
+>
+> t$0 {comm:real, dname:string, ename:string} bag
+> t$1 ({deptno:int, dname:string, loc:string} * {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} * {comm:real, ename:string, job:string, sal:real}) bag
+> t$2 ({deptno:int, dname:string, loc:string} * {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real}) bag
+> t$3 {deptno:int, dname:string, loc:string} bag
+> t$4 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
+> t$5 {comm:real, ename:string, job:string, sal:real} bag
+> |_} : string
+
 (* Where the translator declines -- it does not guess -- the plan is
  * the step list that runs the query. A `group` is one such. *)
 Sys.planOf (from i in [1, 2] group j = i);

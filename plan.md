@@ -238,23 +238,26 @@ column until it is rendered and the decision to break a relation out
 asks whether it is at the start of a line. Here that decision is
 structural, so the question does not arise.
 
-*R4b, wrapping.* A node's own line wraps at the session's `lineWidth`,
-and its continuation is indented four from the node -- which is how a
-reader tells a continuation from a grandchild. Nothing else moves: the
-nodes, the indentation and every number are the same at any width. The
-golden plans are all at 78.
+*R4b, wrapping.* Done. A node's own line folds at the session's
+`lineWidth`, with its continuation indented four from the node. Break
+points are found in the *rendered* line rather than built into it --
+before a conjunction's keyword at the top level, after the comma
+between a record's fields -- so a line that fits is character for
+character the line an unwrapped printer would write, and the flat form
+cannot drift from how an expression prints elsewhere. `lindig.rs` then
+makes the fold one decision for the whole line, which is what the
+golden text shows: a record folds after every comma or none.
 
-**R4b and R4c come after R5**, decided 2026-09-12 on reading what they
-need. Both are about byte-exact output, which only R6 requires, while
-the shadow in R5 finds disagreements without printing anything at all.
-And wrapping is not the small piece it looks like: the golden text
-breaks a line at the syntactic points of the *expression* -- after a
-record's comma, before an `andalso` -- so it needs a document-based
-expression renderer, which is what morel-java's "The writer builds a
-document, not a string" did. Ours renders an expression straight to a
-string, so this is a change to how every expression prints, and it
-should be made when its output is being checked against the golden
-files rather than before.
+**R4c comes after R5**, decided 2026-09-12. It is about byte-exact
+output, which only R6 requires, while the shadow in R5 finds
+disagreements without printing anything at all.
+
+R4b was deferred for the same reason and then done, because the fold
+turned out not to need what morel-java's does. Its writer renders an
+expression *into* a document, so the break points are built in and
+every expression's printing changes; finding them in the rendered line
+instead leaves the rest of the printer alone, and is exact by
+construction because the pieces join back into the line.
 
 *R4c, fragments.* A relation reached from inside an expression cannot
 print where it stands, because an operator must be the first

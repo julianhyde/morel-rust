@@ -44,10 +44,12 @@
 #![allow(dead_code)]
 
 use crate::compile::core::{Expr, Rel};
+use crate::compile::lindig::{self, Doc};
 use crate::compile::types::{Label, Type};
 use crate::eval::val::Val;
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::iter::once;
 use std::rc::Rc;
 
 /// A type longer than this is replaced by a reference and printed once
@@ -64,8 +66,8 @@ const MONIKER_LIMIT: usize = 24;
 ///
 /// With `with_types`, every node line ends in its collection type,
 /// which is what `Sys.planOf` prints; without, the tree alone.
-pub fn plan(exp: &Expr, with_types: bool) -> String {
-    let mut w = Writer::new(with_types);
+pub fn plan(exp: &Expr, with_types: bool, line_width: usize) -> String {
+    let mut w = Writer::new(with_types, line_width);
     w.node(exp, 0);
     w.finish()
 }
@@ -78,16 +80,23 @@ pub fn plan(exp: &Expr, with_types: bool) -> String {
 struct Writer {
     out: String,
     with_types: bool,
+    /// Width at which a node's own line wraps, the session's
+    /// `lineWidth`. Nothing else in the text depends on it: the nodes,
+    /// their indentation and every number are the same at any width, so
+    /// a plan read at another width is the same plan, folded
+    /// differently.
+    line_width: usize,
     /// Monikers that have been given a `t$N`, in the order they were
     /// first seen, which is the order they are numbered and listed.
     type_refs: Vec<String>,
 }
 
 impl Writer {
-    fn new(with_types: bool) -> Writer {
+    fn new(with_types: bool, line_width: usize) -> Writer {
         Writer {
             out: String::new(),
             with_types,
+            line_width,
             type_refs: Vec::new(),
         }
     }
@@ -105,7 +114,8 @@ impl Writer {
             // A leaf is an ordinary expression, and prints as one.
             leaf => self.with_type(format!("{}", leaf), &leaf.type_()),
         };
-        let _ = writeln!(self.out, "{:indent$}{}", "", line, indent = indent);
+        self.out.push_str(&wrap(&line, indent, self.line_width));
+        self.out.push('\n');
         if let Expr::Rel(_, rel) = exp {
             for input in rel.inputs() {
                 self.node(input, indent + 2);
@@ -149,6 +159,111 @@ impl Writer {
         }
         renumber(&self.out)
     }
+}
+
+/// Lays out one node's line, folded if it does not fit.
+///
+/// A continuation is indented four from the node, which is how a
+/// reader -- and a parser -- tells a continuation from a grandchild:
+/// after a node at indent *d*, the run of lines at *d + 4* before the
+/// first line at *d + 2* belongs to that node.
+///
+/// The break points are the syntactic ones the text shows: before a
+/// conjunction's `andalso` or `orelse`, and after the comma between a
+/// record's fields. They are found in the rendered line rather than
+/// built into it, so that a line which fits is character for character
+/// the line an unwrapped printer would have written.
+fn wrap(line: &str, indent: usize, line_width: usize) -> String {
+    let indented = format!("{:indent$}{}", "", line, indent = indent);
+    if indented.len() <= line_width {
+        return indented;
+    }
+    let pieces = break_points(line);
+    if pieces.len() < 2 {
+        return indented;
+    }
+    let docs: Vec<Doc> = pieces
+        .iter()
+        .enumerate()
+        .flat_map(|(i, piece)| {
+            let mut v = Vec::new();
+            if i > 0 {
+                v.push(lindig::line());
+            }
+            v.push(lindig::text(piece));
+            v
+        })
+        .collect();
+    let doc = lindig::nest(
+        (indent + 4) as i32,
+        lindig::group(lindig::hcat(
+            once(lindig::text(&format!("{:indent$}", "", indent = indent)))
+                .chain(docs)
+                .collect(),
+        )),
+    );
+    lindig::render(line_width as i32, doc)
+}
+
+/// Splits a node's line at the points a fold may go: before a
+/// conjunction's keyword at the top level, and after the comma between
+/// the fields of a record that the line's argument opens with.
+///
+/// A piece keeps the text that precedes its break, so joining the
+/// pieces with a single space gives the line back.
+fn break_points(line: &str) -> Vec<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_string {
+            if c == '\\' {
+                i += 2;
+                continue;
+            }
+            if c == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ => {}
+        }
+        // ` andalso ` or ` orelse ` joins two conditions, and the fold
+        // goes before the keyword.
+        if c == ' ' && depth == 1 {
+            for keyword in ["andalso ", "orelse "] {
+                if chars[i + 1..]
+                    .starts_with(&keyword.chars().collect::<Vec<_>>()[..])
+                {
+                    pieces.push(chars[start..i].iter().collect());
+                    start = i + 1;
+                    break;
+                }
+            }
+        }
+        // A record's fields are separated by ", ", and the fold goes
+        // after the comma.
+        if c == ',' && depth == 2 && chars.get(i + 1) == Some(&' ') {
+            pieces.push(chars[start..=i].iter().collect());
+            start = i + 2;
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    if start < chars.len() {
+        pieces.push(chars[start..].iter().collect());
+    }
+    pieces
 }
 
 /// Returns a node's arguments, in the order the datatype lists them.
@@ -351,7 +466,7 @@ mod tests {
             Box::new(id("r", Kind::List.apply(int()))),
             Box::new(t()),
         ));
-        assert_eq!(plan(&tree, false), "filter [true]\n  r\n");
+        assert_eq!(plan(&tree, false, 78), "filter [true]\n  r\n");
     }
 
     /// Every node line ends in its collection type.
@@ -362,7 +477,7 @@ mod tests {
             Box::new(t()),
         ));
         assert_eq!(
-            plan(&tree, true),
+            plan(&tree, true, 78),
             "filter [true] : int list\n  r : int list\n"
         );
     }
@@ -380,7 +495,7 @@ mod tests {
             Box::new(left.clone()),
             Box::new(right.clone()),
         ));
-        assert_eq!(plan(&inner, false), "join\n  a\n  b\n");
+        assert_eq!(plan(&inner, false, 78), "join\n  a\n  b\n");
 
         // A left join says so, and a binder prints before the
         // condition.
@@ -391,7 +506,10 @@ mod tests {
             Box::new(left),
             Box::new(right),
         ));
-        assert_eq!(plan(&outer, false), "join [left] [v$0] [p]\n  a\n  b\n");
+        assert_eq!(
+            plan(&outer, false, 78),
+            "join [left] [v$0] [p]\n  a\n  b\n"
+        );
     }
 
     /// A set operator says `all` when it keeps duplicates, and nothing
@@ -403,9 +521,9 @@ mod tests {
             id("b", Kind::List.apply(int())),
         ];
         let all = node(Rel::Union(false, inputs.clone()));
-        assert_eq!(plan(&all, false), "union [all]\n  a\n  b\n");
+        assert_eq!(plan(&all, false, 78), "union [all]\n  a\n  b\n");
         let distinct = node(Rel::Union(true, inputs));
-        assert_eq!(plan(&distinct, false), "union\n  a\n  b\n");
+        assert_eq!(plan(&distinct, false, 78), "union\n  a\n  b\n");
     }
 
     /// A group writes its keys, and its aggregates where it has any.
@@ -420,12 +538,12 @@ mod tests {
             vec![(Label::String("c".to_string()), id("n", int()))],
         ));
         assert_eq!(
-            plan(&with_aggregates, false),
+            plan(&with_aggregates, false, 78),
             "group [k = $0] [c = n]\n  r\n"
         );
         // No aggregates, so no second argument. This is `distinct`.
         let without = node(Rel::Group(Box::new(input), keys, vec![]));
-        assert_eq!(plan(&without, false), "group [k = $0]\n  r\n");
+        assert_eq!(plan(&without, false, 78), "group [k = $0]\n  r\n");
     }
 
     /// A type longer than the limit prints as a reference, and once in
@@ -436,12 +554,58 @@ mod tests {
         let input = id("depts", Kind::Bag.apply(dept()));
         let tree = node(Rel::Filter(Box::new(input), Box::new(t())));
         assert_eq!(
-            plan(&tree, true),
+            plan(&tree, true, 78),
             "filter [true] : t$0\n  \
              depts : t$0\n\
              \n\
              t$0 {deptno:int, dname:string} bag\n"
         );
+    }
+
+    /// A node's line folds where it does not fit, and its continuation
+    /// is indented four from the node, which is how a reader tells a
+    /// continuation from a grandchild.
+    #[test]
+    fn a_line_folds_four_from_the_node() {
+        let line = "filter [#deptno (#2 $0) = #deptno (#1 $0) \
+                    andalso #job (#2 $0) = \"PRESIDENT\"] : t$1";
+        // At a width that holds it, nothing moves.
+        assert_eq!(wrap(line, 2, 200), format!("  {}", line));
+        // At 78 it folds before the `andalso`, at 2 + 4.
+        assert_eq!(
+            wrap(line, 2, 78),
+            "  filter [#deptno (#2 $0) = #deptno (#1 $0)\n      \
+             andalso #job (#2 $0) = \"PRESIDENT\"] : t$1"
+        );
+    }
+
+    /// A record's fields fold after the comma, and all of them fold
+    /// together: the fold is one decision, not one per field.
+    #[test]
+    fn a_record_folds_after_each_comma() {
+        let line = "project [{comm = #comm (#3 $0), dname = #dname (#1 $0), \
+                    ename = #ename (#2 $0)}] : t$0";
+        assert_eq!(
+            wrap(line, 0, 78),
+            "project [{comm = #comm (#3 $0),\n    \
+             dname = #dname (#1 $0),\n    \
+             ename = #ename (#2 $0)}] : t$0"
+        );
+    }
+
+    /// The pieces a fold may go between join back into the line, so a
+    /// line that fits is the line an unwrapped printer would write.
+    #[test]
+    fn the_pieces_give_the_line_back() {
+        for line in [
+            "filter [a andalso b] : int list",
+            "project [{a = 1, b = 2}] : t$0",
+            "join : t$1",
+            // A comma inside a string is not a break point.
+            "filter [$0 = \"a, b\"] : string list",
+        ] {
+            assert_eq!(break_points(line).join(" "), line, "{}", line);
+        }
     }
 
     /// The binders the compiler generated are numbered by first
@@ -482,7 +646,7 @@ mod tests {
                 Span::new(""),
             )),
         ));
-        let text = plan(&outer, false);
+        let text = plan(&outer, false, 78);
         assert!(text.contains("v$0"), "renumbered from zero: {}", text);
         assert!(!text.contains("v$40"), "not the allocated number: {}", text);
     }

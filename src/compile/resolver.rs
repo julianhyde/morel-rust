@@ -64,9 +64,12 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 /// Converts an AST to a Core tree.
-pub fn resolve(resolved: &Resolved) -> (CoreDecl, Vec<(String, Span)>) {
+pub fn resolve(
+    resolved: &Resolved,
+    line_width: usize,
+) -> (CoreDecl, Vec<(String, Span)>) {
     let session_fns = expander::FnEnv::new();
-    resolve_with_session_fns(resolved, &session_fns)
+    resolve_with_session_fns(resolved, &session_fns, line_width)
 }
 
 /// Same as `resolve`, but seeds the predicate-inversion pass
@@ -74,10 +77,15 @@ pub fn resolve(resolved: &Resolved) -> (CoreDecl, Vec<(String, Span)>) {
 pub fn resolve_with_session_fns(
     resolved: &Resolved,
     session_fns: &expander::FnEnv,
+    line_width: usize,
 ) -> (CoreDecl, Vec<(String, Span)>) {
     let empty_rec = expander::FnEnv::new();
-    let (decl, _pre_fn_env, errors) =
-        resolve_with_session_fns_rec(resolved, session_fns, &empty_rec);
+    let (decl, _pre_fn_env, errors) = resolve_with_session_fns_rec(
+        resolved,
+        session_fns,
+        &empty_rec,
+        line_width,
+    );
     (decl, errors)
 }
 
@@ -96,8 +104,10 @@ pub fn resolve_with_session_fns_rec(
     resolved: &Resolved,
     session_fns: &expander::FnEnv,
     rec_session_fns: &expander::FnEnv,
+    line_width: usize,
 ) -> (CoreDecl, expander::FnEnv, Vec<(String, Span)>) {
-    let resolver = Resolver::new(&resolved.type_map, resolved.base_line);
+    let resolver =
+        Resolver::new(&resolved.type_map, resolved.base_line, line_width);
     // A checked type that has no name may have been made in this very
     // statement -- a record modifier gives one -- and its conditions were
     // deduced here, so here is where they can be compiled. A later
@@ -297,6 +307,9 @@ fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
 pub struct Resolver<'a> {
     type_map: &'a TypeMap,
     base_line: usize,
+    /// Width at which a plan's lines wrap, which is the session's
+    /// `lineWidth`. Only `Sys.planOf` reads it.
+    line_width: usize,
     /// Errors detected during resolution (e.g. field-not-found).
     errors: RefCell<Vec<(String, Span)>>,
     /// Span of the receiver of the field selector being resolved, if
@@ -442,10 +455,15 @@ impl ResolvedValDecl {
 
 impl<'a> Resolver<'a> {
     /// Creates a new resolver with the given type map.
-    pub fn new(type_map: &'a TypeMap, base_line: usize) -> Self {
+    pub fn new(
+        type_map: &'a TypeMap,
+        base_line: usize,
+        line_width: usize,
+    ) -> Self {
         Self {
             type_map,
             base_line,
+            line_width,
             errors: RefCell::new(Vec::new()),
             selector_receiver_span: RefCell::new(None),
             self_fns: RefCell::new(HashSet::new()),
@@ -2012,7 +2030,7 @@ impl<'a> Resolver<'a> {
                     let core_arg = self.resolve_expr(arg);
                     return CoreExpr::Literal(
                         t,
-                        Val::String(plan_of(&core_arg).into()),
+                        Val::String(plan_of(&core_arg, self.line_width).into()),
                     );
                 }
                 // Dispatch `Relational.sum coll` to sum$int/sum$real by the
@@ -4277,7 +4295,7 @@ fn is_structure_member(exp: &Expr, structure: &str, member: &str) -> bool {
 /// cross-implementation contract. Where the translator declines -- it
 /// does not guess -- the core expression is printed instead, which for
 /// a query is the step list that runs it.
-fn plan_of(exp: &CoreExpr) -> String {
+fn plan_of(exp: &CoreExpr, line_width: usize) -> String {
     if let CoreExpr::From(_, steps) = exp
         && let Some(tree) = rel_translator::translate(steps, &exp.type_())
     {
@@ -4285,7 +4303,7 @@ fn plan_of(exp: &CoreExpr) -> String {
         // the text rather than into a log: a plan nobody reads is not
         // a check, and a tree that fails an invariant is a finding
         // whichever implementation is wrong.
-        let mut text = rel_printer::plan(&tree, true);
+        let mut text = rel_printer::plan(&tree, true, line_width);
         for error in rel_validator::validate(&tree) {
             text.push_str(&format!("INVALID: {}\n", error));
         }

@@ -39,9 +39,14 @@
 // runs it over the corpus lands. Remove when it does.
 #![allow(dead_code)]
 
-use crate::compile::core::{Expr, Pat, Rel, Step, StepKind, element_type};
+use crate::compile::core::{
+    Expr, JoinKind, Pat, Rel, Step, StepKind, element_type,
+};
+use crate::compile::free_finder::free_names_in;
+use crate::compile::postfix::peel_type;
 use crate::compile::span::Span;
-use crate::compile::types::{Label, Type};
+use crate::compile::types::{Label, PrimitiveType, Type};
+use crate::eval::val::Val;
 use crate::syntax::ast::JoinType;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -217,7 +222,7 @@ impl Translator {
                 }
                 let n = components_of(&left) + 1;
                 let join = Rel::Join(
-                    crate::compile::core::JoinKind::Inner,
+                    JoinKind::Inner,
                     None,
                     Box::new(true_literal()),
                     Box::new(left),
@@ -359,23 +364,22 @@ fn selector(e: Expr, slot: usize, t: Rc<Type>) -> Expr {
 /// and the printer omits.
 fn true_literal() -> Expr {
     Expr::Literal(
-        Rc::new(Type::Primitive(crate::compile::types::PrimitiveType::Bool)),
-        crate::eval::val::Val::Bool(true),
+        Rc::new(Type::Primitive(PrimitiveType::Bool)),
+        Val::Bool(true),
     )
 }
 
 /// Looks through a type alias, as the structural tests here must.
 fn peel(t: &Rc<Type>) -> &Type {
-    crate::compile::postfix::peel_type(t)
+    peel_type(t)
 }
 
 /// Returns the leaf `[()]`, over which a query with no scan iterates.
 fn unit_leaf() -> Expr {
-    let unit =
-        Rc::new(Type::Primitive(crate::compile::types::PrimitiveType::Unit));
+    let unit = Rc::new(Type::Primitive(PrimitiveType::Unit));
     Expr::List(
         Rc::new(Type::List(unit.clone())),
-        vec![Expr::Literal(unit, crate::eval::val::Val::Unit)],
+        vec![Expr::Literal(unit, Val::Unit)],
     )
 }
 
@@ -388,7 +392,7 @@ fn node(rel: Rel) -> Option<Expr> {
 /// Returns whether `source` reads any of the query's binders, which
 /// makes a scan dependent.
 fn reads_a_binding(source: &Expr, bindings: &[(String, Path)]) -> bool {
-    let free = crate::compile::free_finder::free_names_in(source);
+    let free = free_names_in(source);
     bindings.iter().any(|(name, _)| free.contains(name))
 }
 
