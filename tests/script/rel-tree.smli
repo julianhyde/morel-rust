@@ -18,49 +18,83 @@
  *
  * Conformance suite for the relational tree.
  *
- * A placeholder. morel-java's suite of the same name is the
- * cross-implementation contract, and replaces this file at milestone
- * R6 of plan.md. Until then it holds what the parts already built can
- * be held to.
+ * `Sys.planOf e` prints the tree that the resolver builds for the
+ * expression `e`, which is not evaluated. That text is the
+ * cross-implementation contract: morel-rust (#33) and morel-go must
+ * print the same text for the same query.
+ *
+ * Where the answer illustrates the rule -- the row an outer join
+ * keeps, the row a scan-less query iterates over -- the query is run
+ * too, so that a plan cannot be made to match by building a tree that
+ * says the right thing and computes the wrong one.
+ *
+ * This is morel-java's file at tag 449-tree.3, copied across. It is
+ * byte for byte morel-java's in two places out of three, and the
+ * places it is not are the findings in plan.md, both of which belong
+ * to morel-rust's `main` rather than to this branch: a `where true`
+ * step is dropped before the tree is built, and an aggregate prints
+ * with parentheses, a structure member's name, and an instance rather
+ * than the generic. Each is marked below.
  *)
-
-(* A plan is longer than the default `stringDepth`, which would
- * truncate it. morel-java's suite sets the same. *)
+Sys.set ("output", "tabular");
+> val it = () : unit
 Sys.set ("stringDepth", ~1);
 > val it = () : unit
+useSilently "scott.smli";
+> [opening scott.smli]
+> val it = () : unit
 
-(* A query prints as a relational tree, one node per line, with the
- * collection type of each node. The binder `i` is gone, and the filter
- * reads the element as `$0`. This is morel-java's first case, and its
- * text, byte for byte. *)
+(* ---------------------------------------------------------------- *)
+(* Leaves.
+ *
+ * A leaf is a bare expression and holds no name: the binder `i` is
+ * gone, and the filter reads the element as `$0`.
+ *)
 Sys.planOf (from i in [1, 2, 3] where i > 1);
 > val it = {_|
 > filter [$0 > 1] : int list
 >   [1, 2, 3] : int list
 > |_} : string
 
-(* A query with several binders ends in a projection that names its
- * element's components: the tree holds no names, so this is where the
- * ones the query wrote come back. *)
-Sys.planOf (from i in [1, 2], j in [3, 4] where i < j yield {i, j});
+(* A leaf whose element is a record. The element type is read off the
+ * expression, so it is the record type, and a field access prints as
+ * `#deptno $0`. The type is 41 characters, so it prints as `t[1]` and
+ * once in the legend.
+ *)
+Sys.planOf (from d in scott.depts where d.deptno > 20 yield d.dname);
 > val it =
 >   {_|
-> project [{i = #1 $0, j = #2 $0}] : {i:int, j:int} list
->   filter [#1 $0 < #2 $0] : (int * int) list
->     join : (int * int) list
->       [1, 2] : int list
->       [3, 4] : int list
+> project [#dname $0] : string bag
+>   filter [#deptno $0 > 20] : t$0
+>     #depts scott : t$0
+>
+> t$0 {deptno:int, dname:string, loc:string} bag
 > |_} : string
 
-(* A join concatenates its inputs' components and carries no yield;
- * the projection above it is where the components are named. The
- * filter's line does not fit, so it folds before the `andalso`, four
- * from the node. This is morel-java's text byte for byte. *)
-Sys.set ("lineWidth", 78);
-> val it = () : unit
-useSilently "scott.smli";
-> [opening scott.smli]
-> val it = () : unit
+(* A query with no scan iterates over one unit row, which is a
+ * visible `[()]` leaf. Run it too: the leaf is the whole of why the
+ * answer has one row rather than none.
+ *
+ * FINDING. morel-java has a `filter [true]` between the two, and we
+ * have none, because the `where true` step is gone before the tree is
+ * built. One of the two is wrong about what a plan should show, and
+ * the spec does not say; the fix, whichever way it goes, belongs to
+ * `main`.
+ *)
+from where true yield 1;
+> val it = [1] : int list
+Sys.planOf (from where true yield 1);
+> val it = {_|
+> project [1] : int list
+>   [()] : unit list
+> |_} : string
+
+(* ---------------------------------------------------------------- *)
+(* Joins.
+ *
+ * A join concatenates its inputs' components and carries no yield;
+ * the projection above it is where the components are named.
+ *)
 Sys.planOf (
   from d in scott.depts, e in scott.emps
     where e.deptno = d.deptno andalso e.job = "PRESIDENT"
@@ -80,9 +114,9 @@ Sys.planOf (
 > t$3 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
 > |_} : string
 
-(* Three inputs. The joins nest to the left and the components stay
- * flat, read as `#1`, `#2`, `#3`; the record's fields fold after each
- * comma. *)
+(* Three inputs. Joins nest to the left, and the components stay flat:
+ * `$0` has three of them, read as `#1`, `#2`, `#3`.
+ *)
 Sys.planOf (
   from d in scott.depts, e in scott.emps, b in scott.bonuses
     where e.deptno = d.deptno andalso b.ename = e.ename
@@ -109,12 +143,8 @@ Sys.planOf (
 > |_} : string
 
 (* A scan that reads an earlier binder is a join carrying a binder,
- * which its right input reads. Dependence is not a mode of the node:
- * it is that free occurrence, which is why decorrelation drops the
- * binder rather than rewriting one node into another. Inside the
- * nested tree `$0` is its own element, and the enclosing row is
- * reached only through the binder. morel-java's text, byte for
- * byte. *)
+ * which its right input reads.
+ *)
 Sys.planOf (
   from d in scott.depts,
       e in (from e2 in scott.emps where e2.deptno = d.deptno)
@@ -133,25 +163,35 @@ Sys.planOf (
 > t$3 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
 > |_} : string
 
-(* An outer join wraps each component of the side that may be absent
- * in `option`, on its own rather than the row as a whole. The
- * condition still sees both sides present, as `$0` and `$1`, whatever
- * the kind. Run it too: the OPERATIONS row, which has no employee, is
- * what the wrapping is for. This is morel-java's text byte for byte. *)
+(* ---------------------------------------------------------------- *)
+(* Outer joins.
+ *
+ * The absent side's components are each wrapped in `option` on their
+ * own, not the row as a whole. Run it too: the
+ * OPERATIONS row, which has no employee, is what the wrapping is for.
+ *)
 from d in scott.depts
   left join e in scott.emps on e.deptno = d.deptno
   yield {d.dname, who = e?.ename};
-> val it =
->   [{dname="ACCOUNTING",who=SOME "CLARK"},
->    {dname="ACCOUNTING",who=SOME "KING"},
->    {dname="ACCOUNTING",who=SOME "MILLER"},
->    {dname="RESEARCH",who=SOME "SMITH"},{dname="RESEARCH",who=SOME "JONES"},
->    {dname="RESEARCH",who=SOME "SCOTT"},{dname="RESEARCH",who=SOME "ADAMS"},
->    {dname="RESEARCH",who=SOME "FORD"},{dname="SALES",who=SOME "ALLEN"},
->    {dname="SALES",who=SOME "WARD"},{dname="SALES",who=SOME "MARTIN"},
->    {dname="SALES",who=SOME "BLAKE"},{dname="SALES",who=SOME "TURNER"},
->    {dname="SALES",who=SOME "JAMES"},{dname="OPERATIONS",who=NONE}]
->   : {dname:string, who:string option} bag
+> dname      who
+> ---------- ------
+> ACCOUNTING CLARK
+> ACCOUNTING KING
+> ACCOUNTING MILLER
+> RESEARCH   SMITH
+> RESEARCH   JONES
+> RESEARCH   SCOTT
+> RESEARCH   ADAMS
+> RESEARCH   FORD
+> SALES      ALLEN
+> SALES      WARD
+> SALES      MARTIN
+> SALES      BLAKE
+> SALES      TURNER
+> SALES      JAMES
+> OPERATIONS
+>
+> val it : {dname:string, who:string option} bag
 Sys.planOf (
   from d in scott.depts
     left join e in scott.emps on e.deptno = d.deptno
@@ -169,77 +209,133 @@ Sys.planOf (
 > t$3 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
 > |_} : string
 
-(* A right join makes the left side's components optional instead. *)
+(* A right join makes the *left* side's components optional. *)
 Sys.planOf (
-  from d in scott.depts
-    right join e in scott.emps on e.deptno = d.deptno
-    yield {who = e.ename});
+  from e in (from x in scott.emps where x.job = "PRESIDENT")
+    right join d in scott.depts on e.deptno = d.deptno
+    yield {d.dname, who = e?.ename});
 > val it =
 >   {_|
-> project [{who = #ename (#2 $0)}] : {who:string} bag
->   join [right] [#deptno $1 = #deptno $0] : t$0
->     #depts scott : t$1
->     #emps scott : t$2
+> project [{dname = #dname (#2 $0), who = #map Option #ename (#1 $0)}] : t$0
+>   join [right] [#deptno $0 = #deptno $1] : t$1
+>     filter [#job $0 = "PRESIDENT"] : t$2
+>       #emps scott : t$2
+>     #depts scott : t$3
 >
-> t$0 ({deptno:int, dname:string, loc:string} option * {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real}) bag
-> t$1 {deptno:int, dname:string, loc:string} bag
+> t$0 {dname:string, who:string option} bag
+> t$1 ({comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} option * {deptno:int, dname:string, loc:string}) bag
 > t$2 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
+> t$3 {deptno:int, dname:string, loc:string} bag
 > |_} : string
 
 (* A full join makes both sides optional. *)
+from e in (from x in scott.emps where x.job = "PRESIDENT")
+  full join d in scott.depts on e.deptno = d.deptno
+  yield {dname = d?.dname, who = e?.ename};
+> dname      who
+> ---------- ----
+> ACCOUNTING KING
+> RESEARCH
+> SALES
+> OPERATIONS
+>
+> val it : {dname:string option, who:string option} bag
 Sys.planOf (
-  from d in scott.depts
-    full join e in scott.emps on e.deptno = d.deptno
-    yield {who = e?.ename});
+  from e in (from x in scott.emps where x.job = "PRESIDENT")
+    full join d in scott.depts on e.deptno = d.deptno
+    yield {dname = d?.dname, who = e?.ename});
 > val it =
 >   {_|
-> project [{who = #map Option #ename (#2 $0)}] : {who:string option} bag
->   join [full] [#deptno $1 = #deptno $0] : t$0
->     #depts scott : t$1
->     #emps scott : t$2
+> project [{dname = #map Option #dname (#2 $0),
+>     who = #map Option #ename (#1 $0)}] : t$0
+>   join [full] [#deptno $0 = #deptno $1] : t$1
+>     filter [#job $0 = "PRESIDENT"] : t$2
+>       #emps scott : t$2
+>     #depts scott : t$3
 >
-> t$0 ({deptno:int, dname:string, loc:string} option * {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} option) bag
-> t$1 {deptno:int, dname:string, loc:string} bag
+> t$0 {dname:string option, who:string option} bag
+> t$1 ({comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} option * {deptno:int, dname:string, loc:string} option) bag
 > t$2 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
+> t$3 {deptno:int, dname:string, loc:string} bag
 > |_} : string
 
-(* `group` builds a record of its keys and aggregates, and the names
- * the query wrote are read back off it. The tree, the types and the
- * legend are morel-java's; the aggregates are not, and plan.md's
- * findings say why. *)
+(* ---------------------------------------------------------------- *)
+(* Group, order, set operators.
+ *
+ * `group` builds a record of its keys and aggregates.
+ *
+ * FINDING. The tree, the types and the legend are morel-java's; the
+ * aggregates are not. morel-java writes `[c = count over (), total =
+ * sum over #sal $0]`, and there are three differences in that one
+ * line: we parenthesise an aggregate where morel-java does not, we
+ * resolve `count` to the structure member and print it in selector
+ * form where morel-java keeps the global name, and we dispatch `sum`
+ * to `sum$real` by the element type where morel-java keeps the
+ * generic. The line is then too long, so it folds, which morel-java's
+ * does not. All three belong to `main`: the parentheses are how an
+ * aggregate has printed in every plan, and the corpus has them.
+ *)
 Sys.planOf (
   from e in scott.emps
     group {e.deptno}
     compute {c = count over (), total = sum over e.sal});
 > val it =
 >   {_|
-> group [deptno = #deptno $0] [c = (#count Relational over ()), total = (sum$real over #sal $0)] : t$0
+> group [deptno = #deptno $0] [c = (#count Relational over ()),
+>     total = (sum$real over #sal $0)] : t$0
 >   #emps scott : t$1
 >
 > t$0 {c:int, deptno:int, total:real} bag
 > t$1 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
 > |_} : string
 
+(* `order` is a sort, and it changes the kind: its input is a `bag`
+ * and its output a `list`. `skip` and `take` are nodes of their own,
+ * whose arguments are evaluated before the first row and so cannot
+ * mention `$0`.
+ *)
+Sys.planOf (
+  from e in scott.emps order e.sal skip 2 take 3 yield e.ename);
+> val it =
+>   {_|
+> project [#ename $0] : string list
+>   take [3] : t$0
+>     skip [2] : t$0
+>       sort [#sal $0] : t$0
+>         #emps scott : t$1
+>
+> t$0 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} list
+> t$1 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
+> |_} : string
+
+(* A set operator carries whether it removes duplicates. *)
+Sys.planOf (from i in [1, 2] union [3]);
+> val it = {_|
+> union [all] : int list
+>   [1, 2] : int list
+>   [3] : int list
+> |_} : string
+Sys.planOf (from i in [1, 2] except [1]);
+> val it = {_|
+> except [all] : int list
+>   [1, 2] : int list
+>   [1] : int list
+> |_} : string
+
 (* ---------------------------------------------------------------- *)
-(* Relations reached from inside an expression, and generated binders.
- *
- * A relational operator is the first non-whitespace on its line, so a
- * relation inside an expression prints as `r$0` and its lines follow
- * the tree. A fragment says in brackets what it reads from outside
- * itself, and the same text stands at the reference and at the
- * definition.
+(* Generated binders.
  *
  * Two nested trees side by side share the enclosing text's numbering:
  * both say `v$0`, because both are bound by the same `let`. An
  * implementation that numbered per tree would say `v$0` and `v$1`.
- *
- * Everything here is morel-java's text byte for byte except where the
- * node's own line folds: morel-java breaks a `let` open, putting its
- * `val`, `in` and `end` on lines of their own, and we fold where the
- * line runs out. That is plan.md's R4d.
  *)
 val pairs = [(1, 2), (2, 3)];
-> val pairs = [(1,2),(2,3)] : (int * int) list
+> 1 2
+> - -
+> 1 2
+> 2 3
+>
+> val pairs : (int * int) list
 Sys.planOf (
   from x in [1, 2, 3]
     where Relational.nonEmpty (from (a, b) in pairs where a = x)
@@ -248,8 +344,11 @@ Sys.planOf (
     yield x);
 > val it =
 >   {_|
-> filter [let val v$0 = $0 in #nonEmpty Relational (r$0[v$0])
->     andalso #nonEmpty Relational (r$1[v$0]) end] : int list
+> filter [let
+>       val v$0 = $0
+>     in
+>       #nonEmpty Relational (r$0[v$0]) andalso #nonEmpty Relational (r$1[v$0])
+>     end] : int list
 >   [1, 2, 3] : int list
 >
 > r$0[v$0] =
@@ -270,7 +369,11 @@ Sys.planOf (
  * It is the case an implementation is most likely to get wrong. One
  * that builds its text by concatenating strings its children returned
  * restarts the numbering in each child, says `v$0` in both places, and
- * gets it wrong silently.
+ * gets it wrong silently. It is also the case that was broken here
+ * until the lowering learned to leave a nested tree's row binding
+ * alone: substituting `v$1` while its value was still `$0` put that
+ * `$0` under a node that rebinds it, so `c = b` became `c = d` and the
+ * query answered [] instead of [1].
  *)
 from x in [1, 2, 3]
   where Relational.nonEmpty (
@@ -295,8 +398,11 @@ Sys.planOf (
 >
 > r$0[v$0] =
 >   project [{a = #1 $0, b = #2 $0}] : {a:int, b:int} list
->     filter [let val v$1 = $0 in #1 $0 = v$0
->         andalso #nonEmpty Relational (r$1[v$1]) end] : (int * int) list
+>     filter [let
+>           val v$1 = $0
+>         in
+>           #1 $0 = v$0 andalso #nonEmpty Relational (r$1[v$1])
+>         end] : (int * int) list
 >       pairs : (int * int) list
 >
 > r$1[v$1] =
@@ -305,9 +411,19 @@ Sys.planOf (
 >       pairs : (int * int) list
 > |_} : string
 
+(* ---------------------------------------------------------------- *)
+(* Beyond morel-java's file: what `Sys.planOf` itself promises, and
+ * where the translator declines.
+ *
+ * These are morel-rust's, and the lines above are morel-java's. They
+ * go at the end so that the two stay easy to tell apart.
+ *)
+
 (* A scan whose pattern destructures binds one name per component, and
  * the projection that ends the tree is where the names come back. A
- * pattern that nests is more than the translator does. *)
+ * pattern that nests is more than the translator does, and where it
+ * declines -- it does not guess -- the plan is the step list that runs
+ * the query. *)
 Sys.planOf (from (i, j) in [(1, 2)]);
 > val it =
 >   {_|
@@ -316,9 +432,6 @@ Sys.planOf (from (i, j) in [(1, 2)]);
 > |_} : string
 Sys.planOf (from (i, (j, k)) in [(1, (2, 3))]);
 > val it = "from (i, (j, k)) in [(1, (2, 3))]" : string
-
-(* Where the translator declines -- it does not guess -- the plan is
- * the step list that runs the query. A `group` is one such. *)
 Sys.planOf (from i in [1, 2] group j = i);
 > val it = "from i in [1, 2] group i yield i" : string
 

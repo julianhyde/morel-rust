@@ -287,7 +287,7 @@ impl Translator {
                 if condition.is_some() || join_type != JoinType::Inner {
                     return None;
                 }
-                self.tree = Some(source.clone());
+                self.tree = Some(self.source_tree(source)?);
                 self.bindings = paths;
             }
             Some(left) => {
@@ -316,7 +316,7 @@ impl Translator {
                         return None;
                     }
                 } else {
-                    right = source.clone();
+                    right = self.source_tree(source)?;
                 }
                 let n = components_of(&left) + 1;
                 // The condition sees the two inputs' elements as `$0`
@@ -395,6 +395,20 @@ impl Translator {
             },
         };
         Some(())
+    }
+
+    /// Translates a scan's source. A query of its own is a tree of its
+    /// own, and anything else is a leaf whose names may need changing.
+    fn source_tree(&self, source: &Expr) -> Option<Expr> {
+        match source {
+            Expr::From(t, steps) => translate_with(
+                steps,
+                t,
+                self.outer.clone(),
+                Rc::clone(&self.counter),
+            ),
+            leaf => substitute(leaf, &self.outer),
+        }
     }
 
     /// Returns a fresh name for a binder the translation invents.

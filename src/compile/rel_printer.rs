@@ -221,18 +221,23 @@ impl Writer {
 
     /// Writes one node, and its inputs below it.
     fn node(&mut self, exp: &Expr, indent: usize) {
-        let line = match exp {
+        let (mut docs, t) = match exp {
             Expr::Rel(t, rel) => {
-                let mut line = rel.op_name().to_string();
+                let mut docs = vec![lindig::text(rel.op_name())];
                 for arg in args(rel) {
-                    let _ = write!(line, " [{}]", arg);
+                    docs.push(lindig::text(" ["));
+                    docs.push(arg);
+                    docs.push(lindig::text("]"));
                 }
-                self.with_type(line, t)
+                (docs, t.clone())
             }
             // A leaf is an ordinary expression, and prints as one.
-            leaf => self.with_type(format!("{}", leaf), &leaf.type_()),
+            leaf => (vec![doc(leaf)], leaf.type_()),
         };
-        self.out.push_str(&wrap(&line, indent, self.line_width));
+        if let Some(suffix) = self.type_suffix(&t) {
+            docs.push(lindig::text(&suffix));
+        }
+        self.out.push_str(&wrap(docs, indent, self.line_width));
         self.out.push('\n');
         if let Expr::Rel(_, rel) = exp {
             for input in rel.inputs() {
@@ -241,16 +246,15 @@ impl Writer {
         }
     }
 
-    /// Appends `: type` to a node's line, as a moniker or a reference to
-    /// one.
-    fn with_type(&mut self, mut line: String, t: &Rc<Type>) -> String {
+    /// Returns the ` : type` a node's line ends with, as a moniker or a
+    /// reference to one, or `None` where the plan carries no types.
+    fn type_suffix(&mut self, t: &Rc<Type>) -> Option<String> {
         if !self.with_types {
-            return line;
+            return None;
         }
         let moniker = format!("{}", t);
         if moniker.len() <= MONIKER_LIMIT {
-            let _ = write!(line, " : {}", moniker);
-            return line;
+            return Some(format!(" : {}", moniker));
         }
         // Two types that print the same moniker share a reference,
         // because the moniker is all the plan says about them.
@@ -262,8 +266,7 @@ impl Writer {
                 self.type_refs.push(moniker);
                 self.type_refs.len() - 1
             });
-        let _ = write!(line, " : t${}", i);
-        line
+        Some(format!(" : t${}", i))
     }
 
     /// Returns the finished text: the tree, the fragments broken out
@@ -289,121 +292,170 @@ impl Writer {
     }
 }
 
-/// Lays out one node's line, folded if it does not fit.
+/// Lays out one node's line, folded where it does not fit.
 ///
 /// A continuation is indented four from the node, which is how a
 /// reader -- and a parser -- tells a continuation from a grandchild:
 /// after a node at indent *d*, the run of lines at *d + 4* before the
 /// first line at *d + 2* belongs to that node.
-///
-/// The break points are the syntactic ones the text shows: before a
-/// conjunction's `andalso` or `orelse`, and after the comma between a
-/// record's fields. They are found in the rendered line rather than
-/// built into it, so that a line which fits is character for character
-/// the line an unwrapped printer would have written.
-fn wrap(line: &str, indent: usize, line_width: usize) -> String {
-    let indented = format!("{:indent$}{}", "", line, indent = indent);
-    if indented.len() <= line_width {
-        return indented;
-    }
-    let pieces = break_points(line);
-    if pieces.len() < 2 {
-        return indented;
-    }
-    let docs: Vec<Doc> = pieces
-        .iter()
-        .enumerate()
-        .flat_map(|(i, piece)| {
-            let mut v = Vec::new();
-            if i > 0 {
-                v.push(lindig::line());
-            }
-            v.push(lindig::text(piece));
-            v
-        })
-        .collect();
+fn wrap(docs: Vec<Doc>, indent: usize, line_width: usize) -> String {
+    let spaces = format!("{:indent$}", "", indent = indent);
     let doc = lindig::nest(
         (indent + 4) as i32,
-        lindig::group(lindig::hcat(
-            once(lindig::text(&format!("{:indent$}", "", indent = indent)))
-                .chain(docs)
-                .collect(),
-        )),
+        lindig::hcat(once(lindig::text(&spaces)).chain(docs).collect()),
     );
     lindig::render(line_width as i32, doc)
 }
 
-/// Splits a node's line at the points a fold may go: before a
-/// conjunction's keyword at the top level, and after the comma between
-/// the fields of a record that the line's argument opens with.
+/// Renders an expression as a document, with a group wherever its text
+/// may break.
 ///
-/// A piece keeps the text that precedes its break, so joining the
-/// pieces with a single space gives the line back.
-fn break_points(line: &str) -> Vec<String> {
-    let chars: Vec<char> = line.chars().collect();
-    let mut pieces = Vec::new();
-    let mut start = 0;
-    let mut depth = 0i32;
-    let mut in_string = false;
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        if in_string {
-            if c == '\\' {
-                i += 2;
-                continue;
-            }
-            if c == '"' {
-                in_string = false;
-            }
-            i += 1;
-            continue;
-        }
-        match c {
-            '"' => in_string = true,
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            _ => {}
-        }
-        // ` andalso ` or ` orelse ` joins two conditions, and the fold
-        // goes before the keyword.
-        if c == ' ' && depth == 1 {
-            for keyword in ["andalso ", "orelse "] {
-                if chars[i + 1..]
-                    .starts_with(&keyword.chars().collect::<Vec<_>>()[..])
-                {
-                    pieces.push(chars[start..i].iter().collect());
-                    start = i + 1;
-                    break;
+/// Only a construct that holds a break point has an arm of its own;
+/// everything else is its `Display` text, which is what a document with
+/// no break point renders to anyway. That is also the contract:
+/// rendered at a width nothing exceeds, this gives back exactly what
+/// `Display` gives, so a line that fits is character for character the
+/// line an unwrapped printer would write.
+fn doc(e: &Expr) -> Doc {
+    match e {
+        // `let`, its declaration, `in`, its body and `end`, each on a
+        // line, with the declaration and the body indented two. One
+        // group, so they are taken together; nests rather than groups
+        // inside it, so the two that are indented do not decide for
+        // themselves. `let` heads the thing it introduces, and does not
+        // trail an `=`.
+        Expr::Let(_, decls, body) => {
+            let mut head = vec![lindig::text("let")];
+            for (i, decl) in decls.iter().enumerate() {
+                if i > 0 {
+                    head.push(lindig::text(";"));
                 }
+                head.push(lindig::line());
+                head.push(lindig::text(&format!("{}", decl)));
+            }
+            lindig::group(lindig::hcat(vec![
+                lindig::nest(2, lindig::hcat(head)),
+                lindig::line(),
+                lindig::text("in"),
+                lindig::nest(2, lindig::hcat(vec![lindig::line(), doc(body)])),
+                lindig::line(),
+                lindig::text("end"),
+            ]))
+        }
+        // A `case` that does not fit puts each arm after the first on a
+        // line of its own, behind the `|` that introduces it. `if`
+        // reaches here too: it is a `case` over `true` and `false` by
+        // the time a plan sees it, which is where an `if` breaks.
+        Expr::Case(_, subject, arms, _) => {
+            let mut inner =
+                vec![lindig::text("case "), doc(subject), lindig::text(" of ")];
+            for (i, arm) in arms.iter().enumerate() {
+                if i > 0 {
+                    inner.push(lindig::line());
+                    inner.push(lindig::text("| "));
+                }
+                inner.push(lindig::text(&format!("{} => ", arm.pat)));
+                inner.push(doc(&arm.expr));
+            }
+            lindig::group(lindig::nest(2, lindig::hcat(inner)))
+        }
+        Expr::Apply(_, fx, arg, _) => {
+            if let Expr::Literal(_, Val::Fn(func)) = fx.as_ref()
+                && let Expr::Tuple(_, args) = arg.as_ref()
+                && args.len() == 2
+                && let Some(op) = func.infix_op()
+            {
+                // `andalso` and `orelse` chain, and a plan's conditions
+                // are mostly made of them, so they are where a long
+                // line is worth breaking. Each is a group of its own,
+                // so an outer one breaks before an inner one does, and
+                // a condition that fits stays on its line.
+                if op == "andalso" || op == "orelse" {
+                    return lindig::group(lindig::hcat(vec![
+                        doc(&args[0]),
+                        lindig::line(),
+                        lindig::text(&format!("{} ", op)),
+                        doc(&args[1]),
+                    ]));
+                }
+                return lindig::hcat(vec![
+                    doc(&args[0]),
+                    lindig::text(&format!(" {} ", op)),
+                    doc(&args[1]),
+                ]);
+            }
+            // An argument is bracketed unless it is written as an atom
+            // already, which is `Display`'s rule.
+            match arg.as_ref() {
+                Expr::Identifier(_, _)
+                | Expr::Input(_, _)
+                | Expr::Literal(_, _)
+                | Expr::RecordSelector(_, _)
+                | Expr::Tuple(_, _) => {
+                    lindig::hcat(vec![doc(fx), lindig::text(" "), doc(arg)])
+                }
+                _ => lindig::hcat(vec![
+                    doc(fx),
+                    lindig::text(" ("),
+                    doc(arg),
+                    lindig::text(")"),
+                ]),
             }
         }
-        // A record's fields are separated by ", ", and the fold goes
-        // after the comma.
-        if c == ',' && depth == 2 && chars.get(i + 1) == Some(&' ') {
-            pieces.push(chars[start..=i].iter().collect());
-            start = i + 2;
-            i += 2;
-            continue;
+        // A record or a tuple may break after a comma, one field to a
+        // line, which is the other place a plan's lines get long.
+        Expr::Tuple(t, elems) => {
+            let mut inner = Vec::new();
+            if let Type::Record(_, fields) = t.as_ref() {
+                inner.push(lindig::text("{"));
+                for (i, (label, e)) in
+                    fields.keys().zip(elems.iter()).enumerate()
+                {
+                    if i > 0 {
+                        inner.push(lindig::text(","));
+                        inner.push(lindig::line());
+                    }
+                    inner.push(lindig::text(&format!("{} = ", label)));
+                    inner.push(doc(e));
+                }
+                inner.push(lindig::text("}"));
+            } else {
+                inner.push(lindig::text("("));
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 {
+                        inner.push(lindig::text(","));
+                        inner.push(lindig::line());
+                    }
+                    inner.push(doc(e));
+                }
+                inner.push(lindig::text(")"));
+            }
+            lindig::group(lindig::hcat(inner))
         }
-        i += 1;
+        Expr::Aggregate(_, a0, a1, _) => lindig::hcat(vec![
+            lindig::text("("),
+            doc(a0),
+            lindig::text(" over "),
+            doc(a1),
+            lindig::text(")"),
+        ]),
+        Expr::Raise(_, a, _) => {
+            lindig::hcat(vec![lindig::text("raise "), doc(a)])
+        }
+        _ => lindig::text(&format!("{}", e)),
     }
-    if start < chars.len() {
-        pieces.push(chars[start..].iter().collect());
-    }
-    pieces
 }
 
 /// Returns a node's arguments, in the order the datatype lists them.
 /// An argument that says nothing is left out: an inner join's kind, a
 /// join's `true` condition, an empty aggregate list, and the `all` of a
 /// set operator that does keep duplicates.
-fn args(rel: &Rel) -> Vec<String> {
+fn args(rel: &Rel) -> Vec<Doc> {
     match rel {
-        Rel::Filter(_, condition) => vec![format!("{}", condition)],
-        Rel::IfEmpty(_, value) => vec![format!("{}", value)],
-        Rel::Project(_, e) | Rel::Sort(_, e) => vec![format!("{}", e)],
-        Rel::Skip(_, n) | Rel::Take(_, n) => vec![format!("{}", n)],
+        Rel::Filter(_, condition) => vec![doc(condition)],
+        Rel::IfEmpty(_, value) => vec![doc(value)],
+        Rel::Project(_, e) | Rel::Sort(_, e) => vec![doc(e)],
+        Rel::Skip(_, n) | Rel::Take(_, n) => vec![doc(n)],
         Rel::Unorder(_) => vec![],
         Rel::Group(_, keys, aggregates) => {
             let mut v = vec![labelled(keys)];
@@ -415,13 +467,13 @@ fn args(rel: &Rel) -> Vec<String> {
         Rel::Join(kind, binder, condition, _, _) => {
             let mut v = Vec::new();
             if let Some(name) = kind.name() {
-                v.push(name.to_string());
+                v.push(lindig::text(name));
             }
             if let Some(name) = binder {
-                v.push(name.clone());
+                v.push(lindig::text(name));
             }
             if !is_true(condition) {
-                v.push(format!("{}", condition));
+                v.push(doc(condition));
             }
             v
         }
@@ -431,7 +483,7 @@ fn args(rel: &Rel) -> Vec<String> {
             if *distinct {
                 vec![]
             } else {
-                vec!["all".to_string()]
+                vec![lindig::text("all")]
             }
         }
     }
@@ -439,12 +491,17 @@ fn args(rel: &Rel) -> Vec<String> {
 
 /// Renders a list of labelled expressions, as a `group`'s keys and
 /// aggregates are written.
-fn labelled(items: &[(Label, Expr)]) -> String {
-    items
-        .iter()
-        .map(|(label, e)| format!("{} = {}", label, e))
-        .collect::<Vec<_>>()
-        .join(", ")
+fn labelled(items: &[(Label, Expr)]) -> Doc {
+    let mut inner = Vec::new();
+    for (i, (label, e)) in items.iter().enumerate() {
+        if i > 0 {
+            inner.push(lindig::text(","));
+            inner.push(lindig::line());
+        }
+        inner.push(lindig::text(&format!("{} = ", label)));
+        inner.push(doc(e));
+    }
+    lindig::group(lindig::hcat(inner))
 }
 
 /// Returns whether an expression is the literal `true`, which a join
@@ -618,7 +675,7 @@ fn generated_name(chars: &[char], i: usize) -> Option<(String, String, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compile::core::{Decl, JoinKind, Kind, Pat, ValBind};
+    use crate::compile::core::{Decl, JoinKind, Kind, Match, Pat, ValBind};
     use crate::compile::library::BuiltInFunction;
     use crate::compile::span::Span;
     use crate::compile::types::{Label, PrimitiveType, Type};
@@ -653,6 +710,22 @@ mod tests {
             Box::new(Expr::Literal(bool_(), Val::Fn(BuiltInFunction::IntGt))),
             Box::new(Expr::Tuple(
                 Rc::new(Type::Tuple(vec![int(), int()])),
+                vec![a, b],
+            )),
+            Span::new(""),
+        )
+    }
+
+    /// `a andalso b`, as an application of the operator.
+    fn and(a: Expr, b: Expr) -> Expr {
+        Expr::Apply(
+            bool_(),
+            Box::new(Expr::Literal(
+                bool_(),
+                Val::Fn(BuiltInFunction::BoolAndAlso),
+            )),
+            Box::new(Expr::Tuple(
+                Rc::new(Type::Tuple(vec![bool_(), bool_()])),
                 vec![a, b],
             )),
             Span::new(""),
@@ -800,15 +873,22 @@ mod tests {
     /// continuation from a grandchild.
     #[test]
     fn a_line_folds_four_from_the_node() {
-        let line = "filter [#deptno (#2 $0) = #deptno (#1 $0) \
-                    andalso #job (#2 $0) = \"PRESIDENT\"] : t$1";
+        let tree = node(Rel::Filter(
+            Box::new(id("xs", Kind::List.apply(int()))),
+            Box::new(and(
+                gt(Expr::Input(int(), 0), lit(100000)),
+                gt(Expr::Input(int(), 0), lit(200000)),
+            )),
+        ));
         // At a width that holds it, nothing moves.
-        assert_eq!(wrap(line, 2, 200), format!("  {}", line));
-        // At 78 it folds before the `andalso`, at 2 + 4.
         assert_eq!(
-            wrap(line, 2, 78),
-            "  filter [#deptno (#2 $0) = #deptno (#1 $0)\n      \
-             andalso #job (#2 $0) = \"PRESIDENT\"] : t$1"
+            plan(&tree, false, 200),
+            "filter [$0 > 100000 andalso $0 > 200000]\n  xs\n"
+        );
+        // At 30 it folds before the `andalso`, four from the node.
+        assert_eq!(
+            plan(&tree, false, 30),
+            "filter [$0 > 100000\n    andalso $0 > 200000]\n  xs\n"
         );
     }
 
@@ -816,28 +896,112 @@ mod tests {
     /// together: the fold is one decision, not one per field.
     #[test]
     fn a_record_folds_after_each_comma() {
-        let line = "project [{comm = #comm (#3 $0), dname = #dname (#1 $0), \
-                    ename = #ename (#2 $0)}] : t$0";
+        let mut fields = BTreeMap::new();
+        for name in ["aaaaaaaa", "bbbbbbbb", "cccccccc"] {
+            fields.insert(Label::String(name.to_string()), int());
+        }
+        let tree = node(Rel::Project(
+            Box::new(id("xs", Kind::List.apply(int()))),
+            Box::new(Expr::Tuple(
+                Rc::new(Type::Record(false, fields)),
+                vec![lit(1), lit(2), lit(3)],
+            )),
+        ));
+        // The fold is one decision, not one per field: every comma
+        // breaks, or none does.
         assert_eq!(
-            wrap(line, 0, 78),
-            "project [{comm = #comm (#3 $0),\n    \
-             dname = #dname (#1 $0),\n    \
-             ename = #ename (#2 $0)}] : t$0"
+            plan(&tree, false, 40),
+            "project [{aaaaaaaa = 1,\n    \
+             bbbbbbbb = 2,\n    \
+             cccccccc = 3}]\n  xs\n"
         );
     }
 
-    /// The pieces a fold may go between join back into the line, so a
-    /// line that fits is the line an unwrapped printer would write.
+    /// A `let` that does not fit puts its declaration, `in`, its body
+    /// and `end` each on a line, with the two it encloses indented two
+    /// further. One decision, so they are taken together; `let` heads
+    /// the thing it introduces, and does not trail an `=`.
     #[test]
-    fn the_pieces_give_the_line_back() {
-        for line in [
-            "filter [a andalso b] : int list",
-            "project [{a = 1, b = 2}] : t$0",
-            "join : t$1",
-            // A comma inside a string is not a break point.
-            "filter [$0 = \"a, b\"] : string list",
+    fn a_let_that_does_not_fit_opens() {
+        let tree = node(Rel::Filter(
+            Box::new(id("xs", Kind::List.apply(int()))),
+            Box::new(let_(
+                "v$5",
+                Expr::Input(int(), 0),
+                gt(Expr::Input(int(), 0), id("v$5", int())),
+            )),
+        ));
+        assert_eq!(
+            plan(&tree, false, 45),
+            "filter [let val v$0 = $0 in $0 > v$0 end]\n  xs\n"
+        );
+        assert_eq!(
+            plan(&tree, false, 30),
+            "filter [let\n      \
+             val v$0 = $0\n    \
+             in\n      \
+             $0 > v$0\n    \
+             end]\n  xs\n"
+        );
+    }
+
+    /// A `case` that does not fit puts each arm after the first behind
+    /// the `|` that introduces it, indented two. `if` breaks here too:
+    /// it is a `case` over `true` and `false` by the time a plan sees
+    /// it.
+    #[test]
+    fn a_case_that_does_not_fit_breaks_at_its_arms() {
+        let arm = |i: i32, value: i32| Match {
+            pat: Pat::Literal(int(), Val::Int(i)),
+            expr: lit(value),
+        };
+        let subject = Expr::Input(int(), 0);
+        let tree = node(Rel::Project(
+            Box::new(id("xs", Kind::List.apply(int()))),
+            Box::new(Expr::Case(
+                int(),
+                Box::new(subject),
+                vec![arm(1, 100), arm(2, 200), arm(3, 300)],
+                Span::new(""),
+            )),
+        ));
+        assert_eq!(
+            plan(&tree, false, 30),
+            "project [case $0 of 1 => 100\n      \
+             | 2 => 200\n      \
+             | 3 => 300]\n  xs\n"
+        );
+    }
+
+    /// A document rendered at a width nothing exceeds is exactly what
+    /// `Display` writes, so a line that fits is character for character
+    /// the line an unwrapped printer would write.
+    #[test]
+    fn a_document_that_fits_is_what_display_writes() {
+        let mut fields = BTreeMap::new();
+        fields.insert(Label::String("a".to_string()), int());
+        fields.insert(Label::String("b".to_string()), int());
+        for e in [
+            gt(Expr::Input(int(), 0), lit(1)),
+            and(gt(Expr::Input(int(), 0), lit(1)), id("p", bool_())),
+            Expr::Tuple(
+                Rc::new(Type::Record(false, fields)),
+                vec![lit(1), lit(2)],
+            ),
+            let_("v$5", Expr::Input(int(), 0), id("v$5", int())),
+            Expr::Apply(
+                int(),
+                Box::new(id("f", int())),
+                Box::new(gt(Expr::Input(int(), 0), lit(1))),
+                Span::new(""),
+            ),
         ] {
-            assert_eq!(break_points(line).join(" "), line, "{}", line);
+            assert_eq!(
+                lindig::render(i32::MAX, doc(&e)),
+                format!("{}", e),
+                "{}",
+                e
+            );
         }
     }
 

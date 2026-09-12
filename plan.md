@@ -283,9 +283,9 @@ away it is printed. The names are sorted in `renumber`, not where the
 header is built, because it is the text's numbering they are in order
 of and not their maker's.
 
-*R4d, a `let` and a `case` may start a line.* Not done, and not
-foreseen: morel-java added it in `01f24633`, the tip of tag
-`449-tree.3`, and two of the suite's own fragment cases need it.
+*R4d, a `let` and a `case` may start a line.* Done, and not foreseen:
+morel-java added it in `01f24633`, the tip of tag `449-tree.3`, and two
+of the suite's fragment cases need it.
 
 ```
 filter [let
@@ -295,16 +295,23 @@ filter [let
     end] : int list
 ```
 
-This is what overturns R4b's decision. Finding the break points in the
+This overturned R4b's decision. Finding the break points in the
 rendered line works while every piece of a fold shares one indent and
 one decision; here the `in` and `end` sit at four from the node and
 what they bracket at six, and the `let` broke while the `andalso`
 inside it did not. Two indents and two decisions, which is to say
 nested groups -- and a flat list of pieces has one group by
-construction. So R4d is the work R4b avoided: render an expression into
-a document, with a group per `let`, `case`, conjunction and record, and
-`lindig.rs` deciding each. It is a rewrite of how every expression in a
-plan line is printed, and nothing outside a plan may change.
+construction. So R4d is the work R4b avoided: a node's line is a
+document, with a group per `let`, `case`, conjunction and record, and
+`lindig.rs` deciding each.
+
+It is not the whole rewrite it looked like, because only a construct
+that holds a break point needs an arm: everything else is its `Display`
+text, which is what a document with no break point renders to anyway.
+That is also the contract, and a test: rendered at a width nothing
+exceeds, the document gives back exactly what `Display` gives, so a
+line that fits is character for character the line an unwrapped printer
+would write, and nothing outside a plan changed at all.
 
 **R5 — the translator, and a shadow over the corpus.** Step list to
 tree, morel-java's `RelTranslator` (966 lines): variable elimination,
@@ -343,10 +350,17 @@ says which is which.
 Both of morel-java's fragment cases now print its text byte for byte
 except where a node's own line folds, which is R4d.
 
-**R6 — the conformance suite.** Copy `rel-tree.smli` across unchanged
-and make it pass. Every difference is a finding: a bug here, a bug
-there, or a place where `spec.md` does not say what it meant. Write it
-in the log below before fixing it.
+**R6 — the conformance suite.** Done 2026-09-12. morel-java's
+`rel-tree.smli` at tag `449-tree.3` is copied across whole, and its
+fifteen plans print morel-java's text byte for byte except in two
+places, each marked in the file and logged below. morel-rust's own
+cases -- what `Sys.planOf` promises, and where the translator declines
+-- follow at the end, so that the two stay easy to tell apart.
+
+The two differences are both morel-rust bugs on `main`, which is what
+this branch was for: a `where true` step is dropped before the tree is
+built, and an aggregate prints with parentheses, a structure member's
+name, and an instance rather than the generic. Neither is fixed here.
 
 **Later, not now.** The lowering (`RelLowerer`, 949 lines) matters when
 the tree becomes what the passes carry. Grounding on the tree
