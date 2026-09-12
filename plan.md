@@ -320,12 +320,39 @@ disappears. It declines rather than guesses, returning `None` for what
 it cannot translate, and we count the declines.
 
 Then borrow morel-java's step-1 technique, which is the cheapest bug
-detector on offer: under `cfg(test)`, translate every query the script
-corpus compiles and assert two things — that the tree's type equals the
-query's type, and that the validator accepts it. Java ran that over
-1534 queries and declined none. Do not attempt a structural round trip
-against the step list; java tried and explains why it cannot work, as
-the translation normalizes.
+detector on offer: translate every query the script corpus compiles and
+assert two things — that the tree's type equals the query's type, and
+that the validator accepts it. Java ran that over 1534 queries and
+declined none. Do not attempt a structural round trip against the step
+list; java tried and explains why it cannot work, as the translation
+normalizes.
+
+*R5c, the shadow.* Done 2026-09-12. The resolver builds the tree for
+every query it resolves, in a debug build only, and records what
+happened; each script test then asserts that no tree failed the
+validator. Over the 67 scripts it translates 958 queries and declines
+804. The type equality is inside `translate`, which returns nothing
+where the tree's type is not the query's, so a failure there shows up
+as a decline rather than as a fault.
+
+It paid for itself on its first run, on a query nothing else looked
+at:
+
+```
+from j in [1, 2] join i in ["x", "y"] except [{i = "y", j = 2}]
+```
+
+The set operator was built over `int * string` and `{i:string, j:int}`.
+A set operator compares its inputs element by element, and after
+several binders the tree's element is its inputs' components, which
+carry no names, while the operand is the row the query wrote. So the
+components are named before the set operator rather than at the end.
+
+Two smaller gaps closed on the way, both found by reading the decline
+count rather than a failure: a `group` whose single key is not written
+as a record takes its name off the expression, and a projection that
+builds the element it was given has no argument, which `spec.md` §6.3
+lists beside an inner join's kind.
 
 *R5b, a query inside an expression, and a scan that destructures.*
 Done 2026-09-12, and the two together are what make R4c reachable from

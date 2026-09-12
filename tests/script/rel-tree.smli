@@ -423,7 +423,11 @@ Sys.planOf (
  * the projection that ends the tree is where the names come back. A
  * pattern that nests is more than the translator does, and where it
  * declines -- it does not guess -- the plan is the step list that runs
- * the query. *)
+ * the query.
+ *
+ * A single key is not written as a record, so its name comes off the
+ * expression; and the projection that follows builds the element it
+ * was given, so it has no argument. *)
 Sys.planOf (from (i, j) in [(1, 2)]);
 > val it =
 >   {_|
@@ -433,7 +437,12 @@ Sys.planOf (from (i, j) in [(1, 2)]);
 Sys.planOf (from (i, (j, k)) in [(1, (2, 3))]);
 > val it = "from (i, (j, k)) in [(1, (2, 3))]" : string
 Sys.planOf (from i in [1, 2] group j = i);
-> val it = "from i in [1, 2] group i yield i" : string
+> val it =
+>   {_|
+> project : int list
+>   group [i = $0] : int list
+>     [1, 2] : int list
+> |_} : string
 
 (* `e` is not evaluated. `List.hd []` raises `Empty`, and a plan of it
  * does not. *)

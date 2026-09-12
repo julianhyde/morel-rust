@@ -136,6 +136,13 @@ pub fn resolve_with_session_fns_rec(
         let mut errors = resolver.errors.borrow_mut();
         check_unbounded_extents(&decl, &mut errors);
     }
+    // Build the tree for every query, beside the step list that will
+    // run it, and check what the translation promises. Nothing depends
+    // on the answer, which is what makes it safe to be wrong about:
+    // the finding is a tree, and the query still runs. Only in a debug
+    // build, because it is a check and not a pass.
+    #[cfg(debug_assertions)]
+    rel_translator::shadow(&decl);
     (decl, pre_fn_env, resolver.errors.into_inner())
 }
 

@@ -44,11 +44,12 @@ use crate::compile::core::{
 };
 use crate::compile::free_finder::free_names_in;
 use crate::compile::postfix::peel_type;
+use crate::compile::rel_validator;
 use crate::compile::span::Span;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
 use crate::syntax::ast::JoinType;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -88,6 +89,136 @@ fn translate_with(
     // rather than printing a plan for a different query.
     let tree = t.name_the_components(tree, query_type)?;
     (tree.type_() == *query_type).then_some(tree)
+}
+
+thread_local! {
+    /// What the shadow has seen since it was last taken.
+    static SHADOW: RefCell<Shadow> = RefCell::new(Shadow::default());
+}
+
+/// What translating every query a script compiles turned up.
+#[derive(Default)]
+pub struct Shadow {
+    /// Queries that became a tree.
+    pub translated: usize,
+    /// Queries the translator declined, which is not a fault: it
+    /// declines rather than guesses. The count is the coverage we do
+    /// not have yet.
+    pub declined: usize,
+    /// Trees the validator complained about, each with the query it
+    /// came from. Every one is a bug -- here, or in morel-java, or in
+    /// what `spec.md` meant -- and the query is enough to find it.
+    pub invalid: Vec<String>,
+}
+
+/// Translates every query in `decl`, and records what happened without
+/// printing anything.
+///
+/// morel-java's step-1 technique, and the cheapest bug detector on
+/// offer. The tree is built beside the step list that does the work,
+/// so a disagreement here is a finding rather than a regression:
+/// nothing depends on the answer.
+///
+/// [`translate`] already declines where the tree's type is not the
+/// query's, so that half of the check is inside it and a failure shows
+/// up as a decline. What is left is the validator, and it is asked of
+/// every tree.
+pub fn shadow(decl: &Decl) {
+    shadow_decl(decl);
+}
+
+/// Returns what the shadow has seen, and forgets it.
+pub fn take_shadow() -> Shadow {
+    SHADOW.with(RefCell::take)
+}
+
+fn shadow_query(exp: &Expr, steps: &[Step]) {
+    let tree = translate(steps, &exp.type_());
+    SHADOW.with(|cell| {
+        let mut shadow = cell.borrow_mut();
+        match &tree {
+            None => shadow.declined += 1,
+            Some(tree) => {
+                shadow.translated += 1;
+                for error in rel_validator::validate(tree) {
+                    shadow.invalid.push(format!("{}: {}", error, exp));
+                }
+            }
+        }
+    });
+}
+
+fn shadow_decl(decl: &Decl) {
+    match decl {
+        Decl::NonRecVal(b) => shadow_expr(&b.expr),
+        Decl::RecVal(binds) => binds.iter().for_each(|b| shadow_expr(&b.expr)),
+        Decl::Datatype(_) | Decl::Over(_) | Decl::Type(_) => {}
+    }
+}
+
+fn shadow_expr(e: &Expr) {
+    match e {
+        // A query, and then what its steps hold: a query nested inside
+        // another is a query too, and is where the interesting cases
+        // are.
+        Expr::Exists(_, steps) | Expr::Forall(_, steps) => {
+            steps.iter().for_each(shadow_step);
+        }
+        Expr::From(_, steps) => {
+            shadow_query(e, steps);
+            steps.iter().for_each(shadow_step);
+        }
+        Expr::Aggregate(_, a, b, _) | Expr::Apply(_, a, b, _) => {
+            shadow_expr(a);
+            shadow_expr(b);
+        }
+        Expr::Case(_, subject, arms, _) => {
+            shadow_expr(subject);
+            arms.iter().for_each(|m| shadow_expr(&m.expr));
+        }
+        Expr::Fn(_, arms, _) => {
+            arms.iter().for_each(|m| shadow_expr(&m.expr));
+        }
+        Expr::Let(_, decls, body) => {
+            decls.iter().for_each(shadow_decl);
+            shadow_expr(body);
+        }
+        Expr::List(_, items) | Expr::Tuple(_, items) => {
+            items.iter().for_each(shadow_expr);
+        }
+        Expr::Raise(_, a, _) => shadow_expr(a),
+        Expr::Rel(_, rel) => rel.children().into_iter().for_each(shadow_expr),
+        Expr::Current(_)
+        | Expr::Extent(_, _)
+        | Expr::Identifier(_, _)
+        | Expr::Input(_, _)
+        | Expr::Literal(_, _)
+        | Expr::Ordinal(_)
+        | Expr::RecordSelector(_, _) => {}
+    }
+}
+
+fn shadow_step(step: &Step) {
+    match &step.kind {
+        StepKind::Scan(_, source, condition) => {
+            shadow_expr(source);
+            condition.iter().for_each(|c| shadow_expr(c));
+        }
+        StepKind::Compute(e)
+        | StepKind::Order(e)
+        | StepKind::Skip(e)
+        | StepKind::Take(e)
+        | StepKind::Where(e)
+        | StepKind::Yield(e) => shadow_expr(e),
+        StepKind::Group(keys, aggregates) => {
+            shadow_expr(keys);
+            aggregates.iter().for_each(|a| shadow_expr(a));
+        }
+        StepKind::Except(_, inputs)
+        | StepKind::Intersect(_, inputs)
+        | StepKind::Union(_, inputs) => inputs.iter().for_each(shadow_expr),
+        _ => {}
+    }
 }
 
 /// Where in its input's element a binder's value is.
@@ -535,7 +666,21 @@ impl Translator {
         inputs: &[Expr],
         f: impl FnOnce(bool, Vec<Expr>) -> Rel,
     ) -> Option<()> {
-        let left = self.tree.take()?;
+        let mut left = self.tree.take()?;
+        // The operands are rows the query wrote, and after several
+        // binders the tree's element is its inputs' components, which
+        // have no names. So the components are named first, here rather
+        // than at the end: a set operator compares its inputs element
+        // by element, and two elements of different shapes are not
+        // comparable at all. Found by the shadow, on
+        // `from j in [1, 2] join i in ["x", "y"] except [...]`, which
+        // built an `except` over `int * string` and `{i:string, j:int}`
+        // and let the validator say so.
+        let operand = inputs.first()?;
+        if element_type(&left.type_()) != element_type(&operand.type_()) {
+            let named = self.name_the_components(left, &operand.type_())?;
+            left = named;
+        }
         let mut all_inputs = vec![left];
         all_inputs.extend(inputs.iter().cloned());
         self.tree = Some(node(f(distinct, all_inputs))?);
@@ -669,9 +814,14 @@ fn peel(t: &Rc<Type>) -> &Type {
 
 /// Decomposes a record expression into its labelled parts, which is
 /// how a `group`'s keys and aggregates are written.
+///
+/// A single key or aggregate is not written as a record at all --
+/// `group i` rather than `group {i = i}` -- so the name comes from the
+/// expression, the way the query's own `yield` takes it.
 fn labelled_parts(e: &Expr) -> Option<Vec<(Label, Expr)>> {
     let Expr::Tuple(t, items) = e else {
-        return None;
+        let name = e.implicit_label()?;
+        return Some(vec![(Label::String(name), e.clone())]);
     };
     let Type::Record(_, fields) = peel(t) else {
         return None;
@@ -889,7 +1039,6 @@ mod tests {
     /// step list.
     #[test]
     fn it_declines_what_it_cannot_translate() {
-        assert_eq!(tree_of("from i in [1, 2] group j = i"), None);
         // A pattern that nests is more than this does: a binder's path
         // through the element is one hop deeper than the components a
         // join concatenates, and nothing yet says which is which.
@@ -897,6 +1046,19 @@ mod tests {
         // `distinct` is a group keyed on the whole element, and the
         // conformance suite does not pin its text.
         assert_eq!(tree_of("from i in [1, 2] distinct"), None);
+    }
+
+    /// A `group` whose single key is not written as a record takes its
+    /// name off the expression, and the projection that follows builds
+    /// the element it was given, so it has no argument.
+    #[test]
+    fn a_lone_group_key_takes_its_name_off_the_expression() {
+        assert_eq!(
+            tree_of("from i in [1, 2] group j = i").unwrap(),
+            "project : int list\n  \
+             group [i = $0] : int list\n    \
+             [1, 2] : int list\n"
+        );
     }
 
     /// A scan whose pattern destructures binds one name per component,

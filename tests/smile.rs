@@ -15,6 +15,7 @@
 // language governing permissions and limitations under the
 // License.
 
+use morel::compile::rel_translator::take_shadow;
 use morel::shell::ScriptTest;
 use std::panic::resume_unwind;
 use std::thread::Builder;
@@ -64,6 +65,20 @@ fn run_script_with(file_name: &str, stack_size: Option<usize>) {
         }
     } else {
         ScriptTest::default().run(file_name).expect("should work");
+        // The shadow built a tree for every query the script compiled.
+        // A tree that fails an invariant is a finding whichever
+        // implementation is wrong, and it would otherwise go
+        // unnoticed: nothing in the script reads it.
+        let shadow = take_shadow();
+        assert!(
+            shadow.invalid.is_empty(),
+            "{}: {} invalid trees, of {} translated and {} declined:\n{}",
+            file_name,
+            shadow.invalid.len(),
+            shadow.translated,
+            shadow.declined,
+            shadow.invalid.join("\n")
+        );
     }
 }
 

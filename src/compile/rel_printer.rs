@@ -454,7 +454,17 @@ fn args(rel: &Rel) -> Vec<Doc> {
     match rel {
         Rel::Filter(_, condition) => vec![doc(condition)],
         Rel::IfEmpty(_, value) => vec![doc(value)],
-        Rel::Project(_, e) | Rel::Sort(_, e) => vec![doc(e)],
+        // A projection that builds the element it was given says
+        // nothing, so it has no argument, as `spec.md` §6.3 lists
+        // alongside an inner join's kind and a `true` condition.
+        Rel::Project(_, e) => {
+            if matches!(e.as_ref(), Expr::Input(_, 0)) {
+                vec![]
+            } else {
+                vec![doc(e)]
+            }
+        }
+        Rel::Sort(_, e) => vec![doc(e)],
         Rel::Skip(_, n) | Rel::Take(_, n) => vec![doc(n)],
         Rel::Unorder(_) => vec![],
         Rel::Group(_, keys, aggregates) => {
