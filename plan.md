@@ -373,6 +373,20 @@ it would hide the bug rather than report it.
    the two is wrong about what a plan should show; the spec does not
    say.
 
+3. **An aggregate prints differently inside a node.** For
+   morel-java's group case the tree, the types and the legend all
+   agree, and only the aggregates differ: we write
+   `[c = (#count Relational over ()), total = (sum$real over #sal $0)]`
+   where morel-java writes `[c = count over (), total = sum over #sal
+   $0]`. Three differences in one line, and they want separating: we
+   parenthesise an aggregate and morel-java does not; we resolve
+   `count` to the structure member and print it in selector form, where
+   morel-java keeps the global name; and we dispatch `sum` to
+   `sum$real` by the element type, where morel-java keeps the generic.
+   The parentheses are not cheap to change -- they are how an aggregate
+   has printed in every plan, and the corpus has them -- so this is a
+   `main` conversation, not a branch one.
+
 And two in `spec.md`, from reading it alone:
 
 1. **§6.3's grammar contradicts its prose and examples.** The `defn`

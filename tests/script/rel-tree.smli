@@ -108,6 +108,23 @@ Sys.planOf (
 > t$5 {comm:real, ename:string, job:string, sal:real} bag
 > |_} : string
 
+(* `group` builds a record of its keys and aggregates, and the names
+ * the query wrote are read back off it. The tree, the types and the
+ * legend are morel-java's; the aggregates are not, and plan.md's
+ * findings say why. *)
+Sys.planOf (
+  from e in scott.emps
+    group {e.deptno}
+    compute {c = count over (), total = sum over e.sal});
+> val it =
+>   {_|
+> group [deptno = #deptno $0] [c = (#count Relational over ()), total = (sum$real over #sal $0)] : t$0
+>   #emps scott : t$1
+>
+> t$0 {c:int, deptno:int, total:real} bag
+> t$1 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
+> |_} : string
+
 (* Where the translator declines -- it does not guess -- the plan is
  * the step list that runs the query. A `group` is one such. *)
 Sys.planOf (from i in [1, 2] group j = i);

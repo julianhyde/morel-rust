@@ -180,9 +180,17 @@ impl Translator {
             StepKind::Union(all, inputs) => {
                 self.set_op(*all, inputs, Rel::Union)
             }
-            // Everything else -- group, compute, distinct, exists --
-            // needs more than this does, and is declined rather than
-            // guessed at.
+            StepKind::Group(keys, aggregates) => {
+                self.group(keys, aggregates.as_deref())
+            }
+            // `compute` is a group with no keys, plus the extraction of
+            // the single element that the enclosing expression
+            // performs.
+            StepKind::Compute(aggregates) => self.group_of(vec![], aggregates),
+            // `distinct` is a group keyed on the whole element, and the
+            // conformance suite does not pin its text, so guessing what
+            // it prints would risk diverging on something nothing
+            // checks.
             _ => None,
         }
     }
@@ -269,6 +277,67 @@ impl Translator {
                 None => Vec::new(),
             },
         };
+        Some(())
+    }
+
+    /// Translates a `group`: the keys and the aggregates, each a list
+    /// of labelled expressions over `$0`.
+    fn group(&mut self, keys: &Expr, aggregates: Option<&Expr>) -> Option<()> {
+        let keys = labelled_parts(keys)?;
+        match aggregates {
+            None => self.group_parts(keys, vec![]),
+            Some(aggregates) => {
+                let aggregates = labelled_parts(aggregates)?;
+                self.group_parts(keys, aggregates)
+            }
+        }
+    }
+
+    /// Translates a group whose aggregates are an expression and whose
+    /// keys are already known.
+    fn group_of(
+        &mut self,
+        keys: Vec<(Label, Expr)>,
+        aggregates: &Expr,
+    ) -> Option<()> {
+        let aggregates = labelled_parts(aggregates)?;
+        self.group_parts(keys, aggregates)
+    }
+
+    /// Builds the `group` node and rebinds the query's names to the
+    /// record it produces.
+    fn group_parts(
+        &mut self,
+        keys: Vec<(Label, Expr)>,
+        aggregates: Vec<(Label, Expr)>,
+    ) -> Option<()> {
+        let rewrite = |t: &Self, parts: Vec<(Label, Expr)>| {
+            parts
+                .into_iter()
+                .map(|(label, e)| Some((label, t.rewrite(&e)?)))
+                .collect::<Option<Vec<_>>>()
+        };
+        let keys = rewrite(self, keys)?;
+        let aggregates = rewrite(self, aggregates)?;
+        let names: Vec<Label> = keys
+            .iter()
+            .chain(aggregates.iter())
+            .map(|(label, _)| label.clone())
+            .collect();
+        self.wrap(|input| Rel::Group(input, keys, aggregates))?;
+        // The element is a record of the keys and the aggregates, so
+        // each is read by its label -- unless there is one field in
+        // all, when the element is that field's value.
+        self.bindings = names
+            .iter()
+            .filter_map(|label| match label {
+                Label::String(name) if names.len() > 1 => {
+                    Some((name.clone(), Path::Field(name.clone())))
+                }
+                Label::String(name) => Some((name.clone(), Path::Whole)),
+                Label::Ordinal(_) => None,
+            })
+            .collect();
         Some(())
     }
 
@@ -372,6 +441,21 @@ fn true_literal() -> Expr {
 /// Looks through a type alias, as the structural tests here must.
 fn peel(t: &Rc<Type>) -> &Type {
     peel_type(t)
+}
+
+/// Decomposes a record expression into its labelled parts, which is
+/// how a `group`'s keys and aggregates are written.
+fn labelled_parts(e: &Expr) -> Option<Vec<(Label, Expr)>> {
+    let Expr::Tuple(t, items) = e else {
+        return None;
+    };
+    let Type::Record(_, fields) = peel(t) else {
+        return None;
+    };
+    if fields.len() != items.len() {
+        return None;
+    }
+    Some(fields.keys().cloned().zip(items.iter().cloned()).collect())
 }
 
 /// Returns the leaf `[()]`, over which a query with no scan iterates.
