@@ -136,6 +136,7 @@ fn visit_expr(
                 Expr::Identifier(t.clone(), name.clone())
             }
         }
+        Expr::Input(_, _) => expr.clone(),
         Expr::Let(t, decls, body) => {
             // For Phase 0 we don't model decl-introduced bindings;
             // recurse into the body without shadowing. Phase 3+
@@ -162,6 +163,10 @@ fn visit_expr(
             span.clone(),
         ),
         Expr::RecordSelector(t, slot) => Expr::RecordSelector(t.clone(), *slot),
+        // Substituting inside a tree must not cross a node boundary,
+        // which every node is for `$0`. The rules come with the
+        // translator; nothing builds a tree yet. See plan.md R5.
+        Expr::Rel(_, _) => todo!("substitute inside a relational tree"),
         Expr::Tuple(t, items) => Expr::Tuple(
             t.clone(),
             items
