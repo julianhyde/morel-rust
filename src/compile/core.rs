@@ -16,6 +16,7 @@
 // License.
 
 use crate::compile::postfix::peel_type;
+use crate::compile::rel_printer;
 use crate::compile::span::Span;
 use crate::compile::type_env::Id;
 use crate::compile::types::{Checks, Label, Type};
@@ -373,11 +374,20 @@ impl Display for Expr {
                     None => write!(f, "#{}", slot + 1),
                 }
             }
-            // Provisional. `spec.md` §6 lays a node out one per line,
-            // with its type, and that is milestone R4; until then a node
-            // prints on one line so that a tree built in a test can be
-            // read at all.
             Expr::Rel(_, rel) => {
+                // A relational operator is the first non-whitespace on
+                // its line (`spec.md` §6.2), and this one would not be,
+                // so while a plan is being printed it prints as a
+                // reference and its lines go below the tree, where they
+                // can be read. Splicing them in here is what made a
+                // nested query's plan unparseable: its indentation began
+                // again from zero inside the line that held it.
+                if let Some(reference) = rel_printer::rel_ref(self) {
+                    return write!(f, "{}", reference);
+                }
+                // Outside a plan -- an error message, a trace -- a node
+                // prints on one line, so that a tree built in a test can
+                // be read at all.
                 write!(f, "{}", rel.op_name())?;
                 for child in rel.children() {
                     write!(f, " ({})", child)?;

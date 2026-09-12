@@ -248,9 +248,12 @@ cannot drift from how an expression prints elsewhere. `lindig.rs` then
 makes the fold one decision for the whole line, which is what the
 golden text shows: a record folds after every comma or none.
 
-**R4c comes after R5**, decided 2026-09-12. It is about byte-exact
-output, which only R6 requires, while the shadow in R5 finds
-disagreements without printing anything at all.
+**R4c came after R5**, decided 2026-09-12 because it is about
+byte-exact output, which only R6 requires, while the shadow in R5
+finds disagreements without printing anything at all. Done 2026-09-12,
+ahead of the rest of R5, because the fragment rule turned out to be
+cheap and the two examples in `spec.md` §6.4 are exact enough to be a
+test on their own.
 
 R4b was deferred for the same reason and then done, because the fold
 turned out not to need what morel-java's does. Its writer renders an
@@ -259,12 +262,49 @@ every expression's printing changes; finding them in the rendered line
 instead leaves the rest of the printer alone, and is exact by
 construction because the pieces join back into the line.
 
-*R4c, fragments.* A relation reached from inside an expression cannot
-print where it stands, because an operator must be the first
+*R4c, fragments.* Done. A relation reached from inside an expression
+cannot print where it stands, because an operator must be the first
 non-whitespace on its line. It prints as `r$0` and its block follows
 the tree. The head lists what the fragment reads from outside itself,
 transitively, and the same text stands at the reference and at the
 definition, so the list must be computed before anything is written.
+
+`Display` is what prints an expression, and Rust's `Display` carries no
+state, so the list a reference goes into lives in a thread-local that
+`plan` installs for the length of one plan and puts back after. That is
+where morel-java threads its writer, and putting it back is what keeps
+a node printing in place everywhere else -- an error message, a trace.
+A fragment is keyed by its *address* in the tree, because two
+structurally equal subqueries are two subqueries and one reference
+would say they are one. What a fragment reads from outside itself is
+its free names less the plan's own, which is transitive without trying:
+a fragment nested inside this one is part of its subtree however far
+away it is printed. The names are sorted in `renumber`, not where the
+header is built, because it is the text's numbering they are in order
+of and not their maker's.
+
+*R4d, a `let` and a `case` may start a line.* Not done, and not
+foreseen: morel-java added it in `01f24633`, the tip of tag
+`449-tree.3`, and two of the suite's own fragment cases need it.
+
+```
+filter [let
+      val v$0 = $0
+    in
+      #nonEmpty Relational (r$0[v$0]) andalso #nonEmpty Relational (r$1[v$0])
+    end] : int list
+```
+
+This is what overturns R4b's decision. Finding the break points in the
+rendered line works while every piece of a fold shares one indent and
+one decision; here the `in` and `end` sit at four from the node and
+what they bracket at six, and the `let` broke while the `andalso`
+inside it did not. Two indents and two decisions, which is to say
+nested groups -- and a flat list of pieces has one group by
+construction. So R4d is the work R4b avoided: render an expression into
+a document, with a group per `let`, `case`, conjunction and record, and
+`lindig.rs` deciding each. It is a rewrite of how every expression in a
+plan line is printed, and nothing outside a plan may change.
 
 **R5 — the translator, and a shadow over the corpus.** Step list to
 tree, morel-java's `RelTranslator` (966 lines): variable elimination,
