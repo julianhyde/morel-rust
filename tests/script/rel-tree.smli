@@ -108,6 +108,76 @@ Sys.planOf (
 > t$5 {comm:real, ename:string, job:string, sal:real} bag
 > |_} : string
 
+(* An outer join wraps each component of the side that may be absent
+ * in `option`, on its own rather than the row as a whole. The
+ * condition still sees both sides present, as `$0` and `$1`, whatever
+ * the kind. Run it too: the OPERATIONS row, which has no employee, is
+ * what the wrapping is for. This is morel-java's text byte for byte. *)
+from d in scott.depts
+  left join e in scott.emps on e.deptno = d.deptno
+  yield {d.dname, who = e?.ename};
+> val it =
+>   [{dname="ACCOUNTING",who=SOME "CLARK"},
+>    {dname="ACCOUNTING",who=SOME "KING"},
+>    {dname="ACCOUNTING",who=SOME "MILLER"},
+>    {dname="RESEARCH",who=SOME "SMITH"},{dname="RESEARCH",who=SOME "JONES"},
+>    {dname="RESEARCH",who=SOME "SCOTT"},{dname="RESEARCH",who=SOME "ADAMS"},
+>    {dname="RESEARCH",who=SOME "FORD"},{dname="SALES",who=SOME "ALLEN"},
+>    {dname="SALES",who=SOME "WARD"},{dname="SALES",who=SOME "MARTIN"},
+>    {dname="SALES",who=SOME "BLAKE"},{dname="SALES",who=SOME "TURNER"},
+>    {dname="SALES",who=SOME "JAMES"},{dname="OPERATIONS",who=NONE}]
+>   : {dname:string, who:string option} bag
+Sys.planOf (
+  from d in scott.depts
+    left join e in scott.emps on e.deptno = d.deptno
+    yield {d.dname, who = e?.ename});
+> val it =
+>   {_|
+> project [{dname = #dname (#1 $0), who = #map Option #ename (#2 $0)}] : t$0
+>   join [left] [#deptno $1 = #deptno $0] : t$1
+>     #depts scott : t$2
+>     #emps scott : t$3
+>
+> t$0 {dname:string, who:string option} bag
+> t$1 ({deptno:int, dname:string, loc:string} * {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} option) bag
+> t$2 {deptno:int, dname:string, loc:string} bag
+> t$3 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
+> |_} : string
+
+(* A right join makes the left side's components optional instead. *)
+Sys.planOf (
+  from d in scott.depts
+    right join e in scott.emps on e.deptno = d.deptno
+    yield {who = e.ename});
+> val it =
+>   {_|
+> project [{who = #ename (#2 $0)}] : {who:string} bag
+>   join [right] [#deptno $1 = #deptno $0] : t$0
+>     #depts scott : t$1
+>     #emps scott : t$2
+>
+> t$0 ({deptno:int, dname:string, loc:string} option * {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real}) bag
+> t$1 {deptno:int, dname:string, loc:string} bag
+> t$2 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
+> |_} : string
+
+(* A full join makes both sides optional. *)
+Sys.planOf (
+  from d in scott.depts
+    full join e in scott.emps on e.deptno = d.deptno
+    yield {who = e?.ename});
+> val it =
+>   {_|
+> project [{who = #map Option #ename (#2 $0)}] : {who:string option} bag
+>   join [full] [#deptno $1 = #deptno $0] : t$0
+>     #depts scott : t$1
+>     #emps scott : t$2
+>
+> t$0 ({deptno:int, dname:string, loc:string} option * {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} option) bag
+> t$1 {deptno:int, dname:string, loc:string} bag
+> t$2 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
+> |_} : string
+
 (* `group` builds a record of its keys and aggregates, and the names
  * the query wrote are read back off it. The tree, the types and the
  * legend are morel-java's; the aggregates are not, and plan.md's

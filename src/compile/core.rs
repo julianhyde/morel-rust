@@ -290,6 +290,7 @@ impl Display for Expr {
                     Expr::Identifier(_, _)
                     | Expr::Input(_, _)
                     | Expr::Literal(_, _)
+                    | Expr::RecordSelector(_, _)
                     | Expr::Tuple(_, _) => write!(f, "{} {}", fx, arg),
                     _ => write!(f, "{} ({})", fx, arg),
                 }

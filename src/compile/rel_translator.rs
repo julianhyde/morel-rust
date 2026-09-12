@@ -96,10 +96,18 @@ enum Path {
 }
 
 impl Path {
-    /// Returns the expression that reads this path out of an element of
-    /// type `elem`.
+    /// Returns the expression that reads this path out of the element
+    /// of the node's only input, `$0`.
     fn read(&self, elem: &Rc<Type>) -> Option<Expr> {
-        let input = Expr::Input(elem.clone(), 0);
+        self.read_at(elem, 0)
+    }
+
+    /// Returns the expression that reads this path out of the element
+    /// of input `index`. A join's condition sees `$0` and `$1`, its
+    /// two inputs' elements, where every other expression sees only
+    /// `$0`.
+    fn read_at(&self, elem: &Rc<Type>, index: usize) -> Option<Expr> {
+        let input = Expr::Input(elem.clone(), index);
         match self {
             Path::Whole => Some(input),
             Path::Component(i) => {
@@ -135,11 +143,6 @@ struct Translator {
 impl Translator {
     /// Translates one step, or declines.
     fn step(&mut self, step: &Step) -> Option<()> {
-        // An outer join re-types the names it binds, and that is the
-        // one thing this does not do yet.
-        if step.join_type != JoinType::Inner {
-            return None;
-        }
         // A query with no scan iterates over a single element, which
         // is unit, so its leaf is `[()]` -- a leaf its author did not
         // write, and the whole of why the answer has one row rather
@@ -149,7 +152,7 @@ impl Translator {
         }
         match &step.kind {
             StepKind::Scan(pat, source, condition) => {
-                self.scan(pat, source, condition.as_deref())
+                self.scan(pat, source, condition.as_deref(), step.join_type)
             }
             StepKind::Where(condition) => {
                 let condition = self.rewrite(condition)?;
@@ -202,6 +205,7 @@ impl Translator {
         pat: &Pat,
         source: &Expr,
         condition: Option<&Expr>,
+        join_type: JoinType,
     ) -> Option<()> {
         // Only a variable pattern for now. A pattern that destructures
         // becomes a projection, and one that can fail becomes a filter
@@ -211,7 +215,10 @@ impl Translator {
         };
         match self.tree.take() {
             None => {
-                if condition.is_some() {
+                // The first scan is the tree's leaf, and has nothing to
+                // join against, so neither a condition nor an outer
+                // kind can mean anything here.
+                if condition.is_some() || join_type != JoinType::Inner {
                     return None;
                 }
                 self.tree = Some(source.clone());
@@ -219,20 +226,40 @@ impl Translator {
             }
             Some(left) => {
                 // A scan that reads an earlier binder is a dependent
-                // join, which carries a binder; and an `on` condition
-                // reads the new binder, which is not in scope until the
-                // join exists. Both are declined.
-                if reads_a_binding(source, &self.bindings)
-                    || condition.is_some()
-                {
+                // join, which carries a binder; that is declined.
+                if reads_a_binding(source, &self.bindings) {
                     self.tree = Some(left);
                     return None;
                 }
                 let n = components_of(&left) + 1;
+                // The condition sees the two inputs' elements as `$0`
+                // and `$1`, and both are present whatever the kind --
+                // where the join's *element* wraps a side that may be
+                // absent. So it is rewritten against the inputs, not
+                // against the row the join produces.
+                let condition = match condition
+                    .map(|c| self.join_condition(c, &left, source, name))
+                {
+                    None => true_literal(),
+                    Some(Some(c)) => c,
+                    // The condition reads something this cannot
+                    // rewrite, so the whole query is declined rather
+                    // than joined on the wrong terms.
+                    Some(None) => {
+                        self.tree = Some(left);
+                        return None;
+                    }
+                };
+                let kind = match join_type {
+                    JoinType::Inner => JoinKind::Inner,
+                    JoinType::Left => JoinKind::Left,
+                    JoinType::Right => JoinKind::Right,
+                    JoinType::Full => JoinKind::Full,
+                };
                 let join = Rel::Join(
-                    JoinKind::Inner,
+                    kind,
                     None,
-                    Box::new(true_literal()),
+                    Box::new(condition),
                     Box::new(left),
                     Box::new(source.clone()),
                 );
@@ -278,6 +305,26 @@ impl Translator {
             },
         };
         Some(())
+    }
+
+    /// Rewrites a join's `on` condition. The binders the left input
+    /// bound read `$0`, its element; the binder the scan introduces
+    /// reads `$1`, the right element.
+    fn join_condition(
+        &self,
+        condition: &Expr,
+        left: &Expr,
+        right: &Expr,
+        name: &str,
+    ) -> Option<Expr> {
+        let left_elem = element_type(&left.type_())?;
+        let right_elem = element_type(&right.type_())?;
+        let mut map = BTreeMap::new();
+        for (bound, path) in &self.bindings {
+            map.insert(bound.clone(), path.read_at(&left_elem, 0)?);
+        }
+        map.insert(name.to_string(), Expr::Input(right_elem, 1));
+        substitute(condition, &map)
     }
 
     /// Translates a `group`: the keys and the aggregates, each a list
