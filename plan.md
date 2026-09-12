@@ -222,9 +222,34 @@ check with its own test, plus rejecting the binder collision §5 leaves
 open. It is what turns a wrong tree into a named error instead of a
 wrong plan.
 
-**R4 — the printer.** `spec.md` §6, the frozen grammar. Build on
-`lindig.rs`, and thread one writer through. Golden tests from §7's
-worked examples.
+**R4 — the printer.** `spec.md` §6, the frozen grammar, in three
+parts.
+
+*R4a, the layout.* One node per line, inputs two spaces in, arguments
+in brackets in the datatype's order with the absent ones omitted, the
+type on every node line, the legend for a moniker over 24 characters,
+and the generated binders renumbered by first occurrence. Done.
+
+Layout is not a function of the width -- tree mode breaks a relation
+out whatever the width -- so this needs no document model, and does not
+use `lindig.rs`. morel-java moved its writer to a document and recorded
+that Lindig "undoes something", because a document has no current
+column until it is rendered and the decision to break a relation out
+asks whether it is at the start of a line. Here that decision is
+structural, so the question does not arise.
+
+*R4b, wrapping.* A node's own line wraps at the session's `lineWidth`,
+and its continuation is indented four from the node -- which is how a
+reader tells a continuation from a grandchild. Nothing else moves: the
+nodes, the indentation and every number are the same at any width. The
+golden plans are all at 78.
+
+*R4c, fragments.* A relation reached from inside an expression cannot
+print where it stands, because an operator must be the first
+non-whitespace on its line. It prints as `r$0` and its block follows
+the tree. The head lists what the fragment reads from outside itself,
+transitively, and the same text stands at the reference and at the
+definition, so the list must be computed before anything is written.
 
 **R5 — the translator, and a shadow over the corpus.** Step list to
 tree, morel-java's `RelTranslator` (966 lines): variable elimination,

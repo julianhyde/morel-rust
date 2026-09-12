@@ -832,6 +832,26 @@ impl Rel {
         }
     }
 
+    /// Returns this node's inputs: the collection-valued children,
+    /// which are the lines below it when it prints. Its argument
+    /// expressions are not among them; see [`Rel::children`] for those.
+    pub fn inputs(&self) -> Vec<&Expr> {
+        match self {
+            Rel::Except(_, inputs)
+            | Rel::Intersect(_, inputs)
+            | Rel::Union(_, inputs) => inputs.iter().collect(),
+            Rel::Filter(input, _)
+            | Rel::Group(input, _, _)
+            | Rel::IfEmpty(input, _)
+            | Rel::Project(input, _)
+            | Rel::Skip(input, _)
+            | Rel::Sort(input, _)
+            | Rel::Take(input, _)
+            | Rel::Unorder(input) => vec![input],
+            Rel::Join(_, _, _, left, right) => vec![left, right],
+        }
+    }
+
     /// Returns the name this node prints under.
     pub fn op_name(&self) -> &'static str {
         match self {

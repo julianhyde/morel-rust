@@ -32,6 +32,7 @@ use crate::compile::core::{Expr, Rel, element_type};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use std::collections::BTreeSet;
+use std::rc::Rc;
 
 /// Returns what is wrong with the tree rooted at `exp`, or an empty
 /// vector if nothing is.
@@ -104,7 +105,7 @@ fn walk(exp: &Expr, binders: &mut BTreeSet<String>, errors: &mut Vec<String>) {
 
 /// Checks one node: invariants 1 to 4.
 fn check_node(
-    t: &std::rc::Rc<Type>,
+    t: &Rc<Type>,
     rel: &Rel,
     binders: &mut BTreeSet<String>,
     errors: &mut Vec<String>,
@@ -273,7 +274,7 @@ fn check_scope(
 
 /// Returns the element type of `input`, or nothing if it is not a
 /// collection -- which `check_node` has already reported.
-fn one(input: &Expr) -> Vec<std::rc::Rc<Type>> {
+fn one(input: &Expr) -> Vec<Rc<Type>> {
     element_type(&input.type_()).into_iter().collect()
 }
 
@@ -288,7 +289,7 @@ fn check_inputs(
     op: &str,
     what: &str,
     exp: &Expr,
-    allowed: &[std::rc::Rc<Type>],
+    allowed: &[Rc<Type>],
     errors: &mut Vec<String>,
 ) {
     match exp {
@@ -354,8 +355,8 @@ fn check_primitive(
 mod tests {
     use super::*;
     use crate::compile::core::{JoinKind, Kind};
+    use crate::compile::span::Span;
     use crate::eval::val::Val;
-    use std::rc::Rc;
 
     fn int() -> Rc<Type> {
         Rc::new(Type::Primitive(PrimitiveType::Int))
@@ -618,7 +619,7 @@ mod tests {
                 int(),
                 Box::new(Expr::Identifier(int(), "size".to_string())),
                 Box::new(nested),
-                crate::compile::span::Span::new(""),
+                Span::new(""),
             )),
         ));
         assert_eq!(validate(&skip), Vec::<String>::new());
