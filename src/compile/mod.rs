@@ -33,6 +33,7 @@ pub mod postfix;
 pub mod pretty;
 pub mod progressive_widen;
 pub mod record_modifiers;
+pub mod rel_validator;
 pub mod replacer;
 pub mod resolver;
 pub mod sat;
