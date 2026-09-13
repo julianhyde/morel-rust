@@ -141,8 +141,15 @@ pub fn resolve_with_session_fns_rec(
     // on the answer, which is what makes it safe to be wrong about:
     // the finding is a tree, and the query still runs. Only in a debug
     // build, because it is a check and not a pass.
+    //
+    // Not where the statement will not compile. An ungrounded scan
+    // leaves an `Extent` that is not a collection, so every node over
+    // it fails to derive a type -- which reads as a finding and is
+    // only a query that was never going to run.
     #[cfg(debug_assertions)]
-    rel_translator::shadow(&decl);
+    if resolver.errors.borrow().is_empty() {
+        rel_translator::shadow(&decl);
+    }
     (decl, pre_fn_env, resolver.errors.into_inner())
 }
 

@@ -70,6 +70,19 @@ fn run_script_with(file_name: &str, stack_size: Option<usize>) {
         // implementation is wrong, and it would otherwise go
         // unnoticed: nothing in the script reads it.
         let shadow = take_shadow();
+        for (reason, n) in &shadow.reasons {
+            eprintln!(
+                "REASON\t{}\t{}\t{}",
+                n,
+                reason,
+                shadow
+                    .examples
+                    .get(reason)
+                    .map(String::as_str)
+                    .unwrap_or("")
+            );
+        }
+        eprintln!("TALLY\t{}\t{}", shadow.translated, shadow.declined);
         assert!(
             shadow.invalid.is_empty(),
             "{}: {} invalid trees, of {} translated and {} declined.\n{}\n\nDeclines:\n{}",

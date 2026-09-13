@@ -114,6 +114,17 @@ fn translate_with(
     if tree.type_() == *query_type {
         return Some(tree);
     }
+    // A query that computes an aggregate is a value, not a collection:
+    // `compute` is a group with no keys, and the single element is
+    // taken out by the expression that holds the query. So the tree's
+    // *element* is what the query's type is, and there is nothing to
+    // name.
+    if element_type(query_type).is_none() {
+        if element_type(&tree.type_()).as_ref() == Some(query_type) {
+            return Some(tree);
+        }
+        return decline("a query whose type is not a collection");
+    }
     // A query with several binders has a row that no step built: the
     // step list carries the binders in an environment, and the tree's
     // element is its inputs' components. So it ends in a projection
@@ -652,7 +663,9 @@ impl Translator {
         left: &Expr,
         name: &str,
     ) -> Option<Expr> {
-        let left_elem = element_type(&left.type_())?;
+        let Some(left_elem) = element_type(&left.type_()) else {
+            return decline("a join whose left is not a collection");
+        };
         let binder = Expr::Identifier(left_elem, name.to_string());
         let mut outer = self.outer.clone();
         for (bound, path) in &self.bindings {
@@ -679,8 +692,11 @@ impl Translator {
         right: &Expr,
         paths: &[(String, Path)],
     ) -> Option<Expr> {
-        let left_elem = element_type(&left.type_())?;
-        let right_elem = element_type(&right.type_())?;
+        let (Some(left_elem), Some(right_elem)) =
+            (element_type(&left.type_()), element_type(&right.type_()))
+        else {
+            return decline("a join whose input is not a collection");
+        };
         let mut map = self.outer.clone();
         for (bound, path) in &self.bindings {
             map.insert(bound.clone(), path.read_at(&left_elem, 0)?);
@@ -709,7 +725,13 @@ impl Translator {
     /// Translates `distinct`: a group on every binder, with no
     /// aggregate.
     fn distinct(&mut self) -> Option<()> {
-        let elem = element_type(&self.tree.as_ref()?.type_())?;
+        let Some(elem) =
+            self.tree.as_ref().and_then(|t| element_type(&t.type_()))
+        else {
+            return decline(
+                "a `distinct` over a tree that is not a collection",
+            );
+        };
         let mut keys = Vec::with_capacity(self.bindings.len());
         for (name, path) in &self.bindings {
             keys.push((Label::String(name.clone()), path.read(&elem)?));
@@ -785,7 +807,9 @@ impl Translator {
         // `from j in [1, 2] join i in ["x", "y"] except [...]`, which
         // built an `except` over `int * string` and `{i:string, j:int}`
         // and let the validator say so.
-        let operand = inputs.first()?;
+        let Some(operand) = inputs.first() else {
+            return decline("a set operator with no operand");
+        };
         if element_type(&left.type_()) != element_type(&operand.type_()) {
             let named = self.name_the_components(left, &operand.type_())?;
             left = named;
@@ -805,11 +829,15 @@ impl Translator {
         tree: Expr,
         query_type: &Rc<Type>,
     ) -> Option<Expr> {
-        let row = element_type(query_type)?;
+        let Some(row) = element_type(query_type) else {
+            return decline("a query whose type is not a collection");
+        };
         let Type::Record(_, fields) = peel(&row) else {
             return decline("a query whose row is not a record");
         };
-        let elem = element_type(&tree.type_())?;
+        let Some(elem) = element_type(&tree.type_()) else {
+            return decline("a tree whose type is not a collection");
+        };
         let mut values = Vec::with_capacity(fields.len());
         for label in fields.keys() {
             let Label::String(name) = label else {
@@ -846,7 +874,13 @@ impl Translator {
     /// a nested tree to want it: an expression that substitutes
     /// straight through is left as it was.
     fn rewrite(&self, e: &Expr) -> Option<Expr> {
-        let elem = element_type(&self.tree.as_ref()?.type_())?;
+        let Some(elem) =
+            self.tree.as_ref().and_then(|t| element_type(&t.type_()))
+        else {
+            return decline(
+                "an expression over a tree that is not a collection",
+            );
+        };
         let mut map = self.outer.clone();
         for (name, path) in &self.bindings {
             map.insert(name.clone(), path.read(&elem)?);
@@ -940,19 +974,24 @@ fn peel(t: &Rc<Type>) -> &Type {
 /// expression, the way the query's own `yield` takes it.
 fn labelled_parts(e: &Expr) -> Option<Vec<(Label, Expr)>> {
     // `group ()` groups on nothing, which is one group, and is how
-    // `compute` is written when it is written as a `group`.
-    if matches!(e, Expr::Tuple(_, items) if items.is_empty()) {
+    // `compute` is written when it is written as a `group`. The `()`
+    // reaches here as the unit value, not as a tuple of no fields.
+    if matches!(e, Expr::Literal(_, Val::Unit))
+        || matches!(e, Expr::Tuple(_, items) if items.is_empty())
+    {
         return Some(vec![]);
     }
     let Expr::Tuple(t, items) = e else {
-        let name = e.implicit_label()?;
+        let Some(name) = e.implicit_label() else {
+            return decline("a group's part that has no name");
+        };
         return Some(vec![(Label::String(name), e.clone())]);
     };
     let Type::Record(_, fields) = peel(t) else {
-        return None;
+        return decline("a group's parts that are not a record");
     };
     if fields.len() != items.len() {
-        return None;
+        return decline("a group's parts that are not a record");
     }
     Some(fields.keys().cloned().zip(items.iter().cloned()).collect())
 }
@@ -1008,7 +1047,14 @@ fn collect_paths(
                 let (label, p) = match field {
                     PatField::Labeled(label, p) => (label.clone(), p),
                     // `{y}` names the field by the pattern in it.
-                    PatField::Anonymous(p) => (p.name()?, p),
+                    PatField::Anonymous(p) => match p.name() {
+                        None => {
+                            return decline(
+                                "a record pattern field                                             with no name",
+                            );
+                        }
+                        Some(name) => (name, p),
+                    },
                 };
                 collect_paths(p, &at.then(Hop::Field(label)), paths)?;
             }
@@ -1109,7 +1155,7 @@ fn substitute_with(
                 // A `fun` is in scope in its own body, and a type or a
                 // datatype is not a value at all.
                 let Decl::NonRecVal(b) = decl else {
-                    return None;
+                    return decline("a `let` that binds a function");
                 };
                 let mut bind = b.as_ref().clone();
                 bind.expr = substitute_with(&b.expr, &scope, nested)?;
@@ -1137,7 +1183,7 @@ fn substitute_with(
             substitute_arms(arms, map, nested)?,
             span.clone(),
         ),
-        _ => return None,
+        _ => return decline("an expression that is not walked"),
     })
 }
 

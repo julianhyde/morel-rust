@@ -19,10 +19,9 @@ use crate::compile::postfix::peel_type;
 use crate::compile::rel_printer;
 use crate::compile::span::Span;
 use crate::compile::type_env::Id;
-use crate::compile::types::{Checks, Label, Type};
+use crate::compile::types::{self, Checks, Label, Type};
 use crate::eval::val::Val;
 use crate::syntax::ast::JoinType;
-use std::collections::BTreeMap;
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::ops::Deref;
 use std::rc::Rc;
@@ -787,7 +786,10 @@ impl Rel {
             Rel::Project(_, e) => Some(e.type_()),
             // A record of the keys and the aggregates -- or, where
             // there is exactly one field in all, that field's type,
-            // which is how `compute` yields a scalar.
+            // which is how `compute` yields a scalar. `spec.md` §3 is
+            // silent about no fields at all, which `group ()` makes;
+            // `record_type` answers `unit`, which is what a record of
+            // nothing is in ML and what the query's own type says.
             Rel::Group(_, keys, aggregates) => {
                 let mut fields: Vec<(Label, Rc<Type>)> = Vec::new();
                 for (label, e) in keys.iter().chain(aggregates.iter()) {
@@ -796,11 +798,7 @@ impl Rel {
                 if fields.len() == 1 {
                     return Some(fields.pop().unwrap().1);
                 }
-                let mut map = BTreeMap::new();
-                for (label, t) in fields {
-                    map.insert(label, t);
-                }
-                Some(Rc::new(Type::Record(false, map)))
+                Some(Rc::new(types::record_type(fields.into_iter().collect())))
             }
             // The inputs' components, concatenated.
             Rel::Join(kind, _, _, left, right) => {

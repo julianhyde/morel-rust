@@ -10,8 +10,8 @@ reason about after the fact.
 `rel-tree.smli` at tag `449-tree.3` is copied across and passes, and
 its fifteen plans are morel-java's text byte for byte except in two
 places, both of which are morel-rust bugs on `main` and neither of
-which is fixed here. The shadow translates 1,246 of the corpus's
-queries and declines 516, with no tree failing the validator. What is
+which is fixed here. The shadow translates 1,301 of the corpus's
+queries and declines 434, with no tree failing the validator. What is
 left is below under "Later, not now": the lowering, and grounding on
 the tree.
 
@@ -354,7 +354,7 @@ substitution and succeeds through the `let` -- because what it said is
 about a path not taken.
 
 Reading the tally bought seven translations in an afternoon, and the
-count went from 804 declines out of 1762 queries to 516 out of 1762:
+count went from 804 declines out of 1762 queries to 434:
 
 | what it bought | what it was |
 | -------------- | ----------- |
@@ -365,15 +365,26 @@ count went from 804 declines out of 1762 queries to 516 out of 1762:
 | a record or wildcard scan pattern | the same walk |
 | `group ()` | a group on nothing, which is one group |
 | `from` with no steps | the unit leaf, which is what `from` evaluates to |
+| a `compute` query | a value, not a collection: the tree's *element* is the query's type |
+| `group ()`'s element | `record_type` answers `unit` for a record of no fields |
+| a statement that will not compile | not shadowed at all |
 
-What is left divides in two. About 300 are queries with nothing to
-build -- `exists` short-circuits into a boolean, and `ordinal` and
-`current` are the row's place and the row itself, and none of §3's
-eleven constructors carries any of the three. The rest are real gaps,
-and the largest are a query whose row is not a record (`group ()`
-again, from the other side), a scan pattern that can fail, and a
-handful that say a node's type did not derive, which is a finding
-rather than a gap.
+Every decline now says why; none is unaccounted for. What is left
+divides in two. About 300 are queries with nothing to build --
+`exists` short-circuits into a boolean, and `ordinal` and `current`
+are the row's place and the row itself, and none of §3's eleven
+constructors carries any of the three. The rest are real gaps, and the
+largest are a query whose row is not a record, a scan pattern that can
+fail, and a scan source holding a query inside an expression.
+
+Two are worth reading twice, because reading a reason is what found
+them. An ungrounded scan leaves an `Extent` that is not a collection,
+so every node over it failed to derive a type -- which read as fifteen
+findings and was one query that was never going to run; the shadow now
+leaves a statement the resolver has rejected alone. And a `compute`
+query is a value rather than a collection, which is exactly what
+`spec.md` §3 says about it, so the check at the end had been asking
+the wrong question of fifty queries.
 
 It paid for itself on its first run, on a query nothing else looked
 at:
