@@ -10,8 +10,8 @@ reason about after the fact.
 `rel-tree.smli` at tag `449-tree.3` is copied across and passes, and
 its fifteen plans are morel-java's text byte for byte except in two
 places, both of which are morel-rust bugs on `main` and neither of
-which is fixed here. The shadow translates 1,301 of the corpus's
-queries and declines 434, with no tree failing the validator. What is
+which is fixed here. The shadow translates 1,338 of the corpus's
+queries and declines 397, with no tree failing the validator. What is
 left is below under "Later, not now": the lowering, and grounding on
 the tree.
 
@@ -353,8 +353,9 @@ purpose -- an expression holding a query declines the plain
 substitution and succeeds through the `let` -- because what it said is
 about a path not taken.
 
-Reading the tally bought seven translations in an afternoon, and the
-count went from 804 declines out of 1762 queries to 434:
+Reading the tally bought fourteen translations in an afternoon, and
+the count went from 804 declines out of 1762 queries to 397 out of
+1735:
 
 | what it bought | what it was |
 | -------------- | ----------- |
@@ -368,14 +369,18 @@ count went from 804 declines out of 1762 queries to 434:
 | a `compute` query | a value, not a collection: the tree's *element* is the query's type |
 | `group ()`'s element | `record_type` answers `unit` for a record of no fields |
 | a statement that will not compile | not shadowed at all |
+| `yield i + j distinct` | `distinct` keys on the whole element, under a name the printer made |
+| a scan pattern that can fail | a filter over the source and a projection over that, which is how morel-java splits it |
+| a query with one binder | its row is that binder's value: the element atomizes rather than becoming a record of one field |
 
 Every decline now says why; none is unaccounted for. What is left
-divides in two. About 300 are queries with nothing to build --
-`exists` short-circuits into a boolean, and `ordinal` and `current`
-are the row's place and the row itself, and none of §3's eleven
-constructors carries any of the three. The rest are real gaps, and the
-largest are a query whose row is not a record, a scan pattern that can
-fail, and a scan source holding a query inside an expression.
+divides in two. Three quarters of it -- 303 of the 397 -- are queries
+with nothing to build: `exists` short-circuits into a boolean, and
+`ordinal` and `current` are the row's place and the row itself, and
+none of §3's eleven constructors carries any of the three. The rest
+are real gaps, and the largest are a query whose row is not a record,
+a scan source holding a query inside an expression, and a `group` key
+that is an expression with no name.
 
 Two are worth reading twice, because reading a reason is what found
 them. An ungrounded scan leaves an `Extent` that is not a collection,

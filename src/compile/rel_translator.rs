@@ -44,6 +44,7 @@ use crate::compile::core::{
     element_type,
 };
 use crate::compile::free_finder::free_names_in;
+use crate::compile::library::BuiltInFunction;
 use crate::compile::postfix::peel_type;
 use crate::compile::rel_validator;
 use crate::compile::span::Span;
@@ -512,6 +513,17 @@ impl Translator {
         let Some(paths) = binder_paths(pat) else {
             return decline("a scan pattern that is not a name or a tuple");
         };
+        // A pattern that can fail filters as well as binds, and the two
+        // halves are separate nodes: the filter goes over the scan's
+        // own source, where the element it tests is `$0`.
+        let mut tests = Vec::new();
+        let Some(source_elem) = element_type(&source.type_()) else {
+            return decline("a scan over something that is not a collection");
+        };
+        if pat_tests(pat, &Path::whole(), &source_elem, &mut tests).is_none() {
+            return decline("a scan pattern that cannot be tested");
+        }
+        let test = all_of(tests);
         match self.tree.take() {
             None => {
                 // The first scan is the tree's leaf, and has nothing to
@@ -520,7 +532,7 @@ impl Translator {
                 if condition.is_some() || join_type != JoinType::Inner {
                     return decline("a first scan with a condition or a kind");
                 }
-                self.tree = Some(self.source_tree(source)?);
+                self.tree = Some(filtered(self.source_tree(source)?, test)?);
                 self.bindings = paths;
             }
             Some(left) => {
@@ -551,6 +563,7 @@ impl Translator {
                 } else {
                     right = self.source_tree(source)?;
                 }
+                let right = filtered(right, test)?;
                 let n = components_of(&left) + 1;
                 // The condition sees the two inputs' elements as `$0`
                 // and `$1`, and both are present whatever the kind --
@@ -722,8 +735,16 @@ impl Translator {
         }
     }
 
-    /// Translates `distinct`: a group on every binder, with no
-    /// aggregate.
+    /// Translates `distinct`: a group whose keys are the whole element
+    /// and whose aggregate list is empty (`spec.md` §3.2).
+    ///
+    /// The binders are how the element is taken apart, and together
+    /// they are the whole of it, so one key each reconstructs the row
+    /// the query wrote and reads as the query wrote it. Where the
+    /// query bound no name at all -- `yield i + j distinct`, whose row
+    /// is a value nothing names -- the key is the element itself,
+    /// under a name the printer made: §6.7's `v$` is exactly the
+    /// vocabulary for a name that is not the query's.
     fn distinct(&mut self) -> Option<()> {
         let Some(elem) =
             self.tree.as_ref().and_then(|t| element_type(&t.type_()))
@@ -732,6 +753,11 @@ impl Translator {
                 "a `distinct` over a tree that is not a collection",
             );
         };
+        if self.bindings.is_empty() {
+            let name = Label::String(self.new_binder());
+            return self
+                .group_parts(vec![(name, Expr::Input(elem, 0))], vec![]);
+        }
         let mut keys = Vec::with_capacity(self.bindings.len());
         for (name, path) in &self.bindings {
             keys.push((Label::String(name.clone()), path.read(&elem)?));
@@ -832,11 +858,20 @@ impl Translator {
         let Some(row) = element_type(query_type) else {
             return decline("a query whose type is not a collection");
         };
-        let Type::Record(_, fields) = peel(&row) else {
-            return decline("a query whose row is not a record");
-        };
         let Some(elem) = element_type(&tree.type_()) else {
             return decline("a tree whose type is not a collection");
+        };
+        // One binder, and the row is its value: the element atomizes
+        // rather than becoming a record of one field. `from (x, 20) in
+        // pairs` answers a list of `x`, not of `{x = x}`.
+        if let [(_, path)] = self.bindings.as_slice() {
+            let value = path.read(&elem)?;
+            if value.type_() == row {
+                return node(Rel::Project(Box::new(tree), Box::new(value)));
+            }
+        }
+        let Type::Record(_, fields) = peel(&row) else {
+            return decline("a query whose row is not a record");
         };
         let mut values = Vec::with_capacity(fields.len());
         for label in fields.keys() {
@@ -1005,6 +1040,15 @@ fn unit_leaf() -> Expr {
     )
 }
 
+/// Returns `tree` with a filter over it, or `tree` itself where there
+/// is nothing to filter on.
+fn filtered(tree: Expr, test: Option<Expr>) -> Option<Expr> {
+    match test {
+        None => Some(tree),
+        Some(test) => node(Rel::Filter(Box::new(tree), Box::new(test))),
+    }
+}
+
 /// Builds the expression for a node, with the type it derives.
 fn node(rel: Rel) -> Option<Expr> {
     match rel.derive_type() {
@@ -1035,8 +1079,14 @@ fn collect_paths(
 ) -> Option<()> {
     match pat {
         Pat::Identifier(_, name) => paths.push((name.clone(), at.clone())),
-        // A wildcard binds nothing, and nothing needs to read it.
-        Pat::Wildcard(_) => {}
+        // A wildcard binds nothing, and nothing needs to read it. Nor
+        // does a literal: it filters, and `pat_tests` says how.
+        Pat::Literal(_, _) | Pat::Wildcard(_) => {}
+        // `x as p` binds the name and whatever `p` binds.
+        Pat::As(_, name, inner) => {
+            paths.push((name.clone(), at.clone()));
+            collect_paths(inner, at, paths)?;
+        }
         Pat::Tuple(_, pats) => {
             for (i, p) in pats.iter().enumerate() {
                 collect_paths(p, &at.then(Hop::Component(i + 1)), paths)?;
@@ -1064,6 +1114,97 @@ fn collect_paths(
         _ => return None,
     }
     Some(())
+}
+
+/// Adds the conditions under which `pat` matches the element it is
+/// read out of, or declines where it is a pattern this cannot test.
+///
+/// A pattern that can fail filters as well as binds, and the two
+/// halves separate: this is the filter, and [`collect_paths`] is the
+/// binding. A scan is then a leaf with a filter over it, and where the
+/// binders do not describe the element a projection over that --
+/// ordinary nodes that a rule can see through, rather than one node
+/// holding a `case` that yields a collection.
+///
+/// A user datatype's constructor is not tested here. It filters too,
+/// but extracting what it binds needs a `case` of its own: a datatype
+/// has no total accessor for a constructor's argument, and no value to
+/// give the branch that does not match.
+fn pat_tests(
+    pat: &Pat,
+    at: &Path,
+    elem: &Rc<Type>,
+    tests: &mut Vec<Expr>,
+) -> Option<()> {
+    match pat {
+        Pat::Identifier(_, _) | Pat::Wildcard(_) => {}
+        Pat::As(_, _, inner) => pat_tests(inner, at, elem, tests)?,
+        Pat::Literal(t, value) => {
+            tests.push(equals(at.read(elem)?, value, t));
+        }
+        Pat::Tuple(_, pats) => {
+            for (i, p) in pats.iter().enumerate() {
+                pat_tests(p, &at.then(Hop::Component(i + 1)), elem, tests)?;
+            }
+        }
+        Pat::Record(_, fields, _) => {
+            for field in fields {
+                let (label, p) = match field {
+                    PatField::Labeled(label, p) => (label.clone(), p),
+                    PatField::Anonymous(p) => (p.name()?, p),
+                };
+                pat_tests(p, &at.then(Hop::Field(label)), elem, tests)?;
+            }
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
+/// Builds `e = value`, which is the test a literal pattern makes.
+fn equals(e: Expr, value: &Val, t: &Rc<Type>) -> Expr {
+    let eq = match peel(t) {
+        Type::Primitive(PrimitiveType::Bool) => BuiltInFunction::BoolEq,
+        Type::Primitive(PrimitiveType::Char) => BuiltInFunction::CharEq,
+        Type::Primitive(PrimitiveType::Int) => BuiltInFunction::IntEq,
+        Type::Primitive(PrimitiveType::Real) => BuiltInFunction::RealEq,
+        Type::Primitive(PrimitiveType::String) => BuiltInFunction::StringEq,
+        _ => BuiltInFunction::GEq,
+    };
+    let boolean = Rc::new(Type::Primitive(PrimitiveType::Bool));
+    let pair = Rc::new(Type::Tuple(vec![t.clone(), t.clone()]));
+    Expr::Apply(
+        boolean.clone(),
+        Box::new(Expr::Literal(
+            Rc::new(Type::Fn(pair.clone(), boolean)),
+            Val::Fn(eq),
+        )),
+        Box::new(Expr::Tuple(
+            pair,
+            vec![e, Expr::Literal(t.clone(), value.clone())],
+        )),
+        Span::new(""),
+    )
+}
+
+/// Joins conditions with `andalso`, or returns `None` where there are
+/// none.
+fn all_of(mut tests: Vec<Expr>) -> Option<Expr> {
+    let mut all = tests.pop()?;
+    let boolean = Rc::new(Type::Primitive(PrimitiveType::Bool));
+    let pair = Rc::new(Type::Tuple(vec![boolean.clone(), boolean.clone()]));
+    while let Some(test) = tests.pop() {
+        all = Expr::Apply(
+            boolean.clone(),
+            Box::new(Expr::Literal(
+                Rc::new(Type::Fn(pair.clone(), boolean.clone())),
+                Val::Fn(BuiltInFunction::BoolAndAlso),
+            )),
+            Box::new(Expr::Tuple(pair.clone(), vec![test, all])),
+            Span::new(""),
+        );
+    }
+    Some(all)
 }
 
 /// Returns whether `source` reads any of the query's binders, which
@@ -1315,9 +1456,11 @@ mod tests {
     /// step list.
     #[test]
     fn it_declines_what_it_cannot_translate() {
-        // A pattern that can fail would take a filter as well as a
-        // projection, which is more than this does.
-        assert_eq!(tree_of("from (x, 20) in [(1, 10), (2, 20)]"), None);
+        // A user datatype's constructor filters, but extracting what
+        // it binds has no total expression: a datatype has no accessor
+        // for a constructor's argument, and no value to give the row
+        // that does not match.
+        assert_eq!(tree_of("from SOME i in [SOME 1, NONE]"), None);
         // `exists` short-circuits a query into a boolean, and none of
         // `spec.md` §3's eleven constructors does that. There is
         // nothing to build, so this decline is permanent.
@@ -1337,6 +1480,19 @@ mod tests {
             "project : int list\n  \
              group [i = $0] : int list\n    \
              [1, 2] : int list\n"
+        );
+    }
+
+    /// A pattern that can fail filters as well as binds, and the two
+    /// halves are separate nodes: a filter over the source, and the
+    /// projection over that.
+    #[test]
+    fn a_pattern_that_can_fail_filters_and_binds() {
+        assert_eq!(
+            tree_of("from (x, 20) in [(1, 10), (2, 20)]").unwrap(),
+            "project [#1 $0] : int list\n  \
+             filter [#2 $0 = 20] : (int * int) list\n    \
+             [(1, 10), (2, 20)] : (int * int) list\n"
         );
     }
 

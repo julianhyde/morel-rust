@@ -421,10 +421,15 @@ Sys.planOf (
 
 (* A scan's pattern says where in the element each name it binds sits,
  * however deep it nests, and the projection that ends the tree is
- * where the names come back. A pattern that can *fail* is more than
- * the translator does -- it would take a filter as well as a
- * projection -- and where the translator declines, it does not guess:
- * the plan is the step list that runs the query.
+ * where the names come back. A pattern that can *fail* filters as
+ * well as binds, and the two halves are separate nodes: a filter over
+ * the source, and the projection over that.
+ *
+ * A constructor pattern is where the translator declines, and it does
+ * not guess: the plan is the step list that runs the query. A
+ * datatype has no total accessor for a constructor's argument, and no
+ * value to give the row that does not match, so extracting what it
+ * binds would need a `case` of its own.
  *
  * A single key is not written as a record, so its name comes off the
  * expression; and the projection that follows builds the element it
@@ -444,7 +449,14 @@ Sys.planOf (from (i, (j, k)) in [(1, (2, 3))]);
 > t$0 {i:int, j:int, k:int} list
 > |_} : string
 Sys.planOf (from (1, j) in [(1, 2), (3, 4)]);
-> val it = "from (1, j) in [(1, 2), (3, 4)]" : string
+> val it =
+>   {_|
+> project [#2 $0] : int list
+>   filter [#1 $0 = 1] : (int * int) list
+>     [(1, 2), (3, 4)] : (int * int) list
+> |_} : string
+Sys.planOf (from SOME i in [SOME 1, NONE]);
+> val it = "from (SOME(i)) in [SOME 1, NONE]" : string
 Sys.planOf (from i in [1, 2] group j = i);
 > val it =
 >   {_|
