@@ -37,9 +37,39 @@ use std::rc::Rc;
 /// Returns what is wrong with the tree rooted at `exp`, or an empty
 /// vector if nothing is.
 pub fn validate(exp: &Expr) -> Vec<String> {
+    validate_eliminating(exp, &BTreeSet::new())
+}
+
+/// Validates as [`validate`] does, and also that the tree reads none
+/// of `leaked`, the binders a step's rewrite failed to substitute out.
+///
+/// Eliminating those names is what a translation *is*: a step list
+/// carries its binders in an environment, and a tree has no
+/// environment, so a binder becomes an expression over `$0` or it
+/// becomes nothing. One left behind is not a plan that reads
+/// differently -- it is a plan naming something nothing defines, and
+/// it will evaluate to whatever an outer binding of the same name
+/// happens to hold.
+///
+/// The set comes from the translator because scope decides it and the
+/// finished tree has none. `from i in [1, 2] yield {h = h}` reads an
+/// outer `h` and binds a field called `h`, and the two are the same
+/// text in the tree; only the step that rewrote the expression knows
+/// which was in scope when.
+pub fn validate_eliminating(
+    exp: &Expr,
+    leaked: &BTreeSet<String>,
+) -> Vec<String> {
     let mut errors = Vec::new();
     let mut binders = BTreeSet::new();
     walk(exp, &mut binders, &mut errors);
+    for name in free_names_in(exp).intersection(leaked) {
+        errors.push(format!(
+            "'{}' is read by the tree, and the query bound it: a binder \
+             the translation did not eliminate",
+            name
+        ));
+    }
     errors
 }
 

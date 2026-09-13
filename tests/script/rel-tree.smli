@@ -479,4 +479,87 @@ Sys.planOf (List.hd []);
 List.map Sys.planOf [1];
 > val it = ["Sys.planOf must be applied to an expression"] : string list
 
+(* What R7's differential harness found, and this branch fixed. Each
+ * of these printed a tree that named something no node defines, or a
+ * node the query did not ask for.
+ *
+ * Two of the six still read differently from morel-java, in ways that
+ * are logged as findings and are not what the case is here to pin: it
+ * merges the identity projection that `yield f = d` leaves behind
+ * (finding 15), and it prints an aggregate without the parentheses
+ * and with the function it desugars to (finding 3). The rest are its
+ * text byte for byte. *)
+
+(* A `yield` that names the whole row binds the name the query wrote,
+ * not the one the expression happens to carry: `f`, and not `d`. The
+ * names come from the step's environment, which is the compiler's
+ * answer, rather than off the expression, which is the translation's
+ * own guess. *)
+Sys.planOf (from d in [{deptno = 10, dname = "Sales"}]
+  yield f = d
+  yield f.deptno);
+> val it =
+>   {_|
+> project [#deptno $0] : int list
+>   project : t$0
+>     [{deptno = 10, dname = "Sales"}] : t$0
+>
+> t$0 {deptno:int, dname:string} list
+> |_} : string
+Sys.planOf (from i in [1, 2, 3]
+  group g = {x = i} compute {c = count over ()}
+  order g.x);
+> val it =
+>   {_|
+> sort [#x $0] : {c:int, x:int} list
+>   project [{c = #c $0, x = #x $0}] : {c:int, x:int} list
+>     group [x = $0] [c = (#count Relational over ())] : {c:int, x:int} list
+>       [1, 2, 3] : int list
+> |_} : string
+
+(* A set operator's operand is translated, and a query it holds is a
+ * tree of its own. Left alone it stayed a step list inside the tree,
+ * and the plan lost the legend entry for its type. *)
+Sys.planOf (from e in [{deptno = 10}]
+  yield e.deptno
+  union (from d in [{deptno = 20}] yield d.deptno));
+> val it =
+>   {_|
+> union [all] : int list
+>   project [#deptno $0] : int list
+>     [{deptno = 10}] : {deptno:int} list
+>   project [#deptno $0] : int list
+>     [{deptno = 20}] : {deptno:int} list
+> |_} : string
+
+(* An operand that reads `current` has nothing to build, so the
+ * translator declines, where before it printed a tree with `current`
+ * free in it. *)
+Sys.planOf (from x in [10, 20] yield (from i in [1, 2] union [current]));
+> val it = "from x in [10, 20] yield from i in [1, 2] union [current]" : string
+
+(* `elements` is a group's rows. It is a name the compiler answers out
+ * of the group's frame rather than out of any binding, so substitution
+ * leaves it alone and the tree named it; it is the identity function
+ * over the whole element, which `group` already expresses. *)
+Sys.planOf (from i in [2, 3, 1, 2] group i compute {elements});
+> val it =
+>   {_|
+> group [i = $0] [elements = (#id Fn over $0)] : t$0
+>   [2, 3, 1, 2] : int list
+>
+> t$0 {`elements`:int list, i:int} list
+> |_} : string
+
+(* A type with one value has one pattern, so a test against it cannot
+ * fail and there is nothing to filter. *)
+Sys.planOf (from i in [1, 2, 3], () in [()]);
+> val it =
+>   {_|
+> project [#1 $0] : int list
+>   join : (int * unit) list
+>     [1, 2, 3] : int list
+>     [()] : unit list
+> |_} : string
+
 (*) End rel-tree.smli

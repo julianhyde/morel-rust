@@ -40,8 +40,8 @@
 #![allow(dead_code)]
 
 use crate::compile::core::{
-    Decl, Expr, JoinKind, Match, Pat, PatField, Rel, Step, StepKind, ValBind,
-    element_type,
+    Binding, Decl, Expr, JoinKind, Match, Pat, PatField, Rel, Step, StepEnv,
+    StepKind, ValBind, element_type,
 };
 use crate::compile::free_finder::free_names_in;
 use crate::compile::library::BuiltInFunction;
@@ -52,19 +52,34 @@ use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
 use crate::syntax::ast::JoinType;
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 /// Translates the query `from steps`, whose type is `query_type`, into
 /// a tree; or returns `None` where it declines.
 pub fn translate(steps: &[Step], query_type: &Rc<Type>) -> Option<Expr> {
     DECLINE.with(|cell| cell.set(None));
+    LEAKED.with(|cell| cell.borrow_mut().clear());
     translate_with(steps, query_type, BTreeMap::new(), Rc::new(Cell::new(0)))
 }
 
 thread_local! {
     /// Why the translation in progress declined, if it has.
     static DECLINE: Cell<Option<&'static str>> = const { Cell::new(None) };
+
+    /// Binders that were in scope for a step's expression and are still
+    /// read by it after the substitution that was supposed to remove
+    /// them. Kept beside the tree rather than inside it because the
+    /// tree is the thing being checked: see
+    /// [`rel_validator::validate_eliminating`].
+    static LEAKED: RefCell<BTreeSet<String>> =
+        const { RefCell::new(BTreeSet::new()) };
+}
+
+/// Returns the binders the last [`translate`] failed to eliminate,
+/// which its tree must not read.
+pub fn leaked() -> BTreeSet<String> {
+    LEAKED.with(|cell| cell.borrow().clone())
 }
 
 /// Records why the translator is declining, and declines.
@@ -102,6 +117,7 @@ fn translate_with(
         bindings: Vec::new(),
         outer,
         counter,
+        in_scope: Vec::new(),
     };
     for step in steps {
         t.step(step)?;
@@ -208,7 +224,9 @@ fn shadow_query(exp: &Expr, steps: &[Step]) {
             }
             Some(tree) => {
                 shadow.translated += 1;
-                for error in rel_validator::validate(tree) {
+                let leaked = leaked();
+                for error in rel_validator::validate_eliminating(tree, &leaked)
+                {
                     shadow.invalid.push(format!("{}: {}", error, exp));
                 }
             }
@@ -435,11 +453,36 @@ struct Translator {
     /// binders in one statement have the same name; uniqueness is all
     /// allocation owes, because the printer renumbers what it prints.
     counter: Rc<Cell<usize>>,
+    /// What the previous step's environment bound, and therefore what
+    /// this step's expressions may read and this step's rewrite must
+    /// remove. It is the compiler's answer rather than `bindings`,
+    /// which is the translation's, so that a wrong `bindings` is caught
+    /// rather than agreed with.
+    in_scope: Vec<String>,
 }
 
 impl Translator {
-    /// Translates one step, or declines.
+    /// Translates one step, or declines, and records what the next
+    /// step's expressions may read.
+    ///
+    /// The names come from the step's own environment and not from
+    /// `self.bindings`, because they are what the check is made of and
+    /// the two must not be the same guess: a translation that works out
+    /// the wrong name for a binder would agree with itself and say
+    /// nothing.
     fn step(&mut self, step: &Step) -> Option<()> {
+        let result = self.translate_step(step);
+        self.in_scope = step
+            .env
+            .bindings
+            .iter()
+            .map(|b| b.id.name.clone())
+            .collect();
+        result
+    }
+
+    /// Translates one step, or declines.
+    fn translate_step(&mut self, step: &Step) -> Option<()> {
         // A query with no scan iterates over a single element, which
         // is unit, so its leaf is `[()]` -- a leaf its author did not
         // write, and the whole of why the answer has one row rather
@@ -455,7 +498,7 @@ impl Translator {
                 let condition = self.rewrite(condition)?;
                 self.wrap(|input| Rel::Filter(input, Box::new(condition)))
             }
-            StepKind::Yield(e) => self.yield_(e),
+            StepKind::Yield(e) => self.yield_(e, &step.env),
             StepKind::Order(e) => {
                 let key = self.rewrite(e)?;
                 self.wrap(|input| Rel::Sort(input, Box::new(key)))
@@ -618,28 +661,11 @@ impl Translator {
     /// Translates a `yield`: a projection, whose element is what the
     /// expression builds, and whose value names what the query called
     /// its binders.
-    fn yield_(&mut self, e: &Expr) -> Option<()> {
+    fn yield_(&mut self, e: &Expr, env: &StepEnv) -> Option<()> {
         let value = self.rewrite(e)?;
         let elem = value.type_();
         self.wrap(|input| Rel::Project(input, Box::new(value)))?;
-        // After a yield the element is what the yield built, so the
-        // binders are its fields -- or the element itself, where the
-        // yield is one value with a name.
-        self.bindings = match (e, peel(&elem)) {
-            (Expr::Tuple(_, _), Type::Record(_, fields)) => fields
-                .keys()
-                .filter_map(|label| match label {
-                    Label::String(name) => {
-                        Some((name.clone(), Path::field(name)))
-                    }
-                    Label::Ordinal(_) => None,
-                })
-                .collect(),
-            _ => match e.implicit_label() {
-                Some(name) => vec![(name, Path::whole())],
-                None => Vec::new(),
-            },
-        };
+        self.bindings = bindings_over(env, &elem)?;
         Some(())
     }
 
@@ -792,6 +818,10 @@ impl Translator {
                 .collect::<Option<Vec<_>>>()
         };
         let keys = rewrite(self, keys)?;
+        let aggregates = aggregates
+            .into_iter()
+            .map(|(label, e)| Some((label, self.rows(e)?)))
+            .collect::<Option<Vec<_>>>()?;
         let aggregates = rewrite(self, aggregates)?;
         let names: Vec<Label> = keys
             .iter()
@@ -813,6 +843,43 @@ impl Translator {
             })
             .collect();
         Some(())
+    }
+
+    /// Turns `elements`, which is a group's rows, into the aggregate it
+    /// stands for: the identity function over the whole element.
+    ///
+    /// `elements` is a name the compiler answers out of the group's
+    /// frame rather than out of any binding, so it survives
+    /// substitution and leaves the tree naming something no node
+    /// defines. morel-java's resolver writes it as `#id Fn over $0`,
+    /// which `spec.md` §3's `group` already expresses, so there is
+    /// nothing to add to the datatype -- only the rewrite the resolver
+    /// does and we did not. A group that bound the name itself keeps
+    /// it, because then it is an ordinary binder and substitution has
+    /// the answer.
+    fn rows(&self, e: Expr) -> Option<Expr> {
+        let Expr::Identifier(t, name) = &e else {
+            return Some(e);
+        };
+        if name != "elements"
+            || self.bindings.iter().any(|(bound, _)| bound == name)
+        {
+            return Some(e);
+        }
+        let Some(elem) =
+            self.tree.as_ref().and_then(|t| element_type(&t.type_()))
+        else {
+            return decline("`elements` over a tree that is not a collection");
+        };
+        Some(Expr::Aggregate(
+            t.clone(),
+            Box::new(Expr::Literal(
+                Rc::new(Type::Fn(t.clone(), t.clone())),
+                Val::Fn(BuiltInFunction::FnId),
+            )),
+            Box::new(Expr::Input(elem, 0)),
+            Span::new(""),
+        ))
     }
 
     /// Translates a set operator: the tree so far, and the step's
@@ -841,11 +908,31 @@ impl Translator {
             left = named;
         }
         let mut all_inputs = vec![left];
-        all_inputs.extend(inputs.iter().cloned());
+        for operand in inputs {
+            all_inputs.push(self.rewrite_operand(operand)?);
+        }
         self.tree = Some(node(f(distinct, all_inputs))?);
         // A set operator's element is its inputs', so the binder that
         // named the element still does.
         Some(())
+    }
+
+    /// Rewrites a set operator's operand.
+    ///
+    /// An operand is a collection compared with the tree element by
+    /// element, not an expression evaluated once per row, so it does
+    /// not read `$0` and the binders over `$0` are not in its map.
+    /// What it may read is `outer`, the row of an enclosing query --
+    /// which is how `from x in [10, 20] yield (from i in [1, 2] union
+    /// [current])` reaches `x` -- and a query it holds is a tree of
+    /// its own, translated here rather than left as the step list it
+    /// arrived as.
+    fn rewrite_operand(&self, e: &Expr) -> Option<Expr> {
+        let counter = Rc::clone(&self.counter);
+        let outer = self.outer.clone();
+        substitute_with(e, &self.outer, &mut |t, steps| {
+            translate_with(steps, t, outer.clone(), Rc::clone(&counter))
+        })
     }
 
     /// Adds the projection that builds the query's row out of the
@@ -909,6 +996,23 @@ impl Translator {
     /// a nested tree to want it: an expression that substitutes
     /// straight through is left as it was.
     fn rewrite(&self, e: &Expr) -> Option<Expr> {
+        let rewritten = self.rewrite_expr(e)?;
+        // A binder that was in scope and is still read is a binder the
+        // substitution did not remove. It is not a decline: the tree we
+        // built is wrong, and saying so is worth more than hiding it in
+        // a count. `spec.md` §2 has no environment for it to name.
+        let free = free_names_in(&rewritten);
+        LEAKED.with(|cell| {
+            cell.borrow_mut().extend(
+                self.in_scope.iter().filter(|n| free.contains(*n)).cloned(),
+            );
+        });
+        Some(rewritten)
+    }
+
+    /// Substitutes the binders out of an expression, wrapping it in a
+    /// `let` where it holds a query that needs the row by name.
+    fn rewrite_expr(&self, e: &Expr) -> Option<Expr> {
         let Some(elem) =
             self.tree.as_ref().and_then(|t| element_type(&t.type_()))
         else {
@@ -999,6 +1103,42 @@ fn true_literal() -> Expr {
 /// Looks through a type alias, as the structural tests here must.
 fn peel(t: &Rc<Type>) -> &Type {
     peel_type(t)
+}
+
+/// Returns where each of a step's binders sits in the element the step
+/// produced.
+///
+/// The step's environment is what the compiler says is in scope after
+/// the step, and the element is what the tree holds, so this is where
+/// the two are matched up. Taking the names from the environment rather
+/// than from the expression is the whole point: `yield f = d` binds `f`
+/// and the expression is `d`, and a translation that reads the name off
+/// the expression binds `d`, drops `f`, and leaves the next step
+/// reading a name nothing defines.
+///
+/// An atom's single binder is the whole element. Otherwise the element
+/// is a record and each binder is a field of it, which
+/// [`Binding::matches_fields`] checks by type as well as by name --
+/// `yield g = {g = ...}` binds `g` to the record and not to its sole
+/// field.
+fn bindings_over(
+    env: &StepEnv,
+    elem: &Rc<Type>,
+) -> Option<Vec<(String, Path)>> {
+    if let [only] = env.bindings.as_slice()
+        && (env.atom || only.type_ == *elem)
+    {
+        return Some(vec![(only.id.name.clone(), Path::whole())]);
+    }
+    if Binding::matches_fields(&env.bindings, peel(elem)) {
+        return Some(
+            env.bindings
+                .iter()
+                .map(|b| (b.id.name.clone(), Path::field(&b.id.name)))
+                .collect(),
+        );
+    }
+    decline("a step whose element does not hold its binders")
 }
 
 /// Decomposes a record expression into its labelled parts, which is
@@ -1140,7 +1280,13 @@ fn pat_tests(
         Pat::Identifier(_, _) | Pat::Wildcard(_) => {}
         Pat::As(_, _, inner) => pat_tests(inner, at, elem, tests)?,
         Pat::Literal(t, value) => {
-            tests.push(equals(at.read(elem)?, value, t));
+            // A type with one value has one pattern, and a test against
+            // it cannot fail. `from i in [1, 2, 3], () in [()]` binds
+            // nothing and filters nothing, and a `filter [$0 = ()]`
+            // over the leaf says it does.
+            if !matches!(peel(t), Type::Primitive(PrimitiveType::Unit)) {
+                tests.push(equals(at.read(elem)?, value, t));
+            }
         }
         Pat::Tuple(_, pats) => {
             for (i, p) in pats.iter().enumerate() {

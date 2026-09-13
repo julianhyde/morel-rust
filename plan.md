@@ -6,7 +6,7 @@ second one against the same written contract: where the two disagree,
 one of them is wrong, and the disagreement is cheap to find and dear to
 reason about after the fact.
 
-**Status, 2026-09-13: R1 to R7 are done.** morel-java's
+**Status, 2026-09-13: R1 to R7 and R9 are done.** morel-java's
 `rel-tree.smli` at tag `449-tree.3` is copied across and passes, and
 its fifteen plans are morel-java's text byte for byte except in two
 places, both of which are morel-rust bugs on `main` and neither of
@@ -15,7 +15,9 @@ queries and declines 397, with no tree failing the validator. The
 differential harness asks both implementations for the plan of 1,235
 queries across the whole of `tests/script`, and the findings log at the
 end has twenty-one entries, eleven of them from the harness -- among
-them a wrong answer on `main` that no test covers.
+them a wrong answer on `main` that no test covers. Five of the eleven
+are fixed here, which took the two implementations from agreeing on
+385 of those queries byte for byte to agreeing on 418.
 
 ## Start here: what the next session does
 
@@ -31,14 +33,19 @@ files of `tests/script`:
 
 | | queries | |
 | ---: | --- | --- |
-| 385 | agree | byte for byte |
-| 491 | differ | 152 of them fully accounted for by seven rewrites |
-| 177 | morel-rust declined | the translator turned the query down |
+| 418 | agree | byte for byte |
+| 443 | differ | 169 of them fully accounted for by seven rewrites |
+| 192 | morel-rust declined | the translator turned the query down |
 | 15 | morel-java declined | which morel-java asserts cannot happen |
 | 19 | morel-rust answered and morel-java did not | all but three in `overload.smli` |
 | 88 | neither compiled | the corpus's error cases |
 | 55 | both declined | |
 | 5 | killed a shell | |
+
+That is after R9. Before it the two agreed on 385, differed on 491 and
+declined 177: five fixes bought 33 agreements and 17 declines, and
+every one of the 17 is a query reading `current` or `ordinal` that used
+to print a tree naming them.
 
 A difference is *accounted for* when a rewrite makes the two texts
 equal exactly, so the seven classes are measurements rather than
@@ -47,62 +54,53 @@ larger than the rest put together:
 
 | cases | class |
 | ----: | ----- |
-| 70 | morel-rust parenthesises an aggregate |
-| 54 | morel-rust writes an arithmetic operator as the call it is in Core |
-| 51 | morel-rust qualifies a global built-in with its structure |
+| 86 | morel-rust parenthesises an aggregate |
+| 60 | morel-rust qualifies a global built-in with its structure |
+| 56 | morel-rust writes an arithmetic operator as the call it is in Core |
+| 56 | morel-java prints the function an aggregate desugars to |
 | 48 | a group of one field: morel-rust's element is the field, morel-java's the record |
-| 47 | morel-java prints the function an aggregate desugars to |
-| 31 | morel-rust names the instance an overload resolved to |
+| 33 | morel-rust names the instance an overload resolved to |
 | 27 | the two break a long line in different places |
 
-That leaves 339, and `--kind unexplained` groups them by the first
-line on which the two disagree:
+That leaves 274, and `--kind unexplained` groups them by the first
+line on which the two disagree. R9 emptied four of the six rows this
+table used to have; what is left is two findings and a decision:
 
 | cases | what it is |
 | ----: | ---------- |
 | 131 | grounding lands on different sides of the printer (finding 9) |
-| 23 | an input morel-rust did not translate, left as a Core query (finding 12) |
-| 10 | `current` free inside a fragment (finding 13) |
-| 9 | an aggregate printed as its own label (finding 14) |
-| 5 | an irrefutable `()` pattern that still filters (finding 16) |
 | 3 | a `where true` morel-rust drops and morel-java keeps (finding 2) |
 
-and most of the remaining 158 is finding 15: the two front ends
+and nearly all of the remaining 140 is finding 15: the two front ends
 normalize a query differently before a tree is ever built, so the two
-translators are not given the same query. Finding 11, a name the query
-bound left free in a node, is smaller than any of these and matters
-more than all but one of them, because it is a tree that is wrong
-rather than a tree that is different.
+translators are not given the same query. Neither of those is a
+translator bug, and no work on the translator will close either.
 
 ### The order for the next session
 
-1. **Fix what R7 found in morel-rust's translator: findings 11 to 14
-   and 16.** Unlike findings 1 to 3 these are bugs in code this branch
-   owns, so fixing them here hides nothing. Start with 11, the free
-   name, and fix it in the *validator* first: a validator that rejected
-   a tree naming something nothing binds would have caught 11, 13 and
-   14 without any of them being looked for. That is the cheapest thing
-   on this list and the one that keeps paying.
+1. **The four `main` findings**, in a session on `main`, and
+   **finding 19 first**: it is a wrong answer with no diagnostic, the
+   others are plans that read differently. This is now the only item
+   on the list that is a bug anyone can hit, and it is still sitting in
+   a branch nobody reads.
 2. **Raise the morel-java findings: 5, 10, 17 and 20.** Finding 10 is
    a three-line crash and finding 17 loses a whole session's input, so
    both are worth sending before the rest.
 3. **Finding 15, the normalization difference**, is a conversation and
-   not a change. The plan text cannot be a cross-implementation
-   contract for a query the two front ends normalize differently, and
-   339 unexplained differences is what that costs. Agreeing where
-   `Sys.planOf` sits in the pipeline is worth more than any single fix
-   on this list.
-4. **The four `main` findings**, in a session on `main`, and
-   **finding 19 first**: it is a wrong answer with no diagnostic, the
-   others are plans that read differently. They are still sitting in a
-   branch nobody reads.
-5. **Finding 4** (`exists`, `ordinal`, `current`) last, and R7 has
+   not a change, and with R9 done it is most of what is left: 140 of
+   the 274 differences the rewrites do not explain, and finding 9's
+   131 beside it. The plan text cannot be a cross-implementation
+   contract for a query the two front ends normalize differently.
+   Agreeing where `Sys.planOf` sits in the pipeline is worth more than
+   any fix on this list.
+4. **Finding 4** (`exists`, `ordinal`, `current`) last, and R7 has
    shifted it: morel-java's `ordinal` plans carry `$ordinal` as a free
    name that nothing defines, one of them crashes its printer
-   (finding 10), and finding 13 shows morel-rust building the same
-   broken tree wherever its decline does not reach. Declining now looks
+   (finding 10), and finding 13 showed morel-rust building the same
+   broken tree wherever its decline did not reach -- which is now 17
+   more declines rather than 17 more wrong trees. Declining looks
    better than matching, but it is still morel-java's call.
-6. **Not the lowering.** morel-java's step 2 built `RelLowerer` (949
+5. **Not the lowering.** morel-java's step 2 built `RelLowerer` (949
    lines) and the flip; `spec.md` does not freeze the lowered form, so
    a second lowering would be checked against nothing. It is worth
    doing when the tree is what executes, and that is not what this
@@ -607,6 +605,49 @@ were read off rather than looked for. Finding 19, the one that
 matters most, came from none of that: it came from asking why a shell
 stopped.
 
+**R9 — what R7 found in the translator.** Done 2026-09-13, before R8
+and out of numerical order, because these are bugs in code this branch
+owns: fixing them here hides nothing, where a fix to findings 1 to 3
+would. Findings 11 to 14 and 16, and the five together took the two
+implementations from agreeing on 385 of the corpus's queries byte for
+byte to agreeing on 418.
+
+The one worth reading is 11, because the fix is a *check* and the check
+found four more bugs than the finding did. Three things had to be true
+for it to work.
+
+*The names come from the compiler, not from the translation.* A step's
+binders are `step.env.bindings`, which is what the compiler says is in
+scope after the step. The translation used to read them off the
+expression instead -- `yield f = d` binds `f`, the expression is `d`,
+and `implicit_label` answers `d` -- so a translation that got a name
+wrong agreed with itself and said nothing. The same change fixed six
+queries in `type.smli` whose `yield` built its record through a `let`,
+where the old code answered "no names at all".
+
+*Scope decides it, and a finished tree has none.* `from i in [1, 2]
+yield {h = h}` reads an outer `h` and binds a field called `h`, and in
+the tree they are the same four characters. A check over the finished
+tree flagged it; a check that asks, after each step's rewrite, whether
+any name that *was in scope for that expression* is still free in it,
+does not. So the translator records what leaked and the validator
+reports it, which is `validate_eliminating` and
+`rel_translator::leaked`.
+
+*A decline is not always the answer.* `elements` looked like finding
+4's family -- a name the compiler answers out of the group's frame,
+which no node defines -- and the reflex was to decline. It is the
+identity function over the whole element, which §3's `group` already
+expresses, so the translator now writes what morel-java's resolver
+writes and nothing was added to the datatype.
+
+The other four are smaller. A set operator's operands were cloned into
+the node untranslated, which cost a legend entry and let `current`
+through (12 and 13); a literal pattern over `unit` made a filter that
+cannot fail (16). Three of the five now print morel-java's text byte
+for byte; the other two differ only in ways logged as findings 3 and
+15. The six cases are at the end of `rel-tree.smli`.
+
 **R8 — land the findings on `main`.** Four morel-rust bugs are logged
 below and none is fixed, because a fix on this branch would hide the
 bug rather than report it. They need a `main` session: a comma-scan's
@@ -846,6 +887,18 @@ whole list.
     binds would have caught this, and 13, and 14, none of which was
     being looked for. It is the cheapest fix on the list.
 
+    **Fixed 2026-09-13**, and the validator first. A step's binders now
+    come from the step's own environment -- the compiler's answer --
+    rather than off the expression the step yields, which was the
+    translation's own guess and said `d` where the query said `f`. The
+    check is `rel_validator::validate_eliminating`, and what it is
+    given comes from the translator, because scope decides it and a
+    finished tree has none: `from i in [1, 2] yield {h = h}` reads an
+    outer `h` and binds a field called `h`, and only the step that
+    rewrote the expression knows which was which. Written for this
+    finding, it caught six more queries in `type.smli` whose `yield`
+    built its record through a `let` and lost every field name.
+
 12. **morel-rust does not translate a set operator's operand.** `from
     e in emps yield e.deptno union (from d in depts yield d.deptno)`
     gives a `union` whose right input is the Core query `from d in
@@ -856,6 +909,13 @@ whole list.
     only under a set operator: any input reached through an expression
     the translator does not walk into.
 
+    **Fixed 2026-09-13.** An operand goes through a rewrite of its own
+    rather than being cloned: it is compared with the tree element by
+    element and not evaluated once per row, so it does not read `$0`
+    and the binders over `$0` are not in its map, but it may read
+    `outer` and a query it holds is a tree. The plan is now
+    morel-java's byte for byte.
+
 13. **`current` survives into a fragment, unsubstituted.** `from x in
     [10,20] yield (from i in [1,2] union [current])` gives, in
     morel-java, `r$0[v$0] = ... [v$0]`, and in morel-rust `r$0 = ...
@@ -865,11 +925,25 @@ whole list.
     where it does not reach, morel-rust builds exactly the tree finding
     4 accuses morel-java of building. It should decline. Ten cases.
 
+    **Fixed 2026-09-13**, by the same rewrite as finding 12: an operand
+    now passes through `substitute_with`, which is where `current` and
+    `ordinal` decline. It declines.
+
 14. **`compute {elements}` prints its own label as its aggregate.**
     `from i in [2,3,1,2] group i compute {elements}` gives `group [i =
     $0] [elements = elements]` in morel-rust and `[elements = #id Fn
     over $0]` in morel-java. Another free name, and the same validator
     would have caught it. Nine cases.
+
+    **Fixed 2026-09-13**, and it did not need a decline after all.
+    `elements` is a name the compiler answers out of the group's frame
+    rather than out of any binding, which is why substitution left it
+    alone; it stands for the identity function over the whole element,
+    and `spec.md` §3's `group` already expresses that. So the
+    translator writes what morel-java's resolver writes, `#id Fn over
+    $0`, and nothing was added to the datatype. A group that bound the
+    name itself keeps it, because then it is an ordinary binder and
+    substitution has the answer.
 
 15. **The two front ends normalize a query differently before a tree
     is built, and that is the largest unexplained class.** morel-java
@@ -896,6 +970,10 @@ whole list.
     components, so the walk that decides refutability never asks about
     it. Five cases.
 
+    **Fixed 2026-09-13.** A literal pattern over a type with one value
+    cannot fail, so it makes no test. The plan is morel-java's byte for
+    byte.
+
 17. **morel-java's shell mis-reads a backslash escape from stdin, and
     loses the rest of the session.** `val a = "a\"b";` and `#"\"";`
     each print nothing and take every statement after them with them;
@@ -912,9 +990,9 @@ whole list.
     "Expected code, closure, or fn, got Int(100)", and `aliasInc 7`
     in `overload.smli` panics at `eval/val.rs:256`, "Not a bool".
     All eight of `overload.smli`'s stops are that second one and one
-    in `relational.smli` is the first. None is new to this branch and none is a
-    tree bug; a bracket says "we know this is wrong", and a panic is a
-    worse kind of wrong than the brackets promise.
+    in `relational.smli` is the first. None is new to this branch and
+    none is a tree bug; a bracket says "we know this is wrong", and a
+    panic is a worse kind of wrong than the brackets promise.
 
 19. **A comma-scan's `on` condition reads an outer binding of the same
     name, and morel-rust answers the wrong thing.** Three lines:

@@ -4318,7 +4318,8 @@ fn plan_of(exp: &CoreExpr, line_width: usize) -> String {
         // a check, and a tree that fails an invariant is a finding
         // whichever implementation is wrong.
         let mut text = rel_printer::plan(&tree, true, line_width);
-        for error in rel_validator::validate(&tree) {
+        let leaked = rel_translator::leaked();
+        for error in rel_validator::validate_eliminating(&tree, &leaked) {
             text.push_str(&format!("INVALID: {}\n", error));
         }
         return text;
