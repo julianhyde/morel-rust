@@ -6,12 +6,16 @@ second one against the same written contract: where the two disagree,
 one of them is wrong, and the disagreement is cheap to find and dear to
 reason about after the fact.
 
-**Status, 2026-09-12: R1 to R6 are done.** morel-java's
+**Status, 2026-09-13: R1 to R7 are done.** morel-java's
 `rel-tree.smli` at tag `449-tree.3` is copied across and passes, and
 its fifteen plans are morel-java's text byte for byte except in two
 places, both of which are morel-rust bugs on `main` and neither of
 which is fixed here. The shadow translates 1,338 of the corpus's
-queries and declines 397, with no tree failing the validator.
+queries and declines 397, with no tree failing the validator. The
+differential harness asks both implementations for the plan of 1,235
+queries across the whole of `tests/script`, and the findings log at the
+end has twenty-one entries, eleven of them from the harness -- among
+them a wrong answer on `main` that no test covers.
 
 ## Start here: what the next session does
 
@@ -19,126 +23,116 @@ Read this section and the findings log at the end. The rest of this
 file is why things are the way they are, and is worth reading when
 something surprises you, not before.
 
-### What we have been doing, and what is worth doing instead
+### What R7 says, in one table
 
-The branch exists to find bugs by building a second implementation
-against a written contract. It has done that: five findings are logged
-below, three of them morel-rust bugs that belong on `main`.
+`etc/rel-diff.py` replays a `.smli` file in both shells and asks each
+for `Sys.planOf` of every `from` statement as it goes. Over the 42
+files of `tests/script`:
 
-But look at what the checking actually rests on. The conformance suite
-is morel-java's fifteen queries. Everything else -- the shadow, the
-validator, the decline tally -- checks morel-rust against *itself*:
-that the tree's type is the query's type, that the validator accepts
-it. Those are real checks and they found real bugs, but they cannot
-find a disagreement, because morel-java is not in the loop. Fifteen
-queries is the whole of the cross-implementation contract we test.
+| | queries | |
+| ---: | --- | --- |
+| 385 | agree | byte for byte |
+| 491 | differ | 152 of them fully accounted for by seven rewrites |
+| 177 | morel-rust declined | the translator turned the query down |
+| 15 | morel-java declined | which morel-java asserts cannot happen |
+| 19 | morel-rust answered and morel-java did not | all but three in `overload.smli` |
+| 88 | neither compiled | the corpus's error cases |
+| 55 | both declined | |
+| 5 | killed a shell | |
 
-**The cheap generalisation is to ask morel-java for the plan of every
-query we can translate, and diff.** `~/dev/morel.4` is a working
-checkout at tag `449-tree.3`, and its shell answers `Sys.planOf` from
-a script:
+A difference is *accounted for* when a rewrite makes the two texts
+equal exactly, so the seven classes are measurements rather than
+guesses. They are worth reading in that order, because the first is
+larger than the rest put together:
 
-```
-$ cd ~/dev/morel.4
-$ echo 'Sys.planOf (from i in [1,2,3] where i > 1);' | ./morel
-- val it = "filter [$0 > 1] : int list\n  [1, 2, 3] : int list\n" : string
-```
+| cases | class |
+| ----: | ----- |
+| 70 | morel-rust parenthesises an aggregate |
+| 54 | morel-rust writes an arithmetic operator as the call it is in Core |
+| 51 | morel-rust qualifies a global built-in with its structure |
+| 48 | a group of one field: morel-rust's element is the field, morel-java's the record |
+| 47 | morel-java prints the function an aggregate desugars to |
+| 31 | morel-rust names the instance an overload resolved to |
+| 27 | the two break a long line in different places |
 
-We have 1,338 queries that translate. Fifteen of them are checked
-against morel-java. That ratio is the argument for R7, and the reason
-to stop where R5d stopped.
+That leaves 339, and `--kind unexplained` groups them by the first
+line on which the two disagree:
 
-### R5d has hit diminishing returns, and its tail is mostly a finding
+| cases | what it is |
+| ----: | ---------- |
+| 131 | grounding lands on different sides of the printer (finding 9) |
+| 23 | an input morel-rust did not translate, left as a Core query (finding 12) |
+| 10 | `current` free inside a fragment (finding 13) |
+| 9 | an aggregate printed as its own label (finding 14) |
+| 5 | an irrefutable `()` pattern that still filters (finding 16) |
+| 3 | a `where true` morel-rust drops and morel-java keeps (finding 2) |
 
-397 declines remain, and 303 of them are `exists`, `ordinal` and
-`current` -- which I had written down as "nothing to build". That was
-wrong, and finding out why is the most valuable thing in this section.
-
-morel-java declines **none** of its 1534 queries; `RelShadow.check`
-throws an `AssertionError` where the translator returns null, on the
-stated invariant that "a query the translator turns down is a query
-the flip cannot carry". So either morel-java translates what we
-decline, or its corpus does not contain it. It is the first. Both
-buckets are representation differences between the two Cores, not gaps
-in the tree:
-
-- **`exists`.** `Resolver` in morel-java translates `exists ...` as if
-  the author had written `Relational.nonEmpty (from ...)`, and
-  `forall ... require e` as `not exists (from ... where not e)`. Its
-  Core holds an ordinary `From` inside an application, which the
-  translator handles. morel-rust keeps a terminal `StepKind::Exists`
-  step, which no node can express. 200 declines.
-- **`ordinal` and `current`.** In morel-java `ordinal` is
-  `BuiltIn.Z_ORDINAL`, a built-in *name* (`$ordinal`), so Core holds an
-  identifier and the translator substitutes it like any other.
-  morel-rust made it a node of its own (`Expr::Ordinal`,
-  commit `5e31f11a`). 103 declines.
-
-That is finding 4 below, and it wants a decision rather than more
-translation. Neither implementation has a node for the row's position,
-so morel-java's tree names something the tree cannot define, and ours
-declines. One of those is wrong and `spec.md` does not say which.
+and most of the remaining 158 is finding 15: the two front ends
+normalize a query differently before a tree is ever built, so the two
+translators are not given the same query. Finding 11, a name the query
+bound left free in a node, is smaller than any of these and matters
+more than all but one of them, because it is a tree that is wrong
+rather than a tree that is different.
 
 ### The order for the next session
 
-1. **R7, the differential harness.** Build it, run it, read the first
-   fifty differences. Everything else waits on what it says.
-2. **Finding 4**, once R7 says how much it costs: either pass
-   `ordinal` and `current` through as atoms, matching morel-java and
-   buying 103 translations, or keep declining and raise the
-   disagreement with morel-java. Do not do this before R7: R7 may show
-   that morel-java's plans for those queries are wrong, which settles
-   it.
-3. **The three `main` findings**, in a session on `main`. They are the
-   branch's product and they are sitting in a branch nobody reads.
-4. **Not the lowering.** morel-java's step 2 built `RelLowerer` (949
+1. **Fix what R7 found in morel-rust's translator: findings 11 to 14
+   and 16.** Unlike findings 1 to 3 these are bugs in code this branch
+   owns, so fixing them here hides nothing. Start with 11, the free
+   name, and fix it in the *validator* first: a validator that rejected
+   a tree naming something nothing binds would have caught 11, 13 and
+   14 without any of them being looked for. That is the cheapest thing
+   on this list and the one that keeps paying.
+2. **Raise the morel-java findings: 5, 10, 17 and 20.** Finding 10 is
+   a three-line crash and finding 17 loses a whole session's input, so
+   both are worth sending before the rest.
+3. **Finding 15, the normalization difference**, is a conversation and
+   not a change. The plan text cannot be a cross-implementation
+   contract for a query the two front ends normalize differently, and
+   339 unexplained differences is what that costs. Agreeing where
+   `Sys.planOf` sits in the pipeline is worth more than any single fix
+   on this list.
+4. **The four `main` findings**, in a session on `main`, and
+   **finding 19 first**: it is a wrong answer with no diagnostic, the
+   others are plans that read differently. They are still sitting in a
+   branch nobody reads.
+5. **Finding 4** (`exists`, `ordinal`, `current`) last, and R7 has
+   shifted it: morel-java's `ordinal` plans carry `$ordinal` as a free
+   name that nothing defines, one of them crashes its printer
+   (finding 10), and finding 13 shows morel-rust building the same
+   broken tree wherever its decline does not reach. Declining now looks
+   better than matching, but it is still morel-java's call.
+6. **Not the lowering.** morel-java's step 2 built `RelLowerer` (949
    lines) and the flip; `spec.md` does not freeze the lowered form, so
    a second lowering would be checked against nothing. It is worth
    doing when the tree is what executes, and that is not what this
    branch is for.
 
-### R7 — a differential harness, in detail
+### Running the harness
 
-The shape, smallest first:
+```
+etc/rel-diff.py --quiet --save /tmp/all.json tests/script/*.smli
+etc/rel-diff.py --load /tmp/all.json --kind unexplained --limit 20
+```
 
-- A list of queries valid in both implementations. Start with the
-  `.smli` files both repos share; the statements are already there and
-  already agreed on. A script that pulls every statement beginning
-  `from` out of a `.smli` file and wraps it in `Sys.planOf (...)` is
-  enough to begin.
-- Run the list through `~/dev/morel.4/./morel` and through
-  `./target/debug/morel`, with `Sys.set ("stringDepth", ~1)` and the
-  same `lineWidth`, and diff the answers.
-- Classify what differs before fixing anything, and write each class
-  in the findings log. morel-java's own lesson, paid for: classify
-  hunks that *add* lines, not only those that delete them.
-- Keep the harness out of the test suite at first. It needs a built
-  morel-java, which CI does not have.
+The whole corpus takes about six minutes and needs a built morel-java
+in `~/dev/morel.4` at tag `449-tree.3`. `--save` and `--load` are worth
+using, because reading the differences takes many passes and running
+the shells takes one. It is not in the test suite, which has no JVM.
 
-Two things it will find that nothing else can: a plan we print
-differently from morel-java for a query neither suite covers, and a
-query morel-java declines. The second is the more interesting, because
-morel-java asserts there are none.
-
-**Built 2026-09-12, as `etc/rel-diff.py`, and it earned its keep on the
-first run** -- findings 5 to 9 below are all its. Over four files it
-asked 989 queries and the two agreed on 108. Read the findings before
-reading the counts: most of what differs is one of five classes, not
-989 separate problems.
-
-Two things it still needs, and the next session should do them first:
-
-- **It stalls.** Both shells stop partway through a long file --
-  morel-java after 176 of `relational.smli`'s 678 queries, morel-rust
-  after 566 -- and everything past the stall reads as "unanswered",
-  which was 605 of the 989. A shell waiting for more input has been
-  given a statement it thinks is unfinished, and the two disagree
-  about which. Feeding a file in chunks, so that a stall costs one
-  chunk rather than the tail, is the cheap fix; finding out what they
-  disagree about is a finding of its own.
-- **It classifies by hand.** `--kind DIFFER` and reading is fine for
-  the first hundred; grouping the differences by shape would make the
-  next thousand readable.
+Two things it does that are worth knowing before reading its output.
+It **strips the `set("mode", "validate")` brackets**, so it runs the
+statements the corpus knows to be broken -- which is how finding 18
+turned up. And a shell that stops answering is **not** allowed
+to take the rest of the file with it: the marker before each statement
+is a progress report, so a run that stops short names the statement it
+stopped on, drops it, and replays. Twenty-six statements stop a shell
+on the corpus: one is finding 10, two are finding 17, nine are finding
+18, **four are finding 19**, and ten are the harness's own -- a
+commented out `(* ... *)` region in `logic.smli` that `parse_blocks`
+splits at a `;` inside it, so the replay feeds a comment that never
+closes and both shells wait for the rest of it. That last one is the
+stall the last session went looking for, and it was ours.
 
 ## What morel-java did
 
@@ -570,17 +564,56 @@ this branch was for: a `where true` step is dropped before the tree is
 built, and an aggregate prints with parentheses, a structure member's
 name, and an instance rather than the generic. Neither is fixed here.
 
-**R7 — the differential harness.** Not started; the next session's
-first job, and "Start here" at the top of this file has the shape.
-Everything up to R6 checks morel-rust against itself. R7 is the first
-thing that checks it against morel-java over more than fifteen
-queries.
+**R7 — the differential harness.** Done 2026-09-13, as
+`etc/rel-diff.py`. Everything up to R6 checks morel-rust against
+itself; R7 is the first thing that checks it against morel-java over
+more than fifteen queries, and it asks 1,235 of them.
 
-**R8 — land the findings on `main`.** Three morel-rust bugs are logged
+It replays a `.smli` file in both shells rather than extracting the
+queries, because a query needs the declarations above it, and it asks
+`Sys.planOf` of each `from` statement as it goes. A marker before each
+statement anchors the two outputs, so a statement that compiles in one
+implementation and not the other shifts nothing. The marker is a
+declaration, `val relDiff = 7`, rather than a string expression,
+because an expression sets `it` and a declaration does not -- and
+`it.smli` is in the corpus.
+
+*The stall was not a stall.* The first run read 605 of 989 answers as
+"unanswered" because both shells stopped partway through a long file,
+which I had written down as a shell waiting for input it thought was
+missing. It is not: morel-java throws an uncaught `ClassCastException`
+(finding 10) and morel-rust panics (finding 18), and each takes the
+rest of the session with it. So the marker before each statement is
+also a progress report, and a run that stops short names the statement
+it stopped on, drops it, and replays -- one attempt per death, rather
+than the chunking the last session proposed, which would have cost
+more and named nothing. `relational.smli` went from 523 unanswered to
+74, and the 74 are the corpus's own error cases.
+
+*Classifying by hand does not scale to 491 differences.* So a class is
+a **canonicalization**: a rewrite applied to *both* answers that erases
+one distinction and nothing else. A case is explained when the two are
+equal after every rewrite has run -- equal exactly, so a rewrite cannot
+take credit for a case it did not account for -- and its class is the
+rewrites it needed, which is found by leaving each out and asking
+whether the two are still equal. Applying a rewrite to both sides is
+what makes this safe: a one-sided rewrite would have to know which
+implementation writes which form, and would turn a form the two agree
+on into a difference.
+
+Seven rewrites explain 152 of the 491. What is left groups by the
+first line on which the two disagree, which is how findings 11 to 16
+were read off rather than looked for. Finding 19, the one that
+matters most, came from none of that: it came from asking why a shell
+stopped.
+
+**R8 — land the findings on `main`.** Four morel-rust bugs are logged
 below and none is fixed, because a fix on this branch would hide the
-bug rather than report it. They need a `main` session: `union
-distinct` re-planning as `union all`, a dropped `where true`, and how
-an aggregate prints.
+bug rather than report it. They need a `main` session: a comma-scan's
+`on` condition reading an outer binding of the same name (finding 19,
+and the only one that gives a wrong answer), `union distinct`
+re-planning as `union all`, a dropped `where true`, and how an
+aggregate prints.
 
 **Later, not now.** The lowering (`RelLowerer`, 949 lines) matters when
 the tree becomes what the passes carry. Grounding on the tree
@@ -773,6 +806,157 @@ for. The first is the one worth the whole exercise.
    one for a query whose grounding lands on different sides of the
    printer. Worth agreeing on before `such-that.smli` is ever
    compared.
+
+And eleven from R7 over the whole corpus, which is what a differential
+harness is for. Two of them stop a shell dead, and those came first
+because nothing else could be measured until they did; the last, found
+by asking why a third shell stopped, is the only wrong answer on the
+whole list.
+
+10. **morel-java's plan printer crashes on a unary `~`, and the crash
+    is uncaught.** Three lines, against `~/dev/morel.4` at tag
+    `449-tree.3`:
+
+    ```
+    val emps = [{id=100,name="Fred",deptno=10}];
+    Sys.planOf (from e in emps yield ~e.deptno);
+    ```
+
+    gives `ClassCastException: Core$Apply cannot be cast to Core$Tuple`
+    at `AstWriter.infix:390`, and the shell does not come back. The
+    cause is two lines apart in `Op.java`: `NEGATE("~ ")` reaches
+    `Op(String padded, int precedence, Assoc assoc)` with precedence 0
+    and `Assoc.NONE`, and that constructor computes `left = precedence
+    * 2 + (assoc == LEFT ? 0 : 1)`, so a *prefix* operator comes out
+    with `left = 1`. `AstWriter.infix` reads `left > 0` as "binary
+    infix" and casts the single argument to a tuple. `~1` is safe only
+    because it folds to a literal before anything prints it.
+
+11. **morel-rust leaves a name the query bound free inside a node.**
+    `from d in scott.depts yield f = d yield f.deptno` gives `project
+    [#deptno f]` over an argument-less `project`, where morel-java
+    gives `project [#deptno $0]` over the leaf; `from i in [1,2,3]
+    group g = {x=i} compute {c = count over ()} order g.x` gives `sort
+    [#x g]`. Variable elimination misses a binder the query names for
+    the whole row. The plan is not merely different, it is wrong: `f`
+    and `g` are free, and nothing in the tree defines them.
+
+    What matters more than the bug is that **the validator accepted
+    it**. A validator that rejected a tree naming something nothing
+    binds would have caught this, and 13, and 14, none of which was
+    being looked for. It is the cheapest fix on the list.
+
+12. **morel-rust does not translate a set operator's operand.** `from
+    e in emps yield e.deptno union (from d in depts yield d.deptno)`
+    gives a `union` whose right input is the Core query `from d in
+    depts yield #deptno d`, where morel-java's is a `project` over a
+    leaf. Legal -- `spec.md` §1 has no leaf constructor, so an input is
+    simply an expression -- but a translation not attempted, and it
+    silently costs the plan a legend entry. Twenty-three cases, and not
+    only under a set operator: any input reached through an expression
+    the translator does not walk into.
+
+13. **`current` survives into a fragment, unsubstituted.** `from x in
+    [10,20] yield (from i in [1,2] union [current])` gives, in
+    morel-java, `r$0[v$0] = ... [v$0]`, and in morel-rust `r$0 = ...
+    [current]` -- a fragment whose head lists nothing and whose body
+    reads a name nothing binds. Finding 4 says morel-rust declines
+    `current`; this says the decline does not reach a nested tree, so
+    where it does not reach, morel-rust builds exactly the tree finding
+    4 accuses morel-java of building. It should decline. Ten cases.
+
+14. **`compute {elements}` prints its own label as its aggregate.**
+    `from i in [2,3,1,2] group i compute {elements}` gives `group [i =
+    $0] [elements = elements]` in morel-rust and `[elements = #id Fn
+    over $0]` in morel-java. Another free name, and the same validator
+    would have caught it. Nine cases.
+
+15. **The two front ends normalize a query differently before a tree
+    is built, and that is the largest unexplained class.** morel-java
+    merges `from e2 in (from e in emps yield e.deptno) yield e2 + 1`
+    into a single `project [#deptno $0 + 1]` and morel-rust keeps two
+    projections; morel-rust drops the identity `yield {x = x}` of
+    `from e in emps yield {x = e.deptno} where x > 10 yield {x = x}
+    where x < 30` and morel-java keeps it; `from u in [(), (), ()]
+    distinct` is `take [1]` in morel-java and a `group` in morel-rust.
+    None of these is a translator difference at all -- the two
+    translators are given different queries.
+
+    This generalizes finding 9, and it is the finding that decides
+    what the plan text is worth. **The plan text cannot be a
+    cross-implementation contract for a query the two normalize
+    differently**, and no amount of work on either translator will
+    close it. Where `Sys.planOf` sits in the pipeline is the thing to
+    agree on, and it is worth more than any single fix on this list.
+
+16. **An irrefutable `()` scan pattern still filters in morel-rust.**
+    `from i in [1,2,3], () in [()]` puts `filter [$0 = ()]` over the
+    leaf, where morel-java has the leaf alone. R5d bought "any scan
+    pattern that cannot fail", and `()` was missed: it has no
+    components, so the walk that decides refutability never asks about
+    it. Five cases.
+
+17. **morel-java's shell mis-reads a backslash escape from stdin, and
+    loses the rest of the session.** `val a = "a\"b";` and `#"\"";`
+    each print nothing and take every statement after them with them;
+    `val c = "\"\"";` raises `Lexical error ... Encountered: '\'`. Its
+    *script* runner reads the same text correctly -- `pretty.smli` is
+    morel-java's own file and contains all three -- so this is the
+    stdin path alone. It costs the harness two files.
+
+18. **morel-rust panics where it should raise, on statements the
+    corpus brackets off.** The harness strips the `set("mode",
+    "validate")` brackets, so it runs what no test runs, and two
+    distinct panics turn up: `group e.deptno compute {my_sum over
+    e.id}` for a user-defined `my_sum` panics at `eval/val.rs:446`,
+    "Expected code, closure, or fn, got Int(100)", and `aliasInc 7`
+    in `overload.smli` panics at `eval/val.rs:256`, "Not a bool".
+    All eight of `overload.smli`'s stops are that second one and one
+    in `relational.smli` is the first. None is new to this branch and none is a
+    tree bug; a bracket says "we know this is wrong", and a panic is a
+    worse kind of wrong than the brackets promise.
+
+19. **A comma-scan's `on` condition reads an outer binding of the same
+    name, and morel-rust answers the wrong thing.** Three lines:
+
+    ```
+    val d = 10;
+    from e in scott.emps,
+        d in scott.depts on e.deptno = d.deptno
+      yield {d.dname, e.ename};
+    ```
+
+    morel-java gives the fourteen rows. morel-rust panics at
+    `compile/types.rs:278`, "Expected record type", because `d.deptno`
+    in the `on` condition is the outer `d : int`; make the outer `d` a
+    record and it stops panicking and **returns `[]`**, having compared
+    every employee against `{deptno = 99}`. Drop the `on` and write the
+    same condition as a `where` and it is right, so the scan's binder
+    is in scope everywhere except the `on` that belongs to it.
+
+    The quiet version is the one that matters: a wrong answer, no
+    diagnostic, and nothing in the corpus covers it because `blog.smli`
+    has a `val d = 10` three hundred lines above the query and no test
+    runs the two together. This is a `main` bug and the only wrong
+    *answer* on this list -- everything else here is a plan that reads
+    differently.
+
+20. **morel-java's translator declines the empty query, and a decline
+    cannot be told from a node-free tree.** `Sys.planOf (from)` gives
+    `[()]` in morel-java and `[()] : unit list` in morel-rust; the
+    same for `from u: unit`, and fifteen queries in all. morel-java's
+    `RelShadow.check` throws where the translator returns null, on the
+    stated invariant that there are none, so either the invariant is
+    wrong or these are not declines.
+
+    They may well not be: `spec.md` §1 has no leaf constructor, so a
+    query that translates to a bare expression has a tree with no node
+    in it, and printing the expression is a defensible thing to do with
+    one. But then the two print a node-free query differently, and
+    **no reader of either text can tell a decline from a leaf** --
+    which makes the fifteen an upper bound and makes morel-java's
+    zero-decline invariant unfalsifiable from outside. Agreeing how a
+    query with no node prints costs a sentence in §6 and settles both.
 
 And two in `spec.md`, from reading it alone:
 
