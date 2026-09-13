@@ -120,6 +120,26 @@ differently from morel-java for a query neither suite covers, and a
 query morel-java declines. The second is the more interesting, because
 morel-java asserts there are none.
 
+**Built 2026-09-12, as `etc/rel-diff.py`, and it earned its keep on the
+first run** -- findings 5 to 9 below are all its. Over four files it
+asked 989 queries and the two agreed on 108. Read the findings before
+reading the counts: most of what differs is one of five classes, not
+989 separate problems.
+
+Two things it still needs, and the next session should do them first:
+
+- **It stalls.** Both shells stop partway through a long file --
+  morel-java after 176 of `relational.smli`'s 678 queries, morel-rust
+  after 566 -- and everything past the stall reads as "unanswered",
+  which was 605 of the 989. A shell waiting for more input has been
+  given a statement it thinks is unfinished, and the two disagree
+  about which. Feeding a file in chunks, so that a stall costs one
+  chunk rather than the tail, is the cheap fix; finding out what they
+  disagree about is a finding of its own.
+- **It classifies by hand.** `--kind DIFFER` and reading is fine for
+  the first hundred; grouping the differences by shape would make the
+  next thousand readable.
+
 ## What morel-java did
 
 `julianhyde/449-tree` in `~/dev/morel.4`, tag `449-tree.3`
@@ -689,6 +709,70 @@ nothing:
    query that reads `ordinal` cannot become a tree and morel-java's
    zero-decline invariant is wrong. Raise it with morel-java before
    changing either implementation.
+
+And five from R7's first run, which is what a differential harness is
+for. The first is the one worth the whole exercise.
+
+5. **morel-java's type legend is not renumbered, so a plan names one
+   binder under two names.** The tree says `v$0` and the legend says
+   `v$8`, and which second name you get depends on what was compiled
+   before. Minimally, against `~/dev/morel.4` at tag `449-tree.3`:
+
+   ```
+   Sys.set ("stringDepth", ~1);
+   val emps = [{id=100,name="Fred",deptno=10}];
+   (*) eight queries, to move the session's binder counter on
+   from e0 in emps order e0.deptno where ordinal > 1 yield e0.name;
+   ...
+   Sys.planOf (from e in emps order e.deptno where ordinal > 1);
+   ```
+
+   gives `filter [#v$0 $0 > 1]` over `project [{e = $0, v$0 = $ordinal
+   ()}]`, and `t$1 {e:{...}, v$8:int} list`. A binder inside a *type*
+   is text that the renumbering writer never sees, exactly as
+   morel-java's own lesson says about a record label -- "a renumbering
+   writer that renames identifiers but not labels prints one binder
+   under two names". The legend is the same mistake one level out.
+
+   Invisible to any test that starts from a cold counter, which is
+   every test morel-java has: with the counter at zero the allocated
+   name and the printed name coincide. morel-rust is immune by
+   construction, because it renumbers the finished text rather than
+   the writer's identifiers, and the legend is part of the text.
+
+6. **An operator that morel-java writes infix, we write as a call.**
+   `from i in [1, 2, 3] yield i - 5` is `project [$0 - 5]` in
+   morel-java and `project [#- Int ($0, 5)]` in morel-rust; `abs x` is
+   `abs $0` there and `#abs Int $0` here. `library.rs`'s `infix_op`
+   says it "Mirrors morel-java's `Resolver.toOp`" and excludes
+   everything but `+`, the comparisons, `::`, `@`, `andalso` and
+   `orelse` -- and morel-java disagrees. This is finding 3's second
+   half, and it is not about aggregates: it touches nearly every plan.
+
+7. **`distinct` atomizes in one implementation and not the other.**
+   `from i in [2, 3, 1, 3] distinct` is `project [#i $0]` over `group
+   [i = $0] : {i:int} list` in morel-java, and `group [i = $0] : int
+   list` here. `spec.md` §3 says a `group`'s element is a "record of
+   the key and aggregate types, **or the single field's type if there
+   is exactly one**", which is what we do and morel-java does not.
+   Raise it: on the spec as written, morel-java is wrong.
+
+8. **A leaf that is a list does not fold here, and folds there.**
+   morel-java breaks `[{d = 20, e = "x"}, {d = 10, e = "y"}, {d = 10,
+   e = "z"}]` after a comma at width 78 and we leave it long, because
+   `doc` in `rel_printer.rs` has an arm for a record but none for a
+   list. morel-java also breaks *inside* the third record while the
+   first two stay whole, which is a group per element and not one
+   group over all of them. Ours to fix, and cheap.
+
+9. **Grounding happens before the plan here and after it there.**
+   `from x where abs x < 5` has the leaf `extent "int"` in morel-java
+   and `#flatten Range ([OPEN (~5, 5)])` here, and `from u: unit` has
+   no tree at all in morel-java. Neither is wrong, but the plan text
+   is supposed to be a cross-implementation contract, and it cannot be
+   one for a query whose grounding lands on different sides of the
+   printer. Worth agreeing on before `such-that.smli` is ever
+   compared.
 
 And two in `spec.md`, from reading it alone:
 
