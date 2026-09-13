@@ -11,9 +11,114 @@ reason about after the fact.
 its fifteen plans are morel-java's text byte for byte except in two
 places, both of which are morel-rust bugs on `main` and neither of
 which is fixed here. The shadow translates 1,338 of the corpus's
-queries and declines 397, with no tree failing the validator. What is
-left is below under "Later, not now": the lowering, and grounding on
-the tree.
+queries and declines 397, with no tree failing the validator.
+
+## Start here: what the next session does
+
+Read this section and the findings log at the end. The rest of this
+file is why things are the way they are, and is worth reading when
+something surprises you, not before.
+
+### What we have been doing, and what is worth doing instead
+
+The branch exists to find bugs by building a second implementation
+against a written contract. It has done that: five findings are logged
+below, three of them morel-rust bugs that belong on `main`.
+
+But look at what the checking actually rests on. The conformance suite
+is morel-java's fifteen queries. Everything else -- the shadow, the
+validator, the decline tally -- checks morel-rust against *itself*:
+that the tree's type is the query's type, that the validator accepts
+it. Those are real checks and they found real bugs, but they cannot
+find a disagreement, because morel-java is not in the loop. Fifteen
+queries is the whole of the cross-implementation contract we test.
+
+**The cheap generalisation is to ask morel-java for the plan of every
+query we can translate, and diff.** `~/dev/morel.4` is a working
+checkout at tag `449-tree.3`, and its shell answers `Sys.planOf` from
+a script:
+
+```
+$ cd ~/dev/morel.4
+$ echo 'Sys.planOf (from i in [1,2,3] where i > 1);' | ./morel
+- val it = "filter [$0 > 1] : int list\n  [1, 2, 3] : int list\n" : string
+```
+
+We have 1,338 queries that translate. Fifteen of them are checked
+against morel-java. That ratio is the argument for R7, and the reason
+to stop where R5d stopped.
+
+### R5d has hit diminishing returns, and its tail is mostly a finding
+
+397 declines remain, and 303 of them are `exists`, `ordinal` and
+`current` -- which I had written down as "nothing to build". That was
+wrong, and finding out why is the most valuable thing in this section.
+
+morel-java declines **none** of its 1534 queries; `RelShadow.check`
+throws an `AssertionError` where the translator returns null, on the
+stated invariant that "a query the translator turns down is a query
+the flip cannot carry". So either morel-java translates what we
+decline, or its corpus does not contain it. It is the first. Both
+buckets are representation differences between the two Cores, not gaps
+in the tree:
+
+- **`exists`.** `Resolver` in morel-java translates `exists ...` as if
+  the author had written `Relational.nonEmpty (from ...)`, and
+  `forall ... require e` as `not exists (from ... where not e)`. Its
+  Core holds an ordinary `From` inside an application, which the
+  translator handles. morel-rust keeps a terminal `StepKind::Exists`
+  step, which no node can express. 200 declines.
+- **`ordinal` and `current`.** In morel-java `ordinal` is
+  `BuiltIn.Z_ORDINAL`, a built-in *name* (`$ordinal`), so Core holds an
+  identifier and the translator substitutes it like any other.
+  morel-rust made it a node of its own (`Expr::Ordinal`,
+  commit `5e31f11a`). 103 declines.
+
+That is finding 4 below, and it wants a decision rather than more
+translation. Neither implementation has a node for the row's position,
+so morel-java's tree names something the tree cannot define, and ours
+declines. One of those is wrong and `spec.md` does not say which.
+
+### The order for the next session
+
+1. **R7, the differential harness.** Build it, run it, read the first
+   fifty differences. Everything else waits on what it says.
+2. **Finding 4**, once R7 says how much it costs: either pass
+   `ordinal` and `current` through as atoms, matching morel-java and
+   buying 103 translations, or keep declining and raise the
+   disagreement with morel-java. Do not do this before R7: R7 may show
+   that morel-java's plans for those queries are wrong, which settles
+   it.
+3. **The three `main` findings**, in a session on `main`. They are the
+   branch's product and they are sitting in a branch nobody reads.
+4. **Not the lowering.** morel-java's step 2 built `RelLowerer` (949
+   lines) and the flip; `spec.md` does not freeze the lowered form, so
+   a second lowering would be checked against nothing. It is worth
+   doing when the tree is what executes, and that is not what this
+   branch is for.
+
+### R7 — a differential harness, in detail
+
+The shape, smallest first:
+
+- A list of queries valid in both implementations. Start with the
+  `.smli` files both repos share; the statements are already there and
+  already agreed on. A script that pulls every statement beginning
+  `from` out of a `.smli` file and wraps it in `Sys.planOf (...)` is
+  enough to begin.
+- Run the list through `~/dev/morel.4/./morel` and through
+  `./target/debug/morel`, with `Sys.set ("stringDepth", ~1)` and the
+  same `lineWidth`, and diff the answers.
+- Classify what differs before fixing anything, and write each class
+  in the findings log. morel-java's own lesson, paid for: classify
+  hunks that *add* lines, not only those that delete them.
+- Keep the harness out of the test suite at first. It needs a built
+  morel-java, which CI does not have.
+
+Two things it will find that nothing else can: a plan we print
+differently from morel-java for a query neither suite covers, and a
+query morel-java declines. The second is the more interesting, because
+morel-java asserts there are none.
 
 ## What morel-java did
 
@@ -445,6 +550,18 @@ this branch was for: a `where true` step is dropped before the tree is
 built, and an aggregate prints with parentheses, a structure member's
 name, and an instance rather than the generic. Neither is fixed here.
 
+**R7 — the differential harness.** Not started; the next session's
+first job, and "Start here" at the top of this file has the shape.
+Everything up to R6 checks morel-rust against itself. R7 is the first
+thing that checks it against morel-java over more than fifteen
+queries.
+
+**R8 — land the findings on `main`.** Three morel-rust bugs are logged
+below and none is fixed, because a fix on this branch would hide the
+bug rather than report it. They need a `main` session: `union
+distinct` re-planning as `union all`, a dropped `where true`, and how
+an aggregate prints.
+
 **Later, not now.** The lowering (`RelLowerer`, 949 lines) matters when
 the tree becomes what the passes carry. Grounding on the tree
 (`RelExpander`, 2057 lines) and the rule framework follow, and
@@ -515,9 +632,10 @@ Worth reading before repeating them.
 Disagreements between morel-rust, morel-java and `spec.md`. One line
 each, with the query, what each produced, and which we think is wrong.
 
-Two in morel-rust, found by building the tree beside the step list.
-Neither is fixed here: this branch is not for `main`, and a fix made on
-it would hide the bug rather than report it.
+Three in morel-rust, found by building the tree beside the step list.
+None is fixed here: this branch is not for `main`, and a fix made on it
+would hide the bug rather than report it. They are the branch's
+product, and getting them onto `main` is a session of its own.
 
 1. **`union distinct` re-plans as `union all`.** The step flag holds
    *distinct*, and `core::write_set_step` names its parameter `all` and
@@ -546,6 +664,31 @@ it would hide the bug rather than report it.
    The parentheses are not cheap to change -- they are how an aggregate
    has printed in every plan, and the corpus has them -- so this is a
    `main` conversation, not a branch one.
+
+And one that is neither, found by asking why morel-java declines
+nothing:
+
+4. **The two Cores disagree about `exists`, `ordinal` and `current`,
+   and the tree cannot express any of them.** morel-java's translator
+   declines none of its 1534 queries and asserts as much; ours declines
+   303 for these three. The reason is representation, not capability.
+   `Resolver` in morel-java rewrites `exists ...` into `Relational.
+   nonEmpty (from ...)` and `forall ... require e` into `not exists
+   (from ... where not e)`, so its Core holds an ordinary `From` that
+   the translator handles; morel-rust keeps a terminal
+   `StepKind::Exists` step. And `ordinal` is `BuiltIn.Z_ORDINAL`, a
+   built-in *name*, in morel-java, where morel-rust made it a node
+   (`Expr::Ordinal`, commit `5e31f11a`).
+
+   The finding is not that one Core is wrong. It is that **neither
+   implementation has a node for the row's position, and morel-java
+   does not notice**: its tree carries `$ordinal` as a free name that
+   nothing in the tree defines, and its shadow passes because a name
+   always substitutes. `spec.md` §3 lists eleven constructors and none
+   of them numbers a row. Either the tree needs a constructor, or a
+   query that reads `ordinal` cannot become a tree and morel-java's
+   zero-decline invariant is wrong. Raise it with morel-java before
+   changing either implementation.
 
 And two in `spec.md`, from reading it alone:
 
