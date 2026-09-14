@@ -2046,6 +2046,32 @@ impl BuiltInFunction {
         names
     }
 
+    /// Returns whether this function has a name of its own in the
+    /// default namespace, as `abs`, `count` and `concat` do.
+    ///
+    /// A function that is *overloaded* under a global name -- `only`,
+    /// which is both `Bag.only` and `List.only` -- is not one of these:
+    /// morel-java writes it `#only Relational`, with the structure the
+    /// resolver picked.
+    pub(crate) fn is_global(&self) -> bool {
+        self.get_bool("global").is_some_and(|b| b)
+    }
+
+    /// Returns the name this function is written by in a plan.
+    ///
+    /// An overload's instance is chosen by the resolver and named for
+    /// the type it resolved to, `sum$real`; morel-java keeps the
+    /// generic in the plan text, so the suffix comes off. A name that
+    /// *starts* with `$` is not one of these -- `$check`, `$require` --
+    /// and keeps all of itself.
+    pub(crate) fn plan_name(&self) -> &'static str {
+        let name = self.name();
+        match name.split_once('$') {
+            Some((generic, _)) if !generic.is_empty() => generic,
+            _ => name,
+        }
+    }
+
     /// Returns the overloaded global name (e.g. `"only"` for
     /// `BagOnly` and `ListOnly`).
     pub(crate) fn overloaded_name(&self) -> Option<&'static str> {
@@ -2089,37 +2115,28 @@ impl BuiltInFunction {
             if matches!(param.as_ref(), Type::Tuple(_)))
     }
 
-    /// Returns the infix operator that this function is written as in
-    /// a core expression, or `None` if it has no infix form. Mirrors
-    /// morel-java's `Resolver.toOp`: `+` (int, real or generic), the
-    /// comparisons, `::`, `@`, `andalso` and `orelse` are written infix,
-    /// `x + 1`; every other operator is written as a call of a structure
-    /// member, `#* Int (x, 2)`. A word operator is never infix: morel-java
-    /// routes word operands to the `Word` members, which have no infix
-    /// form.
-    pub(crate) fn infix_op(&self) -> Option<&'static str> {
-        use BuiltInFunction::{
-            BoolAndAlso, BoolEq, BoolGt, BoolLt, BoolNe, BoolOrElse, CharEq,
-            CharGe, CharGt, CharLe, CharLt, CharNe, GEq, GGe, GGt, GLe, GLt,
-            GNe, GPlus, IntEq, IntGe, IntGt, IntLe, IntLt, IntNe, IntPlus,
-            ListAt, ListCons, RealEq, RealGe, RealGt, RealLe, RealLt, RealNe,
-            RealPlus, StringEq, StringGe, StringGt, StringLe, StringLt,
-            StringNe,
-        };
-        match self {
-            GPlus | IntPlus | RealPlus => Some("+"),
-            GEq | IntEq | RealEq | StringEq | CharEq | BoolEq => Some("="),
-            GNe | IntNe | RealNe | StringNe | CharNe | BoolNe => Some("<>"),
-            GLt | IntLt | RealLt | StringLt | CharLt | BoolLt => Some("<"),
-            GLe | IntLe | RealLe | StringLe | CharLe => Some("<="),
-            GGt | IntGt | RealGt | StringGt | CharGt | BoolGt => Some(">"),
-            GGe | IntGe | RealGe | StringGe | CharGe => Some(">="),
-            ListCons => Some("::"),
-            ListAt => Some("@"),
-            BoolAndAlso => Some("andalso"),
-            BoolOrElse => Some("orelse"),
-            _ => None,
+    /// Returns how this function is written infix in a core expression
+    /// -- its spelling and its precedence bounds -- or `None` if it has
+    /// no infix form.
+    ///
+    /// The set is morel-java's, and it is larger than
+    /// `Resolver.toOp`'s: `AstWriter.infix` looks the function's name
+    /// up in `Op.BY_OP_NAME`, so every `Op` with a padded name is
+    /// written infix, not only the handful `toOp` converts. So `i - 5`
+    /// is `$0 - 5` and not `#- Int ($0, 5)`.
+    ///
+    /// The name may be the global operator's (`op -`, which is what a
+    /// generic `-` resolves to) or the structure member's (`-`, for
+    /// `Int.-` and for `Word.+`); morel takes either to the same
+    /// operator, and so does morel-java -- `0wxAB + 0wx1` is infix
+    /// there too.
+    pub(crate) fn infix_op(&self) -> Option<(&'static str, u8, u8)> {
+        if !self.takes_pair() {
+            return None;
         }
+        let name = self.op_name().unwrap_or_else(|| self.name());
+        let op = name.strip_prefix("op ").unwrap_or(name);
+        infix_bounds(op).map(|(left, right)| (op, left, right))
     }
 
     /// Returns the `op X` spelling of an operator: the canonical name of
@@ -2142,6 +2159,57 @@ impl BuiltInFunction {
     pub(crate) fn is_built_in_overload(name: &str) -> bool {
         BuiltInFunction::iter().any(|f| f.overloaded_name() == Some(name))
     }
+}
+
+/// Returns the precedence bounds of an infix operator, or `None` where
+/// it is not one morel-java writes infix.
+///
+/// The bounds are `Op`'s: `precedence * 2`, with one added on the side
+/// the operator does *not* associate to, so that an operand of equal
+/// precedence is bracketed on the side where regrouping would change
+/// what it means. `AstWriter.infix` brackets when `left > op.left ||
+/// op.right < right`, which is what keeps the brackets in `$0 - ($0 -
+/// 1)` and drops them from `$0 - 1 + $0`.
+///
+/// `~` is not here. `Op.NEGATE` reaches the constructor with
+/// `Assoc.NONE`, which gives a *prefix* operator `left = 1`, and
+/// morel-java reads that as "binary infix" and crashes on the cast;
+/// see `java-findings.md` on the `449-tree` branch.
+pub(crate) fn infix_bounds(op: &str) -> Option<(u8, u8)> {
+    /// `(spelling, precedence, right-associative)`, from morel-java's
+    /// `Op`.
+    const OPS: &[(&str, u8, bool)] = &[
+        ("*", 7, false),
+        ("/", 7, false),
+        ("div", 7, false),
+        ("mod", 7, false),
+        ("+", 6, false),
+        ("-", 6, false),
+        ("^", 6, false),
+        ("::", 5, true),
+        ("@", 5, true),
+        ("<=", 4, false),
+        ("<", 4, false),
+        (">=", 4, false),
+        (">", 4, false),
+        ("=", 4, false),
+        ("<>", 4, false),
+        ("elem", 4, false),
+        ("notelem", 4, false),
+        ("o", 3, false),
+        ("andalso", 2, false),
+        ("orelse", 1, false),
+        ("implies", 0, false),
+    ];
+    OPS.iter().find(|(spelling, _, _)| *spelling == op).map(
+        |(_, precedence, right_associative)| {
+            let base = precedence * 2;
+            (
+                base + u8::from(*right_associative),
+                base + u8::from(!*right_associative),
+            )
+        },
+    )
 }
 
 /// List of built-in records. They represent structures of the standard basis

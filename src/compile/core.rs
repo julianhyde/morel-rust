@@ -239,132 +239,165 @@ impl Expr {
 
 impl Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        match &self {
-            // lint: sort until '#}' where '##Expr::'
-            Expr::Aggregate(_, a0, a1, _) => {
-                write!(f, "({} over {})", a0, a1)
-            }
-            Expr::Apply(_, fx, arg, _) => {
-                // `Apply(Lit(Val::Fn(op)), Tuple([a, b]))` is written
-                // `a op b` when `op` has an infix form, and as a call
-                // otherwise: `x + 1`, but `#* Int (x, 2)`. The set is
-                // morel-java's (see `BuiltInFunction::infix_op`).
-                if let Expr::Literal(_, Val::Fn(func)) = fx.as_ref()
-                    && let Expr::Tuple(_, args) = arg.as_ref()
-                    && args.len() == 2
-                    && let Some(op) = func.infix_op()
-                {
-                    return write!(f, "{} {} {}", args[0], op, args[1]);
+        fmt_bounded(self, f, 0, 0)
+    }
+}
+
+/// Writes `expr` into the operator context whose precedence bounds are
+/// `left` and `right`.
+///
+/// Only an infix operator reads the bounds; everything else is
+/// bracketed already, or is an atom, and starts its operands in a fresh
+/// context. That is morel-java's `AstNode.unparse(w, left, right)` with
+/// the arms it does not need left out.
+fn fmt_bounded(
+    expr: &Expr,
+    f: &mut Formatter<'_>,
+    left: u8,
+    right: u8,
+) -> FmtResult {
+    match expr {
+        // lint: sort until '#}' where '##Expr::'
+        Expr::Aggregate(_, a0, a1, _) => {
+            write!(f, "{} over {}", a0, a1)
+        }
+        Expr::Apply(_, fx, arg, _) => {
+            // `Apply(Lit(Val::Fn(op)), Tuple([a, b]))` is written
+            // `a op b` when `op` has an infix form, and as a call
+            // otherwise. The set is morel-java's (see
+            // `BuiltInFunction::infix_op`), and so is the bracketing:
+            // an operand is bracketed where the context binds
+            // tighter than the operator does, which keeps
+            // `$0 - ($0 - 1)` and drops the brackets from
+            // `$0 - 1 + $0`.
+            if let Expr::Literal(_, Val::Fn(func)) = fx.as_ref()
+                && let Expr::Tuple(_, args) = arg.as_ref()
+                && args.len() == 2
+                && let Some((op, op_left, op_right)) = func.infix_op()
+            {
+                let wrap = left > op_left || op_right < right;
+                let (left, right) = if wrap {
+                    f.write_str("(")?;
+                    (0, 0)
+                } else {
+                    (left, right)
+                };
+                fmt_bounded(&args[0], f, left, op_left)?;
+                write!(f, " {} ", op)?;
+                fmt_bounded(&args[1], f, op_right, right)?;
+                if wrap {
+                    f.write_str(")")?;
                 }
-                // An argument is bracketed unless it is written as an
-                // atom already: a name, a literal, or something that
-                // carries its own brackets. `#rev List xs`, but
-                // `#flatten Range ([OPEN (0, 10)])`.
-                match arg.as_ref() {
-                    Expr::Identifier(_, _)
-                    | Expr::Literal(_, _)
-                    | Expr::Tuple(_, _) => write!(f, "{} {}", fx, arg),
-                    _ => write!(f, "{} ({})", fx, arg),
-                }
+                return Ok(());
             }
-            Expr::Case(_, e, arms, _) => {
-                write!(f, "case {} of ", e)?;
-                for (i, match_) in arms.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " | ")?;
+            // An argument is bracketed unless it is written as an
+            // atom already: a name, a literal, or something that
+            // carries its own brackets. `#rev List xs`, but
+            // `#flatten Range ([OPEN (0, 10)])`.
+            match arg.as_ref() {
+                Expr::Identifier(_, _)
+                | Expr::Literal(_, _)
+                | Expr::Tuple(_, _) => write!(f, "{} {}", fx, arg),
+                _ => write!(f, "{} ({})", fx, arg),
+            }
+        }
+        Expr::Case(_, e, arms, _) => {
+            write!(f, "case {} of ", e)?;
+            for (i, match_) in arms.iter().enumerate() {
+                if i > 0 {
+                    write!(f, " | ")?;
+                }
+                write!(f, "{} => {}", match_.pat, match_.expr)?;
+            }
+            Ok(())
+        }
+        Expr::Current(_) => write!(f, "current"),
+        Expr::Exists(_, steps) => write!(f, "exists {:?}", steps),
+        Expr::Extent(t, _) => write!(f, "extent({})", t),
+        Expr::Fn(_, arms, _) => {
+            write!(f, "fn ")?;
+            for (i, match_) in arms.iter().enumerate() {
+                if i > 0 {
+                    write!(f, " | ")?;
+                }
+                write!(f, "{} => {}", match_.pat, match_.expr)?;
+            }
+            Ok(())
+        }
+        Expr::Forall(_, steps) => {
+            write!(f, "forall")?;
+            write_steps(f, steps)
+        }
+        Expr::From(_, steps) => {
+            write!(f, "from")?;
+            write_steps(f, steps)
+        }
+        Expr::Identifier(_, name) => write!(f, "{}", name),
+        Expr::Let(_, decls, body) => {
+            write!(f, "let ")?;
+            let mut first = true;
+            for decl in decls {
+                if first {
+                    first = false;
+                } else {
+                    write!(f, "; ")?;
+                }
+                write!(f, "{}", decl)?;
+            }
+            write!(f, " in {} end", body)
+        }
+        Expr::List(_, elems) => {
+            let elems_str = elems
+                .iter()
+                .map(|e| format!("{}", e))
+                .collect::<Vec<_>>()
+                .join(", ");
+            write!(f, "[{}]", elems_str)
+        }
+        Expr::Literal(_, lit) => write!(f, "{}", lit),
+        Expr::Ordinal(_) => write!(f, "ordinal"),
+        Expr::Raise(_, e, _) => write!(f, "raise {}", e),
+        Expr::RecordSelector(t, slot) => {
+            // A selector is written by the field it selects: a
+            // record's label, or a tuple's ordinal, which is
+            // 1-based as it is in the source. `#rev List`, `#1 p`.
+            let field = match t.as_ref() {
+                Type::Fn(param_type, _) => match peel_type(param_type) {
+                    Type::Record(_, fields) => {
+                        fields.keys().nth(*slot).map(|l| match l {
+                            Label::String(name) => name.clone(),
+                            Label::Ordinal(i) => i.to_string(),
+                        })
                     }
-                    write!(f, "{} => {}", match_.pat, match_.expr)?;
-                }
-                Ok(())
+                    _ => None,
+                },
+                _ => None,
+            };
+            match field {
+                Some(name) => write!(f, "#{}", name),
+                None => write!(f, "#{}", slot + 1),
             }
-            Expr::Current(_) => write!(f, "current"),
-            Expr::Exists(_, steps) => write!(f, "exists {:?}", steps),
-            Expr::Extent(t, _) => write!(f, "extent({})", t),
-            Expr::Fn(_, arms, _) => {
-                write!(f, "fn ")?;
-                for (i, match_) in arms.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " | ")?;
-                    }
-                    write!(f, "{} => {}", match_.pat, match_.expr)?;
-                }
-                Ok(())
-            }
-            Expr::Forall(_, steps) => {
-                write!(f, "forall")?;
-                write_steps(f, steps)
-            }
-            Expr::From(_, steps) => {
-                write!(f, "from")?;
-                write_steps(f, steps)
-            }
-            Expr::Identifier(_, name) => write!(f, "{}", name),
-            Expr::Let(_, decls, body) => {
-                write!(f, "let ")?;
+        }
+        Expr::Tuple(t, elems) => {
+            if let Type::Record(_, type_fields) = t.as_ref() {
+                write!(f, "{{")?;
                 let mut first = true;
-                for decl in decls {
+                for (label, e) in type_fields.keys().zip(elems.iter()) {
                     if first {
                         first = false;
                     } else {
-                        write!(f, "; ")?;
+                        write!(f, ", ")?;
                     }
-                    write!(f, "{}", decl)?;
+                    write!(f, "{} = {}", label, e)?;
                 }
-                write!(f, " in {} end", body)
+                return write!(f, "}}");
             }
-            Expr::List(_, elems) => {
-                let elems_str = elems
-                    .iter()
-                    .map(|e| format!("{}", e))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "[{}]", elems_str)
-            }
-            Expr::Literal(_, lit) => write!(f, "{}", lit),
-            Expr::Ordinal(_) => write!(f, "ordinal"),
-            Expr::Raise(_, e, _) => write!(f, "raise {}", e),
-            Expr::RecordSelector(t, slot) => {
-                // A selector is written by the field it selects: a
-                // record's label, or a tuple's ordinal, which is
-                // 1-based as it is in the source. `#rev List`, `#1 p`.
-                let field = match t.as_ref() {
-                    Type::Fn(param_type, _) => match peel_type(param_type) {
-                        Type::Record(_, fields) => {
-                            fields.keys().nth(*slot).map(|l| match l {
-                                Label::String(name) => name.clone(),
-                                Label::Ordinal(i) => i.to_string(),
-                            })
-                        }
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                match field {
-                    Some(name) => write!(f, "#{}", name),
-                    None => write!(f, "#{}", slot + 1),
-                }
-            }
-            Expr::Tuple(t, elems) => {
-                if let Type::Record(_, type_fields) = t.as_ref() {
-                    write!(f, "{{")?;
-                    let mut first = true;
-                    for (label, e) in type_fields.keys().zip(elems.iter()) {
-                        if first {
-                            first = false;
-                        } else {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{} = {}", label, e)?;
-                    }
-                    return write!(f, "}}");
-                }
-                let elems_str = elems
-                    .iter()
-                    .map(|e| format!("{}", e))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "({})", elems_str)
-            }
+            let elems_str = elems
+                .iter()
+                .map(|e| format!("{}", e))
+                .collect::<Vec<_>>()
+                .join(", ");
+            write!(f, "({})", elems_str)
         }
     }
 }

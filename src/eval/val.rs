@@ -471,15 +471,16 @@ impl Display for Val {
             Val::Doc(_) => write!(f, "-"),
             Val::File(file) => write!(f, "{}", file::display_file(file)),
             Val::Fn(func) => {
-                // Written as morel-java's unparser writes a built-in:
-                // `not` bare; a constructor (`SOME`, `LESS`) bare, since
-                // it is resolved without its structure name; any other
-                // structure member in record-selector form, `#size
-                // String` or `#* Int`, because in core a call like
-                // `String.size x` is `#size String x`; and a top-level
-                // name as it is, `abs` or `op <`.
-                let name = func.name();
-                if func == &BuiltInFunction::BoolNot || func.is_constructor() {
+                // Written as morel-java's unparser writes a built-in: a
+                // name of its own in the default namespace bare, `abs`
+                // or `count`, because that is how the resolver found it;
+                // a constructor (`SOME`, `LESS`) bare for the same
+                // reason; and any other structure member in
+                // record-selector form, `#size String` or `#toString
+                // Int`, because in core a call like `String.size x` is
+                // `#size String x`.
+                let name = func.plan_name();
+                if func.is_global() || func.is_constructor() {
                     write!(f, "{}", name)
                 } else if let Some(p) = func.package() {
                     write!(f, "#{} {}", name, p)
