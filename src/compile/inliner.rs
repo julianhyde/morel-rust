@@ -793,17 +793,25 @@ impl Expr {
             }
             StepKind::Scan(pat, expr, condition) => {
                 let pat2 = x.transform_pat(env, pat);
+                // The source is evaluated before the pattern binds
+                // anything, so it reads the enclosing scope; the `on`
+                // condition is evaluated once per candidate pair, with
+                // the row this scan produced, so it reads the pattern's
+                // names. `from e in emps, d in depts on e.deptno =
+                // d.deptno` with a `val d` above it got the outer one,
+                // and answered with it.
                 let expr2 = x.transform_expr(env, expr);
-                let condition2 = condition
-                    .as_ref()
-                    .map(|c| Box::new(x.transform_expr(env, c)));
-                // Shadow names bound by the scan pattern so that
-                // subsequent steps (e.g. Where, Yield) do not inline
-                // outer-scope constants for variables of the same name.
+                // Shadow names bound by the scan pattern so that the
+                // condition, and subsequent steps (e.g. Where, Yield),
+                // do not inline outer-scope constants for variables of
+                // the same name.
                 let mut scan_env = env.clone();
                 pat.for_each_id_pat(&mut |(t, name)| {
                     scan_env = scan_env.child_none(name, t);
                 });
+                let condition2 = condition
+                    .as_ref()
+                    .map(|c| Box::new(x.transform_expr(&scan_env, c)));
                 (
                     StepKind::Scan(Box::new(pat2), Box::new(expr2), condition2),
                     scan_env,

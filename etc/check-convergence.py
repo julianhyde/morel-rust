@@ -83,6 +83,14 @@ SCRIPT_SUFFIXES = (".smli", ".sml", ".sml.out")
 # merely outstanding. A file morel-rust has not caught up with yet
 # belongs in the divergence report, where it reads as work to do.
 ACCEPTED = {
+    "relational.smli": (
+        818,
+        "tests added here and not yet in morel-java: an `on` condition "
+        "that reads the row the scan just produced where an outer value "
+        "has the same name, and a set operator whose plan says "
+        "`distinct` when the query did. Both are to be propagated to "
+        "morel-java.",
+    ),
     "hybrid.smli": (
         373,
         "morel-rust has no Calcite, so `Sys.plan` shows a filter "
