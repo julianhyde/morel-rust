@@ -83,6 +83,15 @@ SCRIPT_SUFFIXES = (".smli", ".sml", ".sml.out")
 # merely outstanding. A file morel-rust has not caught up with yet
 # belongs in the divergence report, where it reads as work to do.
 ACCEPTED = {
+    "optimize.smli": (
+        179,
+        "tests of `inlinePassCount` added here and not yet in "
+        "morel-java, to be propagated there; and, after inlining, "
+        "morel-java writes a built-in operator as the structure member "
+        "it inlined to, `#`*` Int (7, 2)`, where this writes it infix "
+        "as it does before inlining, because one function value stands "
+        "for both.",
+    ),
     "relational.smli": (
         830,
         "tests added here and not yet in morel-java: an `on` condition "

@@ -521,4 +521,25 @@ from i in List.rev xs;
 Sys.planEx "~1";
 > val it = "val it = #rev List xs" : string
 
+(* The `inlinePassCount` property is the number of analysis-and-inline
+ * passes. It used to be accepted and ignored: the inliner read a
+ * constant, so setting it to zero changed nothing. Zero does not mean
+ * "do nothing" -- the inliner still runs once with no analysis, so
+ * nothing is substituted and the folding that does not need use counts
+ * still happens. *)
+Sys.set ("inlinePassCount", 0);
+> val it = () : unit
+let val d = 2 in from i in [1, 2, 3] where i = d yield i + d end;
+> val it = [4] : int list
+Sys.planEx "0";
+> val it =
+>   "val it = let val d = 2 in from i in [1, 2, 3] where i = d yield i + d end"
+>   : string
+Sys.unset "inlinePassCount";
+> val it = () : unit
+let val d = 2 in from i in [1, 2, 3] where i = d yield i + d end;
+> val it = [4] : int list
+Sys.planEx "0";
+> val it = "val it = from i in [1, 2, 3] where i = 2 yield i + 2" : string
+
 (*) End optimize.smli
