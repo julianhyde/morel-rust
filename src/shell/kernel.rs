@@ -573,6 +573,11 @@ impl Kernel {
                 self.session.borrow_mut().config.hybrid = Some(b);
                 Ok(PropVal::Bool(b))
             }
+            Prop::InlinePassCount => {
+                let i = expect_int(prop, val)?;
+                self.session.borrow_mut().config.inline_pass_count = Some(i);
+                Ok(PropVal::Int(i))
+            }
             Prop::LineWidth => {
                 let i = expect_int(prop, val)?;
                 self.config.line_width = Some(i);
@@ -706,6 +711,9 @@ impl Kernel {
             }
             Prop::Hybrid => {
                 self.session.borrow_mut().config.hybrid = None;
+            }
+            Prop::InlinePassCount => {
+                self.session.borrow_mut().config.inline_pass_count = None;
             }
             Prop::LineWidth => {
                 self.config.line_width = None;
@@ -1000,6 +1008,21 @@ impl Kernel {
     /// in the session so that `Sys.planEx` can re-print them. Mirrors
     /// the storage logic in `evaluate_node`, but is a separate entry
     /// point used when evaluation is skipped due to a compile error.
+    /// How many analysis-and-inline passes to run, from the
+    /// `inlinePassCount` property.
+    ///
+    /// The property is what a session sets; the inliner used to read a
+    /// constant instead, so `Sys.set ("inlinePassCount", 0)` silently
+    /// did nothing.
+    fn inline_passes(&self) -> usize {
+        self.session
+            .borrow()
+            .config
+            .inline_pass_count
+            .unwrap_or(inliner::INLINE_PASS_COUNT as i32)
+            .max(0) as usize
+    }
+
     fn record_decls_for_planex(&mut self, resolved: &Resolved) {
         let line_width = self.config.line_width.unwrap_or(79) as usize;
         let (decl, resolve_errors) = resolver::resolve(resolved, line_width);
@@ -1010,7 +1033,7 @@ impl Kernel {
         for (k, v) in &self.environment.bindings {
             env2 = env2.child(k, &Type::Primitive(PrimitiveType::Unit), v);
         }
-        let decl2 = inliner::inline_decl(&env2, &decl);
+        let decl2 = inliner::inline_decl(&env2, &decl, self.inline_passes());
         if !is_plan_or_plan_ex_call(&decl2) {
             let mut session = self.session.borrow_mut();
             session.pre_inline_decl = Some(decl);
@@ -1113,7 +1136,7 @@ impl Kernel {
             let t = e.type_();
             env2 = env2.child_expr(name, &t, e);
         }
-        let decl2 = inliner::inline_decl(&env2, &decl);
+        let decl2 = inliner::inline_decl(&env2, &decl, self.inline_passes());
 
         // Save the pre- and post-inlining declarations so that
         // `Sys.planEx` can re-print the previous command's plan at the

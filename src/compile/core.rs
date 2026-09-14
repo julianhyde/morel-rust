@@ -265,155 +265,188 @@ impl Expr {
 
 impl Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        match &self {
-            // lint: sort until '#}' where '##Expr::'
-            Expr::Aggregate(_, a0, a1, _) => {
-                write!(f, "({} over {})", a0, a1)
-            }
-            Expr::Apply(_, fx, arg, _) => {
-                // `Apply(Lit(Val::Fn(op)), Tuple([a, b]))` is written
-                // `a op b` when `op` has an infix form, and as a call
-                // otherwise: `x + 1`, but `#* Int (x, 2)`. The set is
-                // morel-java's (see `BuiltInFunction::infix_op`).
-                if let Expr::Literal(_, Val::Fn(func)) = fx.as_ref()
-                    && let Expr::Tuple(_, args) = arg.as_ref()
-                    && args.len() == 2
-                    && let Some(op) = func.infix_op()
-                {
-                    return write!(f, "{} {} {}", args[0], op, args[1]);
+        fmt_bounded(self, f, 0, 0)
+    }
+}
+
+/// Writes `expr` into the operator context whose precedence bounds are
+/// `left` and `right`.
+///
+/// Only an infix operator reads the bounds; everything else is
+/// bracketed already, or is an atom, and starts its operands in a fresh
+/// context. That is morel-java's `AstNode.unparse(w, left, right)` with
+/// the arms it does not need left out.
+fn fmt_bounded(
+    expr: &Expr,
+    f: &mut Formatter<'_>,
+    left: u8,
+    right: u8,
+) -> FmtResult {
+    match expr {
+        // lint: sort until '#}' where '##Expr::'
+        Expr::Aggregate(_, a0, a1, _) => {
+            write!(f, "{} over {}", a0, a1)
+        }
+        Expr::Apply(_, fx, arg, _) => {
+            // `Apply(Lit(Val::Fn(op)), Tuple([a, b]))` is written
+            // `a op b` when `op` has an infix form, and as a call
+            // otherwise. The set is morel-java's (see
+            // `BuiltInFunction::infix_op`), and so is the bracketing:
+            // an operand is bracketed where the context binds
+            // tighter than the operator does, which keeps
+            // `$0 - ($0 - 1)` and drops the brackets from
+            // `$0 - 1 + $0`.
+            if let Expr::Literal(_, Val::Fn(func)) = fx.as_ref()
+                && let Expr::Tuple(_, args) = arg.as_ref()
+                && args.len() == 2
+                && let Some((op, op_left, op_right)) = func.infix_op()
+            {
+                let wrap = left > op_left || op_right < right;
+                let (left, right) = if wrap {
+                    f.write_str("(")?;
+                    (0, 0)
+                } else {
+                    (left, right)
+                };
+                fmt_bounded(&args[0], f, left, op_left)?;
+                write!(f, " {} ", op)?;
+                fmt_bounded(&args[1], f, op_right, right)?;
+                if wrap {
+                    f.write_str(")")?;
                 }
-                // An argument is bracketed unless it is written as an
-                // atom already: a name, a literal, or something that
-                // carries its own brackets. `#rev List xs`, but
-                // `#flatten Range ([OPEN (0, 10)])`.
-                match arg.as_ref() {
-                    Expr::Identifier(_, _)
-                    | Expr::Input(_, _)
-                    | Expr::Literal(_, _)
-                    | Expr::RecordSelector(_, _)
-                    | Expr::Tuple(_, _) => write!(f, "{} {}", fx, arg),
-                    _ => write!(f, "{} ({})", fx, arg),
-                }
+                return Ok(());
             }
-            Expr::Case(_, e, arms, _) => {
-                write!(f, "case {} of ", e)?;
-                for (i, match_) in arms.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " | ")?;
+            // An argument is bracketed unless it is written as an
+            // atom already: a name, a literal, or something that
+            // carries its own brackets. `#rev List xs`, but
+            // `#flatten Range ([OPEN (0, 10)])`.
+            match arg.as_ref() {
+                Expr::Identifier(_, _)
+                | Expr::Input(_, _)
+                | Expr::Literal(_, _)
+                | Expr::RecordSelector(_, _)
+                | Expr::Tuple(_, _) => write!(f, "{} {}", fx, arg),
+                _ => write!(f, "{} ({})", fx, arg),
+            }
+        }
+        Expr::Case(_, e, arms, _) => {
+            write!(f, "case {} of ", e)?;
+            for (i, match_) in arms.iter().enumerate() {
+                if i > 0 {
+                    write!(f, " | ")?;
+                }
+                write!(f, "{} => {}", match_.pat, match_.expr)?;
+            }
+            Ok(())
+        }
+        Expr::Current(_) => write!(f, "current"),
+        Expr::Exists(_, steps) => write!(f, "exists {:?}", steps),
+        Expr::Extent(t, _) => write!(f, "extent({})", t),
+        Expr::Fn(_, arms, _) => {
+            write!(f, "fn ")?;
+            for (i, match_) in arms.iter().enumerate() {
+                if i > 0 {
+                    write!(f, " | ")?;
+                }
+                write!(f, "{} => {}", match_.pat, match_.expr)?;
+            }
+            Ok(())
+        }
+        Expr::Forall(_, steps) => {
+            write!(f, "forall")?;
+            write_steps(f, steps)
+        }
+        Expr::From(_, steps) => {
+            write!(f, "from")?;
+            write_steps(f, steps)
+        }
+        Expr::Identifier(_, name) => write!(f, "{}", name),
+        Expr::Input(_, i) => write!(f, "${}", i),
+        Expr::Let(_, decls, body) => {
+            write!(f, "let ")?;
+            let mut first = true;
+            for decl in decls {
+                if first {
+                    first = false;
+                } else {
+                    write!(f, "; ")?;
+                }
+                write!(f, "{}", decl)?;
+            }
+            write!(f, " in {} end", body)
+        }
+        Expr::List(_, elems) => {
+            let elems_str = elems
+                .iter()
+                .map(|e| format!("{}", e))
+                .collect::<Vec<_>>()
+                .join(", ");
+            write!(f, "[{}]", elems_str)
+        }
+        Expr::Literal(_, lit) => write!(f, "{}", lit),
+        Expr::Ordinal(_) => write!(f, "ordinal"),
+        Expr::Raise(_, e, _) => write!(f, "raise {}", e),
+        Expr::RecordSelector(t, slot) => {
+            // A selector is written by the field it selects: a
+            // record's label, or a tuple's ordinal, which is
+            // 1-based as it is in the source. `#rev List`, `#1 p`.
+            let field = match t.as_ref() {
+                Type::Fn(param_type, _) => match peel_type(param_type) {
+                    Type::Record(_, fields) => {
+                        fields.keys().nth(*slot).map(|l| match l {
+                            Label::String(name) => name.clone(),
+                            Label::Ordinal(i) => i.to_string(),
+                        })
                     }
-                    write!(f, "{} => {}", match_.pat, match_.expr)?;
-                }
-                Ok(())
+                    _ => None,
+                },
+                _ => None,
+            };
+            match field {
+                Some(name) => write!(f, "#{}", name),
+                None => write!(f, "#{}", slot + 1),
             }
-            Expr::Current(_) => write!(f, "current"),
-            Expr::Exists(_, steps) => write!(f, "exists {:?}", steps),
-            Expr::Extent(t, _) => write!(f, "extent({})", t),
-            Expr::Fn(_, arms, _) => {
-                write!(f, "fn ")?;
-                for (i, match_) in arms.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " | ")?;
-                    }
-                    write!(f, "{} => {}", match_.pat, match_.expr)?;
-                }
-                Ok(())
+        }
+        Expr::Rel(_, rel) => {
+            // A relational operator is the first non-whitespace on
+            // its line (`spec.md` §6.2), and this one would not be,
+            // so while a plan is being printed it prints as a
+            // reference and its lines go below the tree, where they
+            // can be read. Splicing them in here is what made a
+            // nested query's plan unparseable: its indentation began
+            // again from zero inside the line that held it.
+            if let Some(reference) = rel_printer::rel_ref(self) {
+                return write!(f, "{}", reference);
             }
-            Expr::Forall(_, steps) => {
-                write!(f, "forall")?;
-                write_steps(f, steps)
+            // Outside a plan -- an error message, a trace -- a node
+            // prints on one line, so that a tree built in a test can
+            // be read at all.
+            write!(f, "{}", rel.op_name())?;
+            for child in rel.children() {
+                write!(f, " ({})", child)?;
             }
-            Expr::From(_, steps) => {
-                write!(f, "from")?;
-                write_steps(f, steps)
-            }
-            Expr::Identifier(_, name) => write!(f, "{}", name),
-            Expr::Input(_, i) => write!(f, "${}", i),
-            Expr::Let(_, decls, body) => {
-                write!(f, "let ")?;
+            Ok(())
+        }
+        Expr::Tuple(t, elems) => {
+            if let Type::Record(_, type_fields) = t.as_ref() {
+                write!(f, "{{")?;
                 let mut first = true;
-                for decl in decls {
+                for (label, e) in type_fields.keys().zip(elems.iter()) {
                     if first {
                         first = false;
                     } else {
-                        write!(f, "; ")?;
+                        write!(f, ", ")?;
                     }
-                    write!(f, "{}", decl)?;
+                    write!(f, "{} = {}", label, e)?;
                 }
-                write!(f, " in {} end", body)
+                return write!(f, "}}");
             }
-            Expr::List(_, elems) => {
-                let elems_str = elems
-                    .iter()
-                    .map(|e| format!("{}", e))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "[{}]", elems_str)
-            }
-            Expr::Literal(_, lit) => write!(f, "{}", lit),
-            Expr::Ordinal(_) => write!(f, "ordinal"),
-            Expr::Raise(_, e, _) => write!(f, "raise {}", e),
-            Expr::RecordSelector(t, slot) => {
-                // A selector is written by the field it selects: a
-                // record's label, or a tuple's ordinal, which is
-                // 1-based as it is in the source. `#rev List`, `#1 p`.
-                let field = match t.as_ref() {
-                    Type::Fn(param_type, _) => match peel_type(param_type) {
-                        Type::Record(_, fields) => {
-                            fields.keys().nth(*slot).map(|l| match l {
-                                Label::String(name) => name.clone(),
-                                Label::Ordinal(i) => i.to_string(),
-                            })
-                        }
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                match field {
-                    Some(name) => write!(f, "#{}", name),
-                    None => write!(f, "#{}", slot + 1),
-                }
-            }
-            Expr::Rel(_, rel) => {
-                // A relational operator is the first non-whitespace on
-                // its line (`spec.md` §6.2), and this one would not be,
-                // so while a plan is being printed it prints as a
-                // reference and its lines go below the tree, where they
-                // can be read. Splicing them in here is what made a
-                // nested query's plan unparseable: its indentation began
-                // again from zero inside the line that held it.
-                if let Some(reference) = rel_printer::rel_ref(self) {
-                    return write!(f, "{}", reference);
-                }
-                // Outside a plan -- an error message, a trace -- a node
-                // prints on one line, so that a tree built in a test can
-                // be read at all.
-                write!(f, "{}", rel.op_name())?;
-                for child in rel.children() {
-                    write!(f, " ({})", child)?;
-                }
-                Ok(())
-            }
-            Expr::Tuple(t, elems) => {
-                if let Type::Record(_, type_fields) = t.as_ref() {
-                    write!(f, "{{")?;
-                    let mut first = true;
-                    for (label, e) in type_fields.keys().zip(elems.iter()) {
-                        if first {
-                            first = false;
-                        } else {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{} = {}", label, e)?;
-                    }
-                    return write!(f, "}}");
-                }
-                let elems_str = elems
-                    .iter()
-                    .map(|e| format!("{}", e))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "({})", elems_str)
-            }
+            let elems_str = elems
+                .iter()
+                .map(|e| format!("{}", e))
+                .collect::<Vec<_>>()
+                .join(", ");
+            write!(f, "({})", elems_str)
         }
     }
 }
@@ -1361,7 +1394,9 @@ fn write_steps(f: &mut Formatter<'_>, steps: &[Step]) -> FmtResult {
             // lint: sort until '#}' where '##StepKind::'
             StepKind::Compute(e) => write!(f, "compute {}", e)?,
             StepKind::Distinct => write!(f, "distinct")?,
-            StepKind::Except(all, es) => write_set_step(f, "except", *all, es)?,
+            StepKind::Except(distinct, es) => {
+                write_set_step(f, "except", *distinct, es)?;
+            }
             StepKind::Exists => write!(f, "exists")?,
             StepKind::Group(key, agg) => {
                 write!(f, "group {}", key)?;
@@ -1369,8 +1404,8 @@ fn write_steps(f: &mut Formatter<'_>, steps: &[Step]) -> FmtResult {
                     write!(f, " compute {}", agg)?;
                 }
             }
-            StepKind::Intersect(all, es) => {
-                write_set_step(f, "intersect", *all, es)?;
+            StepKind::Intersect(distinct, es) => {
+                write_set_step(f, "intersect", *distinct, es)?;
             }
             StepKind::Order(e) => write!(f, "order {}", e)?,
             StepKind::Scan(pat, source, condition) => {
@@ -1399,7 +1434,9 @@ fn write_steps(f: &mut Formatter<'_>, steps: &[Step]) -> FmtResult {
             }
             StepKind::Skip(e) => write!(f, "skip {}", e)?,
             StepKind::Take(e) => write!(f, "take {}", e)?,
-            StepKind::Union(all, es) => write_set_step(f, "union", *all, es)?,
+            StepKind::Union(distinct, es) => {
+                write_set_step(f, "union", *distinct, es)?;
+            }
             StepKind::Unorder => write!(f, "unorder")?,
             StepKind::Where(e) => write!(f, "where {}", e)?,
             StepKind::Yield(e) => write!(f, "yield {}", e)?,
@@ -1409,15 +1446,23 @@ fn write_steps(f: &mut Formatter<'_>, steps: &[Step]) -> FmtResult {
 }
 
 /// Writes a `union`, `intersect` or `except` step and its operands.
+/// Writes a set operator's step: the keyword, `distinct` where the step
+/// removes duplicates, and the operands.
+///
+/// The flag is *distinct*, which is what the parser sets for `union
+/// distinct` and what [`crate::syntax::ast`] prints. This used to name
+/// it `all` and write that word, so a plan said the opposite of the
+/// query it came from and re-running the plan would have changed the
+/// answer.
 fn write_set_step(
     f: &mut Formatter<'_>,
     keyword: &str,
-    all: bool,
+    distinct: bool,
     exprs: &[Expr],
 ) -> FmtResult {
     write!(f, "{}", keyword)?;
-    if all {
-        write!(f, " all")?;
+    if distinct {
+        write!(f, " distinct")?;
     }
     for (i, e) in exprs.iter().enumerate() {
         write!(f, "{} {}", if i > 0 { "," } else { "" }, e)?;

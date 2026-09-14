@@ -249,6 +249,9 @@ fn test_each_expr_kind() {
     k.check_kind("from i in [1, 2, 3, 4, 5] skip 1 take 3");
     k.check_kind("from i in [1, 2, 3] union [4, 5]");
     k.check_kind("from i in [1, 2, 3] union distinct [4, 5]");
+    // `distinct` qualifies the operator, so it is written once however
+    // many operands follow.
+    k.check_kind("from i in [1, 2, 3] union distinct [4, 5], [6]");
     k.check_kind("from i in [1, 2, 3] intersect [2, 3]");
     k.check_kind("from i in [1, 2, 3] except [2]");
     k.check_kind_as(

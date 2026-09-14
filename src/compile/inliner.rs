@@ -362,12 +362,22 @@ fn expr_to_val(expr: &Expr) -> Option<Val> {
 /// `inlinePassCount` default.
 pub const INLINE_PASS_COUNT: usize = 5;
 
-/// Runs the analyzer and inliner together, iterating up to
-/// `INLINE_PASS_COUNT` (5) times until the declaration's `Display` is
-/// stable. Mirrors the loop in morel-java's `Compiles.java`.
-pub fn inline_decl(env: &Env, decl: &Decl) -> Decl {
+/// Runs the analyzer and inliner together, iterating up to `passes`
+/// times until the declaration's `Display` is stable. Mirrors the loop
+/// in morel-java's `Compiles.java`.
+///
+/// `passes` is the `inlinePassCount` property. Zero does not mean "do
+/// nothing": morel-java runs the inliner once with no analysis, and so
+/// does this. With no use counts every binding reads as used unsafely,
+/// so none is substituted, and what is left is the folding that does
+/// not depend on them.
+pub fn inline_decl(env: &Env, decl: &Decl, passes: usize) -> Decl {
+    if passes == 0 {
+        let inliner = Inliner { analysis: None };
+        return inliner.transform_decl(env, decl);
+    }
     let mut current = decl.clone();
-    for _ in 0..INLINE_PASS_COUNT {
+    for _ in 0..passes {
         let analysis = analyze(&current);
         let inliner = Inliner {
             analysis: Some(analysis),
@@ -801,17 +811,25 @@ impl Expr {
             }
             StepKind::Scan(pat, expr, condition) => {
                 let pat2 = x.transform_pat(env, pat);
+                // The source is evaluated before the pattern binds
+                // anything, so it reads the enclosing scope; the `on`
+                // condition is evaluated once per candidate pair, with
+                // the row this scan produced, so it reads the pattern's
+                // names. `from e in emps, d in depts on e.deptno =
+                // d.deptno` with a `val d` above it got the outer one,
+                // and answered with it.
                 let expr2 = x.transform_expr(env, expr);
-                let condition2 = condition
-                    .as_ref()
-                    .map(|c| Box::new(x.transform_expr(env, c)));
-                // Shadow names bound by the scan pattern so that
-                // subsequent steps (e.g. Where, Yield) do not inline
-                // outer-scope constants for variables of the same name.
+                // Shadow names bound by the scan pattern so that the
+                // condition, and subsequent steps (e.g. Where, Yield),
+                // do not inline outer-scope constants for variables of
+                // the same name.
                 let mut scan_env = env.clone();
                 pat.for_each_id_pat(&mut |(t, name)| {
                     scan_env = scan_env.child_none(name, t);
                 });
+                let condition2 = condition
+                    .as_ref()
+                    .map(|c| Box::new(x.transform_expr(&scan_env, c)));
                 (
                     StepKind::Scan(Box::new(pat2), Box::new(expr2), condition2),
                     scan_env,
