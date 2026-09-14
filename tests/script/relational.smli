@@ -114,6 +114,27 @@ from e in [{d=20,e="x"},{d=10,e="y"},{d=10,e="z"}]
 > val it = [{d={d=10,n="a"},e={d=10,e="y"}},{d={d=10,n="a"},e={d=10,e="z"}}]
 >   : {d:{d:int, n:string}, e:{d:int, e:string}} list
 
+(* An `on` condition reads the row the scan just produced, so a scan
+ * variable shadows a value of the same name. It used to read the
+ * outer one, which raised where the outer value was not a record and
+ * quietly answered [] where it was. *)
+let
+  val d = 10
+in
+  from e in [{d=20,e="x"},{d=10,e="y"}]
+    join d in [{d=10,n="a"},{d=30,n="b"}] on e.d = d.d
+    yield {e.e, d.n}
+end;
+> val it = [{e="y",n="a"}] : {e:string, n:string} list
+let
+  val d = {d=99,n="z"}
+in
+  from e in [{d=20,e="x"},{d=10,e="y"}]
+    join d in [{d=10,n="a"},{d=30,n="b"}] on e.d = d.d
+    yield {e.e, d.n}
+end;
+> val it = [{e="y",n="a"}] : {e:string, n:string} list
+
 (*
 from e in [{d=20,e="x"},{d=10,e="y"},{d=10,e="z"}]
   join d in [{d=10,n="a"},{d=30,n="b"}] on e.d = d.d
