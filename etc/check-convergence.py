@@ -83,8 +83,21 @@ SCRIPT_SUFFIXES = (".smli", ".sml", ".sml.out")
 # merely outstanding. A file morel-rust has not caught up with yet
 # belongs in the divergence report, where it reads as work to do.
 ACCEPTED = {
+    "such-that.smli": (
+        730,
+        "after inlining, morel-java writes a built-in operator as the "
+        "structure member it inlined to, where this writes it infix as "
+        "it does before inlining, because one function value stands for "
+        "both.",
+    ),
+    "built-in/sys.smli": (
+        54,
+        "`Word.+` is written infix, `0wxAB + 0wx1`, where morel-java "
+        "writes the structure member, because one function value stands "
+        "for the global operator and the member.",
+    ),
     "optimize.smli": (
-        179,
+        185,
         "tests of `inlinePassCount` added here and not yet in "
         "morel-java, to be propagated there; and, after inlining, "
         "morel-java writes a built-in operator as the structure member "

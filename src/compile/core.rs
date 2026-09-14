@@ -248,42 +248,59 @@ impl Expr {
     /// chain breaks before the inner one, so what fits on a line stays
     /// on it. Everything else is laid out as it always was.
     pub fn to_doc(&self) -> Doc {
+        self.doc_bounded(0, 0)
+    }
+
+    /// Returns this expression as a document, in the operator context
+    /// whose precedence bounds are `left` and `right`.
+    ///
+    /// Only an infix operator reads the bounds; everything else is
+    /// bracketed already, or is an atom, and starts its operands in a
+    /// fresh context. That is morel-java's `AstNode.unparse(w, left,
+    /// right)` with the arms it does not need left out.
+    fn doc_bounded(&self, left: u8, right: u8) -> Doc {
         match &self {
             // lint: sort until '#}' where '##Expr::'
-            Expr::Aggregate(_, a0, a1, _) => hcat(vec![
-                text("("),
-                a0.to_doc(),
-                text(" over "),
-                a1.to_doc(),
-                text(")"),
-            ]),
+            Expr::Aggregate(_, a0, a1, _) => {
+                hcat(vec![a0.to_doc(), text(" over "), a1.to_doc()])
+            }
             Expr::Apply(_, fx, arg, _) => {
                 // `Apply(Lit(Val::Fn(op)), Tuple([a, b]))` is written
                 // `a op b` when `op` has an infix form, and as a call
-                // otherwise: `x + 1`, but `#* Int (x, 2)`. The set is
-                // morel-java's (see `BuiltInFunction::infix_op`).
+                // otherwise. The set is morel-java's (see
+                // `BuiltInFunction::infix_op`), and so is the
+                // bracketing: an operand is bracketed where the context
+                // binds tighter than the operator does, which keeps
+                // `$0 - ($0 - 1)` and drops the brackets from
+                // `$0 - 1 + $0`.
                 if let Expr::Literal(_, Val::Fn(func)) = fx.as_ref()
                     && let Expr::Tuple(_, args) = arg.as_ref()
                     && args.len() == 2
-                    && let Some(op) = func.infix_op()
+                    && let Some((op, op_left, op_right)) = func.infix_op()
                 {
-                    if matches!(
+                    let wrap = left > op_left || op_right < right;
+                    let (left, right) =
+                        if wrap { (0, 0) } else { (left, right) };
+                    let a = args[0].doc_bounded(left, op_left);
+                    let b = args[1].doc_bounded(op_right, right);
+                    let doc = if matches!(
                         func,
                         BuiltInFunction::BoolAndAlso
                             | BuiltInFunction::BoolOrElse
                     ) {
-                        return group(hcat(vec![
-                            args[0].to_doc(),
+                        group(hcat(vec![
+                            a,
                             line(),
                             text(&format!("{} ", op)),
-                            args[1].to_doc(),
-                        ]));
+                            b,
+                        ]))
+                    } else {
+                        hcat(vec![a, text(&format!(" {} ", op)), b])
+                    };
+                    if wrap {
+                        return hcat(vec![text("("), doc, text(")")]);
                     }
-                    return hcat(vec![
-                        args[0].to_doc(),
-                        text(&format!(" {} ", op)),
-                        args[1].to_doc(),
-                    ]);
+                    return doc;
                 }
                 // An argument is bracketed unless it is written as an
                 // atom already: a name, a literal, or something that

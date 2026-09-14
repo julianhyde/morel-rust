@@ -354,7 +354,7 @@ from t, f
 > val it : {f:int, t:int} list
 Sys.planEx "3";
 > val it =
->   "val it = from t in #flatten Range ([CLOSED (0, 10)]) join f in #flatten Range ([CLOSED (0, 6)]) where #`*` Int (3, t) + #`*` Int (5, f) = 30"
+>   "val it = from t in #flatten Range ([CLOSED (0, 10)]) join f in #flatten Range ([CLOSED (0, 6)]) where 3 * t + 5 * f = 30"
 >   : string
 
 (* A linear Diophantine equation with no solutions. FBBT bounds

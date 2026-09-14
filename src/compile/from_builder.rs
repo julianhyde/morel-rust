@@ -619,12 +619,14 @@ impl FromBuilder {
     pub fn where_(&mut self, condition: Expr) -> &mut Self {
         let condition = self.subst_current(condition);
         let condition = self.with_ordinal(condition);
-        // Check if the condition is a boolean literal true.
-        if let Expr::Literal(_, Val::Bool(true)) = condition {
-            // Skip "where true".
-            return self;
-        }
-
+        // `where true` is kept, not skipped. morel-java skips it in its
+        // own `FromBuilder` and keeps it in the `RelBuilder` that builds
+        // the tree, where dropping it is a *simplification* that is off
+        // by default, so that a plan shows the query as written. We
+        // build the tree from the step list, so a step dropped here can
+        // never reach it: `from where true yield 1` is `project [1]`
+        // over `filter [true]` over `[()]` in morel-java, and had no
+        // filter at all here.
         let env = self.step_env();
         let step = Step::new(StepKind::Where(Box::new(condition)), env);
         self.add_step(step);
@@ -1335,15 +1337,17 @@ mod tests {
     }
 
     #[test]
-    fn test_where_true_skipped() {
+    fn test_where_true_kept() {
         let mut builder = FromBuilder::new();
         let initial_len = builder.steps.len();
         builder.where_(Expr::Literal(
             Rc::new(Type::Primitive(PrimitiveType::Bool)),
             Val::Bool(true),
         ));
-        // "where true" should be skipped
-        assert_eq!(builder.steps.len(), initial_len);
+        // `where true` is kept: the tree is built from the step list,
+        // so a step dropped here can never reach a plan, and
+        // morel-java's plan shows it.
+        assert_eq!(builder.steps.len(), initial_len + 1);
     }
 
     #[test]
@@ -1571,8 +1575,8 @@ mod tests {
             ),
         );
 
-        // Should have scan, (where true skipped), distinct, and take
-        assert_eq!(builder.steps.len(), 3);
+        // Should have scan, where true, distinct, and take
+        assert_eq!(builder.steps.len(), 4);
     }
 
     #[test]
