@@ -11,13 +11,13 @@ morel-java's `rel-tree.smli` at tag `449-tree.3` is copied across, and
 **every plan in it is now morel-java's text byte for byte**, which is
 the acceptance criterion in "The contract" below.
 
-The findings log at the end has twenty-one entries, eleven of them from
+The findings log at the end has twenty-two entries, twelve of them from
 the differential harness -- among them a wrong answer on `main` that no
 test covered. Nine are fixed: five in the translator, on this branch,
 and four on `main`. The harness asks both implementations for the plan
-of 1,237 queries across the whole of `tests/script`, and over the
+of 1,241 queries across the whole of `tests/script`, and over the
 session they went from agreeing on 385 of them byte for byte to
-agreeing on **502**.
+agreeing on **503**.
 
 ## Start here: what the next session does
 
@@ -33,10 +33,10 @@ files of `tests/script`:
 
 | | queries | |
 | ---: | --- | --- |
-| 502 | agree | byte for byte |
-| 365 | differ | 99 of them fully accounted for by four rewrites |
+| 503 | agree | byte for byte |
+| 367 | differ | 99 of them fully accounted for by four rewrites |
 | 192 | morel-rust declined | the translator turned the query down |
-| 15 | morel-java declined | not declines at all: finding 20 |
+| 16 | morel-java declined | not declines at all: finding 20 |
 | 19 | morel-rust answered and morel-java did not | all but three in `overload.smli` |
 | 88 | neither compiled | the corpus's error cases |
 | 55 | both declined | |
@@ -47,7 +47,7 @@ five shells killed. R9's five translator fixes bought 33 agreements and
 17 declines -- every one of the 17 a query reading `current` or
 `ordinal` that used to print a tree naming them -- and R8's four `main`
 fixes bought 84 more agreements and emptied three of the seven rewrite
-classes.
+classes. The last four queries came from fixing the harness itself.
 
 A difference is *accounted for* when a rewrite makes the two texts
 equal exactly, so the classes are measurements rather than guesses.
@@ -67,10 +67,10 @@ that wrote it and `#only Relational` where `compute` supplied it.
 morel-rust's Core keeps the resolved function and not the name it was
 written under, so it cannot tell the two apart.
 
-That leaves 266, and `--kind unexplained` groups them by the first line
+That leaves 268, and `--kind unexplained` groups them by the first line
 on which the two disagree. Every row this table used to have is now
-empty but one: **131 are finding 9**, grounding landing on different
-sides of the printer, and nearly all of the remaining 135 is finding
+empty but one: **132 are finding 9**, grounding landing on different
+sides of the printer, and nearly all of the remaining 136 is finding
 15, the two front ends normalizing a query differently before a tree is
 ever built. Neither is a translator bug, and no work on the translator
 will close either. They are the whole of what is left.
@@ -84,7 +84,7 @@ will close either. They are the whole of what is left.
    both are worth sending before the rest. This is first because it is
    the only item left that another person is waiting on.
 2. **Findings 9 and 15, which are the whole of what is left**, and
-   both are conversations rather than changes: 131 and 135 of the 266
+   both are conversations rather than changes: 132 and 136 of the 268
    differences the rewrites do not explain. Grounding lands on
    different sides of the printer, and the two front ends normalize a
    query differently before a tree is ever built -- so for those
@@ -123,13 +123,10 @@ statements the corpus knows to be broken -- which is how finding 18
 turned up. And a shell that stops answering is **not** allowed
 to take the rest of the file with it: the marker before each statement
 is a progress report, so a run that stops short names the statement it
-stopped on, drops it, and replays. Twenty-two statements stop a shell
-on the corpus: one is finding 10, two are finding 17, nine are finding
-18, and ten are the harness's own -- a commented out `(* ... *)` region
-in `logic.smli` that `parse_blocks` splits at a `;` inside it, so the
-replay feeds a comment that never closes and both shells wait for the
-rest of it. That last one is the stall the last session went looking
-for, and it was ours. Four more were finding 19 until it was fixed.
+stopped on, drops it, and replays. **Twelve statements stop a shell on
+the corpus, and every one of them is a finding**: one is finding 10,
+two are finding 17 and nine are finding 18. Ten more were the harness's
+own and four more were finding 19, and both are fixed.
 
 ## What morel-java did
 
@@ -604,6 +601,22 @@ were read off rather than looked for. Finding 19, the one that
 matters most, came from none of that: it came from asking why a shell
 stopped.
 
+*And ten of the stops were the harness's own*, which took two goes to
+see. A `.smli` file comments a statement out by wrapping it, and
+`parse_blocks` splits on `;` without tracking comments, so the `*)`
+that closes the wrapper arrives at the head of the *next* block: fed
+to a shell one block at a time, that is an unterminated comment, and a
+shell waiting for the rest of it reads from outside exactly like a
+shell that has died. Joining a block to the one after it until the
+comment closes fixes it -- but the first attempt lost 214 queries,
+because `(*)` *inside* a block comment is a line comment and not a
+nested `(*`, which `simple.smli` says in as many words and names the
+case. The lesson is the harness's own: a count that moves the wrong
+way is the check, and reading it is what caught a fix that looked
+right.
+
+Twelve statements stop a shell now, and every one is a finding.
+
 **R9 — what R7 found in the translator.** Done 2026-09-13, before R8
 and out of numerical order, because these are bugs in code this branch
 owns: fixing them here hides nothing, where a fix to findings 1 to 3
@@ -907,11 +920,11 @@ for. The first is the one worth the whole exercise.
    printer. Worth agreeing on before `such-that.smli` is ever
    compared.
 
-And eleven from R7 over the whole corpus, which is what a differential
+And twelve from R7 over the whole corpus, which is what a differential
 harness is for. Two of them stop a shell dead, and those came first
-because nothing else could be measured until they did; the last, found
-by asking why a third shell stopped, is the only wrong answer on the
-whole list.
+because nothing else could be measured until they did; finding 19,
+found by asking why a third shell stopped, is the only wrong answer on
+the whole list.
 
 10. **morel-java's plan printer crashes on a unary `~`, and the crash
     is uncaught.** Three lines, against `~/dev/morel.4` at tag
@@ -1111,6 +1124,22 @@ whole list.
     its assertion would show up in the plan text is the one place the
     plan text says nothing. Agreeing how a query with no node prints
     costs a sentence in §6 and settles both.
+
+21. **morel-java writes a built-in as the resolver *found* it, and
+    morel-rust cannot tell how it was found.** `from e in emps yield
+    only (from d in depts ...)` gives `only (r$0[v$0])` in morel-java,
+    because the query wrote `only`; a `compute` that the compiler
+    supplied the same function for gives `#only Relational (r$0)`.
+    morel-rust's Core keeps the `BuiltInFunction` the name resolved to
+    and not the name it was written under, so it writes one of the two
+    everywhere -- the qualified form, since `only` is *overloaded*
+    under a global name rather than being global itself.
+
+    Three cases, and the smallest finding here. It is worth a line
+    because it is the last of finding 3's family and it is not fixable
+    the way the others were: the information is thrown away at resolve
+    time, so closing it means Core remembering the spelling, which is
+    a larger change than three plans are worth.
 
 And two in `spec.md`, from reading it alone:
 

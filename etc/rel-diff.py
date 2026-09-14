@@ -197,6 +197,26 @@ def query_of(statement: str) -> Optional[str]:
 def strip_comments(s: str) -> str:
     """Removes `(* ... *)` and `(*) ...` comments, outside string
     literals."""
+    return walk_comments(s)[0]
+
+
+def unclosed_comment(s: str) -> bool:
+    """Returns whether `s` leaves a `(*` block comment open.
+
+    A `.smli` file comments a statement out by wrapping it, and the
+    `*)` that closes the wrapper sits at the head of the *next* block
+    the parser hands back, because the parser splits on `;` without
+    tracking comments. Fed to a shell one block at a time, that is an
+    unterminated comment: the shell waits for the rest of it, answers
+    nothing more, and reads from outside exactly like a shell that has
+    died. Ten of the corpus's twenty-two stops were this.
+    """
+    return walk_comments(s)[1] > 0
+
+
+def walk_comments(s: str) -> Tuple[str, int]:
+    """Returns `s` without its comments, and the `(*` depth it ends
+    at."""
     out = []
     depth = 0
     i = 0
@@ -218,7 +238,11 @@ def strip_comments(s: str) -> str:
             out.append(c)
             i += 1
             continue
-        if s.startswith("(*)", i) and depth == 0:
+        # `(*)` is a line comment at any depth. Inside a block comment
+        # it does *not* open a nested one -- `simple.smli` says so, and
+        # names the case -- and reading it as `(*` left the block open
+        # for the rest of the file.
+        if s.startswith("(*)", i):
             j = s.find("\n", i)
             i = len(s) if j < 0 else j
             continue
@@ -233,7 +257,7 @@ def strip_comments(s: str) -> str:
         if depth == 0:
             out.append(c)
         i += 1
-    return "".join(out)
+    return "".join(out), depth
 
 
 # `set("mode", "validate")`, which tells a shell to echo the expected
@@ -260,10 +284,21 @@ def evaluating(statement: str) -> str:
 
 
 def read(path: str) -> Replay:
-    """Reads one `.smli` file into the statements the harness replays."""
+    """Reads one `.smli` file into the statements the harness replays.
+
+    A statement that leaves a comment open is joined to the one after
+    it, and to the one after that, until the comment closes: a block
+    the parser split inside a `(* ... *)` is not a statement, and
+    feeding half of one to a shell stops it.
+    """
     replay = Replay(path=path)
+    pending = []
     for statement in statements(path):
-        statement = evaluating(statement)
+        pending.append(evaluating(statement))
+        statement = "\n".join(pending)
+        if unclosed_comment(statement):
+            continue
+        pending = []
         if not statement.strip():
             continue
         i = len(replay.statements)
@@ -271,6 +306,8 @@ def read(path: str) -> Replay:
         query = query_of(statement)
         if query is not None:
             replay.queries[i] = query
+    if pending:
+        replay.statements.append("\n".join(pending))
     return replay
 
 
