@@ -317,6 +317,13 @@ fn wrap(docs: Vec<Doc>, indent: usize, line_width: usize) -> String {
 /// `Display` gives, so a line that fits is character for character the
 /// line an unwrapped printer would write.
 fn doc(e: &Expr) -> Doc {
+    doc_bounded(e, 0, 0)
+}
+
+/// Builds the document for `e` inside an operator context whose
+/// precedence bounds are `left` and `right`, so that an operand is
+/// bracketed exactly where [`Display`] brackets it.
+fn doc_bounded(e: &Expr, left: u8, right: u8) -> Doc {
     match e {
         // `let`, its declaration, `in`, its body and `end`, each on a
         // line, with the declaration and the body indented two. One
@@ -363,26 +370,40 @@ fn doc(e: &Expr) -> Doc {
             if let Expr::Literal(_, Val::Fn(func)) = fx.as_ref()
                 && let Expr::Tuple(_, args) = arg.as_ref()
                 && args.len() == 2
-                && let Some(op) = func.infix_op()
+                && let Some((op, op_left, op_right)) = func.infix_op()
             {
+                let wrap = left > op_left || op_right < right;
+                let (left, right) = if wrap { (0, 0) } else { (left, right) };
+                let a0 = doc_bounded(&args[0], left, op_left);
+                let a1 = doc_bounded(&args[1], op_right, right);
                 // `andalso` and `orelse` chain, and a plan's conditions
                 // are mostly made of them, so they are where a long
                 // line is worth breaking. Each is a group of its own,
                 // so an outer one breaks before an inner one does, and
                 // a condition that fits stays on its line.
-                if op == "andalso" || op == "orelse" {
-                    return lindig::group(lindig::hcat(vec![
-                        doc(&args[0]),
+                let joined = if op == "andalso" || op == "orelse" {
+                    lindig::group(lindig::hcat(vec![
+                        a0,
                         lindig::line(),
                         lindig::text(&format!("{} ", op)),
-                        doc(&args[1]),
-                    ]));
-                }
-                return lindig::hcat(vec![
-                    doc(&args[0]),
-                    lindig::text(&format!(" {} ", op)),
-                    doc(&args[1]),
-                ]);
+                        a1,
+                    ]))
+                } else {
+                    lindig::hcat(vec![
+                        a0,
+                        lindig::text(&format!(" {} ", op)),
+                        a1,
+                    ])
+                };
+                return if wrap {
+                    lindig::hcat(vec![
+                        lindig::text("("),
+                        joined,
+                        lindig::text(")"),
+                    ])
+                } else {
+                    joined
+                };
             }
             // An argument is bracketed unless it is written as an atom
             // already, which is `Display`'s rule.
@@ -432,13 +453,9 @@ fn doc(e: &Expr) -> Doc {
             }
             lindig::group(lindig::hcat(inner))
         }
-        Expr::Aggregate(_, a0, a1, _) => lindig::hcat(vec![
-            lindig::text("("),
-            doc(a0),
-            lindig::text(" over "),
-            doc(a1),
-            lindig::text(")"),
-        ]),
+        Expr::Aggregate(_, a0, a1, _) => {
+            lindig::hcat(vec![doc(a0), lindig::text(" over "), doc(a1)])
+        }
         Expr::Raise(_, a, _) => {
             lindig::hcat(vec![lindig::text("raise "), doc(a)])
         }

@@ -6,19 +6,18 @@ second one against the same written contract: where the two disagree,
 one of them is wrong, and the disagreement is cheap to find and dear to
 reason about after the fact.
 
-**Status, 2026-09-13: R1 to R7 and R9 are done, and half of R8.**
-morel-java's `rel-tree.smli` at tag `449-tree.3` is copied across and
-passes, and its fifteen plans are morel-java's text byte for byte
-except in two places, both of which are morel-rust bugs on `main` and
-neither of which is fixed here. The shadow translates 1,338 of the
-corpus's queries and declines 397, with no tree failing the validator.
-The differential harness asks both implementations for the plan of 1,235
-queries across the whole of `tests/script`, and the findings log at the
-end has twenty-one entries, eleven of them from the harness -- among
-them a wrong answer on `main` that no test covered. Five of the eleven
-are fixed here, which took the two implementations from agreeing on
-385 of those queries byte for byte to agreeing on 418; two more are
-fixed on `main`, including the wrong answer.
+**Status, 2026-09-13: R1 to R9 are done.**
+morel-java's `rel-tree.smli` at tag `449-tree.3` is copied across, and
+**every plan in it is now morel-java's text byte for byte**, which is
+the acceptance criterion in "The contract" below.
+
+The findings log at the end has twenty-one entries, eleven of them from
+the differential harness -- among them a wrong answer on `main` that no
+test covered. Nine are fixed: five in the translator, on this branch,
+and four on `main`. The harness asks both implementations for the plan
+of 1,237 queries across the whole of `tests/script`, and over the
+session they went from agreeing on 385 of them byte for byte to
+agreeing on **502**.
 
 ## Start here: what the next session does
 
@@ -34,48 +33,47 @@ files of `tests/script`:
 
 | | queries | |
 | ---: | --- | --- |
-| 418 | agree | byte for byte |
-| 443 | differ | 169 of them fully accounted for by seven rewrites |
+| 502 | agree | byte for byte |
+| 365 | differ | 99 of them fully accounted for by four rewrites |
 | 192 | morel-rust declined | the translator turned the query down |
 | 15 | morel-java declined | not declines at all: finding 20 |
 | 19 | morel-rust answered and morel-java did not | all but three in `overload.smli` |
 | 88 | neither compiled | the corpus's error cases |
 | 55 | both declined | |
-| 5 | killed a shell | |
+| 1 | killed a shell | |
 
-That is after R9. Before it the two agreed on 385, differed on 491 and
-declined 177: five fixes bought 33 agreements and 17 declines, and
-every one of the 17 is a query reading `current` or `ordinal` that used
-to print a tree naming them.
+The session started at 385 agreeing, 491 differing, 177 declined and
+five shells killed. R9's five translator fixes bought 33 agreements and
+17 declines -- every one of the 17 a query reading `current` or
+`ordinal` that used to print a tree naming them -- and R8's four `main`
+fixes bought 84 more agreements and emptied three of the seven rewrite
+classes.
 
 A difference is *accounted for* when a rewrite makes the two texts
-equal exactly, so the seven classes are measurements rather than
-guesses. They are worth reading in that order, because the first is
-larger than the rest put together:
+equal exactly, so the classes are measurements rather than guesses.
+Three of the seven are now empty; what is left is morel-java's to
+answer, not ours:
 
 | cases | class |
 | ----: | ----- |
-| 86 | morel-rust parenthesises an aggregate |
-| 60 | morel-rust qualifies a global built-in with its structure |
-| 56 | morel-rust writes an arithmetic operator as the call it is in Core |
-| 56 | morel-java prints the function an aggregate desugars to |
-| 48 | a group of one field: morel-rust's element is the field, morel-java's the record |
-| 33 | morel-rust names the instance an overload resolved to |
-| 27 | the two break a long line in different places |
+| 58 | morel-java prints the function an aggregate desugars to, `fn $col => count (#fromList Bag $col)` |
+| 48 | a group of one field: morel-rust's element is the field, morel-java's the record, and `spec.md` §3 says ours |
+| 22 | the two break a long line in different places |
+| 3 | `only` written bare where the query wrote it and qualified where the compiler supplied it |
 
-That leaves 274, and `--kind unexplained` groups them by the first
-line on which the two disagree. R9 emptied four of the six rows this
-table used to have; what is left is two findings and a decision:
+The last is small and is a finding of its own: morel-java writes a
+built-in as the resolver *found* it, so `only` is bare in a `yield`
+that wrote it and `#only Relational` where `compute` supplied it.
+morel-rust's Core keeps the resolved function and not the name it was
+written under, so it cannot tell the two apart.
 
-| cases | what it is |
-| ----: | ---------- |
-| 131 | grounding lands on different sides of the printer (finding 9) |
-| 3 | a `where true` morel-rust drops and morel-java keeps (finding 2) |
-
-and nearly all of the remaining 140 is finding 15: the two front ends
-normalize a query differently before a tree is ever built, so the two
-translators are not given the same query. Neither of those is a
-translator bug, and no work on the translator will close either.
+That leaves 266, and `--kind unexplained` groups them by the first line
+on which the two disagree. Every row this table used to have is now
+empty but one: **131 are finding 9**, grounding landing on different
+sides of the printer, and nearly all of the remaining 135 is finding
+15, the two front ends normalizing a query differently before a tree is
+ever built. Neither is a translator bug, and no work on the translator
+will close either. They are the whole of what is left.
 
 ### The order for the next session
 
@@ -85,25 +83,23 @@ translator bug, and no work on the translator will close either.
    three-line crash and finding 17 loses a whole session's input, so
    both are worth sending before the rest. This is first because it is
    the only item left that another person is waiting on.
-2. **Findings 2 and 3**, the two `main` findings still open. Both are
-   decisions and not patches: `spec.md` does not say whether a plan
-   should show a `where true`, and an aggregate's parentheses are how
-   every plan has printed, so the corpus moves with them.
-3. **Finding 15, the normalization difference**, is a conversation and
-   not a change, and with R9 done it is most of what is left: 140 of
-   the 274 differences the rewrites do not explain, and finding 9's
-   131 beside it. The plan text cannot be a cross-implementation
-   contract for a query the two front ends normalize differently.
-   Agreeing where `Sys.planOf` sits in the pipeline is worth more than
-   any fix on this list.
-4. **Finding 4** (`exists`, `ordinal`, `current`) last, and R7 has
+2. **Findings 9 and 15, which are the whole of what is left**, and
+   both are conversations rather than changes: 131 and 135 of the 266
+   differences the rewrites do not explain. Grounding lands on
+   different sides of the printer, and the two front ends normalize a
+   query differently before a tree is ever built -- so for those
+   queries the two translators are not even given the same query. The
+   plan text cannot be a cross-implementation contract across either,
+   and agreeing where `Sys.planOf` sits in the pipeline is worth more
+   than any fix on this list.
+3. **Finding 4** (`exists`, `ordinal`, `current`) last, and R7 has
    shifted it: morel-java's `ordinal` plans carry `$ordinal` as a free
    name that nothing defines, one of them crashes its printer
    (finding 10), and finding 13 showed morel-rust building the same
    broken tree wherever its decline did not reach -- which is now 17
    more declines rather than 17 more wrong trees. Declining looks
    better than matching, but it is still morel-java's call.
-5. **Not the lowering.** morel-java's step 2 built `RelLowerer` (949
+4. **Not the lowering.** morel-java's step 2 built `RelLowerer` (949
    lines) and the flip; `spec.md` does not freeze the lowered form, so
    a second lowering would be checked against nothing. It is worth
    doing when the tree is what executes, and that is not what this
@@ -127,13 +123,13 @@ statements the corpus knows to be broken -- which is how finding 18
 turned up. And a shell that stops answering is **not** allowed
 to take the rest of the file with it: the marker before each statement
 is a progress report, so a run that stops short names the statement it
-stopped on, drops it, and replays. Twenty-six statements stop a shell
+stopped on, drops it, and replays. Twenty-two statements stop a shell
 on the corpus: one is finding 10, two are finding 17, nine are finding
-18, **four are finding 19**, and ten are the harness's own -- a
-commented out `(* ... *)` region in `logic.smli` that `parse_blocks`
-splits at a `;` inside it, so the replay feeds a comment that never
-closes and both shells wait for the rest of it. That last one is the
-stall the last session went looking for, and it was ours.
+18, and ten are the harness's own -- a commented out `(* ... *)` region
+in `logic.smli` that `parse_blocks` splits at a `;` inside it, so the
+replay feeds a comment that never closes and both shells wait for the
+rest of it. That last one is the stall the last session went looking
+for, and it was ours. Four more were finding 19 until it was fixed.
 
 ## What morel-java did
 
@@ -651,19 +647,33 @@ cannot fail (16). Three of the five now print morel-java's text byte
 for byte; the other two differ only in ways logged as findings 3 and
 15. The six cases are at the end of `rel-tree.smli`.
 
-**R8 — land the findings on `main`.** Two of the four are done, in a
-`main` session on 2026-09-13: a comma-scan's `on` condition reading an
-outer binding of the same name (finding 19, `709e5d8f`, and the only
-one that gave a wrong answer), and `union distinct` re-planning as
-`union all` (finding 1, `69e6a205`). Both are on `main` with tests in
-`relational.smli`, and neither is on this branch, which is still the
-tree's.
+**R8 — land the findings on `main`.** Done 2026-09-13, all four, in a
+`main` session:
 
-Two are left, and both want a decision rather than a patch: a dropped
-`where true` (finding 2) and how an aggregate prints (finding 3).
-`spec.md` does not say which implementation is right about either, and
-the aggregate's parentheses are how every plan has printed, so the
-corpus moves with them.
+| finding | commit | what it was |
+| ------- | ------ | ----------- |
+| 19 | `709e5d8f` | a comma-scan's `on` condition read an outer binding of the same name -- the only wrong *answer* on the list |
+| 1 | `69e6a205` | `union distinct` re-planned as `union all` |
+| 2, 3, 6 | `4dd4137d` | a dropped `where true`, and how an operator and an aggregate print |
+
+and one more that turned up on the way: `inlinePassCount` was accepted
+and ignored (`d972d0f8`), which I found trying to use it to tell
+whether the `on`-condition bug was the inliner's.
+
+The last commit is what the acceptance criterion turned on, and the
+answer came from reading morel-java rather than from arguing about the
+spec. Two of the three questions it settled had an answer sitting in
+morel-java's source: `FILTER_TRUE` is a *simplification* there, off by
+default, which is why its plan keeps a `where true`; and
+`AstWriter.infix` looks an operator up in `Op.BY_OP_NAME` rather than
+going through `Resolver.toOp`, which is why it writes far more
+operators infix than our comment claimed to mirror. Widening the set
+then exposed a worse bug underneath: we had no bracketing at all, so
+`i + (i + 1)` printed as `i + i + 1`.
+
+`main` is merged into this branch, and **`rel-tree.smli`'s every plan
+is now morel-java's text byte for byte**. That is the acceptance
+criterion in "The contract" below, and it is met.
 
 **Later, not now.** The lowering (`RelLowerer`, 949 lines) matters when
 the tree becomes what the passes carry. Grounding on the tree
@@ -762,6 +772,14 @@ product, and getting them onto `main` is a session of its own.
    the two is wrong about what a plan should show; the spec does not
    say.
 
+   **Fixed on `main` 2026-09-13, `4dd4137d`**, and reading morel-java
+   settled which. It skips `where true` in its own `FromBuilder` as we
+   did -- the same three lines, the same comment -- and keeps it in the
+   `RelBuilder` that builds the tree, where dropping it is a
+   *simplification* that is off by default, so that a plan shows the
+   query as written. We build the tree from the step list, so a step
+   dropped there can never reach a plan; it is kept.
+
 3. **An aggregate prints differently inside a node.** For
    morel-java's group case the tree, the types and the legend all
    agree, and only the aggregates differ: we write
@@ -775,6 +793,16 @@ product, and getting them onto `main` is a session of its own.
    The parentheses are not cheap to change -- they are how an aggregate
    has printed in every plan, and the corpus has them -- so this is a
    `main` conversation, not a branch one.
+
+   **Fixed on `main` 2026-09-13, `4dd4137d`**, all three, once that
+   conversation was had. A built-in with a name of its own in the
+   default namespace prints bare, because that is how the resolver
+   found it -- `count`, `sum`, `abs`, `concat` -- while one merely
+   *overloaded* under a global name stays qualified, `#only
+   Relational`, which is what morel-java does too. An overload's
+   instance prints as the generic it instantiates. And nothing
+   parenthesises an aggregate. The corpus moved in three files, all of
+   it plan text.
 
 And one that is neither, found by asking why morel-java declines
 nothing:
@@ -839,6 +867,20 @@ for. The first is the one worth the whole exercise.
    everything but `+`, the comparisons, `::`, `@`, `andalso` and
    `orelse` -- and morel-java disagrees. This is finding 3's second
    half, and it is not about aggregates: it touches nearly every plan.
+
+   **Fixed on `main` 2026-09-13, `4dd4137d`.** `toOp` is the wrong
+   mechanism to mirror: `AstWriter.infix` looks the function up in
+   `Op.BY_OP_NAME`, so morel-java writes *every* operator with a padded
+   name infix, and `toOp`'s handful is only what it converts from a
+   built-in literal. The set is now derived from the operator's own
+   name rather than listed.
+
+   Which exposed a second bug underneath, and a worse one: there was no
+   bracketing at all. `i + (i + 1)` printed as `i + i + 1`, and
+   `i > 1 andalso (i < 3 orelse i = 5)` lost the grouping it was
+   written with -- a plan that says something the query does not.
+   Operands now carry morel-java's precedence bounds, in `Display` and
+   in the tree printer both.
 
 7. **`distinct` atomizes in one implementation and not the other.**
    `from i in [2, 3, 1, 3] distinct` is `project [#i $0]` over `group

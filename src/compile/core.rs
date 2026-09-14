@@ -415,7 +415,7 @@ fn fmt_bounded(
             // can be read. Splicing them in here is what made a
             // nested query's plan unparseable: its indentation began
             // again from zero inside the line that held it.
-            if let Some(reference) = rel_printer::rel_ref(self) {
+            if let Some(reference) = rel_printer::rel_ref(expr) {
                 return write!(f, "{}", reference);
             }
             // Outside a plan -- an error message, a trace -- a node

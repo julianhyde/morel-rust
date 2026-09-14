@@ -28,13 +28,11 @@
  * too, so that a plan cannot be made to match by building a tree that
  * says the right thing and computes the wrong one.
  *
- * This is morel-java's file at tag 449-tree.3, copied across. It is
- * byte for byte morel-java's in two places out of three, and the
- * places it is not are the findings in plan.md, both of which belong
- * to morel-rust's `main` rather than to this branch: a `where true`
- * step is dropped before the tree is built, and an aggregate prints
- * with parentheses, a structure member's name, and an instance rather
- * than the generic. Each is marked below.
+ * This is morel-java's file at tag 449-tree.3, copied across, and
+ * every plan in it is now morel-java's text byte for byte. It was not
+ * in two places, and the comments that marked them say what each one
+ * was; both were fixed on `main`, because both were how morel-rust
+ * printed a plan rather than how it built a tree.
  *)
 Sys.set ("output", "tabular");
 > val it = () : unit
@@ -75,18 +73,21 @@ Sys.planOf (from d in scott.depts where d.deptno > 20 yield d.dname);
  * visible `[()]` leaf. Run it too: the leaf is the whole of why the
  * answer has one row rather than none.
  *
- * FINDING. morel-java has a `filter [true]` between the two, and we
- * have none, because the `where true` step is gone before the tree is
- * built. One of the two is wrong about what a plan should show, and
- * the spec does not say; the fix, whichever way it goes, belongs to
- * `main`.
+ * The `filter [true]` is morel-java's, and used to be missing here:
+ * the `where true` step was dropped before the tree was built.
+ * morel-java drops it in its own `FromBuilder` too, and keeps it in
+ * the `RelBuilder` that builds the tree, where dropping it is a
+ * simplification that is off by default. We build the tree from the
+ * step list, so the step has to survive there.
  *)
 from where true yield 1;
 > val it = [1] : int list
 Sys.planOf (from where true yield 1);
-> val it = {_|
+> val it =
+>   {_|
 > project [1] : int list
->   [()] : unit list
+>   filter [true] : unit list
+>     [()] : unit list
 > |_} : string
 
 (* ---------------------------------------------------------------- *)
@@ -264,16 +265,13 @@ Sys.planOf (
  *
  * `group` builds a record of its keys and aggregates.
  *
- * FINDING. The tree, the types and the legend are morel-java's; the
- * aggregates are not. morel-java writes `[c = count over (), total =
- * sum over #sal $0]`, and there are three differences in that one
- * line: we parenthesise an aggregate where morel-java does not, we
- * resolve `count` to the structure member and print it in selector
- * form where morel-java keeps the global name, and we dispatch `sum`
- * to `sum$real` by the element type where morel-java keeps the
- * generic. The line is then too long, so it folds, which morel-java's
- * does not. All three belong to `main`: the parentheses are how an
- * aggregate has printed in every plan, and the corpus has them.
+ * The aggregates used to read three ways differently from
+ * morel-java's: we parenthesised an aggregate, we resolved `count` to
+ * the structure member and printed it in selector form, and we
+ * dispatched `sum` to `sum$real` by the element type. morel-java
+ * parenthesises nothing, and keeps the global name and the generic,
+ * because that is how its resolver found them. All three are fixed on
+ * `main`, and this line is now morel-java's byte for byte.
  *)
 Sys.planOf (
   from e in scott.emps
@@ -281,8 +279,7 @@ Sys.planOf (
     compute {c = count over (), total = sum over e.sal});
 > val it =
 >   {_|
-> group [deptno = #deptno $0] [c = (#count Relational over ()),
->     total = (sum$real over #sal $0)] : t$0
+> group [deptno = #deptno $0] [c = count over (), total = sum over #sal $0] : t$0
 >   #emps scott : t$1
 >
 > t$0 {c:int, deptno:int, total:real} bag
@@ -513,7 +510,7 @@ Sys.planOf (from i in [1, 2, 3]
 >   {_|
 > sort [#x $0] : {c:int, x:int} list
 >   project [{c = #c $0, x = #x $0}] : {c:int, x:int} list
->     group [x = $0] [c = (#count Relational over ())] : {c:int, x:int} list
+>     group [x = $0] [c = count over ()] : {c:int, x:int} list
 >       [1, 2, 3] : int list
 > |_} : string
 
@@ -545,7 +542,7 @@ Sys.planOf (from x in [10, 20] yield (from i in [1, 2] union [current]));
 Sys.planOf (from i in [2, 3, 1, 2] group i compute {elements});
 > val it =
 >   {_|
-> group [i = $0] [elements = (#id Fn over $0)] : t$0
+> group [i = $0] [elements = #id Fn over $0] : t$0
 >   [2, 3, 1, 2] : int list
 >
 > t$0 {`elements`:int list, i:int} list
