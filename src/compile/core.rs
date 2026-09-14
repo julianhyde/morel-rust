@@ -918,7 +918,9 @@ fn write_steps(f: &mut Formatter<'_>, steps: &[Step]) -> FmtResult {
             // lint: sort until '#}' where '##StepKind::'
             StepKind::Compute(e) => write!(f, "compute {}", e)?,
             StepKind::Distinct => write!(f, "distinct")?,
-            StepKind::Except(all, es) => write_set_step(f, "except", *all, es)?,
+            StepKind::Except(distinct, es) => {
+                write_set_step(f, "except", *distinct, es)?;
+            }
             StepKind::Exists => write!(f, "exists")?,
             StepKind::Group(key, agg) => {
                 write!(f, "group {}", key)?;
@@ -926,8 +928,8 @@ fn write_steps(f: &mut Formatter<'_>, steps: &[Step]) -> FmtResult {
                     write!(f, " compute {}", agg)?;
                 }
             }
-            StepKind::Intersect(all, es) => {
-                write_set_step(f, "intersect", *all, es)?;
+            StepKind::Intersect(distinct, es) => {
+                write_set_step(f, "intersect", *distinct, es)?;
             }
             StepKind::Order(e) => write!(f, "order {}", e)?,
             StepKind::Scan(pat, source, condition) => {
@@ -956,7 +958,9 @@ fn write_steps(f: &mut Formatter<'_>, steps: &[Step]) -> FmtResult {
             }
             StepKind::Skip(e) => write!(f, "skip {}", e)?,
             StepKind::Take(e) => write!(f, "take {}", e)?,
-            StepKind::Union(all, es) => write_set_step(f, "union", *all, es)?,
+            StepKind::Union(distinct, es) => {
+                write_set_step(f, "union", *distinct, es)?;
+            }
             StepKind::Unorder => write!(f, "unorder")?,
             StepKind::Where(e) => write!(f, "where {}", e)?,
             StepKind::Yield(e) => write!(f, "yield {}", e)?,
@@ -966,15 +970,23 @@ fn write_steps(f: &mut Formatter<'_>, steps: &[Step]) -> FmtResult {
 }
 
 /// Writes a `union`, `intersect` or `except` step and its operands.
+/// Writes a set operator's step: the keyword, `distinct` where the step
+/// removes duplicates, and the operands.
+///
+/// The flag is *distinct*, which is what the parser sets for `union
+/// distinct` and what [`crate::syntax::ast`] prints. This used to name
+/// it `all` and write that word, so a plan said the opposite of the
+/// query it came from and re-running the plan would have changed the
+/// answer.
 fn write_set_step(
     f: &mut Formatter<'_>,
     keyword: &str,
-    all: bool,
+    distinct: bool,
     exprs: &[Expr],
 ) -> FmtResult {
     write!(f, "{}", keyword)?;
-    if all {
-        write!(f, " all")?;
+    if distinct {
+        write!(f, " distinct")?;
     }
     for (i, e) in exprs.iter().enumerate() {
         write!(f, "{} {}", if i > 0 { "," } else { "" }, e)?;
