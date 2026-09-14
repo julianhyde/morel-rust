@@ -105,6 +105,47 @@ will close either. They are the whole of what is left.
    doing when the tree is what executes, and that is not what this
    branch is for.
 
+### What the translator still declines, and why
+
+The shadow translates 1,312 of the corpus's 1,741 queries and declines
+429. Reading that tally is what buys coverage -- it is what took the
+translator from 958 to 1,338 in an afternoon -- and until now there was
+no way to read it without editing `tests/smile.rs`, because it prints
+only when the assertion fires. There is now:
+
+```
+MOREL_SHADOW_TALLY=1 cargo test --test smile -- --nocapture
+```
+
+| declines | reason |
+| -------: | ------ |
+| 200 | a query that tests for existence |
+| 137 | a query that reads `ordinal` or `current` |
+| 23 | a tree whose type is not the query's |
+| 23 | a query whose row is not a record |
+| 13 | a scan source over the enclosing row |
+| 11 | a scan over something that is not a collection |
+| 11 | a group's part that has no name |
+| 4 | a query whose row names an unbound binder |
+| 3 | a `let` that binds a function |
+| 2 | a scan pattern that is not a name or a tuple |
+| 1 | a group's parts that are not a record |
+| 1 | a correlated outer join |
+
+**337 of the 429 are finding 4** -- `exists`, `ordinal` and `current`,
+which are morel-java's call and not coverage we are missing. Another
+34 are grounding: the 11 ungrounded scans, and 23 of the "tree whose
+type is not the query's" are `such-that.smli` queries whose expansion
+rewrites the row into something the query's own type does not name.
+That leaves **58 that are real gaps**, and the largest of them is a
+dozen queries at a time. Anyone buying coverage should start from this
+table rather than from the count.
+
+The count itself moved the wrong way this session -- 1,338 translated
+became 1,312 -- and that is the fix working: 17 of the 26 are queries
+reading `current` or `ordinal` through a set operator's operand, which
+used to print a tree that named them (finding 13).
+
 ### Running the harness
 
 ```
