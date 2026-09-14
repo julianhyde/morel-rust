@@ -354,12 +354,22 @@ fn expr_to_val(expr: &Expr) -> Option<Val> {
 /// `inlinePassCount` default.
 pub const INLINE_PASS_COUNT: usize = 5;
 
-/// Runs the analyzer and inliner together, iterating up to
-/// `INLINE_PASS_COUNT` (5) times until the declaration's `Display` is
-/// stable. Mirrors the loop in morel-java's `Compiles.java`.
-pub fn inline_decl(env: &Env, decl: &Decl) -> Decl {
+/// Runs the analyzer and inliner together, iterating up to `passes`
+/// times until the declaration's `Display` is stable. Mirrors the loop
+/// in morel-java's `Compiles.java`.
+///
+/// `passes` is the `inlinePassCount` property. Zero does not mean "do
+/// nothing": morel-java runs the inliner once with no analysis, and so
+/// does this. With no use counts every binding reads as used unsafely,
+/// so none is substituted, and what is left is the folding that does
+/// not depend on them.
+pub fn inline_decl(env: &Env, decl: &Decl, passes: usize) -> Decl {
+    if passes == 0 {
+        let inliner = Inliner { analysis: None };
+        return inliner.transform_decl(env, decl);
+    }
     let mut current = decl.clone();
-    for _ in 0..INLINE_PASS_COUNT {
+    for _ in 0..passes {
         let analysis = analyze(&current);
         let inliner = Inliner {
             analysis: Some(analysis),
