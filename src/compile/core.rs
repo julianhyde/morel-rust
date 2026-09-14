@@ -954,8 +954,8 @@ fn steps_doc(steps: &[Step]) -> Doc {
                 docs.push(beside(text("compute "), e.to_doc()));
             }
             StepKind::Distinct => docs.push(text("distinct")),
-            StepKind::Except(all, es) => {
-                docs.push(set_step_doc("except", *all, es));
+            StepKind::Except(distinct, es) => {
+                docs.push(set_step_doc("except", *distinct, es));
             }
             StepKind::Exists => docs.push(text("exists")),
             StepKind::Group(key, agg) => {
@@ -964,8 +964,8 @@ fn steps_doc(steps: &[Step]) -> Doc {
                     docs.push(beside(text(" compute "), agg.to_doc()));
                 }
             }
-            StepKind::Intersect(all, es) => {
-                docs.push(set_step_doc("intersect", *all, es));
+            StepKind::Intersect(distinct, es) => {
+                docs.push(set_step_doc("intersect", *distinct, es));
             }
             StepKind::Order(e) => docs.push(beside(text("order "), e.to_doc())),
             StepKind::Scan(pat, source, condition) => {
@@ -996,8 +996,8 @@ fn steps_doc(steps: &[Step]) -> Doc {
             }
             StepKind::Skip(e) => docs.push(beside(text("skip "), e.to_doc())),
             StepKind::Take(e) => docs.push(beside(text("take "), e.to_doc())),
-            StepKind::Union(all, es) => {
-                docs.push(set_step_doc("union", *all, es));
+            StepKind::Union(distinct, es) => {
+                docs.push(set_step_doc("union", *distinct, es));
             }
             StepKind::Unorder => docs.push(text("unorder")),
             StepKind::Where(e) => docs.push(beside(text("where "), e.to_doc())),
@@ -1007,11 +1007,18 @@ fn steps_doc(steps: &[Step]) -> Doc {
     hcat(docs)
 }
 
-/// Returns a `union`, `intersect` or `except` step and its operands.
-fn set_step_doc(keyword: &str, all: bool, exprs: &[Expr]) -> Doc {
+/// Returns a set operator's step: the keyword, `distinct` where the
+/// step removes duplicates, and the operands.
+///
+/// The flag is *distinct*, which is what the parser sets for `union
+/// distinct` and what [`crate::syntax::ast`] prints. This used to name
+/// it `all` and write that word, so a plan said the opposite of the
+/// query it came from and re-running the plan would have changed the
+/// answer.
+fn set_step_doc(keyword: &str, distinct: bool, exprs: &[Expr]) -> Doc {
     let mut docs = vec![text(keyword)];
-    if all {
-        docs.push(text(" all"));
+    if distinct {
+        docs.push(text(" distinct"));
     }
     for (i, e) in exprs.iter().enumerate() {
         docs.push(text(if i > 0 { ", " } else { " " }));

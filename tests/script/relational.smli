@@ -46,6 +46,18 @@ from i in [2, 3, 1] union distinct [1, 4, 3];
 from i in [(2,1), (3,1), (1,1)] union distinct [(1,1), (4,1), (3,2)];
 > val it = [(2,1),(3,1),(1,1),(4,1),(3,2)] : (int * int) list
 
+(* A set operator's flag is *distinct*, and the plan prints the word it
+ * means. It used to print `all`, so a plan said the opposite of the
+ * query it came from and re-running it would have changed the answer. *)
+from i in [2, 3, 1] union distinct [1, 4], [3];
+> val it = [2,3,1,4] : int list
+Sys.planEx "core";
+> val it = "val it = from i in [2, 3, 1] union distinct [1, 4], [3]" : string
+from i in [2, 3, 1] union [1, 4], [3];
+> val it = [2,3,1,1,4,3] : int list
+Sys.planEx "core";
+> val it = "val it = from i in [2, 3, 1] union [1, 4], [3]" : string
+
 from i in [3,1,2] order i;
 > val it = [1,2,3] : int list
 

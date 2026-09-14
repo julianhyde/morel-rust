@@ -1281,6 +1281,12 @@ impl Display for BinderPrefix<'_> {
 }
 
 /// Writes a set-operation step (`union`, `intersect`, `except`).
+/// Writes a set operator's step: the keyword, `distinct` where the step
+/// removes duplicates, and the operands.
+///
+/// `distinct` qualifies the operator and not each operand, which is
+/// where the grammar puts it -- `union distinct a, b` -- so writing it
+/// once is what parses back.
 fn write_set_step(
     f: &mut Formatter<'_>,
     keyword: &str,
@@ -1288,11 +1294,11 @@ fn write_set_step(
     args: &[Expr],
 ) -> FmtResult {
     f.write_str(keyword)?;
+    if distinct {
+        f.write_str(" distinct")?;
+    }
     for (i, arg) in args.iter().enumerate() {
         f.write_str(if i == 0 { " " } else { ", " })?;
-        if distinct {
-            f.write_str("distinct ")?;
-        }
         write!(f, "{}", arg)?;
     }
     Ok(())
