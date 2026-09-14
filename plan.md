@@ -37,7 +37,7 @@ files of `tests/script`:
 | 418 | agree | byte for byte |
 | 443 | differ | 169 of them fully accounted for by seven rewrites |
 | 192 | morel-rust declined | the translator turned the query down |
-| 15 | morel-java declined | which morel-java asserts cannot happen |
+| 15 | morel-java declined | not declines at all: finding 20 |
 | 19 | morel-rust answered and morel-java did not | all but three in `overload.smli` |
 | 88 | neither compiled | the corpus's error cases |
 | 55 | both declined | |
@@ -79,8 +79,10 @@ translator bug, and no work on the translator will close either.
 
 ### The order for the next session
 
-1. **Raise the morel-java findings: 5, 10, 17 and 20.** Finding 10 is
-   a three-line crash and finding 17 loses a whole session's input, so
+1. **Raise the morel-java findings: 5, 10, 17 and 20.** They are
+   written up ready to file in `java-findings.md`, each with a repro
+   replayed out of that file against tag `449-tree.3`. Finding 10 is a
+   three-line crash and finding 17 loses a whole session's input, so
    both are worth sending before the rest. This is first because it is
    the only item left that another person is waiting on.
 2. **Findings 2 and 3**, the two `main` findings still open. Both are
@@ -1045,22 +1047,28 @@ whole list.
     answer -- with the outer `val` inside a `let`, so that it does not
     stay in scope for the rest of the file.
 
-20. **morel-java's translator declines the empty query, and a decline
-    cannot be told from a node-free tree.** `Sys.planOf (from)` gives
-    `[()]` in morel-java and `[()] : unit list` in morel-rust; the
-    same for `from u: unit`, and fifteen queries in all. morel-java's
-    `RelShadow.check` throws where the translator returns null, on the
-    stated invariant that there are none, so either the invariant is
-    wrong or these are not declines.
+20. **A node-free tree and a decline are the same text, so neither can
+    be told from the other.** `Sys.planOf (from)` gives `[()]` in
+    morel-java and `[()] : unit list` in morel-rust; the same for
+    `from u: unit`, and for fifteen queries the harness first read as
+    "morel-java declined".
 
-    They may well not be: `spec.md` §1 has no leaf constructor, so a
+    They are not declines. `spec.md` §1 has no leaf constructor, so a
     query that translates to a bare expression has a tree with no node
-    in it, and printing the expression is a defensible thing to do with
-    one. But then the two print a node-free query differently, and
-    **no reader of either text can tell a decline from a leaf** --
-    which makes the fifteen an upper bound and makes morel-java's
-    zero-decline invariant unfalsifiable from outside. Agreeing how a
-    query with no node prints costs a sentence in §6 and settles both.
+    in it -- and `from;` appears five times in morel-java's own corpus
+    while `RelShadow.check` throws an `AssertionError` wherever
+    `RelTranslator.toRel` returns null, so its translator plainly does
+    not turn the query down. Printing the expression is a defensible
+    thing to do with a node-free tree.
+
+    What is left is still a finding, and a sharper one: the two print a
+    node-free query differently, and **no reader of either text can
+    tell a decline from a leaf**. That makes the harness's
+    "morel-java declined" column unreliable, and morel-java's
+    zero-decline invariant unfalsifiable from outside -- the one place
+    its assertion would show up in the plan text is the one place the
+    plan text says nothing. Agreeing how a query with no node prints
+    costs a sentence in §6 and settles both.
 
 And two in `spec.md`, from reading it alone:
 
