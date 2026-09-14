@@ -6,18 +6,19 @@ second one against the same written contract: where the two disagree,
 one of them is wrong, and the disagreement is cheap to find and dear to
 reason about after the fact.
 
-**Status, 2026-09-13: R1 to R7 and R9 are done.** morel-java's
-`rel-tree.smli` at tag `449-tree.3` is copied across and passes, and
-its fifteen plans are morel-java's text byte for byte except in two
-places, both of which are morel-rust bugs on `main` and neither of
-which is fixed here. The shadow translates 1,338 of the corpus's
-queries and declines 397, with no tree failing the validator. The
-differential harness asks both implementations for the plan of 1,235
+**Status, 2026-09-13: R1 to R7 and R9 are done, and half of R8.**
+morel-java's `rel-tree.smli` at tag `449-tree.3` is copied across and
+passes, and its fifteen plans are morel-java's text byte for byte
+except in two places, both of which are morel-rust bugs on `main` and
+neither of which is fixed here. The shadow translates 1,338 of the
+corpus's queries and declines 397, with no tree failing the validator.
+The differential harness asks both implementations for the plan of 1,235
 queries across the whole of `tests/script`, and the findings log at the
 end has twenty-one entries, eleven of them from the harness -- among
-them a wrong answer on `main` that no test covers. Five of the eleven
+them a wrong answer on `main` that no test covered. Five of the eleven
 are fixed here, which took the two implementations from agreeing on
-385 of those queries byte for byte to agreeing on 418.
+385 of those queries byte for byte to agreeing on 418; two more are
+fixed on `main`, including the wrong answer.
 
 ## Start here: what the next session does
 
@@ -78,14 +79,14 @@ translator bug, and no work on the translator will close either.
 
 ### The order for the next session
 
-1. **The four `main` findings**, in a session on `main`, and
-   **finding 19 first**: it is a wrong answer with no diagnostic, the
-   others are plans that read differently. This is now the only item
-   on the list that is a bug anyone can hit, and it is still sitting in
-   a branch nobody reads.
-2. **Raise the morel-java findings: 5, 10, 17 and 20.** Finding 10 is
+1. **Raise the morel-java findings: 5, 10, 17 and 20.** Finding 10 is
    a three-line crash and finding 17 loses a whole session's input, so
-   both are worth sending before the rest.
+   both are worth sending before the rest. This is first because it is
+   the only item left that another person is waiting on.
+2. **Findings 2 and 3**, the two `main` findings still open. Both are
+   decisions and not patches: `spec.md` does not say whether a plan
+   should show a `where true`, and an aggregate's parentheses are how
+   every plan has printed, so the corpus moves with them.
 3. **Finding 15, the normalization difference**, is a conversation and
    not a change, and with R9 done it is most of what is left: 140 of
    the 274 differences the rewrites do not explain, and finding 9's
@@ -648,13 +649,19 @@ cannot fail (16). Three of the five now print morel-java's text byte
 for byte; the other two differ only in ways logged as findings 3 and
 15. The six cases are at the end of `rel-tree.smli`.
 
-**R8 — land the findings on `main`.** Four morel-rust bugs are logged
-below and none is fixed, because a fix on this branch would hide the
-bug rather than report it. They need a `main` session: a comma-scan's
-`on` condition reading an outer binding of the same name (finding 19,
-and the only one that gives a wrong answer), `union distinct`
-re-planning as `union all`, a dropped `where true`, and how an
-aggregate prints.
+**R8 — land the findings on `main`.** Two of the four are done, in a
+`main` session on 2026-09-13: a comma-scan's `on` condition reading an
+outer binding of the same name (finding 19, `709e5d8f`, and the only
+one that gave a wrong answer), and `union distinct` re-planning as
+`union all` (finding 1, `69e6a205`). Both are on `main` with tests in
+`relational.smli`, and neither is on this branch, which is still the
+tree's.
+
+Two are left, and both want a decision rather than a patch: a dropped
+`where true` (finding 2) and how an aggregate prints (finding 3).
+`spec.md` does not say which implementation is right about either, and
+the aggregate's parentheses are how every plan has printed, so the
+corpus moves with them.
 
 **Later, not now.** The lowering (`RelLowerer`, 949 lines) matters when
 the tree becomes what the passes carry. Grounding on the tree
@@ -738,6 +745,14 @@ product, and getting them onto `main` is a session of its own.
    says the opposite of the query, and re-running the plan would change
    the answer. Found because translating the flag into a node inverted
    it, which sent me to look at what the flag means.
+
+   **Fixed on `main` 2026-09-13, `69e6a205`.** The core unparser writes
+   `distinct`, the word the flag means. The AST unparser had the word
+   right and wrote it before every operand, so `union distinct a, b`
+   came back as `union distinct a, distinct b`, which does not parse;
+   `distinct` qualifies the operator and the grammar takes it once.
+   `Sys.planEx "core"` is where the text is visible, and
+   `relational.smli` now pins it.
 2. **A `where true` step is dropped, and morel-java keeps it.** For
    `from where true yield 1`, morel-java's golden text is
    `project [1]` over `filter [true]` over `[()]`, and ours has no
@@ -1018,6 +1033,17 @@ whole list.
     runs the two together. This is a `main` bug and the only wrong
     *answer* on this list -- everything else here is a plan that reads
     differently.
+
+    **Fixed on `main` 2026-09-13, `709e5d8f`.** The inliner shadows a
+    scan's pattern names in the environment it hands to subsequent
+    steps, and did that *after* transforming the condition. The source
+    is evaluated before the pattern binds anything, so it reads the
+    enclosing scope; the condition is evaluated once per candidate
+    pair, with the row the scan produced, so it reads the pattern's
+    names. Moving the shadow above the condition is the whole fix, and
+    `relational.smli` pins both halves -- the raise and the empty
+    answer -- with the outer `val` inside a `let`, so that it does not
+    stay in scope for the rest of the file.
 
 20. **morel-java's translator declines the empty query, and a decline
     cannot be told from a node-free tree.** `Sys.planOf (from)` gives
