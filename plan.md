@@ -6,18 +6,18 @@ second one against the same written contract: where the two disagree,
 one of them is wrong, and the disagreement is cheap to find and dear to
 reason about after the fact.
 
-**Status, 2026-09-13: R1 to R9 are done.**
+**Status, 2026-09-14: R1 to R9 are done.**
 morel-java's `rel-tree.smli` at tag `449-tree.3` is copied across, and
 **every plan in it is now morel-java's text byte for byte**, which is
 the acceptance criterion in "The contract" below.
 
 The findings log at the end has twenty-two entries, twelve of them from
 the differential harness -- among them a wrong answer on `main` that no
-test covered. Nine are fixed: five in the translator, on this branch,
-and four on `main`. The harness asks both implementations for the plan
-of 1,241 queries across the whole of `tests/script`, and over the
-session they went from agreeing on 385 of them byte for byte to
-agreeing on **503**.
+test covered. **Thirteen are fixed**: five in the translator on this
+branch, four on `main`, and four in morel-java itself. The harness asks
+both implementations for the plan of 1,241 queries across the whole of
+`tests/script`, and over the session they went from agreeing on 385 of
+them byte for byte to agreeing on **508**.
 
 ## Start here: what the next session does
 
@@ -33,21 +33,35 @@ files of `tests/script`:
 
 | | queries | |
 | ---: | --- | --- |
-| 503 | agree | byte for byte |
-| 367 | differ | 99 of them fully accounted for by four rewrites |
-| 192 | morel-rust declined | the translator turned the query down |
-| 16 | morel-java declined | not declines at all: finding 20 |
+| 508 | agree | byte for byte |
+| 378 | differ | 99 of them fully accounted for by four rewrites |
+| 247 | morel-rust declined | the translator turned the query down |
+| 0 | morel-java declined | its own invariant, and now checkable |
 | 19 | morel-rust answered and morel-java did not | all but three in `overload.smli` |
 | 88 | neither compiled | the corpus's error cases |
-| 55 | both declined | |
-| 1 | killed a shell | |
+| 1 | both declined | |
+| 0 | killed a shell | |
+
+That is against **morel-java with findings 5, 10, 17 and 20 fixed**
+(`~/dev/morel.2` on `449-tree`, `240129bb`); run the harness with
+`--java ~/dev/morel.2`. Against morel-java as it was, the same corpus
+gave 503 agreeing, 192 rust declines, 16 java declines and 55 "both
+declined".
+
+**The decline column was wrong about 54 queries**, which is finding 20's
+point and the best argument for having fixed it. A node-free tree and a
+decline were the same text, so the harness read 54 of morel-java's trees
+as declines and called them "both declined"; they are morel-rust's
+declines alone. morel-java now declines nothing, which is what
+`RelShadow` asserts and what no reader could check before.
 
 The session started at 385 agreeing, 491 differing, 177 declined and
 five shells killed. R9's five translator fixes bought 33 agreements and
 17 declines -- every one of the 17 a query reading `current` or
 `ordinal` that used to print a tree naming them -- and R8's four `main`
 fixes bought 84 more agreements and emptied three of the seven rewrite
-classes. The last four queries came from fixing the harness itself.
+classes. Four queries came back from fixing the harness itself, and
+five more agreements from fixing morel-java.
 
 A difference is *accounted for* when a rewrite makes the two texts
 equal exactly, so the classes are measurements rather than guesses.
@@ -67,24 +81,24 @@ that wrote it and `#only Relational` where `compute` supplied it.
 morel-rust's Core keeps the resolved function and not the name it was
 written under, so it cannot tell the two apart.
 
-That leaves 268, and `--kind unexplained` groups them by the first line
+That leaves 279, and `--kind unexplained` groups them by the first line
 on which the two disagree. Every row this table used to have is now
-empty but one: **132 are finding 9**, grounding landing on different
-sides of the printer, and nearly all of the remaining 136 is finding
+empty but one: **141 are finding 9**, grounding landing on different
+sides of the printer, and nearly all of the remaining 138 is finding
 15, the two front ends normalizing a query differently before a tree is
 ever built. Neither is a translator bug, and no work on the translator
 will close either. They are the whole of what is left.
 
 ### The order for the next session
 
-1. **Raise the morel-java findings: 5, 10, 17 and 20.** They are
-   written up ready to file in `java-findings.md`, each with a repro
-   replayed out of that file against tag `449-tree.3`. Finding 10 is a
-   three-line crash and finding 17 loses a whole session's input, so
-   both are worth sending before the rest. This is first because it is
-   the only item left that another person is waiting on.
+1. **Send morel-java's four fixes on.** Findings 5, 10, 17 and 20 are
+   fixed in `~/dev/morel.2` on `449-tree` (`240129bb`), each with a
+   test that fails without it, and `java-findings.md` says what each
+   one was. They are not on `~/dev/morel.4`, where the 449 work is
+   happening, so someone has to move them. Until then the harness needs
+   `--java ~/dev/morel.2` to see the numbers in the table above.
 2. **Findings 9 and 15, which are the whole of what is left**, and
-   both are conversations rather than changes: 132 and 136 of the 268
+   both are conversations rather than changes: 141 and 138 of the 279
    differences the rewrites do not explain. Grounding lands on
    different sides of the printer, and the two front ends normalize a
    query differently before a tree is ever built -- so for those
@@ -164,10 +178,10 @@ statements the corpus knows to be broken -- which is how finding 18
 turned up. And a shell that stops answering is **not** allowed
 to take the rest of the file with it: the marker before each statement
 is a progress report, so a run that stops short names the statement it
-stopped on, drops it, and replays. **Twelve statements stop a shell on
-the corpus, and every one of them is a finding**: one is finding 10,
-two are finding 17 and nine are finding 18. Ten more were the harness's
-own and four more were finding 19, and both are fixed.
+stopped on, drops it, and replays. **Nine statements stop a shell on the
+corpus, and every one is a morel-rust panic** (finding 18). Ten more
+were the harness's own, four were finding 19, and three were
+morel-java's findings 10 and 17; all are fixed.
 
 ## What morel-java did
 
@@ -913,6 +927,11 @@ for. The first is the one worth the whole exercise.
    construction, because it renumbers the finished text rather than
    the writer's identifiers, and the legend is part of the text.
 
+   **Fixed in morel-java 2026-09-14**, `~/dev/morel.2` `240129bb`: its
+   renumbering writer now renames the generated binders *inside* a
+   type's text, where before it renamed only a string that was entirely
+   one.
+
 6. **An operator that morel-java writes infix, we write as a call.**
    `from i in [1, 2, 3] yield i - 5` is `project [$0 - 5]` in
    morel-java and `project [#- Int ($0, 5)]` in morel-rust; `abs x` is
@@ -985,6 +1004,12 @@ the whole list.
     with `left = 1`. `AstWriter.infix` reads `left > 0` as "binary
     infix" and casts the single argument to a tuple. `~1` is safe only
     because it folds to a literal before anything prints it.
+
+    **Fixed in morel-java 2026-09-14**, `~/dev/morel.2` `240129bb`:
+    `NEGATE` has an associativity of its own, `Assoc.PREFIX`, and
+    `AstWriter.infix` asks `isPrefix()` rather than reading `left > 0`
+    as "is infix". It also gained a precedence tighter than any binary
+    operator, so `~x + 1` needs no brackets and `~(x + 1)` keeps them.
 
 11. **morel-rust leaves a name the query bound free inside a node.**
     `from d in scott.depts yield f = d yield f.deptno` gives `project
@@ -1095,6 +1120,11 @@ the whole list.
     morel-java's own file and contains all three -- so this is the
     stdin path alone. It costs the harness two files.
 
+    **Fixed in morel-java 2026-09-14**, `~/dev/morel.2` `240129bb`:
+    `isEscaped` is overridden, which is what `DefaultParser` asks once
+    it is inside a literal, so the reader knows which quotes are escaped
+    without unescaping anything.
+
 18. **morel-rust panics where it should raise, on statements the
     corpus brackets off.** The harness strips the `set("mode",
     "validate")` brackets, so it runs what no test runs, and two
@@ -1163,8 +1193,14 @@ the whole list.
     "morel-java declined" column unreliable, and morel-java's
     zero-decline invariant unfalsifiable from outside -- the one place
     its assertion would show up in the plan text is the one place the
-    plan text says nothing. Agreeing how a query with no node prints
-    costs a sentence in §6 and settles both.
+    plan text says nothing.
+
+    **Fixed in morel-java 2026-09-14**, `~/dev/morel.2` `240129bb`,
+    morel-rust's way: a query's plan prints as a leaf line with its
+    collection type even when the tree has no node in it, and an
+    expression that is not a query still prints as itself. It made the
+    harness's decline column right about 54 queries, and morel-java's
+    zero-decline invariant checkable from outside for the first time.
 
 21. **morel-java writes a built-in as the resolver *found* it, and
     morel-rust cannot tell how it was found.** `from e in emps yield

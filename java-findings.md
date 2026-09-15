@@ -6,9 +6,27 @@ against the Java code. Every repro below is against
 `julianhyde/449-tree` at tag `449-tree.3` (`01f24633`), fed to `./morel`
 on stdin from `src/test/resources/script`.
 
-They are ready to file as they stand. The branch's own record is
-`plan.md`, where these are findings 5, 10, 17 and 20; this file is the
-half of it that is morel-java's.
+**All four are fixed**, in `~/dev/morel.2` on `449-tree`, commit
+`240129bb`, each with a test that fails without its fix. What follows is
+what each one was and how it was found; the fix is described at the end
+of the entry. The branch's own record is `plan.md`, where these are
+findings 5, 10, 17 and 20.
+
+Fixing them moved the differential harness, which is the check that
+found three of them:
+
+| | before | after |
+| --- | ---: | ---: |
+| queries morel-java declined | 16 | **0** |
+| queries the harness read as "both declined" | 55 | 1 |
+| statements that stop a shell | 12 | 9 |
+
+and every one of the nine remaining stops is a morel-rust panic. The
+middle row is finding 4's point, confirmed: 54 of those were morel-java
+printing a node-free tree, which read as a decline, so the harness's
+decline column was wrong about 54 queries and morel-java's
+"the translator declines nothing" could not be checked from outside. It
+can now, and it holds.
 
 Two of them stop the shell dead, which is how they were found: a
 differential harness replays a `.smli` file in both implementations and
@@ -52,7 +70,13 @@ if (op2 != null && op2.left > 0) {
 ```
 
 `~1` is safe only because it folds to a literal before anything prints
-it, which is why nothing in the suite sees this.
+it, which is why nothing in the suite saw this.
+
+**Fixed.** `NEGATE` has an associativity of its own, `Assoc.PREFIX`, and
+`AstWriter.infix` asks `isPrefix()` rather than reading `left > 0` as
+"is infix". It also has a precedence tighter than any binary operator,
+so `~x + 1` needs no brackets and `~(x + 1)` keeps them. Five cases in
+`rel-tree.smli`, including `op ~ i`, which crashed the same way.
 
 ## 2. The shell mis-reads a backslash escape from stdin
 
@@ -72,8 +96,17 @@ stdIn:1.13-1.13 Lexical error at line 1, column 13.
 ```
 
 The *script* runner reads the same text correctly -- `pretty.smli` is
-morel-java's own file and contains all three -- so this is the stdin
-path alone. It costs a differential harness two files.
+morel-java's own file and contains all three -- so this was the stdin
+path alone. It cost a differential harness two files.
+
+**Fixed.** The line reader must not unescape what it hands back, or an
+escape would be eaten before morel's lexer saw it, so `escapeChars`
+stays null and `isEscaped` is overridden instead -- which is what
+`DefaultParser` asks once it is *inside* a literal. (`isQuoteChar`,
+the obvious place, is only asked outside one; overriding it changed
+nothing.) Counting the backslashes there changes no text. Two
+`ShellTest` cases assert that the statement *after* the literal runs,
+which is what was lost.
 
 ## 3. A plan's legend is not renumbered, so one binder gets two names
 
@@ -125,6 +158,12 @@ morel-rust is immune by construction, because it renumbers the finished
 text rather than the writer's identifiers, and the legend is part of the
 text.
 
+**Fixed.** The renumbering writer now renames the generated binders
+inside a type's text, where before it renamed only a string that was
+*entirely* one. The test moves the session's counter on with eight
+queries and asserts the warm plan is the cold plan's text; without the
+fix the output says `v$8` twice.
+
 ## 4. A node-free tree and a decline print the same
 
 ```
@@ -150,6 +189,10 @@ Two consequences, and the second is the one worth fixing:
   outside.** The one place a decline would show up in the plan text is
   the one place the plan text says nothing.
 
-morel-rust prints `[()] : unit list` -- a node line with its collection
-type, like any other leaf. A sentence in §6 saying which is right
-settles both, and the cross-implementation contract needs it either way.
+**Fixed**, morel-rust's way: a query's plan prints as a leaf line with
+its collection type, `[()] : unit list`, the way the leaf of any other
+tree does. An expression that is *not* a query still prints as itself,
+with no type and no trailing newline -- `Sys.planOf (List.hd [])` is
+unchanged -- and the argument's *AST* is what says which, because by
+the time it is Core a node-free tree is indistinguishable from an
+ordinary expression, which was the whole trouble.
