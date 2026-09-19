@@ -3203,10 +3203,18 @@ fn lift_nested_exists_in_where(steps: Vec<Step>) -> Vec<Step> {
                 Expr::Tuple(rec_t, items)
             };
             buf.push(Step::new(
-                StepKind::Yield(Box::new(yield_expr)),
+                StepKind::Yield(Box::new(yield_expr.clone())),
                 trailing_env.clone(),
             ));
             buf.push(Step::new(StepKind::Distinct, trailing_env.clone()));
+            // Iterate unbounded variables in their natural order, even
+            // though we joined to a relation to find their values: the
+            // order the relation happens to be scanned in is not the
+            // order the query asked for.
+            buf.push(Step::new(
+                StepKind::Order(Box::new(yield_expr)),
+                trailing_env.clone(),
+            ));
         }
         buf
     };

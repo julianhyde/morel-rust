@@ -1657,8 +1657,8 @@ from x, z
   distinct;
 > x z
 > - -
-> 1 3
 > 1 2
+> 1 3
 > 4 3
 >
 > val it : {x:int, z:int} list
@@ -1669,8 +1669,8 @@ from x, z
   distinct;
 > x z
 > - -
-> 1 3
 > 1 2
+> 1 3
 > 4 3
 >
 > val it : {x:int, z:int} list
@@ -1912,7 +1912,7 @@ fun caskSells b =
 
 from p
   where (exists b where likes (p, b) andalso not (caskSells b));
-> val it = ["shaggy","fred"] : string list
+> val it = ["fred","shaggy"] : string list
 
 (* Family relationships ----------------------------------------------
  *
