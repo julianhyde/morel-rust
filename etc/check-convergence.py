@@ -47,7 +47,13 @@ import sys
 
 RUST_PREFIX = "tests/script/"
 JAVA_PREFIX = "src/test/resources/script/"
-DEFAULT_JAVA_REPO = os.path.expanduser("~/dev/morel.0")
+# There is deliberately no default morel-java checkout. A hardcoded
+# path is not a criterion, it is a guess about which clone is current,
+# and the two ports guessed differently -- morel-rust at ~/dev/morel.0,
+# morel-go at ~/dev/morel.1 -- so the same propagation could pass one
+# gate and fail the other. Pass --java-repo; any clone containing the
+# commit being measured against gives the same answer, because the
+# commits, not the path, are what the comparison is pinned to.
 
 
 def git(repo, *args):
@@ -132,7 +138,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("rust_commit", nargs="?", default="HEAD")
     p.add_argument("--java", help="morel-java commit SHA (else from message)")
-    p.add_argument("--java-repo", default=DEFAULT_JAVA_REPO)
+    p.add_argument("--java-repo", required=True,
+                   help="path to a morel-java clone that contains the "
+                        "commit being measured against")
     p.add_argument("--verbose", action="store_true",
                    help="list every file, not just regressions")
     args = p.parse_args()

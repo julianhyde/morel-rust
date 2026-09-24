@@ -50,9 +50,13 @@ Run `/usr/local/bin/fullMake --no-clean` and confirm it passes.
 A propagation must move every changed `.smli` section literally,
 adding any that do not yet exist — do not adapt or skip a section
 because the implementation is hard. Gate this with
-`etc/check-convergence.py HEAD`, which fails if any `.smli` file
-diverged further from morel-java. Both it and `fullMake` must pass
-before committing.
+`etc/check-convergence.py --java-repo <morel-java clone> HEAD`, which
+fails if any `.smli` file diverged further from morel-java.
+`--java-repo` is required and has no default: pick a clone that
+contains the commit named in the `Propagates` line, and check
+`~/dev/plan.md` for which clone is current. The gate compares that
+commit and its parent, so the answer does not change as morel-java
+moves on. Both it and `fullMake` must pass before committing.
 
 ### Commit message
 
