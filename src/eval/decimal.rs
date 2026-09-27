@@ -797,6 +797,47 @@ pub fn parse_prefix(s: &str) -> Option<Option<Decimal>> {
     Some(canonical(p.neg, &p.mag, p.exp))
 }
 
+/// Adds a list of decimals exactly, then rounds once. `None` on
+/// overflow.
+pub fn sum(values: &[Decimal]) -> Option<Decimal> {
+    let mut exp = 0i32;
+    let mut first = true;
+    for d in values {
+        if d.is_zero() {
+            continue;
+        }
+        if first || d.exp < exp {
+            exp = d.exp;
+            first = false;
+        }
+    }
+    if first {
+        // Every term is zero, so no exponent was chosen.
+        return Some(Decimal::zero());
+    }
+    // Accumulate positive and negative magnitudes separately, so that
+    // the addition is exact and nothing is rounded until the end.
+    let mut pos = ZERO.to_string();
+    let mut neg = ZERO.to_string();
+    for d in values {
+        if d.is_zero() {
+            continue;
+        }
+        let m = d.mag_at(exp);
+        if d.signum() < 0 {
+            neg = add_mag(&neg, &m);
+        } else {
+            pos = add_mag(&pos, &m);
+        }
+    }
+    let total = match cmp_mag(&pos, &neg) {
+        Ordering::Equal => Decimal::zero(),
+        Ordering::Greater => canonical(false, &sub_mag(&pos, &neg), exp)?,
+        Ordering::Less => canonical(true, &sub_mag(&neg, &pos), exp)?,
+    };
+    Some(total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -971,6 +1012,14 @@ mod tests {
         assert!(parse_prefix("1E6145").unwrap().is_none());
         assert_eq!(show(&parse_prefix("1E~7000").unwrap().unwrap()), "0");
         assert!(parse_prefix("1E999999999999").unwrap().is_none());
+    }
+
+    #[test]
+    fn sums_exactly() {
+        let xs = [d("0.1"), d("0.2"), d("12.30")];
+        assert_eq!(show(&sum(&xs).unwrap()), "12.6");
+        assert!(sum(&[Decimal::max_finite(), Decimal::max_finite()]).is_none());
+        assert_eq!(show(&sum(&[]).unwrap()), "0");
     }
 
     #[test]

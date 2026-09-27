@@ -2084,6 +2084,16 @@ impl<'a> Resolver<'a> {
                                 &span,
                             );
                         }
+                        Some(Type::Data(name, args))
+                            if args.is_empty() && name == "decimal" =>
+                        {
+                            return self.call1(
+                                t,
+                                BuiltInFunction::RelationalSumDecimal,
+                                arg,
+                                &span,
+                            );
+                        }
                         _ => {}
                     }
                 }

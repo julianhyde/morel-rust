@@ -1407,6 +1407,9 @@ pub enum BuiltInFunction {
     // resolver so plans read `Relational.sum$int`/`$real`, as in morel-java.
     // They are internal (no structure `p`, not global): the resolver
     // references them directly, and `plan_label` supplies their label.
+    #[strum(props(name = "sum$decimal", throws = "Overflow"))]
+    #[strum(props(type = "decimal bag -> decimal"))]
+    RelationalSumDecimal,
     #[strum(props(name = "sum$int"))]
     #[strum(props(type = "int bag -> int"))]
     RelationalSumInt,

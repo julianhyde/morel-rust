@@ -2887,6 +2887,8 @@ pub enum EagerF1 {
     RelationalMax,
     RelationalMin,
     RelationalOnly,
+    RelationalSum,
+    RelationalSumDecimal,
     StringFromString,
     SysParseTree,
     SysPlanEx,
@@ -3078,6 +3080,22 @@ impl EagerF1 {
             RealTrunc => Real::trunc(a0.expect_real(), span),
             RelationalMax => Relational::max(a0.expect_list(), span),
             RelationalMin => Relational::min(a0.expect_list(), span),
+            RelationalSum => {
+                // `sum` is `'a bag -> 'a` where `'a` is numeric; dispatch
+                // on the element type, for the calls whose type the
+                // resolver could not settle -- a `compute sum over`
+                // reaches here rather than `sum$int` and its companions.
+                // An empty bag sums to `0` (int).
+                let items = a0.expect_list();
+                match items.first() {
+                    Some(Val::Decimal(_)) => decimal_sum_val(&items, span),
+                    Some(Val::Real(_)) => {
+                        Ok(Val::Real(items.iter().map(Val::expect_real).sum()))
+                    }
+                    _ => Ok(Val::Int(items.iter().map(Val::expect_int).sum())),
+                }
+            }
+            RelationalSumDecimal => decimal_sum_val(&a0.expect_list(), span),
             StringFromString => string_cvt::scan_str(
                 r,
                 f,
@@ -3310,7 +3328,6 @@ pub enum Eager1 {
     RelationalCount,
     RelationalEmpty,
     RelationalNonEmpty,
-    RelationalSum,
     RelationalSumInt,
     RelationalSumReal,
     StringConcat,
@@ -3714,16 +3731,6 @@ impl Eager1 {
             RelationalCount => Val::Int(a0.expect_list().len() as i32),
             RelationalEmpty => Val::Bool(a0.expect_list().is_empty()),
             RelationalNonEmpty => Val::Bool(!a0.expect_list().is_empty()),
-            RelationalSum => {
-                // `sum` is `'a bag -> 'a` where `'a` is numeric; dispatch on
-                // the element type. An empty bag sums to `0` (int).
-                let items = a0.expect_list();
-                if matches!(items.first(), Some(Val::Real(_))) {
-                    Val::Real(items.iter().map(Val::expect_real).sum())
-                } else {
-                    Val::Int(items.iter().map(Val::expect_int).sum())
-                }
-            }
             RelationalSumInt => {
                 Val::Int(a0.expect_list().iter().map(Val::expect_int).sum())
             }
@@ -5186,6 +5193,9 @@ fn plan_label(variant: &str) -> String {
     // Internal overload instances whose label is a `structure.name$type`
     // form that does not follow from a structure `p` prop.
     match variant {
+        "RelationalSumDecimal" => {
+            return "Relational.sum$decimal".to_string();
+        }
         "RelationalSumInt" => return "Relational.sum$int".to_string(),
         "RelationalSumReal" => return "Relational.sum$real".to_string(),
         _ => {}
@@ -5719,7 +5729,8 @@ fn build_library() -> Lib {
     EagerF2::RelationalMinBy.implements(&mut b, RelationalMinBy);
     Eager1::RelationalNonEmpty.implements(&mut b, RelationalNonEmpty);
     EagerF1::RelationalOnly.implements(&mut b, RelationalOnly);
-    Eager1::RelationalSum.implements(&mut b, RelationalSum);
+    EagerF1::RelationalSum.implements(&mut b, RelationalSum);
+    EagerF1::RelationalSumDecimal.implements(&mut b, RelationalSumDecimal);
     Eager1::RelationalSumInt.implements(&mut b, RelationalSumInt);
     Eager1::RelationalSumReal.implements(&mut b, RelationalSumReal);
     Eager2::StringCaret.implements(&mut b, StringCaret);
@@ -6529,6 +6540,17 @@ fn decimal_to_int(
 ) -> Result<Val, MorelError> {
     match d.round_to_int(mode).to_i32() {
         Some(n) => Ok(Val::Int(n)),
+        None => Err(MorelError::Runtime(BuiltInExn::Overflow, span.clone())),
+    }
+}
+
+/// Sums a list of decimals, raising `Overflow` if the total is too
+/// large. The sum is exact and rounded once, at the end.
+fn decimal_sum_val(items: &[Val], span: &Span) -> Result<Val, MorelError> {
+    let values: Vec<decimal::Decimal> =
+        items.iter().map(|v| v.expect_decimal().clone()).collect();
+    match decimal::sum(&values) {
+        Some(d) => Ok(Val::Decimal(d)),
         None => Err(MorelError::Runtime(BuiltInExn::Overflow, span.clone())),
     }
 }
