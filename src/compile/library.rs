@@ -641,13 +641,17 @@ pub enum BuiltInFunction {
     #[strum(props(type = "forall 3 ('a -> 'b -> 'c) -> 'a * 'b -> 'c"))]
     FnUncurry,
     #[strum(props(name = "abs", global = true, prefer = "int"))]
-    #[strum(props(domain = "int real"))]
+    #[strum(props(domain = "int real", decimal = "true"))]
     #[strum(props(type = "forall 1 'a -> 'a"))]
     GAbs,
     #[strum(props(name = "op div", global = true, prefer = "int"))]
     #[strum(props(domain = "int word"))]
     #[strum(props(type = "forall 1 'a * 'a -> 'a"))]
     GDiv,
+    #[strum(props(name = "op /", global = true, prefer = "real"))]
+    #[strum(props(domain = "real", decimal = "true"))]
+    #[strum(props(type = "forall 1 'a * 'a -> 'a"))]
+    GDivide,
     #[strum(props(name = "op =", global = true))]
     #[strum(props(type = "forall 1 'a * 'a -> bool"))]
     GEq,
@@ -664,7 +668,7 @@ pub enum BuiltInFunction {
     #[strum(props(type = "forall 1 'a * 'a -> bool"))]
     GLt,
     #[strum(props(name = "op -", global = true, prefer = "int"))]
-    #[strum(props(domain = "int real word"))]
+    #[strum(props(domain = "int real word", decimal = "true"))]
     #[strum(props(type = "forall 1 'a * 'a -> 'a"))]
     GMinus,
     #[strum(props(name = "op mod", global = true, prefer = "int"))]
@@ -675,15 +679,15 @@ pub enum BuiltInFunction {
     #[strum(props(type = "forall 1 'a * 'a -> bool"))]
     GNe,
     #[strum(props(name = "op ~", global = true, prefer = "int"))]
-    #[strum(props(domain = "int real word"))]
+    #[strum(props(domain = "int real word", decimal = "true"))]
     #[strum(props(type = "forall 1 'a -> 'a"))]
     GNegate,
     #[strum(props(name = "op +", global = true, prefer = "int"))]
-    #[strum(props(domain = "int real word"))]
+    #[strum(props(domain = "int real word", decimal = "true"))]
     #[strum(props(type = "forall 1 'a * 'a -> 'a"))]
     GPlus,
     #[strum(props(name = "op *", global = true, prefer = "int"))]
-    #[strum(props(domain = "int real word"))]
+    #[strum(props(domain = "int real word", decimal = "true"))]
     #[strum(props(type = "forall 1 'a * 'a -> 'a"))]
     GTimes,
     #[strum(props(p = "General", name = "before", global = true))]
@@ -1248,7 +1252,7 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Real", name = "copySign"))]
     #[strum(props(type = "real * real -> real"))]
     RealCopySign,
-    #[strum(props(p = "Real", name = "/", alias = "op /"))]
+    #[strum(props(p = "Real", name = "/"))]
     #[strum(props(type = "real * real -> real"))]
     RealDivide,
     #[strum(props(p = "Real", name = "=", type = "real * real -> bool"))]
@@ -2211,6 +2215,15 @@ impl BuiltInFunction {
                 s.split(' ').filter_map(PrimitiveType::parse_name).collect()
             })
             .unwrap_or_default()
+    }
+
+    /// Whether an overloaded operator also applies to `decimal`. It is
+    /// read from the `decimal` prop rather than `domain`, because
+    /// `decimal` is a datatype with no constructors, not a
+    /// [PrimitiveType]. Standard ML's overload classes have no such
+    /// member; this is a Morel extension.
+    pub(crate) fn overload_includes_decimal(&self) -> bool {
+        self.get_str("decimal").is_some()
     }
 
     /// Whether this function takes a pair, as `+` does, rather than a

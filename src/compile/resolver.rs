@@ -1993,6 +1993,16 @@ impl<'a> Resolver<'a> {
                                     &span,
                                 );
                             }
+                            Type::Data(name, args)
+                                if args.is_empty() && name == "decimal" =>
+                            {
+                                return self.call1(
+                                    t,
+                                    BuiltInFunction::DecimalAbs,
+                                    arg,
+                                    &span,
+                                );
+                            }
                             _ => {}
                         }
                     }
@@ -2161,7 +2171,28 @@ impl<'a> Resolver<'a> {
                 self.call2(t, f, &span, a0, a1)
             }
             ExprKind::Divide(a0, a1) => {
-                self.call2(t, BuiltInFunction::RealDivide, &span, a0, a1)
+                // `/` applies to real and to decimal, the two types
+                // closed under division; real is the default.
+                match a0.get_type(self.type_map).expect("type").as_ref() {
+                    Type::Data(name, args)
+                        if args.is_empty() && name == "decimal" =>
+                    {
+                        self.call2(
+                            t,
+                            BuiltInFunction::DecimalDivide,
+                            &span,
+                            a0,
+                            a1,
+                        )
+                    }
+                    _ => self.call2(
+                        t,
+                        BuiltInFunction::RealDivide,
+                        &span,
+                        a0,
+                        a1,
+                    ),
+                }
             }
             ExprKind::Elem(a0, a1) => {
                 self.call2(t, BuiltInFunction::ListElem, &span, a0, a1)
@@ -2444,6 +2475,17 @@ impl<'a> Resolver<'a> {
                         a0,
                         a1,
                     ),
+                    Type::Data(name, args)
+                        if args.is_empty() && name == "decimal" =>
+                    {
+                        self.call2(
+                            t,
+                            BuiltInFunction::DecimalMinus,
+                            &span,
+                            a0,
+                            a1,
+                        )
+                    }
                     _ => self.call2(t, BuiltInFunction::GMinus, &span, a0, a1),
                 }
             }
@@ -2465,6 +2507,11 @@ impl<'a> Resolver<'a> {
                     }
                     Type::Primitive(PrimitiveType::Word) => {
                         self.call1(t, BuiltInFunction::WordOpNegate, a0, &span)
+                    }
+                    Type::Data(name, args)
+                        if args.is_empty() && name == "decimal" =>
+                    {
+                        self.call1(t, BuiltInFunction::DecimalNegate, a0, &span)
                     }
                     _ => self.call1(t, BuiltInFunction::GNegate, a0, &span),
                 }
@@ -2516,6 +2563,17 @@ impl<'a> Resolver<'a> {
                         a0,
                         a1,
                     ),
+                    Type::Data(name, args)
+                        if args.is_empty() && name == "decimal" =>
+                    {
+                        self.call2(
+                            t,
+                            BuiltInFunction::DecimalPlus,
+                            &span,
+                            a0,
+                            a1,
+                        )
+                    }
                     // Polymorphic / unconstrained type variable: use the
                     // generic dispatcher which resolves at runtime.
                     _ => self.call2(t, BuiltInFunction::GPlus, &span, a0, a1),
@@ -2656,6 +2714,17 @@ impl<'a> Resolver<'a> {
                         a0,
                         a1,
                     ),
+                    Type::Data(name, args)
+                        if args.is_empty() && name == "decimal" =>
+                    {
+                        self.call2(
+                            t,
+                            BuiltInFunction::DecimalTimes,
+                            &span,
+                            a0,
+                            a1,
+                        )
+                    }
                     _ => self.call2(t, BuiltInFunction::GTimes, &span, a0, a1),
                 }
             }

@@ -5030,6 +5030,7 @@ pub enum Custom {
     // lint: sort until '#}'
     GAbs,
     GDiv,
+    GDivide,
     GEq,
     GGe,
     GGt,
@@ -5095,6 +5096,13 @@ impl Custom {
                 (Val::Int(x), Val::Int(y)) => Val::Int(Int::div(x, y)),
                 (Val::Word(x), Val::Word(y)) => Val::Word(x / y),
                 _ => panic!("Type error in div operation"),
+            },
+            GDivide => match (a0, a1) {
+                (Val::Real(x), Val::Real(y)) => Val::Real(x / y),
+                // A decimal `/` is specialized to `Decimal./` while
+                // resolving, because it can overflow and divide by zero
+                // and this dispatcher cannot fail.
+                _ => panic!("Type error in / operation"),
             },
             GEq => Val::Bool(norm(a0) == norm(a1)),
             GGe => Val::Bool(matches!(
@@ -5458,6 +5466,7 @@ fn build_library() -> Lib {
     EagerF2::FnUncurry.implements(&mut b, FnUncurry);
     Custom::GAbs.implements(&mut b, GAbs);
     Custom::GDiv.implements(&mut b, GDiv);
+    Custom::GDivide.implements(&mut b, GDivide);
     Custom::GEq.implements(&mut b, GEq);
     Custom::GGe.implements(&mut b, GGe);
     Custom::GGt.implements(&mut b, GGt);

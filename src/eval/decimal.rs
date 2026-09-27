@@ -27,6 +27,10 @@
 //! rounding and scaling are string operations, and the one operation
 //! that needs more, division, is schoolbook long division in base 10.
 
+use crate::eval::real::{
+    FmtKind, ZERO_DIGITS, format_exact, format_fix, format_gen, format_sci,
+    round_digits,
+};
 use std::cmp::Ordering;
 use std::fmt;
 
@@ -53,7 +57,7 @@ const MAX_PARSED_EXPONENT: i32 = 100_000;
 /// requires that `digits` has no leading zero and no trailing zero,
 /// that it is at most [PRECISION] long, and that zero is the single
 /// value with empty digits, exponent 0 and `neg` false.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct Decimal {
     neg: bool,
     digits: String,
@@ -250,6 +254,93 @@ impl Decimal {
             1
         }
     }
+    /// Rounds to an integral decimal.
+    pub fn round_to_int(&self, mode: RoundMode) -> Decimal {
+        if self.exp >= 0 {
+            // Already integral.
+            return self.clone();
+        }
+        let k = (-self.exp) as usize;
+        let (whole, frac) = if k >= self.digits.len() {
+            (ZERO.to_string(), self.digits.clone())
+        } else {
+            let split = self.digits.len() - k;
+            (
+                self.digits[..split].to_string(),
+                self.digits[split..].to_string(),
+            )
+        };
+        let mut mag = whole;
+        if round_up(mode, self.neg, &mag, &frac, k) {
+            mag = add_mag(&mag, "1");
+        }
+        // An integral value always fits, so canonical cannot fail.
+        canonical(self.neg, &mag, 0).unwrap()
+    }
+
+    /// The decimal equal to an int.
+    pub fn from_i32(n: i32) -> Self {
+        let neg = n < 0;
+        let mag = i64::from(n).abs().to_string();
+        canonical(neg, &mag, 0).unwrap()
+    }
+
+    /// Converts to an int, or `None` if it does not fit. The value must
+    /// be integral.
+    pub fn to_i32(&self) -> Option<i32> {
+        if self.is_zero() {
+            return Some(0);
+        }
+        let mut mag = self.digits.clone();
+        if self.exp > 0 {
+            mag.push_str(&"0".repeat(self.exp as usize));
+        }
+        // i32::MIN has 10 digits, so anything longer cannot fit.
+        if mag.len() > 10 {
+            return None;
+        }
+        let n: i64 = mag.parse().ok()?;
+        let n = if self.neg { -n } else { n };
+        i32::try_from(n).ok()
+    }
+
+    /// The nearest real, which is an infinity if the value is too
+    /// large.
+    pub fn to_f32(&self) -> f32 {
+        if self.is_zero() {
+            return 0.0;
+        }
+        let text = format!(
+            "{}{}E{}",
+            if self.neg { "-" } else { "" },
+            self.digits,
+            self.exp
+        );
+        // A value out of range parses as an infinity, with an error
+        // that says so; that is the answer we want.
+        text.parse::<f32>().unwrap_or(if self.neg {
+            f32::NEG_INFINITY
+        } else {
+            f32::INFINITY
+        })
+    }
+
+    /// Renders in the given `StringCvt.realfmt` style. Ties round
+    /// half-even, as decimal arithmetic does.
+    pub fn fmt_style(&self, kind: FmtKind, n: usize) -> String {
+        let (digits, exp) = if self.is_zero() {
+            (ZERO_DIGITS.to_string(), 0)
+        } else {
+            (self.digits.clone(), self.adj_exp())
+        };
+        let body = match kind {
+            FmtKind::Sci => format_sci(&digits, exp, n, true),
+            FmtKind::Fix => format_fix(&digits, exp, n, true),
+            FmtKind::Gen => format_gen(&digits, exp, n, true),
+            FmtKind::Exact => format_exact(&digits, exp),
+        };
+        if self.neg { format!("~{}", body) } else { body }
+    }
 }
 
 /// The digit string of zero, where a magnitude needs one.
@@ -442,8 +533,7 @@ fn canonical(neg: bool, mag: &str, exp: i32) -> Option<Decimal> {
     }
     if digits.len() > PRECISION {
         let drop = (digits.len() - PRECISION) as i32;
-        let (rounded, adj) =
-            crate::eval::real::round_digits(&digits, PRECISION, true);
+        let (rounded, adj) = round_digits(&digits, PRECISION, true);
         digits = rounded;
         exp += drop + adj;
     }
@@ -548,38 +638,12 @@ pub fn rem(a: &Decimal, b: &Decimal) -> Result<Option<Decimal>, ()> {
 }
 
 /// How a decimal is rounded to an integer.
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 pub enum RoundMode {
     Trunc,
     Floor,
     Ceil,
     HalfEven,
-}
-
-impl Decimal {
-    /// Rounds to an integral decimal.
-    pub fn round_to_int(&self, mode: RoundMode) -> Decimal {
-        if self.exp >= 0 {
-            // Already integral.
-            return self.clone();
-        }
-        let k = (-self.exp) as usize;
-        let (whole, frac) = if k >= self.digits.len() {
-            (ZERO.to_string(), self.digits.clone())
-        } else {
-            let split = self.digits.len() - k;
-            (
-                self.digits[..split].to_string(),
-                self.digits[split..].to_string(),
-            )
-        };
-        let mut mag = whole;
-        if round_up(mode, self.neg, &mag, &frac, k) {
-            mag = add_mag(&mag, "1");
-        }
-        // An integral value always fits, so canonical cannot fail.
-        canonical(self.neg, &mag, 0).unwrap()
-    }
 }
 
 /// Whether rounding a magnitude `whole` with dropped digits `frac`, of
@@ -731,85 +795,6 @@ pub fn parse_prefix(s: &str) -> Option<Option<Decimal>> {
     let rest = s.trim_start();
     let (p, _) = parse_at(rest)?;
     Some(canonical(p.neg, &p.mag, p.exp))
-}
-
-impl Decimal {
-    /// The decimal equal to an int.
-    pub fn from_i32(n: i32) -> Self {
-        let neg = n < 0;
-        let mag = i64::from(n).abs().to_string();
-        canonical(neg, &mag, 0).unwrap()
-    }
-
-    /// Converts to an int, or `None` if it does not fit. The value must
-    /// be integral.
-    pub fn to_i32(&self) -> Option<i32> {
-        if self.is_zero() {
-            return Some(0);
-        }
-        let mut mag = self.digits.clone();
-        if self.exp > 0 {
-            mag.push_str(&"0".repeat(self.exp as usize));
-        }
-        // i32::MIN has 10 digits, so anything longer cannot fit.
-        if mag.len() > 10 {
-            return None;
-        }
-        let n: i64 = mag.parse().ok()?;
-        let n = if self.neg { -n } else { n };
-        i32::try_from(n).ok()
-    }
-
-    /// The nearest real, which is an infinity if the value is too
-    /// large.
-    pub fn to_f32(&self) -> f32 {
-        if self.is_zero() {
-            return 0.0;
-        }
-        let text = format!(
-            "{}{}E{}",
-            if self.neg { "-" } else { "" },
-            self.digits,
-            self.exp
-        );
-        // A value out of range parses as an infinity, with an error
-        // that says so; that is the answer we want.
-        text.parse::<f32>().unwrap_or(if self.neg {
-            f32::NEG_INFINITY
-        } else {
-            f32::INFINITY
-        })
-    }
-
-    /// Renders in the given `StringCvt.realfmt` style. Ties round
-    /// half-even, as decimal arithmetic does.
-    pub fn fmt_style(
-        &self,
-        kind: crate::eval::real::FmtKind,
-        n: usize,
-    ) -> String {
-        use crate::eval::real::{
-            ZERO_DIGITS, format_exact, format_fix, format_gen, format_sci,
-        };
-        let (digits, exp) = if self.is_zero() {
-            (ZERO_DIGITS.to_string(), 0)
-        } else {
-            (self.digits.clone(), self.adj_exp())
-        };
-        let body = match kind {
-            crate::eval::real::FmtKind::Sci => {
-                format_sci(&digits, exp, n, true)
-            }
-            crate::eval::real::FmtKind::Fix => {
-                format_fix(&digits, exp, n, true)
-            }
-            crate::eval::real::FmtKind::Gen => {
-                format_gen(&digits, exp, n, true)
-            }
-            crate::eval::real::FmtKind::Exact => format_exact(&digits, exp),
-        };
-        if self.neg { format!("~{}", body) } else { body }
-    }
 }
 
 #[cfg(test)]
