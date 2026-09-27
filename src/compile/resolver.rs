@@ -47,6 +47,7 @@ use crate::compile::types::{
     Checks, Label, PrimitiveType, Type, TypeVariable, instantiate,
 };
 use crate::eval::code::LIBRARY;
+use crate::eval::decimal;
 use crate::eval::val::Val;
 use crate::syntax::ast::{
     CastKind, DatatypeBind, Decl, DeclKind, Expr, ExprKind, FunMatch, Literal,
@@ -1993,6 +1994,43 @@ impl<'a> Resolver<'a> {
                                 );
                             }
                             _ => {}
+                        }
+                    }
+                }
+                // `decimal "12.3"` is converted here, so that the plan
+                // holds the value rather than a call, and an invalid
+                // literal is a compile error rather than a `Domain`
+                // exception at run time. Resolving is the right moment:
+                // the argument is still the one the program wrote, and a
+                // `decimal` that a local declaration shadows has another
+                // result type, which is how one is told from the other.
+                let is_decimal_fn = match &func.kind {
+                    ExprKind::Apply(sel, recv) => matches!(
+                        (&sel.kind, &recv.kind),
+                        (
+                            ExprKind::RecordSelector(member),
+                            ExprKind::Identifier(structure),
+                        ) if member == "decimal" && structure == "Decimal"
+                    ),
+                    ExprKind::Identifier(name) => name == "decimal",
+                    _ => false,
+                };
+                if is_decimal_fn
+                    && matches!(t.as_ref(), Type::Data(name, args)
+                        if args.is_empty() && name == "decimal")
+                    && let ExprKind::Literal(lit) = &arg.kind
+                    && let LiteralKind::String(raw) = &lit.kind
+                    && let Ok(text) = parser::unquote_string(raw)
+                {
+                    match decimal::parse_exact(&text) {
+                        Some(d) => {
+                            return CoreExpr::Literal(t, Val::Decimal(d));
+                        }
+                        None => {
+                            self.errors.borrow_mut().push((
+                                format!("invalid decimal literal '{}'", text),
+                                span.clone(),
+                            ));
                         }
                     }
                 }

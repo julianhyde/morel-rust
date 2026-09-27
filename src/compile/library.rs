@@ -352,6 +352,142 @@ pub enum BuiltInFunction {
     /// `Date.yearDay d`.
     #[strum(props(p = "Date", name = "yearDay", type = "date -> int"))]
     DateYearDay,
+    /// `Decimal.abs`.
+    #[strum(props(p = "Decimal", name = "abs"))]
+    #[strum(props(type = "decimal -> decimal"))]
+    DecimalAbs,
+    /// `Decimal.ceil`.
+    #[strum(props(p = "Decimal", name = "ceil"))]
+    #[strum(props(type = "decimal -> int", throws = "Overflow"))]
+    DecimalCeil,
+    /// `Decimal.compare`.
+    #[strum(props(p = "Decimal", name = "compare"))]
+    #[strum(props(type = "decimal * decimal -> `order`"))]
+    DecimalCompare,
+    /// `Decimal.decimal`.
+    #[strum(props(p = "Decimal", name = "decimal", global = true))]
+    #[strum(props(type = "string -> decimal", throws = "Domain"))]
+    DecimalDecimal,
+    /// `Decimal./`.
+    #[strum(props(p = "Decimal", name = "/"))]
+    #[strum(props(type = "decimal * decimal -> decimal", throws = "Div"))]
+    DecimalDivide,
+    /// `Decimal.floor`.
+    #[strum(props(p = "Decimal", name = "floor"))]
+    #[strum(props(type = "decimal -> int", throws = "Overflow"))]
+    DecimalFloor,
+    /// `Decimal.fmt`.
+    #[strum(props(p = "Decimal", name = "fmt"))]
+    #[strum(props(type = "realfmt -> decimal -> string", throws = "Size"))]
+    DecimalFmt,
+    /// `Decimal.fromInt`.
+    #[strum(props(p = "Decimal", name = "fromInt"))]
+    #[strum(props(type = "int -> decimal"))]
+    DecimalFromInt,
+    /// `Decimal.fromReal`.
+    #[strum(props(p = "Decimal", name = "fromReal"))]
+    #[strum(props(type = "real -> decimal", throws = "Overflow"))]
+    DecimalFromReal,
+    /// `Decimal.fromString`.
+    #[strum(props(p = "Decimal", name = "fromString"))]
+    #[strum(props(type = "string -> decimal option", throws = "Overflow"))]
+    DecimalFromString,
+    /// `Decimal.>=`.
+    #[strum(props(p = "Decimal", name = ">="))]
+    #[strum(props(type = "decimal * decimal -> bool"))]
+    DecimalGe,
+    /// `Decimal.>`.
+    #[strum(props(p = "Decimal", name = ">"))]
+    #[strum(props(type = "decimal * decimal -> bool"))]
+    DecimalGt,
+    /// `Decimal.<=`.
+    #[strum(props(p = "Decimal", name = "<="))]
+    #[strum(props(type = "decimal * decimal -> bool"))]
+    DecimalLe,
+    /// `Decimal.<`.
+    #[strum(props(p = "Decimal", name = "<"))]
+    #[strum(props(type = "decimal * decimal -> bool"))]
+    DecimalLt,
+    /// `Decimal.max`.
+    #[strum(props(p = "Decimal", name = "max"))]
+    #[strum(props(type = "decimal * decimal -> decimal"))]
+    DecimalMax,
+    /// `Decimal.maxFinite`.
+    #[strum(props(p = "Decimal", name = "maxFinite"))]
+    #[strum(props(type = "decimal"))]
+    DecimalMaxFinite,
+    /// `Decimal.min`.
+    #[strum(props(p = "Decimal", name = "min"))]
+    #[strum(props(type = "decimal * decimal -> decimal"))]
+    DecimalMin,
+    /// `Decimal.minPos`.
+    #[strum(props(p = "Decimal", name = "minPos"))]
+    #[strum(props(type = "decimal"))]
+    DecimalMinPos,
+    /// `Decimal.-`.
+    #[strum(props(p = "Decimal", name = "-"))]
+    #[strum(props(type = "decimal * decimal -> decimal", throws = "Overflow"))]
+    DecimalMinus,
+    /// `Decimal.~`.
+    #[strum(props(p = "Decimal", name = "~"))]
+    #[strum(props(type = "decimal -> decimal"))]
+    DecimalNegate,
+    /// `Decimal.+`.
+    #[strum(props(p = "Decimal", name = "+"))]
+    #[strum(props(type = "decimal * decimal -> decimal", throws = "Overflow"))]
+    DecimalPlus,
+    /// `Decimal.precision`.
+    #[strum(props(p = "Decimal", name = "precision"))]
+    #[strum(props(type = "int"))]
+    DecimalPrecision,
+    /// `Decimal.radix`.
+    #[strum(props(p = "Decimal", name = "radix"))]
+    #[strum(props(type = "int"))]
+    DecimalRadix,
+    /// `Decimal.realCeil`.
+    #[strum(props(p = "Decimal", name = "realCeil"))]
+    #[strum(props(type = "decimal -> decimal"))]
+    DecimalRealCeil,
+    /// `Decimal.realFloor`.
+    #[strum(props(p = "Decimal", name = "realFloor"))]
+    #[strum(props(type = "decimal -> decimal"))]
+    DecimalRealFloor,
+    /// `Decimal.realRound`.
+    #[strum(props(p = "Decimal", name = "realRound"))]
+    #[strum(props(type = "decimal -> decimal"))]
+    DecimalRealRound,
+    /// `Decimal.realTrunc`.
+    #[strum(props(p = "Decimal", name = "realTrunc"))]
+    #[strum(props(type = "decimal -> decimal"))]
+    DecimalRealTrunc,
+    /// `Decimal.rem`.
+    #[strum(props(p = "Decimal", name = "rem"))]
+    #[strum(props(type = "decimal * decimal -> decimal", throws = "Div"))]
+    DecimalRem,
+    /// `Decimal.round`.
+    #[strum(props(p = "Decimal", name = "round"))]
+    #[strum(props(type = "decimal -> int", throws = "Overflow"))]
+    DecimalRound,
+    /// `Decimal.sign`.
+    #[strum(props(p = "Decimal", name = "sign"))]
+    #[strum(props(type = "decimal -> int"))]
+    DecimalSign,
+    /// `Decimal.*`.
+    #[strum(props(p = "Decimal", name = "*"))]
+    #[strum(props(type = "decimal * decimal -> decimal", throws = "Overflow"))]
+    DecimalTimes,
+    /// `Decimal.toReal`.
+    #[strum(props(p = "Decimal", name = "toReal"))]
+    #[strum(props(type = "decimal -> real"))]
+    DecimalToReal,
+    /// `Decimal.toString`.
+    #[strum(props(p = "Decimal", name = "toString"))]
+    #[strum(props(type = "decimal -> string"))]
+    DecimalToString,
+    /// `Decimal.trunc`.
+    #[strum(props(p = "Decimal", name = "trunc"))]
+    #[strum(props(type = "decimal -> int", throws = "Overflow"))]
+    DecimalTrunc,
     #[strum(props(p = "Relational", name = "DESC", global = true))]
     #[strum(props(type = "forall 1 'a -> 'a descending"))]
     #[strum(props(constructor_ordinal = "0"))]
@@ -2161,6 +2297,8 @@ pub enum BuiltInRecord {
     Datalog,
     #[strum(props(name = "Date"))]
     Date,
+    #[strum(props(name = "Decimal"))]
+    Decimal,
     #[strum(props(name = "Either"))]
     Either,
     #[strum(props(name = "Fn"))]
@@ -2419,6 +2557,8 @@ pub enum BuiltInEqtype {
     Collection,
     #[strum(props(name = "date", varCount = "0"))]
     Date,
+    #[strum(props(name = "decimal", varCount = "0"))]
+    Decimal,
     #[strum(props(name = "doc", varCount = "0"))]
     Doc,
     #[strum(props(name = "list", varCount = "1"))]
