@@ -172,3 +172,25 @@ fn trailing_comment_is_not_an_error() {
     assert!(out.contains("val it = 2 : int"), "{}", out);
     assert!(!out.contains("Error"), "{}", out);
 }
+
+/// A backslash-escaped quote does not end a string literal. The line
+/// reader tracks quotes so that it knows whether a statement is
+/// complete, so reading the escaped quote as the closing one would
+/// leave a literal open to the end of the input: the statement would
+/// never run, and neither would anything after it. So the test asserts
+/// that the statement after the literal runs, which is what would be
+/// lost (hydromatic/morel#482).
+#[test]
+fn escaped_quote_in_string_literal() {
+    let out = pipe("val a = \"x\\\"y\";\nval b = 2;\n");
+    assert!(out.contains("val a = \"x\\\"y\" : string"), "{out}");
+    assert!(out.contains("val b = 2 : int"), "{out}");
+}
+
+/// As `escaped_quote_in_string_literal`, for a char literal.
+#[test]
+fn escaped_quote_in_char_literal() {
+    let out = pipe("val a = #\"\\\"\";\nval b = 2;\n");
+    assert!(out.contains("val a = #\"\\\"\" : char"), "{out}");
+    assert!(out.contains("val b = 2 : int"), "{out}");
+}
