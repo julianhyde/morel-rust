@@ -455,7 +455,7 @@ from e in scott.emps where e.deptno = 30 yield {e.ename, e.comm};
 >   [{comm=SOME 300,ename="ALLEN"},{comm=SOME 500,ename="WARD"},
 >    {comm=SOME 1400,ename="MARTIN"},{comm=NONE,ename="BLAKE"},
 >    {comm=SOME 0,ename="TURNER"},{comm=NONE,ename="JAMES"}]
->   : {comm:real option, ename:string} bag
+>   : {comm:decimal option, ename:string} bag
 from e in scott.emps where e.deptno = 10 yield e.mgr;
 > val it = [SOME 7839,NONE,SOME 7782] : int option bag
 from e in scott.emps where e.comm = NONE andalso e.deptno = 30 yield e.ename;
@@ -476,12 +476,12 @@ from e in scott.emps
   where Option.isSome e.comm
   yield (e.ename, valOf e.comm);
 > val it = [("ALLEN",300),("WARD",500),("MARTIN",1400),("TURNER",0)]
->   : (string * real) bag
+>   : (string * decimal) bag
 from e in scott.emps
   group e.deptno compute {c = count over (), s = sum over e.sal};
 > val it =
->   [{c=5,deptno=20,s=10875},{c=3,deptno=10,s=8750},{c=6,deptno=30,s=9400}]
->   : {c:int, deptno:int, s:real} bag
+>   [{c=5,deptno=20,s=10875},{c=6,deptno=30,s=9400},{c=3,deptno=10,s=8750}]
+>   : {c:int, deptno:int, s:decimal} bag
 Sys.set ("hybrid", false);
 > val it = () : unit
 

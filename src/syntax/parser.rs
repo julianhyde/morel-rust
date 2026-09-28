@@ -2832,6 +2832,27 @@ pub fn is_reserved_word(id: &str) -> bool {
 /// word), so that it round-trips. Mirrors morel-java's `Parsers.appendId`
 /// (the `AstWriter.idQuoted` path) — use for variable identifiers in
 /// expressions and for record labels.
+/// Returns a record selector, `#label` or `#1`. A label that is not
+/// letters, digits, underscores and primes -- an operator such as `*` --
+/// is enclosed in back-ticks, `` #`*` ``, which the parser reads back as
+/// the same selector.
+pub fn selector_text(label: &str) -> String {
+    if is_plain_label(label) {
+        format!("#{label}")
+    } else {
+        format!("#`{}`", label.replace('`', "``"))
+    }
+}
+
+/// Whether a label can follow `#` without quoting: non-empty, and
+/// letters, digits, underscores and primes.
+fn is_plain_label(label: &str) -> bool {
+    !label.is_empty()
+        && label
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
+}
+
 pub fn append_id(buf: &mut String, id: &str) {
     if id.contains('`') {
         buf.push('`');

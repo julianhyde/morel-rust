@@ -21,6 +21,7 @@ use crate::compile::type_env::Id;
 use crate::compile::types::{Checks, Label, Type};
 use crate::eval::val::Val;
 use crate::syntax::ast::JoinType;
+use crate::syntax::parser;
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::ops::Deref;
 use std::rc::Rc;
@@ -340,7 +341,7 @@ impl Display for Expr {
                     _ => None,
                 };
                 match field {
-                    Some(name) => write!(f, "#{}", name),
+                    Some(name) => write!(f, "{}", parser::selector_text(&name)),
                     None => write!(f, "#{}", slot + 1),
                 }
             }

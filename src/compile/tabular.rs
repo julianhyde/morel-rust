@@ -413,10 +413,9 @@ impl Section {
         }
         if is_decimal(type_) {
             // A scalar column, though `decimal` is a datatype with no
-            // constructors rather than a primitive. Left-aligned, as
-            // morel-java leaves it: the values are as wide as their
-            // notation, not a fixed number of places.
-            return Section::leaf(Kind::Scalar, name, false, false);
+            // constructors rather than a primitive; a number, so
+            // right-aligned as `int` and `real` are.
+            return Section::leaf(Kind::Scalar, name, true, false);
         }
         if let Some(cs) = dt.enum_constructors(type_) {
             // An enum: a scalar column of constructor names.
@@ -667,7 +666,7 @@ fn is_decimal(type_: &Type) -> bool {
 /// Whether values of a type are right-aligned in their column. An enum
 /// is not: its values are words.
 fn is_numeric_type(type_: &Type) -> bool {
-    matches!(type_, Type::Primitive(p) if is_numeric(p))
+    matches!(type_, Type::Primitive(p) if is_numeric(p)) || is_decimal(type_)
 }
 
 // ---------------------------------------------------------------------------

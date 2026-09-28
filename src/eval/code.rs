@@ -6167,12 +6167,20 @@ impl LibBuilder {
 fn build_scott() -> (Type, Val) {
     use Label::String as S;
 
-    // Schema for one row of `bonuses`: {comm:real, ename:string, job:string,
-    // sal:real}
+    // The money columns are DECIMAL in the foreign source, so they are
+    // `decimal` here; the values are written as they read.
+    let dec = |x: f32| -> Val {
+        Val::Decimal(
+            decimal::parse_exact(&format!("{x}")).expect("decimal literal"),
+        )
+    };
+
+    // Schema for one row of `bonuses`: {comm:decimal, ename:string, job:string,
+    // sal:decimal}
     let bonus_fields: BTreeMap<Label, Rc<Type>> = [
         (
             S("comm".to_string()),
-            Rc::new(Type::Primitive(PrimitiveType::Real)),
+            Rc::new(Type::Data("decimal".to_string(), vec![])),
         ),
         (
             S("ename".to_string()),
@@ -6184,7 +6192,7 @@ fn build_scott() -> (Type, Val) {
         ),
         (
             S("sal".to_string()),
-            Rc::new(Type::Primitive(PrimitiveType::Real)),
+            Rc::new(Type::Data("decimal".to_string(), vec![])),
         ),
     ]
     .into_iter()
@@ -6225,9 +6233,9 @@ fn build_scott() -> (Type, Val) {
         dept(40, "OPERATIONS", "BOSTON"),
     ]));
 
-    // Schema for one row of `emps`: {comm:real option, deptno:int,
+    // Schema for one row of `emps`: {comm:decimal option, deptno:int,
     // empno:int, ename:string, hiredate:string, job:string,
-    // mgr:int option, sal:real}. `comm` and `mgr` are the two columns
+    // mgr:int option, sal:decimal}. `comm` and `mgr` are the two columns
     // that contain nulls in the SQL `scott` database, so morel-java
     // reads them as `option`; this dataset is a literal and has no
     // nulls, but it must present the same schema.
@@ -6238,7 +6246,13 @@ fn build_scott() -> (Type, Val) {
         ))
     };
     let emp_fields: BTreeMap<Label, Rc<Type>> = [
-        (S("comm".to_string()), opt(PrimitiveType::Real)),
+        (
+            S("comm".to_string()),
+            Rc::new(Type::Named(
+                vec![Rc::new(Type::Data("decimal".to_string(), vec![]))],
+                "option".to_string(),
+            )),
+        ),
         (
             S("deptno".to_string()),
             Rc::new(Type::Primitive(PrimitiveType::Int)),
@@ -6262,7 +6276,7 @@ fn build_scott() -> (Type, Val) {
         (S("mgr".to_string()), opt(PrimitiveType::Int)),
         (
             S("sal".to_string()),
-            Rc::new(Type::Primitive(PrimitiveType::Real)),
+            Rc::new(Type::Data("decimal".to_string(), vec![])),
         ),
     ]
     .into_iter()
@@ -6283,14 +6297,14 @@ fn build_scott() -> (Type, Val) {
         // NONE is Val::Unit; SOME v is Val::Some(v).
         let some = |v: Val| Val::Some(Box::new(v));
         Val::List(Rc::new(vec![
-            comm.map_or(Val::Unit, |c| some(Val::Real(c))),
+            comm.map_or(Val::Unit, |c| some(dec(c))),
             Val::Int(deptno),
             Val::Int(empno),
             Val::String((ename.to_string()).into()),
             Val::String((hiredate.to_string()).into()),
             Val::String((job.to_string()).into()),
             mgr.map_or(Val::Unit, |m| some(Val::Int(m))),
-            Val::Real(sal),
+            dec(sal),
         ]))
     };
     let emps = Val::List(Rc::new(vec![
@@ -6436,7 +6450,7 @@ fn build_scott() -> (Type, Val) {
         ),
     ]));
 
-    // Schema for one row of `salgrades`: {grade:int, hisal:real, losal:real}
+    // Schema for one row of `salgrades`: {grade:int, hisal:decimal, losal:decimal}
     let salgrade_fields: BTreeMap<Label, Rc<Type>> = [
         (
             S("grade".to_string()),
@@ -6444,22 +6458,18 @@ fn build_scott() -> (Type, Val) {
         ),
         (
             S("hisal".to_string()),
-            Rc::new(Type::Primitive(PrimitiveType::Real)),
+            Rc::new(Type::Data("decimal".to_string(), vec![])),
         ),
         (
             S("losal".to_string()),
-            Rc::new(Type::Primitive(PrimitiveType::Real)),
+            Rc::new(Type::Data("decimal".to_string(), vec![])),
         ),
     ]
     .into_iter()
     .collect();
     let salgrade_row_type = Type::Record(false, salgrade_fields);
     let salgrade = |grade: i32, hisal: f32, losal: f32| -> Val {
-        Val::List(Rc::new(vec![
-            Val::Int(grade),
-            Val::Real(hisal),
-            Val::Real(losal),
-        ]))
+        Val::List(Rc::new(vec![Val::Int(grade), dec(hisal), dec(losal)]))
     };
     let salgrades = Val::List(Rc::new(vec![
         salgrade(1, 1200.0, 700.0),

@@ -84,12 +84,12 @@ SCRIPT_SUFFIXES = (".smli", ".sml", ".sml.out")
 # belongs in the divergence report, where it reads as work to do.
 ACCEPTED = {
     "hybrid.smli": (
-        218,
-        "morel-rust does not translate `=` on an `option` column into "
-        "a Calcite `IS NOT DISTINCT FROM`, so `Sys.plan` shows the "
-        "filter evaluated locally over the dataset inlined as a "
-        "constant, where morel-java shows a pushed-down plan. The "
-        "rest is plan text.",
+        373,
+        "morel-rust has no Calcite, so `Sys.plan` shows a filter "
+        "evaluated locally over the dataset inlined as a constant "
+        "where morel-java shows a pushed-down plan, and it omits the "
+        "tests of what a `decimal` literal or aggregate pushes down. "
+        "The rest is plan text.",
     ),
     "use.sml.out": (
         2,

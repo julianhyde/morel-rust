@@ -495,7 +495,7 @@ impl Display for Val {
                 if func == &BuiltInFunction::BoolNot || func.is_constructor() {
                     write!(f, "{}", name)
                 } else if let Some(p) = func.package() {
-                    write!(f, "#{} {}", name, p)
+                    write!(f, "{} {}", parser::selector_text(name), p)
                 } else {
                     write!(f, "{}", name)
                 }
