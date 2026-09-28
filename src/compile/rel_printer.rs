@@ -447,6 +447,9 @@ fn doc_bounded(e: &Expr, left: u8, right: u8) -> Doc {
                 ]),
             }
         }
+        // The row's position, which a node that counts its rows binds
+        // as `$ordinal`.
+        Expr::Ordinal(_) => lindig::text("$ordinal"),
         // A record or a tuple may break after a comma, one field to a
         // line, which is the other place a plan's lines get long.
         Expr::Tuple(t, elems) => {

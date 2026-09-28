@@ -376,7 +376,12 @@ impl Expr {
             ]),
             Expr::Current(_) => text("current"),
             Expr::Exists(_, steps) => text(&format!("exists {:?}", steps)),
-            Expr::Extent(t, _) => text(&format!("extent({})", t)),
+            Expr::Extent(t, _) => {
+                // The extent of a type is named by the type of its
+                // elements: `extent "int"` is every int.
+                let elem = element_type(t).unwrap_or_else(|| t.clone());
+                text(&format!("extent \"{}\"", elem))
+            }
             Expr::Fn(_, arms, _) => beside(text("fn "), matches_doc(arms)),
             Expr::Forall(_, steps) => beside(text("forall"), steps_doc(steps)),
             Expr::From(_, steps) => beside(text("from"), steps_doc(steps)),
@@ -397,7 +402,7 @@ impl Expr {
             Expr::List(_, elems) => {
                 enclosed("[", "]", elems.iter().map(Expr::to_doc).collect())
             }
-            Expr::Literal(_, lit) => text(&lit.to_string()),
+            Expr::Literal(_, lit) => text(&literal_text(lit)),
             Expr::Ordinal(_) => text("ordinal"),
             Expr::Raise(_, e, _) => beside(text("raise "), e.to_doc()),
             Expr::RecordSelector(t, slot) => {
@@ -469,6 +474,18 @@ impl Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         // No width: every group is laid out flat, on one line.
         write!(f, "{}", self.unparse(i32::MAX))
+    }
+}
+
+/// Returns a literal as a plan writes it. A real that is a whole
+/// number keeps its `.0`, `1000.0`, so that it reads back as a real
+/// and not an int; a value prints `1000`, and that is a different
+/// thing in a different place.
+fn literal_text(lit: &Val) -> String {
+    let s = lit.to_string();
+    match lit {
+        Val::Real(_) if !s.contains(['.', 'E', 'e', 'i', 'n']) => s + ".0",
+        _ => s,
     }
 }
 
@@ -843,19 +860,19 @@ impl Rel {
             | Rel::Unorder(input) => element_type(&input.type_()),
             // The element is what the expression builds.
             Rel::Project(_, e) => Some(e.type_()),
-            // A record of the keys and the aggregates -- or, where
-            // there is exactly one field in all, that field's type,
-            // which is how `compute` yields a scalar. `spec.md` §3 is
-            // silent about no fields at all, which `group ()` makes;
+            // A record of the keys and the aggregates -- a record
+            // whether there is one field or many, because an element
+            // whose shape depended on how many labels there were would
+            // make dropping one of two labels a change of shape that
+            // nothing above could rewrite locally. Where a query wants
+            // the bare value, a projection above says so. `spec.md` §3
+            // is silent about no fields at all, which `group ()` makes;
             // `record_type` answers `unit`, which is what a record of
             // nothing is in ML and what the query's own type says.
             Rel::Group(_, keys, aggregates) => {
                 let mut fields: Vec<(Label, Rc<Type>)> = Vec::new();
                 for (label, e) in keys.iter().chain(aggregates.iter()) {
                     fields.push((label.clone(), e.type_()));
-                }
-                if fields.len() == 1 {
-                    return Some(fields.pop().unwrap().1);
                 }
                 Some(Rc::new(types::record_type(fields.into_iter().collect())))
             }
@@ -2048,11 +2065,10 @@ mod tests {
         );
     }
 
-    /// A group builds a record of its keys and aggregates -- unless
-    /// there is exactly one field in all, which is how a keyless group
-    /// (`compute`) yields a scalar.
+    /// A group builds a record of its keys and aggregates, of one field
+    /// or many.
     #[test]
-    fn group_builds_a_record_or_one_field() {
+    fn group_builds_a_record() {
         let input = leaf(int(), Kind::Bag);
         let key = Expr::Input(int(), 0);
         let total = Expr::Identifier(int(), "total".to_string());
@@ -2070,14 +2086,20 @@ mod tests {
             other => panic!("expected a bag, got {:?}", other),
         }
 
-        // One aggregate and no keys: the element is the aggregate's own
-        // type, not a record of one field.
+        // One aggregate and no keys: still a record, of one field; a
+        // query that wants the bare value projects it out above.
         let one = Rel::Group(
             Box::new(input),
             vec![],
             vec![(Label::String("total".to_string()), total)],
         );
-        assert_eq!(*one.derive_type().unwrap(), Type::Bag(int()));
+        match one.derive_type().unwrap().as_ref() {
+            Type::Bag(elem) => match elem.as_ref() {
+                Type::Record(_, fields) => assert_eq!(fields.len(), 1),
+                other => panic!("expected a record, got {:?}", other),
+            },
+            other => panic!("expected a bag, got {:?}", other),
+        }
     }
 
     /// An input reference is not a variable, so it frees no name. That

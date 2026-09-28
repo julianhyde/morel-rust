@@ -264,6 +264,17 @@ Sys.planOf (
 > t$0 {c:int, deptno:int, total:real} bag
 > t$1 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
 > |_} : string
+
+(* An aggregate over a list, where the aggregate function takes a bag,
+ * is composed with a converter, and the composed function's parameter
+ * is a generated name like any other binder. `group` with no keys
+ * yields one row, from any number of input rows, including none. *)
+Sys.planOf (from i in [1, 2] group {} compute {c = count over ()});
+> val it =
+>   {_|
+> group [] [c = fn col$0 => count (#fromList Bag col$0) over ()] : {c:int} list
+>   [1, 2] : int list
+> |_} : string
 from i in [] group {} compute {c = count over ()};
 > c
 > -
@@ -455,10 +466,28 @@ val es = [{id = 100, name = "Fred", deptno = 10}];
 >     10 100 Fred
 >
 > val es : {deptno:int, id:int, name:string} list
+Sys.planOf (from e in es order e.deptno where ordinal > 1);
+> val it =
+>   {_|
+> filter [$ordinal > 1] : t$0
+>   sort [#deptno $0] : t$0
+>     es : t$0
+>
+> t$0 {deptno:int, id:int, name:string} list
+> |_} : string
 (* Move the counter on: eight scans allocate eight patterns. *)
 from a in es, b in es, c in es, d in es, e in es, f in es, g in es, h in es
   yield 1;
 > val it = [1] : int list
+Sys.planOf (from e in es order e.deptno where ordinal > 1);
+> val it =
+>   {_|
+> filter [$ordinal > 1] : t$0
+>   sort [#deptno $0] : t$0
+>     es : t$0
+>
+> t$0 {deptno:int, id:int, name:string} list
+> |_} : string
 
 (* A tree with no node in it is still a tree.
  *
@@ -473,20 +502,74 @@ Sys.planOf (from);
 > |} : string
 from;
 > val it = [()] : unit list
+Sys.planOf (from i in [1, 2, 3]);
+> val it = {|[1, 2, 3] : int list
+> |} : string
+Sys.planOf (from u: unit);
+> val it = {|extent "unit" : unit list
+> |} : string
 
 (* An expression that is not a query has no tree, and prints as itself:
  * no type, no trailing newline. That is the difference a reader needs,
  * and `List.hd []` above shows the other side of it. *)
 Sys.planOf ([1, 2, 3]);
 > val it = "[1, 2, 3]" : string
+
+(* ---------------------------------------------------------------- *)
+(* Cases a second implementation asked for.
+ *
+ * `andalso` associates to the right: `a andalso b andalso c` is
+ * `a andalso (b andalso c)`, and the text shows no parentheses. An
+ * implementation that folds the other way prints `(a andalso b)
+ * andalso c`. *)
+Sys.planOf (
+  from e in scott.emps
+    where e.deptno = 10 andalso e.job = "CLERK" andalso e.sal > 1000.0
+    yield e.ename);
+> val it =
+>   {_|
+> project [#ename $0] : string bag
+>   filter [#deptno $0 = 10 andalso #job $0 = "CLERK"
+>       andalso #sal $0 > 1000.0] : t$0
+>     #emps scott : t$0
+>
+> t$0 {comm:real, deptno:int, empno:int, ename:string, hiredate:string, job:string, mgr:int, sal:real} bag
+> |_} : string
 from e in scott.emps
   where e.deptno = 10 andalso e.job = "CLERK" andalso e.sal > 1000.0
   yield e.ename;
 > val it = ["MILLER"] : string bag
+
+(* A group with one key and no aggregate builds a record all the same;
+ * the query's bare value is a projection above it. *)
+Sys.planOf (from i in [1, 2, 3] group i);
+> val it =
+>   {_|
+> project [#i $0] : int list
+>   group [i = $0] : {i:int} list
+>     [1, 2, 3] : int list
+> |_} : string
 from i in [1, 2, 3] group i;
 > val it = [1,2,3] : int list
+
+(* A leaf is printed as the implementation's own Core expression, so
+ * two implementations agree on its text only where their Core agrees
+ * on the expression. A range is a call of `Range.flatten` here; an
+ * extent prints as `extent` with its type. *)
+Sys.planOf (from c in [#"a" ..] where c <= #"d");
+> val it =
+>   {_|
+> filter [$0 <= #"d"] : char list
+>   #flatten Range ([AT_LEAST #"a"]) : char list
+> |_} : string
 from c in [#"a" ..] where c <= #"d";
 > val it = [#"a",#"b",#"c",#"d"] : char list
+Sys.planOf (from i where i elem [1, 2, 3] andalso i > 1);
+> val it =
+>   {_|
+> filter [$0 elem [1, 2, 3] andalso $0 > 1] : int list
+>   extent "int" : int list
+> |_} : string
 from i where i elem [1, 2, 3] andalso i > 1;
 > val it = [2,3] : int list
 

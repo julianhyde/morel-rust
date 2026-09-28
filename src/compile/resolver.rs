@@ -345,6 +345,11 @@ pub struct Resolver<'a> {
     /// modified record needs. `$` is not a character a user can write,
     /// so a generated name never captures one the user chose.
     temp_counter: Cell<u32>,
+    /// How many `Sys.planOf` arguments are being resolved. A query
+    /// under one is not grounded, so that the plan shows the query as
+    /// written, which is what morel-java prints: its grounding runs
+    /// after its resolver.
+    plan_of_depth: Cell<usize>,
 }
 
 /// Builds `F elem`, where `F` is the functor of `map` (`ListMap`, `BagMap`,
@@ -484,6 +489,7 @@ impl<'a> Resolver<'a> {
             self_fns: RefCell::new(HashSet::new()),
             aggregate_input_is_bag: Cell::new(None),
             temp_counter: Cell::new(0),
+            plan_of_depth: Cell::new(0),
         }
     }
 
@@ -2089,10 +2095,18 @@ impl<'a> Resolver<'a> {
                 if is_structure_member(func, "Sys", "planOf")
                     && !self.type_map.user_bindings.contains("Sys")
                 {
+                    self.plan_of_depth.set(self.plan_of_depth.get() + 1);
                     let core_arg = self.resolve_expr(arg);
+                    self.plan_of_depth.set(self.plan_of_depth.get() - 1);
+                    // A query that simplifies to a leaf alone is still a
+                    // query, and prints as a tree of one node.
+                    let is_query = matches!(arg.kind, ExprKind::From(_));
                     return CoreExpr::Literal(
                         t,
-                        Val::String(plan_of(&core_arg, self.line_width).into()),
+                        Val::String(
+                            plan_of(&core_arg, is_query, self.line_width)
+                                .into(),
+                        ),
                     );
                 }
                 // Dispatch `Relational.sum coll` to sum$int/sum$real by the
@@ -3738,11 +3752,10 @@ impl<'a> Resolver<'a> {
             for step in &steps[..steps.len() - 1] {
                 self.resolve_step(&mut builder, step);
             }
-            let from_result = expander::expand_from(
+            let from_result = self.ground(
                 builder
                     .build_simplify()
                     .expect("Failed to build From expression"),
-                &self.type_map.datatype_map(),
             );
 
             // Apply the function to the query result. If the function is an
@@ -3785,12 +3798,21 @@ impl<'a> Resolver<'a> {
             self.resolve_step(&mut builder, step);
         }
 
-        expander::expand_from(
+        self.ground(
             builder
                 .build_simplify()
                 .expect("Failed to build From expression"),
-            &self.type_map.datatype_map(),
         )
+    }
+
+    /// Grounds a query -- gives each unbounded variable a collection
+    /// to iterate -- unless the query is the argument of `Sys.planOf`,
+    /// whose plan shows the query as written.
+    fn ground(&self, from: CoreExpr) -> CoreExpr {
+        if self.plan_of_depth.get() > 0 {
+            return from;
+        }
+        expander::expand_from(from, &self.type_map.datatype_map())
     }
 
     /// Resolves a step in a query, adding it to a [FromBuilder].
@@ -4464,7 +4486,7 @@ fn is_structure_member(exp: &Expr, structure: &str, member: &str) -> bool {
 /// cross-implementation contract. Where the translator declines -- it
 /// does not guess -- the core expression is printed instead, which for
 /// a query is the step list that runs it.
-fn plan_of(exp: &CoreExpr, line_width: usize) -> String {
+fn plan_of(exp: &CoreExpr, is_query: bool, line_width: usize) -> String {
     if let CoreExpr::From(_, steps) = exp
         && let Some(tree) = rel_translator::translate(steps, &exp.type_())
     {
@@ -4478,6 +4500,11 @@ fn plan_of(exp: &CoreExpr, line_width: usize) -> String {
             text.push_str(&format!("INVALID: {}\n", error));
         }
         return text;
+    }
+    if is_query && !matches!(exp, CoreExpr::From(_, _)) {
+        // A query that simplified to a leaf alone -- a scan of a
+        // collection with nothing above it -- is a tree of one node.
+        return rel_printer::plan(exp, true, line_width);
     }
     format!("{}", exp)
 }

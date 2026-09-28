@@ -92,16 +92,6 @@ ACCEPTED = {
         "morel-java; and `Sys.planEx` still prints the step list where "
         "morel-java prints the tree.",
     ),
-    "rel-tree.smli": (
-        83,
-        "plans this port's tree does not yet reproduce: a keyless group "
-        "whose aggregate is composed with a bag converter, a group of "
-        "one key, which builds a record in morel-java and a scalar "
-        "here, `$ordinal` in a tree, an extent over `unit`, a char "
-        "range whose filter this port folds into the range, a `decimal` "
-        "column compared with a real literal, and a query this port "
-        "grounds before the tree is printed.",
-    ),
     "optimize.smli": (
         228,
         "tests of `inlinePassCount` added here and not yet in "

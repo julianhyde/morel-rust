@@ -326,6 +326,10 @@ enum Hop {
     Component(usize),
     /// Field `label` of a record, which a `yield` of a record makes.
     Field(String),
+    /// The row's position, `$ordinal`, which is not read out of the
+    /// element at all: a node that counts its rows binds it beside
+    /// `$0`.
+    Ordinal,
 }
 
 impl Path {
@@ -342,6 +346,11 @@ impl Path {
     /// Field `label` of the element.
     fn field(label: &str) -> Path {
         Path(vec![Hop::Field(label.to_string())])
+    }
+
+    /// The row's position, `$ordinal`.
+    fn ordinal() -> Path {
+        Path(vec![Hop::Ordinal])
     }
 
     /// Returns this path read from inside component `i` instead of
@@ -430,6 +439,11 @@ impl Hop {
                     }
                 }
             }
+            // The position is bound beside the element, not inside it,
+            // so the base is not read.
+            Hop::Ordinal => Some(Expr::Ordinal(Rc::new(Type::Primitive(
+                PrimitiveType::Int,
+            )))),
         }
     }
 }
@@ -662,11 +676,52 @@ impl Translator {
     /// expression builds, and whose value names what the query called
     /// its binders.
     fn yield_(&mut self, e: &Expr, env: &StepEnv) -> Option<()> {
+        // A `yield` the resolver added to carry `ordinal` in the row
+        // adds no node: a tree binds the position beside the element,
+        // so the binder reads `$ordinal` from here on.
+        if let Some(name) = self.materialized_ordinal(e) {
+            self.bindings.push((name, Path::ordinal()));
+            return Some(());
+        }
         let value = self.rewrite(e)?;
         let elem = value.type_();
-        self.wrap(|input| Rel::Project(input, Box::new(value)))?;
+        // A projection of the element itself changes nothing, and is
+        // the `yield` that puts the row back after `ordinal` is done
+        // with.
+        if !matches!(value, Expr::Input(_, 0)) {
+            self.wrap(|input| Rel::Project(input, Box::new(value)))?;
+        }
         self.bindings = bindings_over(env, &elem)?;
         Some(())
+    }
+
+    /// Returns the name of the field under which a `yield` carries
+    /// `ordinal`, where the `yield` is one the resolver added for that
+    /// and nothing else: every other field is a binder yielded as
+    /// itself.
+    fn materialized_ordinal(&self, e: &Expr) -> Option<String> {
+        let Expr::Tuple(t, exprs) = e else {
+            return None;
+        };
+        let Type::Record(_, fields) = t.as_ref() else {
+            return None;
+        };
+        let mut ordinal = None;
+        for (label, value) in fields.keys().zip(exprs) {
+            let Label::String(name) = label else {
+                return None;
+            };
+            match value {
+                Expr::Ordinal(_) if name.starts_with("ordinal$") => {
+                    ordinal = Some(name.clone());
+                }
+                Expr::Identifier(_, id)
+                    if id == name
+                        && self.bindings.iter().any(|(b, _)| b == name) => {}
+                _ => return None,
+            }
+        }
+        ordinal
     }
 
     /// Translates a scan's source. A query of its own is a tree of its
@@ -828,21 +883,83 @@ impl Translator {
             .chain(aggregates.iter())
             .map(|(label, _)| label.clone())
             .collect();
+        let aggregates = self.converted(aggregates)?;
         self.wrap(|input| Rel::Group(input, keys, aggregates))?;
-        // The element is a record of the keys and the aggregates, so
-        // each is read by its label -- unless there is one field in
-        // all, when the element is that field's value.
+        // The element is a record of the keys and the aggregates, a
+        // record whether there is one field or many, so each is read
+        // by its label. Where the query wants the bare value of its
+        // one field, the projection that closes the query says so.
         self.bindings = names
             .iter()
             .filter_map(|label| match label {
-                Label::String(name) if names.len() > 1 => {
-                    Some((name.clone(), Path::field(name)))
-                }
-                Label::String(name) => Some((name.clone(), Path::whole())),
+                Label::String(name) => Some((name.clone(), Path::field(name))),
                 Label::Ordinal(_) => None,
             })
             .collect();
         Some(())
+    }
+
+    /// Composes each aggregate whose function takes a bag with a
+    /// converter, where the input is a list: `fn col$0 => count
+    /// (#fromList Bag col$0) over ()`. The parameter takes a generated
+    /// name that does not start with `$`, because a `$` name is a
+    /// node's pattern. This is what morel-java's resolver does, and
+    /// the plan text shows it.
+    fn converted(
+        &self,
+        aggregates: Vec<(Label, Expr)>,
+    ) -> Option<Vec<(Label, Expr)>> {
+        let ordered = self
+            .tree
+            .as_ref()
+            .is_some_and(|t| matches!(peel(&t.type_()), Type::List(_)));
+        if !ordered {
+            return Some(aggregates);
+        }
+        Some(
+            aggregates
+                .into_iter()
+                .map(|(label, e)| {
+                    let Expr::Aggregate(t, f, arg, span) = e else {
+                        return (label, e);
+                    };
+                    if !takes_bag(&f) {
+                        return (label, Expr::Aggregate(t, f, arg, span));
+                    }
+                    let elem = arg.type_();
+                    let list_t = Rc::new(Type::List(elem.clone()));
+                    let bag_t = Rc::new(Type::Bag(elem));
+                    let name = format!("col${}", self.counter.get());
+                    self.counter.set(self.counter.get() + 1);
+                    let param = Expr::Identifier(list_t.clone(), name.clone());
+                    let converter = Expr::Literal(
+                        Rc::new(Type::Fn(list_t.clone(), bag_t.clone())),
+                        Val::Fn(BuiltInFunction::BagFromList),
+                    );
+                    let converted = Expr::Apply(
+                        bag_t,
+                        Box::new(converter),
+                        Box::new(param),
+                        span.clone(),
+                    );
+                    let applied = Expr::Apply(
+                        t.clone(),
+                        f,
+                        Box::new(converted),
+                        span.clone(),
+                    );
+                    let composed = Expr::Fn(
+                        Rc::new(Type::Fn(list_t.clone(), t.clone())),
+                        vec![Match {
+                            pat: Pat::Identifier(list_t, name),
+                            expr: applied,
+                        }],
+                        span.clone(),
+                    );
+                    (label, Expr::Aggregate(t, Box::new(composed), arg, span))
+                })
+                .collect(),
+        )
     }
 
     /// Turns `elements`, which is a group's rows, into the aggregate it
@@ -1169,6 +1286,30 @@ fn labelled_parts(e: &Expr) -> Option<Vec<(Label, Expr)>> {
         return decline("a group's parts that are not a record");
     }
     Some(fields.keys().cloned().zip(items.iter().cloned()).collect())
+}
+
+/// Returns whether an aggregate function is declared over a bag, and
+/// so needs a converter where the input is a list.
+///
+/// The collection aggregates -- `count`, `sum`, `max`, `min`, `empty`,
+/// `nonEmpty`, `only` -- are declared over `'a bag` and adapt to a
+/// list, so their instance here is typed by the input; morel-java's
+/// are declared over a bag and converted, and its plan text shows the
+/// converter. Any other function is what its type says.
+fn takes_bag(f: &Expr) -> bool {
+    if let Expr::Literal(_, Val::Fn(func)) = f {
+        let name = func.plan_name();
+        if matches!(
+            name,
+            "count" | "empty" | "max" | "min" | "nonEmpty" | "only" | "sum"
+        ) {
+            return true;
+        }
+    }
+    match peel(&f.type_()) {
+        Type::Fn(param, _) => matches!(peel(param), Type::Bag(_)),
+        _ => false,
+    }
 }
 
 /// Returns the leaf `[()]`, over which a query with no scan iterates.
@@ -1623,8 +1764,8 @@ mod tests {
     fn a_lone_group_key_takes_its_name_off_the_expression() {
         assert_eq!(
             tree_of("from i in [1, 2] group j = i").unwrap(),
-            "project : int list\n  \
-             group [i = $0] : int list\n    \
+            "project [#i $0] : int list\n  \
+             group [i = $0] : {i:int} list\n    \
              [1, 2] : int list\n"
         );
     }
