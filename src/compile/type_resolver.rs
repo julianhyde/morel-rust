@@ -9203,6 +9203,21 @@ pub(crate) fn ast_type_to_core_type_with_vars(
             ast_type_to_core_type(ast_type)
                 .or_else(|| Some(Type::Data(name.clone(), vec![])))
         }
+        TypeKind::Record(fields) => {
+            // A record field may hold a type variable too, as the argument
+            // of a constructor of a polymorphic datatype does: `T of {a: 'a,
+            // b: int}`.
+            let mut field_map: BTreeMap<Label, Rc<Type>> = BTreeMap::new();
+            for field in fields {
+                let field_type = Rc::new(ast_type_to_core_type_with_vars(
+                    &field.type_,
+                    type_vars,
+                )?);
+                field_map
+                    .insert(Label::from(field.label.name.clone()), field_type);
+            }
+            Some(Type::Record(false, field_map))
+        }
         _ => ast_type_to_core_type(ast_type),
     }
 }
