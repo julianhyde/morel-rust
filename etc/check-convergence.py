@@ -95,12 +95,8 @@ ACCEPTED = {
     "optimize.smli": (
         228,
         "tests of `inlinePassCount` added here and not yet in "
-        "morel-java, to be propagated there; `Sys.planEx` still prints "
-        "the step list where morel-java prints the tree; and, after "
-        "inlining, morel-java writes a built-in operator as the "
-        "structure member it inlined to, where this writes it infix as "
-        "it does before inlining, because one function value stands for "
-        "both.",
+        "morel-java, to be propagated there; and `Sys.planEx` still "
+        "prints the step list where morel-java prints the tree.",
     ),
     "hybrid.smli": (
         394,
@@ -114,16 +110,12 @@ ACCEPTED = {
     "built-in/sys.smli": (
         58,
         "`Sys.planEx` still prints the step list where morel-java "
-        "prints the tree, and `Word.+` is written infix where "
-        "morel-java writes the structure member, because one function "
-        "value stands for the global operator and the member.",
+        "prints the tree.",
     ),
     "such-that.smli": (
         730,
-        "after inlining, morel-java writes a built-in operator as the "
-        "structure member it inlined to, where this writes it infix as "
-        "it does before inlining, because one function value stands for "
-        "both.",
+        "`Sys.planEx` still prints the step list where morel-java "
+        "prints the tree.",
     ),
     "use.sml.out": (
         2,

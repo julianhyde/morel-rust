@@ -20,6 +20,7 @@
 // dead until variants land.
 #![allow(dead_code)]
 
+use crate::compile::core::print_inlined;
 use crate::compile::library;
 use crate::compile::library::{
     BuiltIn, BuiltInExn, BuiltInFunction, BuiltInRecord,
@@ -3139,12 +3140,13 @@ impl EagerF1 {
                         .as_ref()
                         .map(|d| format!("{}", d))
                         .unwrap_or_default(),
-                    Ok(_) => r
-                        .session
-                        .post_inline_decl
-                        .as_ref()
-                        .map(|d| format!("{}", d))
-                        .unwrap_or_default(),
+                    Ok(_) => print_inlined(|| {
+                        r.session
+                            .post_inline_decl
+                            .as_ref()
+                            .map(|d| format!("{}", d))
+                            .unwrap_or_default()
+                    }),
                     Err(_) => r
                         .session
                         .pre_inline_decl

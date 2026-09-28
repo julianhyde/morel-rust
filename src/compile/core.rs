@@ -27,6 +27,7 @@ use crate::compile::types::{self, Checks, Label, Type};
 use crate::eval::val::Val;
 use crate::syntax::ast::JoinType;
 use crate::syntax::parser;
+use std::cell::Cell;
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::ops::Deref;
 use std::rc::Rc;
@@ -303,6 +304,7 @@ impl Expr {
                     && let Expr::Tuple(_, args) = arg.as_ref()
                     && args.len() == 2
                     && let Some((op, op_left, op_right)) = func.infix_op()
+                    && written_infix(func, op)
                 {
                     let wrap = left > op_left || op_right < right;
                     let (left, right) =
@@ -475,6 +477,55 @@ impl Display for Expr {
         // No width: every group is laid out flat, on one line.
         write!(f, "{}", self.unparse(i32::MAX))
     }
+}
+
+thread_local! {
+    /// Whether the expression being printed has been through the
+    /// inliner. Set by `Sys.planEx` around a post-inlining plan; see
+    /// [`written_infix`].
+    static INLINED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Prints `f` as a plan of an expression the inliner has been through,
+/// which is what `Sys.planEx` shows for a phase after inlining.
+pub fn print_inlined<T>(f: impl FnOnce() -> T) -> T {
+    let previous = INLINED.with(|cell| cell.replace(true));
+    let result = f();
+    INLINED.with(|cell| cell.set(previous));
+    result
+}
+
+/// Returns whether an operator is written infix, `$0 - 5`, rather
+/// than as a call of the structure member that implements it,
+/// `#`-` Int ($0, 5)`.
+///
+/// Before inlining, morel-java's Core holds the global operator the
+/// query wrote, and its printer writes every operator infix. Inlining
+/// replaces an overloaded operator with the instance the types chose,
+/// which is a structure member, and a member prints as a call; only
+/// `+`, the comparisons, `::`, `@`, `andalso` and `orelse`, which its
+/// resolver converts back to operators, stay infix. A `Word` member
+/// is a member from the start, `#`+` Word (0wxAB, 0wx1)`, because no
+/// global operator resolves to it. One function value stands for the
+/// global and the member here, so the stage of the plan decides.
+fn written_infix(func: &BuiltInFunction, op: &str) -> bool {
+    if func.parent() == Some("Word") {
+        return false;
+    }
+    !INLINED.with(Cell::get)
+        || matches!(
+            op,
+            "+" | "="
+                | "<>"
+                | "<"
+                | "<="
+                | ">"
+                | ">="
+                | "::"
+                | "@"
+                | "andalso"
+                | "orelse"
+        )
 }
 
 /// Returns a literal as a plan writes it. A real that is a whole

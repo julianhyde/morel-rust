@@ -249,6 +249,8 @@ val double = fn n => n * 2;
 > val double = fn : int -> int
 double 7;
 > val it = 14 : int
+Sys.planEx "3";
+> val it = "val it = #`*` Int (7, 2)" : string
 
 (*) Composing inlined functions.
 val inc2 = fn x => x + 1;
@@ -257,9 +259,13 @@ val double2 = fn x => x * 2;
 > val double2 = fn : int -> int
 inc2 (double2 3);
 > val it = 7 : int
+Sys.planEx "3";
+> val it = "val it = #`*` Int (3, 2) + 1" : string
 
 fn i => inc2 (double2 i);
 > val it = fn : int -> int
+Sys.planEx "3";
+> val it = "val it = fn i => #`*` Int (i, 2) + 1" : string
 
 (*) Recursive functions are NOT inlined (would cause infinite expansion).
 val rec factorial = fn n => if n < 2 then 1 else n * factorial (n - 1);
