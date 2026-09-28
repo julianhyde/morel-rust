@@ -20,9 +20,10 @@ use crate::compile::lindig::{
     Doc, beside, group, hcat, line, punctuate, render, text,
 };
 use crate::compile::postfix::peel_type;
+use crate::compile::rel_printer;
 use crate::compile::span::Span;
 use crate::compile::type_env::Id;
-use crate::compile::types::{Checks, Label, Type};
+use crate::compile::types::{self, Checks, Label, Type};
 use crate::eval::val::Val;
 use crate::syntax::ast::JoinType;
 use crate::syntax::parser;
@@ -53,6 +54,29 @@ pub enum Expr {
     Case(Rc<Type>, Box<Expr>, Vec<Match>, Span),
     Let(Rc<Type>, Vec<Decl>, Box<Expr>),
     Fn(Rc<Type>, Vec<Match>, Span),
+
+    /// `Input(t, i)` names the element of the `i`th input of the
+    /// relational node that encloses it: `$0` for a one-input node's
+    /// input, and `$0` and `$1` for a join's left and right. `t` is that
+    /// element's type.
+    ///
+    /// It is a node of its own rather than an identifier, and that is
+    /// deliberate. morel-java made it an `Id` first, over a pattern
+    /// named `"$0"`, and every `$0` in a tree was then the same variable
+    /// to anything reasoning about free variables -- use counts,
+    /// substitution -- because a pattern compares by name and ordinal
+    /// and not by type. It does not announce itself when it is wrong: a
+    /// use count that is too high only makes the inliner decline, while
+    /// one that is too low makes it substitute across a node boundary.
+    /// See spec.md §2 and plan.md.
+    #[allow(dead_code)]
+    Input(Rc<Type>, usize),
+
+    /// A node of a relational tree; see [`Rel`]. `t` is the collection
+    /// type the node produces, so a node is an expression like any
+    /// other and a query may appear wherever an expression may.
+    #[allow(dead_code)]
+    Rel(Rc<Type>, Box<Rel>),
 
     /// `raise e` — evaluates `e` to an `exn` value, then throws.
     /// `type` is the type of the surrounding context (since `raise`
@@ -134,12 +158,14 @@ impl Expr {
             Expr::Forall(t, _) => t.clone(),
             Expr::From(t, _) => t.clone(),
             Expr::Identifier(t, _) => t.clone(),
+            Expr::Input(t, _) => t.clone(),
             Expr::Let(t, _, _) => t.clone(),
             Expr::List(t, _) => t.clone(),
             Expr::Literal(t, _) => t.clone(),
             Expr::Ordinal(t) => t.clone(),
             Expr::Raise(t, _, _) => t.clone(),
             Expr::RecordSelector(t, _) => t.clone(),
+            Expr::Rel(t, _) => t.clone(),
             Expr::Tuple(t, _) => t.clone(),
         }
     }
@@ -308,7 +334,9 @@ impl Expr {
                 // `#flatten Range ([OPEN (0, 10)])`.
                 match arg.as_ref() {
                     Expr::Identifier(_, _)
+                    | Expr::Input(_, _)
                     | Expr::Literal(_, _)
+                    | Expr::RecordSelector(_, _)
                     | Expr::Tuple(_, _) => {
                         hcat(vec![fx.to_doc(), text(" "), arg.to_doc()])
                     }
@@ -333,6 +361,7 @@ impl Expr {
             Expr::Forall(_, steps) => beside(text("forall"), steps_doc(steps)),
             Expr::From(_, steps) => beside(text("from"), steps_doc(steps)),
             Expr::Identifier(_, name) => text(name),
+            Expr::Input(_, i) => text(&format!("${}", i)),
             Expr::Let(_, decls, body) => {
                 let decls_str = decls
                     .iter()
@@ -371,6 +400,28 @@ impl Expr {
                     Some(name) => text(&parser::selector_text(&name)),
                     None => text(&format!("#{}", slot + 1)),
                 }
+            }
+            Expr::Rel(_, rel) => {
+                // A relational operator is the first non-whitespace on
+                // its line, and this one would not be, so while a plan
+                // is being printed it prints as a reference and its
+                // lines go below the tree, where they can be read.
+                // Splicing them in here is what made a nested query's
+                // plan unparseable: its indentation began again from
+                // zero inside the line that held it.
+                if let Some(reference) = rel_printer::rel_ref(self) {
+                    return text(&reference);
+                }
+                // Outside a plan -- an error message, a trace -- a node
+                // prints on one line, so that a tree built in a test
+                // can be read at all.
+                let mut docs = vec![text(rel.op_name())];
+                for child in rel.children() {
+                    docs.push(text(" ("));
+                    docs.push(child.to_doc());
+                    docs.push(text(")"));
+                }
+                hcat(docs)
             }
             Expr::Tuple(t, elems) => {
                 if let Type::Record(_, type_fields) = t.as_ref() {
@@ -619,6 +670,384 @@ pub enum StepKind {
     Unorder,
     Where(Box<Expr>),
     Yield(Box<Expr>),
+}
+
+/// A node of a relational tree: an operator whose inputs are
+/// collections and whose result is a collection.
+///
+/// The tree is morel-java's #449 representation of a query, and
+/// `spec.md` on its `julianhyde/449-tree` branch is the contract. Two
+/// things are worth knowing before reading the variants.
+///
+/// **There is no leaf constructor.** An input is an ordinary [`Expr`]
+/// of collection type: another node, or a global, a variable, a list
+/// literal -- anything. The boundary between the tree and the rest of
+/// Core is wherever the expression stops being a node.
+///
+/// **A node holds no names.** Its expressions read their input's
+/// element as [`Expr::Input`], `$0`, which every node rebinds to its
+/// own input; a join's right element is `$1`. What a binder used to be
+/// called survives only in the projection that names it, which is why a
+/// query with several binders ends in one.
+///
+/// Four things that look like constructors are not, and are spelled out
+/// here so that they are not added: `distinct` is a [`Rel::Group`]
+/// whose keys are the whole element; `compute` is a keyless `Group`
+/// plus the extraction the enclosing expression performs; `yieldAll` is
+/// a dependent join and a projection; and an outer apply is a
+/// [`Rel::Join`] of kind `Left` carrying a binder. Correlation is not a
+/// mode either: it is a free occurrence of a join's binder in its right
+/// input, so decorrelation drops the binder rather than rewriting one
+/// node into another.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub enum Rel {
+    /// `except [distinct] r0 r1 ...`: the elements of `r0` that are in
+    /// no later input. All inputs have the same element type.
+    Except(bool, Vec<Expr>),
+
+    /// `filter [cond] r`: the elements of the input for which `cond` is
+    /// true. Fields are input, condition.
+    Filter(Box<Expr>, Box<Expr>),
+
+    /// `group [keys] [aggregates] r`: one element per distinct key,
+    /// whose value is a record of the keys and the aggregates -- or, if
+    /// there is exactly one field in all, that field's value. Fields are
+    /// input, keys, aggregates.
+    ///
+    /// `distinct` is this with the whole element as the key and no
+    /// aggregates; `compute` is this with no keys.
+    Group(Box<Expr>, Vec<(Label, Expr)>, Vec<(Label, Expr)>),
+
+    /// `intersect [distinct] r0 r1 ...`
+    Intersect(bool, Vec<Expr>),
+
+    /// `join [kind] [binder] [cond] left right`: the pairs of elements
+    /// for which `cond` is true, with the components of the two inputs
+    /// concatenated. Fields are kind, binder, condition, left, right.
+    ///
+    /// A join has no yield. The projection above it is where the
+    /// components are named.
+    ///
+    /// The binder, where there is one, names the left element inside the
+    /// right input and nowhere else; its presence is what makes the join
+    /// dependent. The condition sees `$0` and `$1`, which are the left
+    /// and right elements and are both present whatever the kind --
+    /// whereas the *element* of an outer join wraps each component of a
+    /// side that may be absent in `option`, on its own.
+    Join(JoinKind, Option<String>, Box<Expr>, Box<Expr>, Box<Expr>),
+
+    /// `project [e] r`: one element per input element, the value of `e`.
+    /// Fields are input, expression.
+    Project(Box<Expr>, Box<Expr>),
+
+    /// `skip [n] r`: the input's elements after the first `n`. Fields
+    /// are input, count. The count is evaluated before the first element
+    /// and so cannot read `$0`.
+    Skip(Box<Expr>, Box<Expr>),
+
+    /// `sort [e] r`: the input's elements ordered by `e`. Its output is
+    /// a `list` whatever its input was. Fields are input, key.
+    Sort(Box<Expr>, Box<Expr>),
+
+    /// `take [n] r`: the input's first `n` elements. Fields are input,
+    /// count; the count cannot read `$0`.
+    Take(Box<Expr>, Box<Expr>),
+
+    /// `unorder r`: the input's elements, as a `bag`.
+    Unorder(Box<Expr>),
+
+    /// `union [distinct] r0 r1 ...`
+    Union(bool, Vec<Expr>),
+}
+
+#[allow(dead_code)]
+impl Rel {
+    /// Returns this node's sub-expressions: its inputs, and the
+    /// expressions its arguments are made of, in the order they are
+    /// written.
+    ///
+    /// It is a flat view, and says nothing about scope: a join's binder
+    /// is in scope in its right input and nowhere else, and every node
+    /// rebinds `$0` for its own expressions. A pass that rewrites, or
+    /// that reasons about names, must walk the variants and honour
+    /// that; this serves the passes for which the answer is the same
+    /// either way, such as "does anything under here mention an
+    /// extent".
+    pub fn children(&self) -> Vec<&Expr> {
+        let mut v: Vec<&Expr> = Vec::new();
+        match self {
+            Rel::Except(_, inputs)
+            | Rel::Intersect(_, inputs)
+            | Rel::Union(_, inputs) => v.extend(inputs.iter()),
+            Rel::Filter(input, e)
+            | Rel::Project(input, e)
+            | Rel::Skip(input, e)
+            | Rel::Sort(input, e)
+            | Rel::Take(input, e) => {
+                v.push(input);
+                v.push(e);
+            }
+            Rel::Group(input, keys, aggregates) => {
+                v.push(input);
+                v.extend(keys.iter().map(|(_, e)| e));
+                v.extend(aggregates.iter().map(|(_, e)| e));
+            }
+            Rel::Join(_, _, condition, left, right) => {
+                v.push(left);
+                v.push(right);
+                v.push(condition);
+            }
+            Rel::Unorder(input) => v.push(input),
+        }
+        v
+    }
+
+    /// Returns the collection type this node produces: the element type
+    /// `spec.md` §3 derives, under the kind §4 derives. `None` where an
+    /// input is not a collection, which the validator reports.
+    pub fn derive_type(&self) -> Option<Rc<Type>> {
+        let kind = self.derive_kind()?;
+        Some(kind.apply(self.derive_element_type()?))
+    }
+
+    /// Returns the element type this node produces; see
+    /// [`Rel::derive_type`].
+    pub fn derive_element_type(&self) -> Option<Rc<Type>> {
+        match self {
+            // The element passes through unchanged.
+            Rel::Filter(input, _)
+            | Rel::Skip(input, _)
+            | Rel::Sort(input, _)
+            | Rel::Take(input, _)
+            | Rel::Unorder(input) => element_type(&input.type_()),
+            // The element is what the expression builds.
+            Rel::Project(_, e) => Some(e.type_()),
+            // A record of the keys and the aggregates -- or, where
+            // there is exactly one field in all, that field's type,
+            // which is how `compute` yields a scalar. `spec.md` §3 is
+            // silent about no fields at all, which `group ()` makes;
+            // `record_type` answers `unit`, which is what a record of
+            // nothing is in ML and what the query's own type says.
+            Rel::Group(_, keys, aggregates) => {
+                let mut fields: Vec<(Label, Rc<Type>)> = Vec::new();
+                for (label, e) in keys.iter().chain(aggregates.iter()) {
+                    fields.push((label.clone(), e.type_()));
+                }
+                if fields.len() == 1 {
+                    return Some(fields.pop().unwrap().1);
+                }
+                Some(Rc::new(types::record_type(fields.into_iter().collect())))
+            }
+            // The inputs' components, concatenated.
+            Rel::Join(kind, _, _, left, right) => {
+                Some(Rc::new(Type::Tuple(join_components(*kind, left, right)?)))
+            }
+            // Every input has the same element type, so the first says
+            // what it is.
+            Rel::Except(_, inputs)
+            | Rel::Intersect(_, inputs)
+            | Rel::Union(_, inputs) => element_type(&inputs.first()?.type_()),
+        }
+    }
+
+    /// Returns the kind this node produces; see [`Rel::derive_type`].
+    pub fn derive_kind(&self) -> Option<Kind> {
+        match self {
+            // A sort orders, and an unorder forgets, whatever they were
+            // given. These two are why the kind is in the signature.
+            Rel::Sort(_, _) => Some(Kind::List),
+            Rel::Unorder(_) => Some(Kind::Bag),
+            // The input's kind passes through.
+            Rel::Filter(input, _)
+            | Rel::Group(input, _, _)
+            | Rel::Project(input, _)
+            | Rel::Skip(input, _)
+            | Rel::Take(input, _) => Kind::of(&input.type_()),
+            Rel::Join(_, _, _, left, right) => Some(Kind::all([
+                Kind::of(&left.type_())?,
+                Kind::of(&right.type_())?,
+            ])),
+            Rel::Except(_, inputs)
+            | Rel::Intersect(_, inputs)
+            | Rel::Union(_, inputs) => {
+                let mut kinds = Vec::with_capacity(inputs.len());
+                for input in inputs {
+                    kinds.push(Kind::of(&input.type_())?);
+                }
+                Some(Kind::all(kinds))
+            }
+        }
+    }
+
+    /// Returns this node's inputs: the collection-valued children,
+    /// which are the lines below it when it prints. Its argument
+    /// expressions are not among them; see [`Rel::children`] for those.
+    pub fn inputs(&self) -> Vec<&Expr> {
+        match self {
+            Rel::Except(_, inputs)
+            | Rel::Intersect(_, inputs)
+            | Rel::Union(_, inputs) => inputs.iter().collect(),
+            Rel::Filter(input, _)
+            | Rel::Group(input, _, _)
+            | Rel::Project(input, _)
+            | Rel::Skip(input, _)
+            | Rel::Sort(input, _)
+            | Rel::Take(input, _)
+            | Rel::Unorder(input) => vec![input],
+            Rel::Join(_, _, _, left, right) => vec![left, right],
+        }
+    }
+
+    /// Returns the name this node prints under.
+    pub fn op_name(&self) -> &'static str {
+        match self {
+            Rel::Except(_, _) => "except",
+            Rel::Filter(_, _) => "filter",
+            Rel::Group(_, _, _) => "group",
+            Rel::Intersect(_, _) => "intersect",
+            Rel::Join(_, _, _, _, _) => "join",
+            Rel::Project(_, _) => "project",
+            Rel::Skip(_, _) => "skip",
+            Rel::Sort(_, _) => "sort",
+            Rel::Take(_, _) => "take",
+            Rel::Unorder(_) => "unorder",
+            Rel::Union(_, _) => "union",
+        }
+    }
+}
+
+/// Whether a collection is ordered. A node's type is a kind applied to
+/// an element type, and `spec.md` §4 says which kind each constructor
+/// produces.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[allow(dead_code)]
+pub enum Kind {
+    Bag,
+    List,
+}
+
+#[allow(dead_code)]
+impl Kind {
+    /// Returns the kind of a collection type, or `None` if `t` is not a
+    /// collection.
+    pub fn of(t: &Type) -> Option<Kind> {
+        match t {
+            Type::Bag(_) => Some(Kind::Bag),
+            Type::List(_) => Some(Kind::List),
+            _ => None,
+        }
+    }
+
+    /// Returns this kind applied to `elem`.
+    pub fn apply(self, elem: Rc<Type>) -> Rc<Type> {
+        Rc::new(match self {
+            Kind::Bag => Type::Bag(elem),
+            Kind::List => Type::List(elem),
+        })
+    }
+
+    /// Returns `List` only if every kind is `List`. A join is a nested
+    /// loop, and a set operator reads all of its inputs, so one bag
+    /// makes the result a bag.
+    pub fn all(kinds: impl IntoIterator<Item = Kind>) -> Kind {
+        if kinds.into_iter().all(|k| k == Kind::List) {
+            Kind::List
+        } else {
+            Kind::Bag
+        }
+    }
+}
+
+/// Returns the element type of a collection, or `None` if `t` is not a
+/// collection.
+#[allow(dead_code)]
+pub fn element_type(t: &Type) -> Option<Rc<Type>> {
+    match t {
+        Type::Bag(e) | Type::List(e) => Some(e.clone()),
+        _ => None,
+    }
+}
+
+/// Returns the element types of `exp`'s components.
+///
+/// A join's components are its inputs' components concatenated, so
+/// `(a join b) join c` and `a join (b join c)` both have three, in the
+/// same order; anything else is one component, itself. A component of a
+/// side an outer join can leave absent is wrapped in `option`, on its
+/// own rather than as a whole row, and the wrapping is additive, so two
+/// chained outer joins give `option option`.
+#[allow(dead_code)]
+pub fn components(exp: &Expr) -> Option<Vec<Rc<Type>>> {
+    if let Expr::Rel(_, rel) = exp
+        && let Rel::Join(kind, _, _, left, right) = rel.as_ref()
+    {
+        return join_components(*kind, left, right);
+    }
+    Some(vec![element_type(&exp.type_())?])
+}
+
+/// Returns the element types of a join's components; see
+/// [`components`].
+#[allow(dead_code)]
+fn join_components(
+    kind: JoinKind,
+    left: &Expr,
+    right: &Expr,
+) -> Option<Vec<Rc<Type>>> {
+    fn wrap(types: Vec<Rc<Type>>, absent: bool) -> Vec<Rc<Type>> {
+        if !absent {
+            return types;
+        }
+        types
+            .into_iter()
+            .map(|t| Rc::new(Type::Named(vec![t], "option".to_string())))
+            .collect()
+    }
+    let mut v = wrap(components(left)?, kind.left_may_be_absent());
+    v.extend(wrap(components(right)?, kind.right_may_be_absent()));
+    Some(v)
+}
+
+/// Which rows an outer [`Rel::Join`] keeps, and therefore which of its
+/// components may be absent.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[allow(dead_code)]
+pub enum JoinKind {
+    /// Every row is a matching pair; nothing is absent.
+    Inner,
+    /// A left element that matches nothing still yields a row, whose
+    /// right components are absent.
+    Left,
+    /// As `Left`, with the sides exchanged.
+    Right,
+    /// Both, so a component of either side may be absent.
+    Full,
+}
+
+#[allow(dead_code)]
+impl JoinKind {
+    /// Returns whether a row may have no element from the left input, so
+    /// that the left components are `option`.
+    pub fn left_may_be_absent(self) -> bool {
+        matches!(self, JoinKind::Right | JoinKind::Full)
+    }
+
+    /// Returns whether a row may have no element from the right input.
+    pub fn right_may_be_absent(self) -> bool {
+        matches!(self, JoinKind::Left | JoinKind::Full)
+    }
+
+    /// Returns the name this kind prints under, or `None` for `Inner`,
+    /// which is omitted.
+    pub fn name(self) -> Option<&'static str> {
+        match self {
+            JoinKind::Inner => None,
+            JoinKind::Left => Some("left"),
+            JoinKind::Right => Some("right"),
+            JoinKind::Full => Some("full"),
+        }
+    }
 }
 
 /// Pattern in core representation.
@@ -1409,5 +1838,259 @@ mod tests {
         let e = conjunction();
         assert_eq!(e.unparse(20), "x > 1 andalso y > 2\nandalso z > 3");
         assert_eq!(e.unparse(10), "x > 1\nandalso y > 2\nandalso z > 3");
+    }
+
+    fn int() -> Rc<Type> {
+        Rc::new(Type::Primitive(PrimitiveType::Int))
+    }
+
+    fn string() -> Rc<Type> {
+        Rc::new(Type::Primitive(PrimitiveType::String))
+    }
+
+    fn bool_() -> Rc<Type> {
+        Rc::new(Type::Primitive(PrimitiveType::Bool))
+    }
+
+    /// A leaf: any expression of collection type will do, because there
+    /// is no leaf constructor.
+    fn leaf(elem: Rc<Type>, kind: Kind) -> Expr {
+        Expr::Identifier(kind.apply(elem), "r".to_string())
+    }
+
+    fn node(rel: Rel) -> Expr {
+        let t = rel.derive_type().expect("derives a type");
+        Expr::Rel(t, Box::new(rel))
+    }
+
+    fn option(t: Rc<Type>) -> Rc<Type> {
+        Rc::new(Type::Named(vec![t], "option".to_string()))
+    }
+
+    /// `filter`, `skip` and `take` pass their input's element and kind
+    /// through; `sort` orders whatever it is given, and `unorder`
+    /// forgets.
+    #[test]
+    fn one_input_nodes_derive_their_type() {
+        let input = leaf(int(), Kind::List);
+        let cond = Expr::Literal(bool_(), Val::Bool(true));
+        let filter =
+            Rel::Filter(Box::new(input.clone()), Box::new(cond.clone()));
+        assert_eq!(*filter.derive_type().unwrap(), Type::List(int()));
+
+        let bag_input = leaf(int(), Kind::Bag);
+        let on_bag = Rel::Filter(Box::new(bag_input.clone()), Box::new(cond));
+        assert_eq!(*on_bag.derive_type().unwrap(), Type::Bag(int()));
+
+        // A sort's output is a list whatever its input was, and an
+        // unorder's is a bag. These two are why the kind is derived
+        // rather than carried.
+        let key = Expr::Input(int(), 0);
+        let sort =
+            Rel::Sort(Box::new(bag_input.clone()), Box::new(key.clone()));
+        assert_eq!(*sort.derive_type().unwrap(), Type::List(int()));
+        let unorder = Rel::Unorder(Box::new(input.clone()));
+        assert_eq!(*unorder.derive_type().unwrap(), Type::Bag(int()));
+
+        // `project`'s element is what its expression builds, so a
+        // projection may change the element type.
+        let project = Rel::Project(Box::new(input.clone()), Box::new(key));
+        assert_eq!(*project.derive_type().unwrap(), Type::List(int()));
+        let to_string = Rel::Project(
+            Box::new(input),
+            Box::new(Expr::Identifier(string(), "s".to_string())),
+        );
+        assert_eq!(*to_string.derive_type().unwrap(), Type::List(string()));
+    }
+
+    /// A join concatenates its inputs' components, and they stay flat:
+    /// three inputs give three components in either association.
+    #[test]
+    fn join_concatenates_components() {
+        let a = leaf(int(), Kind::List);
+        let b = leaf(string(), Kind::List);
+        let c = leaf(bool_(), Kind::List);
+        let t = Expr::Literal(bool_(), Val::Bool(true));
+        let join = |kind, left: Expr, right: Expr| {
+            Rel::Join(
+                kind,
+                None,
+                Box::new(t.clone()),
+                Box::new(left),
+                Box::new(right),
+            )
+        };
+
+        let ab = node(join(JoinKind::Inner, a.clone(), b.clone()));
+        assert_eq!(
+            *ab.type_(),
+            Type::List(Rc::new(Type::Tuple(vec![int(), string()])))
+        );
+
+        // Left-deep and right-deep have the same three components.
+        let left_deep = node(join(JoinKind::Inner, ab, c.clone()));
+        let bc = node(join(JoinKind::Inner, b, c));
+        let right_deep = node(join(JoinKind::Inner, a.clone(), bc));
+        let three = Type::Tuple(vec![int(), string(), bool_()]);
+        assert_eq!(*left_deep.type_(), Type::List(three.clone().into()));
+        assert_eq!(*right_deep.type_(), Type::List(three.into()));
+    }
+
+    /// An outer join wraps each component of the side that may be
+    /// absent, on its own rather than the row as a whole, and the
+    /// wrapping is additive when joins chain.
+    #[test]
+    fn outer_join_wraps_each_component() {
+        let a = leaf(int(), Kind::List);
+        let b = leaf(string(), Kind::List);
+        let c = leaf(bool_(), Kind::List);
+        let t = Expr::Literal(bool_(), Val::Bool(true));
+        let join = |kind, left: Expr, right: Expr| {
+            Rel::Join(
+                kind,
+                None,
+                Box::new(t.clone()),
+                Box::new(left),
+                Box::new(right),
+            )
+        };
+
+        let left = node(join(JoinKind::Left, a.clone(), b.clone()));
+        assert_eq!(
+            *left.type_(),
+            Type::List(Rc::new(Type::Tuple(vec![int(), option(string())])))
+        );
+        let right = node(join(JoinKind::Right, a.clone(), b.clone()));
+        assert_eq!(
+            *right.type_(),
+            Type::List(Rc::new(Type::Tuple(vec![option(int()), string()])))
+        );
+        let full = node(join(JoinKind::Full, a.clone(), b));
+        assert_eq!(
+            *full.type_(),
+            Type::List(Rc::new(Type::Tuple(vec![
+                option(int()),
+                option(string())
+            ])))
+        );
+
+        // Chained, the wrapping is additive: the first join's right
+        // component is wrapped again by the second.
+        let chained = node(join(JoinKind::Left, left, c));
+        assert_eq!(
+            *chained.type_(),
+            Type::List(Rc::new(Type::Tuple(vec![
+                int(),
+                option(string()),
+                option(bool_())
+            ])))
+        );
+    }
+
+    /// A join is a nested loop, so one bag makes the result a bag; the
+    /// same holds for a set operator, which reads all of its inputs.
+    #[test]
+    fn one_bag_makes_a_bag() {
+        let t = Expr::Literal(bool_(), Val::Bool(true));
+        let join = |left: Expr, right: Expr| {
+            Rel::Join(
+                JoinKind::Inner,
+                None,
+                Box::new(t.clone()),
+                Box::new(left),
+                Box::new(right),
+            )
+        };
+        let list = leaf(int(), Kind::List);
+        let bag = leaf(int(), Kind::Bag);
+        assert_eq!(
+            join(list.clone(), list.clone()).derive_kind(),
+            Some(Kind::List)
+        );
+        assert_eq!(
+            join(list.clone(), bag.clone()).derive_kind(),
+            Some(Kind::Bag)
+        );
+        assert_eq!(
+            Rel::Union(false, vec![list.clone(), list.clone()]).derive_kind(),
+            Some(Kind::List)
+        );
+        assert_eq!(
+            Rel::Union(false, vec![list.clone(), bag]).derive_kind(),
+            Some(Kind::Bag)
+        );
+        // A set operator's element type is its inputs', which agree.
+        assert_eq!(
+            *Rel::Except(true, vec![list.clone(), list])
+                .derive_type()
+                .unwrap(),
+            Type::List(int())
+        );
+    }
+
+    /// A group builds a record of its keys and aggregates -- unless
+    /// there is exactly one field in all, which is how a keyless group
+    /// (`compute`) yields a scalar.
+    #[test]
+    fn group_builds_a_record_or_one_field() {
+        let input = leaf(int(), Kind::Bag);
+        let key = Expr::Input(int(), 0);
+        let total = Expr::Identifier(int(), "total".to_string());
+        let two = Rel::Group(
+            Box::new(input.clone()),
+            vec![(Label::String("deptno".to_string()), key.clone())],
+            vec![(Label::String("total".to_string()), total.clone())],
+        );
+        let t = two.derive_type().unwrap();
+        match t.as_ref() {
+            Type::Bag(elem) => match elem.as_ref() {
+                Type::Record(_, fields) => assert_eq!(fields.len(), 2),
+                other => panic!("expected a record, got {:?}", other),
+            },
+            other => panic!("expected a bag, got {:?}", other),
+        }
+
+        // One aggregate and no keys: the element is the aggregate's own
+        // type, not a record of one field.
+        let one = Rel::Group(
+            Box::new(input),
+            vec![],
+            vec![(Label::String("total".to_string()), total)],
+        );
+        assert_eq!(*one.derive_type().unwrap(), Type::Bag(int()));
+    }
+
+    /// An input reference is not a variable, so it frees no name. That
+    /// is the point of making it a node of its own.
+    #[test]
+    fn input_reference_is_not_a_variable() {
+        use crate::compile::free_finder::free_names_in;
+        let input = leaf(int(), Kind::List);
+        let filter = node(Rel::Filter(
+            Box::new(input),
+            Box::new(Expr::Input(int(), 0)),
+        ));
+        assert!(free_names_in(&filter).contains("r"));
+        assert_eq!(free_names_in(&filter).len(), 1);
+    }
+
+    /// A dependent join's binder is in scope in its right input, and
+    /// nowhere else.
+    #[test]
+    fn join_binder_is_bound_in_the_right_input() {
+        use crate::compile::free_finder::free_names_in;
+        let left = Expr::Identifier(Kind::List.apply(int()), "l".to_string());
+        let right_reads_binder =
+            Expr::Identifier(Kind::List.apply(int()), "v".to_string());
+        let join = node(Rel::Join(
+            JoinKind::Inner,
+            Some("v".to_string()),
+            Box::new(Expr::Literal(bool_(), Val::Bool(true))),
+            Box::new(left),
+            Box::new(right_reads_binder),
+        ));
+        let free = free_names_in(&join);
+        assert!(free.contains("l"));
+        assert!(!free.contains("v"), "the binder binds in the right input");
     }
 }

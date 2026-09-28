@@ -74,6 +74,8 @@ pub(crate) fn agg_implicit_label(expr: &Expr) -> Option<String> {
 fn replace_current(expr: &Expr, repl: &Expr) -> Expr {
     match expr {
         Expr::Current(_) => repl.clone(),
+        // A tree is a query, and establishes its own `current`.
+        Expr::Input(_, _) | Expr::Rel(_, _) => expr.clone(),
         // A nested query establishes its own `current`; leave it alone.
         Expr::From(..) | Expr::Exists(..) | Expr::Forall(..) => expr.clone(),
         // Leaves with no sub-expressions.
@@ -156,6 +158,8 @@ pub(crate) const ORDINAL_FIELD_PREFIX: &str = "ordinal$";
 fn replace_ordinal(expr: &Expr, repl: &Expr) -> Expr {
     match expr {
         Expr::Ordinal(_) => repl.clone(),
+        // A tree is a query, and counts its own rows.
+        Expr::Input(_, _) | Expr::Rel(_, _) => expr.clone(),
         Expr::Literal(..)
         | Expr::Identifier(..)
         | Expr::RecordSelector(..)

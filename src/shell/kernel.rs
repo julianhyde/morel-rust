@@ -243,6 +243,11 @@ fn expr_contains_reference(expr: &Expr, name: &str) -> bool {
         Expr::From(_, _) | Expr::Exists(_, _) | Expr::Forall(_, _) => false,
         Expr::Raise(_, e, _) => expr_contains_reference(e, name),
         Expr::Extent(_, _) => false,
+        Expr::Input(_, _) => false,
+        Expr::Rel(_, rel) => rel
+            .children()
+            .iter()
+            .any(|e| expr_contains_reference(e, name)),
     }
 }
 
