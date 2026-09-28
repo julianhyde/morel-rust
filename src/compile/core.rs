@@ -15,6 +15,10 @@
 // language governing permissions and limitations under the
 // License.
 
+use crate::compile::library::BuiltInFunction;
+use crate::compile::lindig::{
+    Doc, beside, group, hcat, line, punctuate, render, text,
+};
 use crate::compile::postfix::peel_type;
 use crate::compile::span::Span;
 use crate::compile::type_env::Id;
@@ -236,15 +240,23 @@ impl Expr {
             _ => None,
         }
     }
-}
 
-impl Display for Expr {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+    /// Returns this expression as a document, so that a layout can be
+    /// chosen to fit a width. An `andalso` or `orelse` chain is a
+    /// group of its own: it stays on one line if it fits, and otherwise
+    /// breaks before each connective, which leads its line; the outer
+    /// chain breaks before the inner one, so what fits on a line stays
+    /// on it. Everything else is laid out as it always was.
+    pub fn to_doc(&self) -> Doc {
         match &self {
             // lint: sort until '#}' where '##Expr::'
-            Expr::Aggregate(_, a0, a1, _) => {
-                write!(f, "({} over {})", a0, a1)
-            }
+            Expr::Aggregate(_, a0, a1, _) => hcat(vec![
+                text("("),
+                a0.to_doc(),
+                text(" over "),
+                a1.to_doc(),
+                text(")"),
+            ]),
             Expr::Apply(_, fx, arg, _) => {
                 // `Apply(Lit(Val::Fn(op)), Tuple([a, b]))` is written
                 // `a op b` when `op` has an infix form, and as a call
@@ -255,7 +267,23 @@ impl Display for Expr {
                     && args.len() == 2
                     && let Some(op) = func.infix_op()
                 {
-                    return write!(f, "{} {} {}", args[0], op, args[1]);
+                    if matches!(
+                        func,
+                        BuiltInFunction::BoolAndAlso
+                            | BuiltInFunction::BoolOrElse
+                    ) {
+                        return group(hcat(vec![
+                            args[0].to_doc(),
+                            line(),
+                            text(&format!("{} ", op)),
+                            args[1].to_doc(),
+                        ]));
+                    }
+                    return hcat(vec![
+                        args[0].to_doc(),
+                        text(&format!(" {} ", op)),
+                        args[1].to_doc(),
+                    ]);
                 }
                 // An argument is bracketed unless it is written as an
                 // atom already: a name, a literal, or something that
@@ -264,66 +292,48 @@ impl Display for Expr {
                 match arg.as_ref() {
                     Expr::Identifier(_, _)
                     | Expr::Literal(_, _)
-                    | Expr::Tuple(_, _) => write!(f, "{} {}", fx, arg),
-                    _ => write!(f, "{} ({})", fx, arg),
-                }
-            }
-            Expr::Case(_, e, arms, _) => {
-                write!(f, "case {} of ", e)?;
-                for (i, match_) in arms.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " | ")?;
+                    | Expr::Tuple(_, _) => {
+                        hcat(vec![fx.to_doc(), text(" "), arg.to_doc()])
                     }
-                    write!(f, "{} => {}", match_.pat, match_.expr)?;
+                    _ => hcat(vec![
+                        fx.to_doc(),
+                        text(" ("),
+                        arg.to_doc(),
+                        text(")"),
+                    ]),
                 }
-                Ok(())
             }
-            Expr::Current(_) => write!(f, "current"),
-            Expr::Exists(_, steps) => write!(f, "exists {:?}", steps),
-            Expr::Extent(t, _) => write!(f, "extent({})", t),
-            Expr::Fn(_, arms, _) => {
-                write!(f, "fn ")?;
-                for (i, match_) in arms.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " | ")?;
-                    }
-                    write!(f, "{} => {}", match_.pat, match_.expr)?;
-                }
-                Ok(())
-            }
-            Expr::Forall(_, steps) => {
-                write!(f, "forall")?;
-                write_steps(f, steps)
-            }
-            Expr::From(_, steps) => {
-                write!(f, "from")?;
-                write_steps(f, steps)
-            }
-            Expr::Identifier(_, name) => write!(f, "{}", name),
+            Expr::Case(_, e, arms, _) => hcat(vec![
+                text("case "),
+                e.to_doc(),
+                text(" of "),
+                matches_doc(arms),
+            ]),
+            Expr::Current(_) => text("current"),
+            Expr::Exists(_, steps) => text(&format!("exists {:?}", steps)),
+            Expr::Extent(t, _) => text(&format!("extent({})", t)),
+            Expr::Fn(_, arms, _) => beside(text("fn "), matches_doc(arms)),
+            Expr::Forall(_, steps) => beside(text("forall"), steps_doc(steps)),
+            Expr::From(_, steps) => beside(text("from"), steps_doc(steps)),
+            Expr::Identifier(_, name) => text(name),
             Expr::Let(_, decls, body) => {
-                write!(f, "let ")?;
-                let mut first = true;
-                for decl in decls {
-                    if first {
-                        first = false;
-                    } else {
-                        write!(f, "; ")?;
-                    }
-                    write!(f, "{}", decl)?;
-                }
-                write!(f, " in {} end", body)
+                let decls_str = decls
+                    .iter()
+                    .map(|d| format!("{}", d))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                hcat(vec![
+                    text(&format!("let {} in ", decls_str)),
+                    body.to_doc(),
+                    text(" end"),
+                ])
             }
             Expr::List(_, elems) => {
-                let elems_str = elems
-                    .iter()
-                    .map(|e| format!("{}", e))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "[{}]", elems_str)
+                enclosed("[", "]", elems.iter().map(Expr::to_doc).collect())
             }
-            Expr::Literal(_, lit) => write!(f, "{}", lit),
-            Expr::Ordinal(_) => write!(f, "ordinal"),
-            Expr::Raise(_, e, _) => write!(f, "raise {}", e),
+            Expr::Literal(_, lit) => text(&lit.to_string()),
+            Expr::Ordinal(_) => text("ordinal"),
+            Expr::Raise(_, e, _) => beside(text("raise "), e.to_doc()),
             Expr::RecordSelector(t, slot) => {
                 // A selector is written by the field it selects: a
                 // record's label, or a tuple's ordinal, which is
@@ -341,33 +351,55 @@ impl Display for Expr {
                     _ => None,
                 };
                 match field {
-                    Some(name) => write!(f, "{}", parser::selector_text(&name)),
-                    None => write!(f, "#{}", slot + 1),
+                    Some(name) => text(&parser::selector_text(&name)),
+                    None => text(&format!("#{}", slot + 1)),
                 }
             }
             Expr::Tuple(t, elems) => {
                 if let Type::Record(_, type_fields) = t.as_ref() {
-                    write!(f, "{{")?;
-                    let mut first = true;
-                    for (label, e) in type_fields.keys().zip(elems.iter()) {
-                        if first {
-                            first = false;
-                        } else {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{} = {}", label, e)?;
-                    }
-                    return write!(f, "}}");
+                    let fields = type_fields
+                        .keys()
+                        .zip(elems.iter())
+                        .map(|(label, e)| {
+                            beside(text(&format!("{} = ", label)), e.to_doc())
+                        })
+                        .collect();
+                    return enclosed("{", "}", fields);
                 }
-                let elems_str = elems
-                    .iter()
-                    .map(|e| format!("{}", e))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "({})", elems_str)
+                enclosed("(", ")", elems.iter().map(Expr::to_doc).collect())
             }
         }
     }
+
+    /// Returns this expression as text, laid out to fit `width`.
+    pub fn unparse(&self, width: i32) -> String {
+        render(width, self.to_doc())
+    }
+}
+
+impl Display for Expr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        // No width: every group is laid out flat, on one line.
+        write!(f, "{}", self.unparse(i32::MAX))
+    }
+}
+
+/// Returns `docs` between `open` and `close`, separated by `", "`,
+/// all on one line.
+fn enclosed(open: &str, close: &str, docs: Vec<Doc>) -> Doc {
+    let mut all = vec![text(open)];
+    all.extend(punctuate(&text(", "), docs));
+    all.push(text(close));
+    hcat(all)
+}
+
+/// Returns the arms of a `case` or `fn`, separated by `|`.
+fn matches_doc(arms: &[Match]) -> Doc {
+    let docs = arms
+        .iter()
+        .map(|m| beside(text(&format!("{} => ", m.pat)), m.expr.to_doc()))
+        .collect();
+    hcat(punctuate(&text(" | "), docs))
 }
 
 /// Match in a `case`.
@@ -906,34 +938,39 @@ impl Pat {
     }
 }
 
-/// Writes a query's steps, as morel-java's core unparser writes them:
+/// Returns a query's steps, as morel-java's core unparser writes them:
 /// each step after the keyword that names it, and the scans after the
 /// first introduced by `join`.
 ///
 /// This is what `Sys.planEx` shows.
-fn write_steps(f: &mut Formatter<'_>, steps: &[Step]) -> FmtResult {
+fn steps_doc(steps: &[Step]) -> Doc {
     let mut scanned = false;
+    let mut docs = Vec::new();
     for step in steps {
-        write!(f, " ")?;
+        docs.push(text(" "));
         match &step.kind {
             // lint: sort until '#}' where '##StepKind::'
-            StepKind::Compute(e) => write!(f, "compute {}", e)?,
-            StepKind::Distinct => write!(f, "distinct")?,
-            StepKind::Except(all, es) => write_set_step(f, "except", *all, es)?,
-            StepKind::Exists => write!(f, "exists")?,
+            StepKind::Compute(e) => {
+                docs.push(beside(text("compute "), e.to_doc()));
+            }
+            StepKind::Distinct => docs.push(text("distinct")),
+            StepKind::Except(all, es) => {
+                docs.push(set_step_doc("except", *all, es));
+            }
+            StepKind::Exists => docs.push(text("exists")),
             StepKind::Group(key, agg) => {
-                write!(f, "group {}", key)?;
+                docs.push(beside(text("group "), key.to_doc()));
                 if let Some(agg) = agg {
-                    write!(f, " compute {}", agg)?;
+                    docs.push(beside(text(" compute "), agg.to_doc()));
                 }
             }
             StepKind::Intersect(all, es) => {
-                write_set_step(f, "intersect", *all, es)?;
+                docs.push(set_step_doc("intersect", *all, es));
             }
-            StepKind::Order(e) => write!(f, "order {}", e)?,
+            StepKind::Order(e) => docs.push(beside(text("order "), e.to_doc())),
             StepKind::Scan(pat, source, condition) => {
                 if scanned {
-                    write!(f, "join ")?;
+                    docs.push(text("join "));
                 }
                 scanned = true;
                 // A pattern that destructures is bracketed, so that what
@@ -941,46 +978,46 @@ fn write_steps(f: &mut Formatter<'_>, steps: &[Step]) -> FmtResult {
                 // tuple pattern is written in brackets already.
                 match pat.as_ref() {
                     Pat::Identifier(_, _) | Pat::Tuple(_, _) => {
-                        write!(f, "{}", pat)?;
+                        docs.push(text(&pat.to_string()));
                     }
-                    _ => write!(f, "({})", pat)?,
+                    _ => docs.push(text(&format!("({})", pat))),
                 }
                 // A scan over an extent has no source to name; what it
                 // enumerates is the values of the pattern's type.
                 match source.as_ref() {
-                    Expr::Extent(_, _) => write!(f, " : {}", pat.type_())?,
-                    _ => write!(f, " in {}", source)?,
+                    Expr::Extent(_, _) => {
+                        docs.push(text(&format!(" : {}", pat.type_())));
+                    }
+                    _ => docs.push(beside(text(" in "), source.to_doc())),
                 }
                 if let Some(condition) = condition {
-                    write!(f, " on {}", condition)?;
+                    docs.push(beside(text(" on "), condition.to_doc()));
                 }
             }
-            StepKind::Skip(e) => write!(f, "skip {}", e)?,
-            StepKind::Take(e) => write!(f, "take {}", e)?,
-            StepKind::Union(all, es) => write_set_step(f, "union", *all, es)?,
-            StepKind::Unorder => write!(f, "unorder")?,
-            StepKind::Where(e) => write!(f, "where {}", e)?,
-            StepKind::Yield(e) => write!(f, "yield {}", e)?,
+            StepKind::Skip(e) => docs.push(beside(text("skip "), e.to_doc())),
+            StepKind::Take(e) => docs.push(beside(text("take "), e.to_doc())),
+            StepKind::Union(all, es) => {
+                docs.push(set_step_doc("union", *all, es));
+            }
+            StepKind::Unorder => docs.push(text("unorder")),
+            StepKind::Where(e) => docs.push(beside(text("where "), e.to_doc())),
+            StepKind::Yield(e) => docs.push(beside(text("yield "), e.to_doc())),
         }
     }
-    Ok(())
+    hcat(docs)
 }
 
-/// Writes a `union`, `intersect` or `except` step and its operands.
-fn write_set_step(
-    f: &mut Formatter<'_>,
-    keyword: &str,
-    all: bool,
-    exprs: &[Expr],
-) -> FmtResult {
-    write!(f, "{}", keyword)?;
+/// Returns a `union`, `intersect` or `except` step and its operands.
+fn set_step_doc(keyword: &str, all: bool, exprs: &[Expr]) -> Doc {
+    let mut docs = vec![text(keyword)];
     if all {
-        write!(f, " all")?;
+        docs.push(text(" all"));
     }
     for (i, e) in exprs.iter().enumerate() {
-        write!(f, "{} {}", if i > 0 { "," } else { "" }, e)?;
+        docs.push(text(if i > 0 { ", " } else { " " }));
+        docs.push(e.to_doc());
     }
-    Ok(())
+    hcat(docs)
 }
 
 impl Display for Pat {
@@ -1290,4 +1327,63 @@ fn fmt_list<T: Display>(
         write!(f, "{}", item)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compile::types::PrimitiveType;
+
+    fn int_t() -> Rc<Type> {
+        Rc::new(Type::Primitive(PrimitiveType::Int))
+    }
+
+    fn bool_t() -> Rc<Type> {
+        Rc::new(Type::Primitive(PrimitiveType::Bool))
+    }
+
+    /// Applies a binary operator to two operands.
+    fn call(op: BuiltInFunction, t: Rc<Type>, a: Expr, b: Expr) -> Expr {
+        let pair_t = Rc::new(Type::Tuple(vec![a.type_(), b.type_()]));
+        let fn_t = Rc::new(Type::Fn(pair_t.clone(), t.clone()));
+        Expr::Apply(
+            t,
+            Box::new(Expr::Literal(fn_t, Val::Fn(op))),
+            Box::new(Expr::Tuple(pair_t, vec![a, b])),
+            Span::new(""),
+        )
+    }
+
+    /// Returns `(x > 1 andalso y > 2) andalso z > 3`.
+    fn conjunction() -> Expr {
+        let gt = |name: &str, n: i32| {
+            call(
+                BuiltInFunction::IntGt,
+                bool_t(),
+                Expr::Identifier(int_t(), name.to_string()),
+                Expr::Literal(int_t(), Val::Int(n)),
+            )
+        };
+        let and = |a, b| call(BuiltInFunction::BoolAndAlso, bool_t(), a, b);
+        and(and(gt("x", 1), gt("y", 2)), gt("z", 3))
+    }
+
+    /// No width prints on one line, and so does a width the text fits.
+    #[test]
+    fn test_fits() {
+        let e = conjunction();
+        let flat = "x > 1 andalso y > 2 andalso z > 3";
+        assert_eq!(e.to_string(), flat);
+        assert_eq!(e.unparse(flat.len() as i32), flat);
+    }
+
+    /// An `andalso` chain that does not fit breaks before each
+    /// `andalso`, which leads its line; the outer group breaks before
+    /// the inner one, so what fits on a line stays on it.
+    #[test]
+    fn test_breaks() {
+        let e = conjunction();
+        assert_eq!(e.unparse(20), "x > 1 andalso y > 2\nandalso z > 3");
+        assert_eq!(e.unparse(10), "x > 1\nandalso y > 2\nandalso z > 3");
+    }
 }
