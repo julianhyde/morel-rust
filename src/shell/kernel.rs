@@ -217,6 +217,11 @@ fn is_safe_for_cross_unit(name: &str, expr: &Expr, env: &Environment) -> bool {
 fn expr_contains_reference(expr: &Expr, name: &str) -> bool {
     match expr {
         Expr::Identifier(_, n) => n == name,
+        Expr::Input(_, _) => false,
+        Expr::Rel(_, rel) => rel
+            .children()
+            .iter()
+            .any(|e| expr_contains_reference(e, name)),
         Expr::Literal(_, _)
         | Expr::Current(_)
         | Expr::Ordinal(_)
@@ -243,11 +248,6 @@ fn expr_contains_reference(expr: &Expr, name: &str) -> bool {
         Expr::From(_, _) | Expr::Exists(_, _) | Expr::Forall(_, _) => false,
         Expr::Raise(_, e, _) => expr_contains_reference(e, name),
         Expr::Extent(_, _) => false,
-        Expr::Input(_, _) => false,
-        Expr::Rel(_, rel) => rel
-            .children()
-            .iter()
-            .any(|e| expr_contains_reference(e, name)),
     }
 }
 
@@ -1102,7 +1102,8 @@ impl Kernel {
     }
 
     fn record_decls_for_planex(&mut self, resolved: &Resolved) {
-        let (decl, resolve_errors) = resolver::resolve(resolved);
+        let line_width = self.config.line_width.unwrap_or(79) as usize;
+        let (decl, resolve_errors) = resolver::resolve(resolved, line_width);
         if !resolve_errors.is_empty() {
             return;
         }
@@ -1175,6 +1176,7 @@ impl Kernel {
                 resolved,
                 &session_fns,
                 &rec_session_fns,
+                self.config.line_width.unwrap_or(79) as usize,
             );
         if let Some((msg, span)) = resolve_errors.first() {
             return Ok(format!(

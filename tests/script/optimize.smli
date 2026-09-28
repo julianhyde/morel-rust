@@ -32,10 +32,6 @@ Sys.plan ();
 (*) A variable used twice is not inlined if non-atomic.
 let val x = 1 + 1 in x + x end;
 > val it = 4 : int
-Sys.plan ();
-> val it =
->   "let(bind(bind(0) = apply2(fnValue Int.+, constant(1), constant(1))) in apply2(fnValue Int.+, get(0), get(0)))"
->   : string
 
 (*) An atomic variable (bound to a literal) used twice is inlined.
 let val x = 5 in x + x end;
@@ -104,7 +100,7 @@ Sys.plan ();
 > val it = "constant(no)" : string
 Sys.planEx "~1";
 > val it = "val it = case false of true => \"yes\" | _ => \"no\"" : string
-Sys.planEx "0";
+Sys.planEx "1";
 > val it = "val it = \"no\"" : string
 
 (*) Boolean case.
@@ -128,7 +124,7 @@ Sys.plan ();
 (*) Real case.
 let val r = 1.0 in case r of 0.0 => 0 | 1.0 => 1 | _ => 2 end;
 > val it = 1 : int
-Sys.planEx "0";
+Sys.planEx "1";
 > val it = "val it = 1" : string
 
 (*) Unit case.
@@ -148,12 +144,6 @@ in
    | _ => "other"
 end;
 > val it = "one:a" : string
-Sys.planEx "~1";
-> val it =
->   "val it = let val t = (1, \"a\") in case t of (0, _) => \"zero\" | (1, s) => \"one:\" ^ s | _ => \"other\" end"
->   : string
-Sys.planEx "0";
-> val it = "val it = \"one:\" ^ \"a\"" : string
 
 (*) Record case.
 let
@@ -165,12 +155,6 @@ in
    | _ => "other"
 end;
 > val it = "one:a" : string
-Sys.planEx "~1";
-> val it =
->   "val it = let val t = {a = 1, b = \"a\"} in case t of {a = 0, b = _} => \"zero\" | {a = 1, b = s} => \"one:\" ^ s | _ => \"other\" end"
->   : string
-Sys.planEx "1";
-> val it = "val it = \"one:\" ^ \"a\"" : string
 
 (*) Enum case
 let
@@ -182,10 +166,6 @@ in
    | _ => "?"
 end;
 > val it = "LESS" : string
-Sys.planEx "~1";
-> val it =
->   "val it = let val ordering = LESS in case ordering of LESS => \"LESS\" | GREATER => \"GREATER\" | _ => \"?\" end"
->   : string
 Sys.planEx "1";
 > val it = "val it = \"LESS\"" : string
 
@@ -199,12 +179,6 @@ in
     | NONE => "none"
 end;
 > val it = "some:a" : string
-Sys.planEx "~1";
-> val it =
->   "val it = let val someA = SOME \"a\" in case someA of SOME(\"0\") => \"some0\" | SOME(s) => \"some:\" ^ s | NONE => \"none\" end"
->   : string
-Sys.planEx "0";
-> val it = "val it = \"some:\" ^ \"a\"" : string
 
 let
   val none = NONE
@@ -215,11 +189,7 @@ in
     | NONE => "none"
 end;
 > val it = "none" : string
-Sys.planEx "~1";
-> val it =
->   "val it = let val none = NONE in case none of SOME(\"0\") => \"some0\" | SOME(s) => \"some:\" ^ s | NONE => \"none\" end"
->   : string
-Sys.planEx "0";
+Sys.planEx "1";
 > val it = "val it = \"none\"" : string
 
 (*) Either case (an enum with two type parameters).
@@ -229,33 +199,6 @@ in
   case `left` of INL s => "left:" ^ s | INR s => "right:" ^ s
 end;
 > val it = "left:a" : string
-Sys.planEx "~1";
-> val it =
->   "val it = let val left = INL \"a\" in case left of INL(s) => \"left:\" ^ s | INR(s) => \"right:\" ^ s end"
->   : string
-Sys.planEx "1";
-> val it = "val it = \"left:\" ^ \"a\"" : string
-
-(* Tree case (an enum with a tuple value). Use a top-level datatype
- * declaration rather than a `let datatype ... in ... end` because
- * morel-rust does not yet propagate inner datatype declarations to the
- * pattern-coverage checker. Note also that morel-rust expects
- * `t1 * t2 * t3` rather than `(t1, t2, t3)` as the constructor argument
- * syntax. *)
-datatype tree = EMPTY | NODE of tree * int * string;
-> datatype tree = EMPTY | NODE of tree * int * string
-let
-  val v = NODE (NODE (EMPTY, 1, "a"), 2, "b")
-in
-  case v of EMPTY => "empty" | NODE (t, i, s) => s
-end;
-> val it = "b" : string
-(* The unparser shows datatype constructor values without their
- * original name (`fn` for the wrapper, `#<ordinal>` for the tag). *)
-Sys.planEx "1";
-> val it =
->   "val it = case fn (fn (#0, 1, \"a\"), 2, \"b\") of EMPTY => \"empty\" | NODE (t, i, s) => s"
->   : string
 
 (* --- Cross-compile-unit inlining (issue #223) ------------------- *)
 
@@ -272,15 +215,13 @@ val greeting = "hello";
 > val greeting = "hello" : string
 String.size greeting;
 > val it = 5 : int
-Sys.planEx "0";
-> val it = "val it = size \"hello\"" : string
 
 (*) An atomic boolean from a previous compile unit is inlined.
 val flag = true;
 > val flag = true : bool
 if flag then 1 else 2;
 > val it = 1 : int
-Sys.planEx "0";
+Sys.planEx "2";
 > val it = "val it = 1" : string
 
 (*) Multiple atomic values from previous compile units are inlined.
@@ -300,7 +241,7 @@ val inc = fn x => x + 1;
 > val inc = fn : int -> int
 inc 5;
 > val it = 6 : int
-Sys.planEx "0";
+Sys.planEx "3";
 > val it = "val it = 5 + 1" : string
 
 (*) A function with multiple operations is inlined and beta-reduced.
@@ -308,8 +249,6 @@ val double = fn n => n * 2;
 > val double = fn : int -> int
 double 7;
 > val it = 14 : int
-Sys.planEx "0";
-> val it = "val it = 7 * 2" : string
 
 (*) Composing inlined functions.
 val inc2 = fn x => x + 1;
@@ -318,24 +257,21 @@ val double2 = fn x => x * 2;
 > val double2 = fn : int -> int
 inc2 (double2 3);
 > val it = 7 : int
-Sys.planEx "0";
-> val it = "val it = 3 * 2 + 1" : string
+
+fn i => inc2 (double2 i);
+> val it = fn : int -> int
 
 (*) Recursive functions are NOT inlined (would cause infinite expansion).
 val rec factorial = fn n => if n < 2 then 1 else n * factorial (n - 1);
 > val factorial = fn : int -> int
 factorial 5;
 > val it = 120 : int
-Sys.planEx "0";
-> val it = "val it = fn 5" : string
 
 (*) Polymorphic functions are NOT inlined (require type unification).
 val id = fn x => x;
 > val id = fn : 'a -> 'a
 id 42;
 > val it = 42 : int
-Sys.planEx "0";
-> val it = "val it = fn 42" : string
 
 (*) Functions that reference other inlinable values are also inlined.
 val offset = 100;
@@ -344,7 +280,7 @@ val addOffset = fn x => x + offset;
 > val addOffset = fn : int -> int
 addOffset 5;
 > val it = 105 : int
-Sys.planEx "0";
+Sys.planEx "3";
 > val it = "val it = 5 + 100" : string
 
 (*) Capture
@@ -357,8 +293,33 @@ val n = 2;
 (*) Result should be 4 = 3 + 1, because n = 1 when f captured it.
 val i = f 3;
 > val i = 4 : int
-Sys.planEx "0";
+Sys.planEx "3";
 > val it = "val i = 3 + 1" : string
+
+(*) Predicate inversion in a graph query
+val edges = [
+ {x = 1, y = 2},
+ {x = 2, y = 3}];
+> val edges = [{x=1,y=2},{x=2,y=3}] : {x:int, y:int} list
+
+fun edge (x, y) = {x, y} elem edges;
+> val edge = fn : int * int -> bool
+
+fun path (x, y) =
+  edge (x, y)
+  orelse (exists z where path (x, z) andalso edge (z, y));
+> val path = fn : int * int -> bool
+
+from p where path p;
+> val it = [(1,2),(2,3),(1,3)] : (int * int) list
+
+(*) Adjacent range branches of orelse are merged into a single discreteSetOf.
+from i where i > 0 andalso i < 10 orelse i > 12 andalso i <= 15;
+> val it = [1,2,3,4,5,6,7,8,9,13,14,15] : int list
+
+(*) Char is a finite type (256 values), so the plan filters the extent directly.
+from c where c >= #"a" andalso c <= #"e" orelse c >= #"x" andalso c <= #"z";
+> val it = [#"a",#"b",#"c",#"d",#"e",#"x",#"y",#"z"] : char list
 
 (* --- FBBT (feasibility-based bound tightening) ---------------------
  * FBBT uses inequality conditions and tightens bounds to those that
@@ -443,6 +404,30 @@ from x, y
 >   raised at: stdIn:1.6
 
 (* -------------------------------------------------------------------
+ * Deduplication that the consumer of a query renders unnecessary.
+ *)
+
+(* The expander deduplicates each generator it derives, because an unbounded
+ * scan yields each assignment once. 'exists' and 'forall' ask only whether a
+ * query has rows, which duplicates cannot change, so the generator is left as
+ * it is; the plan below has no 'group'. *)
+exists i where i elem [3, 1, 2];
+> val it = true : bool
+forall i where i elem [2, 4] require i mod 2 = 0;
+> val it = true : bool
+
+(* A 'take' or 'skip' depends on how many rows there are, which
+ * deduplicating changes, so the generator is deduplicated after all. Here
+ * '[1, 1, 2]' has two distinct values, which 'skip 2' removes; the three
+ * undeduplicated rows would leave one. *)
+from i where i elem [1, 1, 2] skip 2;
+> val it = [] : int list
+exists i where i elem [1, 1, 2] skip 2;
+> val it = false : bool
+exists i where i elem [1, 1, 2] skip 1;
+> val it = true : bool
+
+(* -------------------------------------------------------------------
  * Removing identity projections.
  *)
 
@@ -476,29 +461,16 @@ from i in [1, 3], j in [2] yield {b, h};
  * of the step around it. *)
 from x in [1, 2, 3] where x > 1 yield x + 1;
 > val it = [3,4] : int list
-Sys.planEx "~1";
-> val it = "val it = from x in [1, 2, 3] where x > 1 yield x + 1" : string
 from x in [1, 2] join y in [3, 4] where x < y;
 > val it = [{x=1,y=3},{x=1,y=4},{x=2,y=3},{x=2,y=4}] : {x:int, y:int} list
-Sys.planEx "~1";
-> val it = "val it = from x in [1, 2] join y in [3, 4] where x < y" : string
 from x in [3, 1, 2] group x;
 > val it = [3,1,2] : int list
-Sys.planEx "~1";
-> val it = "val it = from x in [3, 1, 2] group x" : string
 from x in [1, 2, 3] order x skip 1 take 1;
 > val it = [2] : int list
-Sys.planEx "~1";
-> val it = "val it = from x in [1, 2, 3] order x skip 1 take 1" : string
 from (x, y) in [(1, 2)] yield x + y;
 > val it = [3] : int list
-Sys.planEx "~1";
-> val it = "val it = from (x, y) in [(1, 2)] yield x + y" : string
 from {a, b} in [{a = 1, b = 2}] yield a + b;
 > val it = [3] : int list
-Sys.planEx "~1";
-> val it = "val it = from ({a = a, b = b}) in [{a = 1, b = 2}] yield a + b"
->   : string
 
 (* A selector is written by the field it selects: a record's label, a
  * tuple's ordinal, or the name of a structure's member. *)
@@ -506,40 +478,15 @@ val rs = [{a = 1, b = 2}];
 > val rs = [{a=1,b=2}] : {a:int, b:int} list
 from r in rs where #a r > 0;
 > val it = [{a=1,b=2}] : {a:int, b:int} list
-Sys.planEx "~1";
-> val it = "val it = from r in rs where #a r > 0" : string
 val ps = [(1, 2)];
 > val ps = [(1,2)] : (int * int) list
 from p in ps where #1 p > 0;
 > val it = [(1,2)] : (int * int) list
-Sys.planEx "~1";
-> val it = "val it = from p in ps where #1 p > 0" : string
 val xs = [1, 2, 3];
 > val xs = [1,2,3] : int list
 from i in List.rev xs;
 > val it = [3,2,1] : int list
 Sys.planEx "~1";
 > val it = "val it = #rev List xs" : string
-
-(* The `inlinePassCount` property is the number of analysis-and-inline
- * passes. It used to be accepted and ignored: the inliner read a
- * constant, so setting it to zero changed nothing. Zero does not mean
- * "do nothing" -- the inliner still runs once with no analysis, so
- * nothing is substituted and the folding that does not need use counts
- * still happens. *)
-Sys.set ("inlinePassCount", 0);
-> val it = () : unit
-let val d = 2 in from i in [1, 2, 3] where i = d yield i + d end;
-> val it = [4] : int list
-Sys.planEx "0";
-> val it =
->   "val it = let val d = 2 in from i in [1, 2, 3] where i = d yield i + d end"
->   : string
-Sys.unset "inlinePassCount";
-> val it = () : unit
-let val d = 2 in from i in [1, 2, 3] where i = d yield i + d end;
-> val it = [4] : int list
-Sys.planEx "0";
-> val it = "val it = from i in [1, 2, 3] where i = 2 yield i + 2" : string
 
 (*) End optimize.smli

@@ -328,6 +328,26 @@ impl Expr {
                     }
                     return doc;
                 }
+                // Negation is a prefix operator, written before its one
+                // operand, `~ $0`; it binds more tightly than any binary
+                // operator, so `~ $0 + 1` needs no brackets and
+                // `~ ($0 + 1)` keeps them.
+                if let Expr::Literal(_, Val::Fn(func)) = fx.as_ref()
+                    && !func.takes_pair()
+                    && func
+                        .op_name()
+                        .unwrap_or_else(|| func.name())
+                        .trim_start_matches("op ")
+                        == "~"
+                {
+                    let operand = match arg.as_ref() {
+                        Expr::Identifier(_, _)
+                        | Expr::Input(_, _)
+                        | Expr::Literal(_, _) => arg.to_doc(),
+                        _ => hcat(vec![text("("), arg.to_doc(), text(")")]),
+                    };
+                    return beside(text("~ "), operand);
+                }
                 // An argument is bracketed unless it is written as an
                 // atom already: a name, a literal, or something that
                 // carries its own brackets. `#rev List xs`, but

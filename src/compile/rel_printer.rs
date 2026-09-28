@@ -405,6 +405,30 @@ fn doc_bounded(e: &Expr, left: u8, right: u8) -> Doc {
                     joined
                 };
             }
+            // Negation is a prefix operator, written before its one
+            // operand, `~ $0`; it binds more tightly than any binary
+            // operator, so `~ $0 + 1` needs no brackets and
+            // `~ ($0 + 1)` keeps them.
+            if let Expr::Literal(_, Val::Fn(func)) = fx.as_ref()
+                && !func.takes_pair()
+                && func
+                    .op_name()
+                    .unwrap_or_else(|| func.name())
+                    .trim_start_matches("op ")
+                    == "~"
+            {
+                let operand = match arg.as_ref() {
+                    Expr::Identifier(_, _)
+                    | Expr::Input(_, _)
+                    | Expr::Literal(_, _) => doc(arg),
+                    _ => lindig::hcat(vec![
+                        lindig::text("("),
+                        doc(arg),
+                        lindig::text(")"),
+                    ]),
+                };
+                return lindig::beside(lindig::text("~ "), operand);
+            }
             // An argument is bracketed unless it is written as an atom
             // already, which is `Display`'s rule.
             match arg.as_ref() {

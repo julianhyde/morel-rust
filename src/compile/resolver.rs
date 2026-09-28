@@ -37,6 +37,9 @@ use crate::compile::library::{BuiltIn, BuiltInFunction};
 use crate::compile::pat_coverage;
 use crate::compile::postfix::{PostfixKind, peel_type, postfix_dispatch};
 use crate::compile::record_modifiers::{self, Source};
+use crate::compile::rel_printer;
+use crate::compile::rel_translator;
+use crate::compile::rel_validator;
 use crate::compile::span::Span;
 use crate::compile::type_resolver::{
     Resolved, TypeMap, Typed, ast_type_to_core_type,
@@ -62,9 +65,12 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 /// Converts an AST to a Core tree.
-pub fn resolve(resolved: &Resolved) -> (CoreDecl, Vec<(String, Span)>) {
+pub fn resolve(
+    resolved: &Resolved,
+    line_width: usize,
+) -> (CoreDecl, Vec<(String, Span)>) {
     let session_fns = expander::FnEnv::new();
-    resolve_with_session_fns(resolved, &session_fns)
+    resolve_with_session_fns(resolved, &session_fns, line_width)
 }
 
 /// Same as `resolve`, but seeds the predicate-inversion pass
@@ -72,10 +78,15 @@ pub fn resolve(resolved: &Resolved) -> (CoreDecl, Vec<(String, Span)>) {
 pub fn resolve_with_session_fns(
     resolved: &Resolved,
     session_fns: &expander::FnEnv,
+    line_width: usize,
 ) -> (CoreDecl, Vec<(String, Span)>) {
     let empty_rec = expander::FnEnv::new();
-    let (decl, _pre_fn_env, errors) =
-        resolve_with_session_fns_rec(resolved, session_fns, &empty_rec);
+    let (decl, _pre_fn_env, errors) = resolve_with_session_fns_rec(
+        resolved,
+        session_fns,
+        &empty_rec,
+        line_width,
+    );
     (decl, errors)
 }
 
@@ -94,8 +105,10 @@ pub fn resolve_with_session_fns_rec(
     resolved: &Resolved,
     session_fns: &expander::FnEnv,
     rec_session_fns: &expander::FnEnv,
+    line_width: usize,
 ) -> (CoreDecl, expander::FnEnv, Vec<(String, Span)>) {
-    let resolver = Resolver::new(&resolved.type_map, resolved.base_line);
+    let resolver =
+        Resolver::new(&resolved.type_map, resolved.base_line, line_width);
     // A checked type that has no name may have been made in this very
     // statement -- a record modifier gives one -- and its conditions were
     // deduced here, so here is where they can be compiled. A later
@@ -123,6 +136,20 @@ pub fn resolve_with_session_fns_rec(
     {
         let mut errors = resolver.errors.borrow_mut();
         check_unbounded_extents(&decl, &mut errors);
+    }
+    // Build the tree for every query, beside the step list that will
+    // run it, and check what the translation promises. Nothing depends
+    // on the answer, which is what makes it safe to be wrong about:
+    // the finding is a tree, and the query still runs. Only in a debug
+    // build, because it is a check and not a pass.
+    //
+    // Not where the statement will not compile. An ungrounded scan
+    // leaves an `Extent` that is not a collection, so every node over
+    // it fails to derive a type -- which reads as a finding and is
+    // only a query that was never going to run.
+    #[cfg(debug_assertions)]
+    if resolver.errors.borrow().is_empty() {
+        rel_translator::shadow(&decl);
     }
     (decl, pre_fn_env, resolver.errors.into_inner())
 }
@@ -295,6 +322,9 @@ fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
 pub struct Resolver<'a> {
     type_map: &'a TypeMap,
     base_line: usize,
+    /// Width at which a plan's lines wrap, which is the session's
+    /// `lineWidth`. Only `Sys.planOf` reads it.
+    line_width: usize,
     /// Errors detected during resolution (e.g. field-not-found).
     errors: RefCell<Vec<(String, Span)>>,
     /// Span of the receiver of the field selector being resolved, if
@@ -440,10 +470,15 @@ impl ResolvedValDecl {
 
 impl<'a> Resolver<'a> {
     /// Creates a new resolver with the given type map.
-    pub fn new(type_map: &'a TypeMap, base_line: usize) -> Self {
+    pub fn new(
+        type_map: &'a TypeMap,
+        base_line: usize,
+        line_width: usize,
+    ) -> Self {
         Self {
             type_map,
             base_line,
+            line_width,
             errors: RefCell::new(Vec::new()),
             selector_receiver_span: RefCell::new(None),
             self_fns: RefCell::new(HashSet::new()),
@@ -2043,6 +2078,22 @@ impl<'a> Resolver<'a> {
                             ));
                         }
                     }
+                }
+                // `Sys.planOf e` is the plan of `e`, and `e` is not
+                // evaluated. Expanded here, where the argument's core is
+                // to hand. Expanding it later would be worse than
+                // inconvenient: the rewrite passes run to a fixed point,
+                // so the answer would depend on when the inliner reached
+                // the call, and a plan's text must depend on the query
+                // and nothing else.
+                if is_structure_member(func, "Sys", "planOf")
+                    && !self.type_map.user_bindings.contains("Sys")
+                {
+                    let core_arg = self.resolve_expr(arg);
+                    return CoreExpr::Literal(
+                        t,
+                        Val::String(plan_of(&core_arg, self.line_width).into()),
+                    );
                 }
                 // Dispatch `Relational.sum coll` to sum$int/sum$real by the
                 // element type, so plans read `Relational.sum$int` as in
@@ -4391,6 +4442,44 @@ fn uncomparable_part(type_: &Type) -> Option<&Type> {
             .or_else(|| args.iter().find_map(|a| uncomparable_part(a))),
         _ => None,
     }
+}
+
+/// Returns whether `exp` is the member `member` of structure
+/// `structure`, which is written `Structure.member` and parses as a
+/// record selector applied to the structure.
+fn is_structure_member(exp: &Expr, structure: &str, member: &str) -> bool {
+    match &exp.kind {
+        ExprKind::Apply(sel, recv) => matches!(
+            (&sel.kind, &recv.kind),
+            (ExprKind::RecordSelector(m), ExprKind::Identifier(s))
+                if m == member && s == structure
+        ),
+        _ => false,
+    }
+}
+
+/// Renders the plan of `exp`, for `Sys.planOf`.
+///
+/// A query prints as a relational tree, which is `spec.md` §6 and the
+/// cross-implementation contract. Where the translator declines -- it
+/// does not guess -- the core expression is printed instead, which for
+/// a query is the step list that runs it.
+fn plan_of(exp: &CoreExpr, line_width: usize) -> String {
+    if let CoreExpr::From(_, steps) = exp
+        && let Some(tree) = rel_translator::translate(steps, &exp.type_())
+    {
+        // Every tree we print is validated, and a complaint goes into
+        // the text rather than into a log: a plan nobody reads is not
+        // a check, and a tree that fails an invariant is a finding
+        // whichever implementation is wrong.
+        let mut text = rel_printer::plan(&tree, true, line_width);
+        let leaked = rel_translator::leaked();
+        for error in rel_validator::validate_eliminating(&tree, &leaked) {
+            text.push_str(&format!("INVALID: {}\n", error));
+        }
+        return text;
+    }
+    format!("{}", exp)
 }
 
 /// Returns whether any of the expressions in `exps` references any of

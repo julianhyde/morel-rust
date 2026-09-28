@@ -15,7 +15,9 @@
 // language governing permissions and limitations under the
 // License.
 
+use morel::compile::rel_translator::take_shadow;
 use morel::shell::ScriptTest;
+use std::env;
 use std::panic::resume_unwind;
 use std::thread::Builder;
 
@@ -64,6 +66,51 @@ fn run_script_with(file_name: &str, stack_size: Option<usize>) {
         }
     } else {
         ScriptTest::default().run(file_name).expect("should work");
+        // The shadow built a tree for every query the script compiled.
+        // A tree that fails an invariant is a finding whichever
+        // implementation is wrong, and it would otherwise go
+        // unnoticed: nothing in the script reads it.
+        let shadow = take_shadow();
+        // Reading the tally is what buys coverage -- it took the
+        // translator from 958 queries to 1,338 in an afternoon -- and
+        // there was no way to read it without editing this file, since
+        // it prints only when the assertion below fires. Run
+        // `MOREL_SHADOW_TALLY=1 cargo test --test smile -- --nocapture`
+        // to see what the translator turned down and why.
+        if env::var_os("MOREL_SHADOW_TALLY").is_some() {
+            println!(
+                "SHADOW {}: {} translated, {} declined\n{}",
+                file_name,
+                shadow.translated,
+                shadow.declined,
+                shadow
+                    .reasons
+                    .iter()
+                    .map(|(reason, n)| format!(
+                        "{:5}  {}\n         e.g. {}",
+                        n,
+                        reason,
+                        shadow.examples.get(reason).map_or("", String::as_str)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
+        assert!(
+            shadow.invalid.is_empty(),
+            "{}: {} invalid trees, of {} translated and {} declined.\n{}\n\nDeclines:\n{}",
+            file_name,
+            shadow.invalid.len(),
+            shadow.translated,
+            shadow.declined,
+            shadow.invalid.join("\n"),
+            shadow
+                .reasons
+                .iter()
+                .map(|(reason, n)| format!("{:5}  {}", n, reason))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 }
 
@@ -338,6 +385,11 @@ fn range() {
 #[test]
 fn regex_example() {
     run_script("tests/script/regex-example.smli");
+}
+
+#[test]
+fn rel_tree() {
+    run_script("tests/script/rel-tree.smli");
 }
 
 #[test]

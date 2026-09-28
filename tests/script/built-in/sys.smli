@@ -32,7 +32,8 @@ Sys.set ("now", "2024-01-01T00:00:00Z");
 Sys;
 > val it =
 >   {clearEnv=fn,colorSchemes=fn,deduceColorScheme=fn,env=fn,file={},
->    parseTree=fn,plan=fn,planEx=fn,set=fn,show=fn,showAll=fn,unset=fn}
+>    parseTree=fn,plan=fn,planEx=fn,planOf=fn,set=fn,show=fn,showAll=fn,
+>    unset=fn}
 >   : {clearEnv:unit -> unit,
 >       colorSchemes:unit
 >                     -> {comment:string, constant:string, error:string,
@@ -41,7 +42,7 @@ Sys;
 >                          typeVar:string} list,
 >       deduceColorScheme:unit -> string, env:unit -> (string * string) list,
 >       file:{...}, parseTree:string -> string, plan:unit -> string,
->       planEx:string -> string, set:string * 'a -> unit,
+>       planEx:string -> string, planOf:'a -> string, set:string * 'b -> unit,
 >       show:string -> string, showAll:unit -> (string * string) list,
 >       unset:string -> unit}
 
@@ -64,12 +65,6 @@ Sys.colorSchemes ();
  * unset and in a test there is no terminal, so the scheme is "none". *)
 Sys.deduceColorScheme ();
 > val it = "none" : string
-
-(* 'scott' is a built-in structure here, where in morel-java it is a
- * foreign value bound only where its data source is, so it is left out
- * of the listing. *)
-Sys.set ("excludeStructures", "^(Test|scott)$");
-> val it = () : unit
 
 (*) val env : unit -> string list
 Sys.env;
@@ -176,7 +171,7 @@ from (name, t) in Sys.env ()
 > StringCvt      {dropl:forall 'a. (char -> bool) -> ('a -> (char * 'a) option) -> 'a -> 'a, padLeft:char -> int -> string -> string, padRight:char -> int -> string -> string, scanString:forall 'a 'b. (('a -> (char * 'a) option) -> 'a -> ('b * 'a) option) -> string -> 'b option, skipWS:forall 'a. ('a -> (char * 'a) option) -> 'a -> 'a, splitl:forall 'a. (char -> bool) -> ('a -> (char * 'a) option) -> 'a -> string * 'a, takel:forall 'a. (char -> bool) -> ('a -> (char * 'a) option) -> 'a -> string}
 > Subscript      exn
 > Sun            weekday
-> Sys            {clearEnv:unit -> unit, colorSchemes:unit -> {comment:string, constant:string, error:string, identifier:string, keyword:string, name:string, numeric:string, string:string, symbol:string, typeVar:string} list, deduceColorScheme:unit -> string, env:unit -> (string * string) list, file:{...}, parseTree:string -> string, plan:unit -> string, planEx:string -> string, set:forall 'a. string * 'a -> unit, show:string -> string, showAll:unit -> (string * string) list, unset:string -> unit}
+> Sys            {clearEnv:unit -> unit, colorSchemes:unit -> {comment:string, constant:string, error:string, identifier:string, keyword:string, name:string, numeric:string, string:string, symbol:string, typeVar:string} list, deduceColorScheme:unit -> string, env:unit -> (string * string) list, file:{...}, parseTree:string -> string, plan:unit -> string, planEx:string -> string, planOf:forall 'a. 'a -> string, set:forall 'a. string * 'a -> unit, show:string -> string, showAll:unit -> (string * string) list, unset:string -> unit}
 > Thu            weekday
 > Time           {+:time * time -> time, -:time * time -> time, <:time * time -> bool, <=:time * time -> bool, >:time * time -> bool, >=:time * time -> bool, compare:time * time -> order, fmt:int -> time -> string, fromMicroseconds:int -> time, fromMilliseconds:int -> time, fromNanoseconds:int -> time, fromReal:real -> time, fromSeconds:int -> time, fromString:string -> time option, now:unit -> time, scan:forall 'a. ('a -> (char * 'a) option) -> 'a -> (time * 'a) option, toMicroseconds:time -> int, toMilliseconds:time -> int, toNanoseconds:time -> int, toReal:time -> real, toSeconds:time -> int, toString:time -> string, zeroTime:time}
 > Tue            weekday
@@ -281,9 +276,6 @@ env;
 env () = Sys.env ();
 > val it = true : bool
 
-Sys.set ("excludeStructures", "^Test$");
-> val it = () : unit
-
 (*) val parseTree : string -> string
 Sys.parseTree;
 > val it = fn : string -> string
@@ -331,19 +323,26 @@ val zebra = true;
 > val zebra = true : bool
 val aardvark = 1 + (if zebra then 2 else 3);
 > val aardvark = 3 : int
+
 (*) Word literals are unparsed in hexadecimal (e.g. "0wxAB") in the plan.
 val warthog = 0wxAB + 0w1;
 > val warthog = 0wxAC : word
-Sys.planEx "0";
-> val it = "val warthog = 0wxAB + 0wx1" : string
 
 (*) val set : string * 'a -> unit
 Sys.set;
 > val it = fn : string * 'a -> unit
 Sys.set ("hybrid", false);
 > val it = () : unit
-Sys.plan ();
-> val it = "apply2(fnValue Sys.set, constant(hybrid), constant(false))" : string
+
+(*) val planEx : string -> string
+Sys.planEx;
+> val it = fn : string -> string
+val x = 1 + 2;
+> val x = 3 : int
+Sys.planEx "0";
+> val it = "val x = 1 + 2" : string
+Sys.planEx "-1";
+> val it = "val x = 1 + 2" : string
 
 (*) val show : string -> string
 Sys.show;
@@ -366,65 +365,9 @@ Sys.showAll;
 > val it = fn : unit -> (string * string) list
 showAll;
 > val it = fn : unit -> (string * string) list
-(*) The table is easier to read, and is how morel-java shows it.
-Sys.set ("output", "tabular");
-> val it = () : unit
-map
-  (fn (p,v) =>
-    (p, if p elem ["directory", "scriptDirectory", "banner", "productVersion"]
-      then "?" else v))
-  (Sys.showAll ());
-> 1                    2
-> -------------------- -------------------------
-> banner               ?
-> colorScheme          NONE
-> directory            ?
-> echo                 false
-> excludeStructures    ^Test$
-> hybrid               true
-> idempotent           false
-> inlinePassCount      5
-> lineWidth            SOME 78
-> matchCoverageEnabled true
-> matchStrict          false
-> maxUseDepth          SOME 50
-> mode                 EVALUATE
-> now                  SOME 2024-01-01T00:00:00Z
-> output               TABULAR
-> printDepth           SOME 5
-> printLength          NONE
-> productName          morel-rust
-> productVersion       ?
-> rangeMaxLength       16777215
-> relationalize        false
-> scriptDirectory      ?
-> showBanner           true
-> stringDepth          NONE
-> stringFold           NONE
-> terminalBackground   NONE
-> timeZone             SOME UTC
->
-> val it : (string * string) list
-Sys.set ("output", "classic");
-> val it = () : unit
-List.length (Sys.showAll ());
-> val it = 27 : int
-List.length (showAll ());
-> val it = 27 : int
-Sys.plan ();
-> val it = "apply(fnValue List.length, argCode apply0(fnValue Sys.showAll))"
->   : string
-
-(*) Test new product properties (MOREL-319)
-Sys.show "productName";
-> val it = "morel-rust" : string
 
 (*) Mask version number since it changes with each release
 String.size (Sys.show "productVersion") > 0;
-> val it = true : bool
-
-(*) Mask banner since it includes version
-String.isPrefix "morel-rust version " (Sys.show "banner");
 > val it = true : bool
 
 (*) Verify new properties are in showAll

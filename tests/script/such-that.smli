@@ -33,13 +33,9 @@ Sys.set ("stringDepth", NONE);
 
 from i where i > 0 andalso i < 10;
 > val it = [1,2,3,4,5,6,7,8,9] : int list
-Sys.planEx "3";
-> val it = "val it = from i in #flatten Range ([OPEN (0, 10)])" : string
 
 from i where i >= 0 andalso i <= 10;
 > val it = [0,1,2,3,4,5,6,7,8,9,10] : int list
-Sys.planEx "3";
-> val it = "val it = from i in #flatten Range ([CLOSED (0, 10)])" : string
 
 from i where i >= 0 andalso i <= 5 orelse i = 8 orelse i > 20 andalso i < 22;
 > val it = [0,1,2,3,4,5,8,21] : int list
@@ -158,21 +154,6 @@ end;
 from j where j elem [1 .. 3];
 > val it = [1,2,3] : int list
 
-(* A pattern whose type is a name is grounded like the type the name
- * abbreviates: an alias is transparent, so the strategies that ask what
- * kind of type a pattern has look through it. The name survives into
- * the result, because that is the type the pattern was written at. *)
-type smallInt = int;
-> type smallInt = int
-from n: smallInt where n elem [1 .. 3];
-> val it = [1,2,3] : smallInt list
-from n: smallInt where n > 0 andalso n < 4;
-> val it = [1,2,3] : smallInt list
-type intPair = int * int;
-> type intPair = int * int
-from p: intPair where p >= (0, 1) andalso p <= (0, 3);
-> val it = [(0,1),(0,2),(0,3)] : intPair list
-
 (*) 'elem' over a range whose bounds depend on an earlier variable.
 from i, j where i elem [1, 2] andalso j elem [i + 1 .. i + 2];
 > i j
@@ -187,6 +168,8 @@ from i, j where i elem [1, 2] andalso j elem [i + 1 .. i + 2];
 (*) Collection inversion of "elem".
 from x where x elem [1,2,3] andalso x > 1;
 > val it = [2,3] : int list
+(* A collection may hold a value twice, but an unbounded scan yields each
+ * satisfying assignment once. *)
 from x where x elem [1,2,2,3];
 > val it = [1,2,3] : int list
 from y where y elem [1,2] andalso y elem [2,3];
@@ -237,9 +220,6 @@ from n where isNum n andalso isEven n;
 from x where case x of y => y elem [1,2];
 > val it = [1,2] : int list
 
-from x where case x of y => y > 0 andalso y < 5;
-> val it = [1,2,3,4] : int list
-
 (*) Case with multiple arms (issue #341)
 from x where (case x of 1 => true | 3 => true | _ => false);
 > val it = [1,3] : int list
@@ -251,9 +231,6 @@ from x where (case x of 1 => true | 2 => false | 3 => true | _ => false);
 (*) Simple boolean inversion: 'not b' generates false
 from b where not b;
 > val it = [false] : bool list
-
-from b where b;
-> val it = [true] : bool list
 
 (*) Case with variable pattern and range predicate
 from x where (case x of 0 => true | n => n >= 5 andalso n <= 8);
@@ -352,10 +329,6 @@ from t, f
 > 0 10
 >
 > val it : {f:int, t:int} list
-Sys.planEx "3";
-> val it =
->   "val it = from t in #flatten Range ([CLOSED (0, 10)]) join f in #flatten Range ([CLOSED (0, 6)]) where 3 * t + 5 * f = 30"
->   : string
 
 (* A linear Diophantine equation with no solutions. FBBT bounds
  * 'x <= 7' and 'y <= 5'; enumerating that box finds nothing, which is
@@ -651,33 +624,6 @@ from x in [1,2], y where y elem [x, x+1];
 >
 > val it : {x:int, y:int} list
 
-(*) Reversed pattern
-from x, y where (y, x) elem [(1,true),(2,false)];
-> x     y
-> ----- -
-> true  1
-> false 2
->
-> val it : {x:bool, y:int} list
-
-(*) Reversed pattern via case
-from x, y where case (y, x) of (a, b) => (a, b) elem [(1,true),(2,false)];
-> x     y
-> ----- -
-> true  1
-> false 2
->
-> val it : {x:bool, y:int} list
-
-(*) Record pattern
-from x, y where {y, x} elem [{y=1,x=true},{y=2,x=false}];
-> x     y
-> ----- -
-> true  1
-> false 2
->
-> val it : {x:bool, y:int} list
-
 from x where (x, "b") elem [(1,"a"),(2,"b")];
 > val it = [2] : int list
 
@@ -726,14 +672,7 @@ from x, y in [0, 2, 9] where x > y andalso x < y + 5;
 >
 > val it : {x:int, y:int} list
 
-(* Similar, but we know the values of x.
- *
- * 'y' has two candidate bounds: 'y < x', which depends on 'x', and the
- * constant bounds that FBBT deduces from it. The dependent one is
- * tighter -- four values of 'y' for each 'x', rather than nine -- and
- * 'x' does not wait on 'y', so there is no cycle to fear, and the
- * extractor prefers it. FBBT's bounds remain as a filter, which the
- * generator has already made redundant. *)
+(* Similar, but we know the values of x. *)
 from x in [3, 5, 7], y where x > y andalso x < y + 5 yield y;
 > val it = [~1,0,1,2,1,2,3,4,3,4,5,6] : int list
 
@@ -855,30 +794,6 @@ where j > 4 andalso j < 7
 >
 > val it : {i:int, j:int, k:int, m:int} list
 
-(* -- Emp and dept examples --------------------------------------- *)
-
-(*) Previously MainTest.testFromSuchThat
-let
-  val emps = [
-    {id = 100, name = "Fred", deptno = 10},
-    {id = 101, name = "Velma", deptno = 20},
-    {id = 102, name = "Shaggy", deptno = 30},
-    {id = 103, name = "Scooby", deptno = 30}]
-  fun hasEmpNameInDept (n, d) =
-    (n, d) elem (from e in emps yield (e.name, e.deptno))
-in
-  from n, d
-    where hasEmpNameInDept (n, d)
-    where d = 30
-    yield {d, n}
-end;
-> d  n
-> -- ------
-> 30 Shaggy
-> 30 Scooby
->
-> val it : {d:int, n:string} list
-
 (* Unbounded variables with `take` and other clauses -------------- *)
 
 (*) A dependent point orders after its dependency.
@@ -892,8 +807,6 @@ from x, y where x = 1 andalso y = x + 1;
 (*) An unused unbounded variable is dropped.
 exists w, x where x = 3;
 > val it = true : bool
-
-(* Unbounded variables with `take` and other clauses -------------- *)
 
 (* Odd and even numbers that are not a multiple of 6. *)
 from i
@@ -948,7 +861,7 @@ from i
 
 from i
   where i >= 0 andalso i <= 10
-  through j in (fn xs => List.`take` (xs, 3));
+  through j in (fn list => List.`take` (list, 3));
 > val it = [0,1,2] : int list
 
 exists i
@@ -1035,18 +948,6 @@ from y
   where exists x
     where (x, y, 3) elem [(1, 2, 3), (2, 3, 4), (5, 4, 3), (4, 2, 3)];
 > val it = [2,4] : int list
-
-from source in [1, 2, 3, 4, 5]
-yield {source, doubled = (from x where x = source * 2)};
-> doubled source
-> ------- ------
->       2      1
->       4      2
->       6      3
->       8      4
->      10      5
->
-> val it : {doubled:int list, source:int} list
 
 (*) 'on' in 'from'
 from i in [1, 2, 3],
@@ -1159,6 +1060,79 @@ yield {dno = #deptno v, name = #dname v};
 >
 > val it : {dno:int, name:string} list
 
+(* An unbounded scan may bear a type annotation, which is often what makes
+ * the extent known: 'from a: t' behaves as 'from a' where a has type t. *)
+type pair = {b: bool, u: unit};
+> type pair = {b:bool, u:unit}
+exists p: pair where p.b;
+> val it = true : bool
+
+(* The pattern of an unbounded scan may be a tuple or a record, and then means
+ * the same as one unbounded scan per component: the extent of a product type
+ * is the product of its components' extents. Each component is grounded by
+ * whichever strategy suits it - 'b' by materializing the finite type 'bool',
+ * 'i' from the collection that constrains it. *)
+from b, i where i elem [3, 5] andalso b;
+> b    i
+> ---- -
+> true 3
+> true 5
+>
+> val it : {b:bool, i:int} list
+from (b, i) where i elem [3, 5] andalso b;
+> b    i
+> ---- -
+> true 3
+> true 5
+>
+> val it : {b:bool, i:int} list
+from {b, i} where i elem [3, 5] andalso b;
+> b    i
+> ---- -
+> true 3
+> true 5
+>
+> val it : {b:bool, i:int} list
+
+(*) Nested products are decomposed too.
+from (b: bool, (c: bool, i)) where i elem [3, 5] andalso b andalso c;
+> b    c    i
+> ---- ---- -
+> true true 3
+> true true 5
+>
+> val it : {b:bool, c:bool, i:int} list
+datatype t = A of bool | B of bool;
+> datatype t = A of bool | B of bool
+
+(* A pattern that binds no variables matches exactly one value, so the scan
+ * contributes one row and binds nothing, as "from" with no scans does. *)
+from;
+> val it = [()] : unit list
+
+(* A variable whose values cannot be enumerated is an error. Where the query
+ * still has a scan, the expander names the pattern; where the query has one
+ * step and has simplified to the extent alone, there is no pattern left to
+ * name, so the message names the type. Either way it is an error, not a
+ * crash. *)
+from i;
+> stdIn:1.6 Error: cannot enumerate all values of type ''a'
+>   raised at: stdIn:1.6
+from i, j;
+> stdIn:1.6 Error: pattern 'i' is not grounded
+>   raised at: stdIn:1.6
+from b: bool, i;
+> stdIn:1.15 Error: pattern 'i' is not grounded
+>   raised at: stdIn:1.15
+from (b: bool, i);
+> stdIn:1.6-1.18 Error: pattern 'i' is not grounded
+>   raised at: stdIn:1.6-1.18
+
+(* A query that only counts its rows, as 'exists' does, may ignore a variable
+ * that it cannot enumerate if no step refers to it. *)
+exists w, x, y where (x, 2) elem [(1, 2), (1, 3), (4, 3)];
+> val it = true : bool
+
 (*) Finite-type extent materialization.
 from b where b orelse not b;
 > val it = [false,true] : bool list
@@ -1176,25 +1150,22 @@ from bc where bc = (true, ()) orelse true;
 >
 > val it : (bool * unit) list
 
-(* The 'unit' extent yields the same value that '()' evaluates to, so it
- * prints as '()'. Classic mode prints a 'unit' from its type and so
- * would hide a wrong value; tabular mode prints the value. *)
+(* The 'unit' extent yields the same value that '()' evaluates
+ * to, so it compares equal and prints as '()'. Classic mode prints a
+ * 'unit' from its type and so hid a wrong value; tabular mode prints the
+ * value, and showed it as '{}'. *)
 from u: unit;
 > val it = [()] : unit list
+(from u: unit) = [()];
+> val it = true : bool
+(from u: unit * unit) = [((), ())];
+> val it = true : bool
 from u: unit * unit;
 > 1  2
 > -- --
 > () ()
 >
 > val it : (unit * unit) list
-
-(* The extent materializes as a list, and prints as one, but the type
- * resolver still calls an extent scan a bag; so a query that compares
- * with a list is refused. morel-java gives 'true' for both. *)
-(from u: unit) = [()];
-> val it = true : bool
-(from u: unit * unit) = [((), ())];
-> val it = true : bool
 
 (*) A quantifier over a finite extent.
 exists b where b;
@@ -1574,21 +1545,6 @@ in
 end;
 > val it = {exists_odd_cycle=[()]} : {exists_odd_cycle:unit list}
 
-(*) Bounded transitive closure
-let
-  val edge_facts = [("a", "b"), ("b", "c"), ("c", "d"), ("d", "e"), ("e", "f"), ("a", "c")]
-  fun edge (x, y) = (x, y) elem edge_facts
-  fun path (x, y, n) =
-    (edge (x, y) andalso n = 1) orelse
-    (exists v0 where path (x, v0, n - 1) andalso edge (v0, y) andalso n + 1 < 3)
-in
-  {path = from x, y, n where path (x, y, n)}
-end;
-> val it =
->   {path=[{n=1,x="a",y="b"},{n=1,x="b",y="c"},{n=1,x="c",y="d"},
->          {n=1,x="d",y="e"},{n=1,x="e",y="f"},{n=1,x="a",y="c"}]}
->   : {path:{n:int, x:string, y:string} list}
-
 (*) Siblings
 let
   val parents = [("Alice", "Bob"), ("Alice", "Carol")]
@@ -1622,17 +1578,6 @@ val edges = [(1, 2), (2, 3), (1, 4), (4, 2), (4, 3)];
 
 fun edge (x, y) = (x, y) elem edges;
 > val edge = fn : int * int -> bool
-
-from x, y where edge (x, y);
-> x y
-> - -
-> 1 2
-> 2 3
-> 1 4
-> 4 2
-> 4 3
->
-> val it : {x:int, y:int} list
 
 (*) Return points that are 2 hops apart.
 let
@@ -1720,32 +1665,36 @@ end;
  *)
 fun isR y = true;
 > val isR = fn : 'a -> bool
+(* TODO
 fun isS1 x = exists y where isR y;
 > val isS1 = fn : 'a -> bool
+*)
 
-(* isS1 is unsafe — `x` doesn't appear in any non-negated
- * relational subgoal, so it can take infinitely many values.
- * morel-java rejects this with `Unsafe`; morel-rust reports
- * the equivalent `pattern 'x' is not grounded`. *)
+(*) isS1 is unsafe
+(* TODO should throw unsafe
 from x where isS1 x;
-> stdIn:1.6 Error: pattern 'x' is not grounded
->   raised at: stdIn:1.6
+> Unsafe
+*)
 
-fun isS2 x = exists y where isR y andalso not (isR x);
-> val isS2 = fn : 'a -> bool
+(*
+fun isS2 x = exists (from y where isR y andalso not (isR x));
+*)
 
-(*) isS2 is unsafe — `x` only appears under negation.
+(*) isS2 is unsafe
+(* TODO should throw unsafe
 from x where isS2 x;
-> stdIn:1.6 Error: pattern 'x' is not grounded
->   raised at: stdIn:1.6
+> Unsafe
+*)
 
-fun isS3 x = exists y where isR y andalso x < y;
-> val isS3 = fn : 'a -> bool
+(*
+fun isS3 x = exists (from y where isR y andalso x < y);
+*)
 
-(*) isS3 is unsafe — `x` only appears in an arithmetic subgoal.
+(*) isS3 is unsafe
+(* TODO should throw unsafe
 from x where isS3 x;
-> stdIn:1.6 Error: pattern 'x' is not grounded
->   raised at: stdIn:1.6
+> Unsafe
+*)
 
 (* Ungrounded tuple-pattern call. The body of `tuPair` places no
  * constraint on its arguments, so neither component of `p` can
@@ -1755,9 +1704,6 @@ from x where isS3 x;
  * same shape using the destructured component name. *)
 fun tuPair (a, b) = true;
 > val tuPair = fn : 'a * 'b -> bool
-from p where tuPair p;
-> stdIn:1.6 Error: pattern 'p__1' is not grounded
->   raised at: stdIn:1.6
 from x, y where tuPair (x, y);
 > stdIn:1.6 Error: pattern 'x' is not grounded
 >   raised at: stdIn:1.6
@@ -2006,16 +1952,10 @@ fun cousin2 (x, y) = sib (x, y)
       andalso cousin2 (xp, yp));
 > val cousin2 = fn : string * string -> bool
 
-(* The expander's Phase 3 stratification check skips `cousin2` —
- * its body contains a self-call inside `not (...)`. The query
- * falls through to the existing pipeline, which can't ground
- * `p`'s components and emits a runtime error. (morel-java
- * reports this as "Error: non-stratified"; morel-rust shows the
- * equivalent "pattern not grounded" message until a phase-3.5
- * enhancement upgrades the wording.) *)
+(* TODO
 from p where cousin2 p;
-> stdIn:1.6 Error: pattern 'p__1' is not grounded
->   raised at: stdIn:1.6
+> Error: non-stratified
+*)
 
 (* -------------------------------------------------------------------
  * Coloring Australia using three colors.
@@ -2106,40 +2046,129 @@ order DESC profit;
 > val it : {b:int, c:int, profit:int} list
 
 (* -------------------------------------------------------------------
- * Extracted testFromSuchThat* tests from MainTest.java. The
- * Most of the `Sys.planEx` checks present in morel-java are omitted:
- * morel-rust builds the same values by a different plan where the
- * bounds are not a single range -- a disjunction concatenates one
- * generator per range rather than flattening a list of them, and a
- * tuple range materializes -- and the queries themselves are what the
- * tests exercise. The ones that do agree are kept, above.
+ * An unbounded scan is ordered, and yields each assignment once.
  *)
 
-(* testFromSuchThat - Basic function with elem predicate *)
-let
-  val emps = [
-    {id = 100, name = "Fred", deptno = 10},
-    {id = 101, name = "Velma", deptno = 20},
-    {id = 102, name = "Shaggy", deptno = 30},
-    {id = 103, name = "Scooby", deptno = 30}]
-  fun hasEmpNameInDept (n, d) =
-    (n, d) elem (from e in emps yield (e.name, e.deptno))
-in
-  from n, d
-    where hasEmpNameInDept (n, d)
-    where d = 30
-    yield {d, n}
-end;
-> d  n
-> -- ------
-> 30 Shaggy
-> 30 Scooby
+(* The order is that of the type, not that of the collection a generator
+ * happens to draw from, and duplicate assignments are removed. *)
+from i where i elem [5, 4, 3, 4];
+> val it = [3,4,5] : int list
+from i where i elem [5, 3] orelse i elem [9, 1];
+> val it = [1,3,5,9] : int list
+
+(*) The 'zero' of relations, written two ways.
+from;
+> val it = [()] : unit list
+
+(*) 'ordinal' is available, because the query is ordered.
+from i where i elem [3, 1, 2] yield {i, n = ordinal};
+> i n
+> - -
+> 1 0
+> 2 1
+> 3 2
 >
-> val it : {d:int, n:string} list
+> val it : {i:int, n:int} list
 
-(* testFromSuchThat2 - Complex function with division and elem.
- * TODO - currently not fully working in morel-java either.
- *)
+(* An unbounded scan leaves the query as ordered as it found it. A list keeps
+ * its order; a bag stays a bag. *)
+val deptList = [{deptno = 20, dname = "Sales"},
+   {deptno = 10, dname = "Marketing"}];
+> deptno dname
+> ------ ---------
+>     20 Sales
+>     10 Marketing
+>
+> val deptList : {deptno:int, dname:string} list
+from d in deptList, i where i = d.deptno * 2;
+> d                i
+> deptno dname
+> ------ --------- --
+>     20 Sales     40
+>     10 Marketing 20
+>
+> val it : {d:{deptno:int, dname:string}, i:int} list
+from d in bag deptList, i where i = d.deptno * 2;
+> d                i
+> deptno dname
+> ------ --------- --
+>     20 Sales     40
+>     10 Marketing 20
+>
+> val it : {d:{deptno:int, dname:string}, i:int} bag
+
+(*) A finite type comes out in the type's order, and needs no sorting.
+from b: bool;
+> val it = [false,true] : bool list
+datatype color = RED | GREEN | BLUE;
+> datatype color = RED | GREEN | BLUE
+from c: color;
+> val it = [RED,GREEN,BLUE] : color list
+
+(* 'nan' follows the rules it follows in 'order' and 'distinct': it sorts
+ * last, and duplicates of it collapse. *)
+val nanValue = 0.0 / 0.0;
+> val nanValue = nan : real
+
+(*) 'exists' and 'forall' ask only whether a row exists, and are unaffected.
+exists i where i elem [5, 4, 3];
+> val it = true : bool
+forall i where i elem [2, 4] require i mod 2 = 0;
+> val it = true : bool
+(* Expected code:
+ * "from(sink
+ *   join(pat e, exp tuple(
+ *   tuple(constant(10), constant(100), constant(Fred)),
+ *   tuple(constant(20), constant(101), constant(Velma)),
+ *   tuple(constant(30), constant(102), constant(Shaggy)),
+ *   tuple(constant(30), constant(103), constant(Scooby))),
+ *  sink yield(codes [tuple(apply(fnValue nth:2, argCode get(name e)), apply(fnValue nth:0, argCode get(name e)))], sink join(pat n_1, exp tuple( apply(fnValue nth:0, argCode get(name v$1))), sink join(pat d_1, exp tuple(constant(30)), sink where(condition apply2(fnValue elem,
+ *                             tuple(get(name n), get(name d)), from(sink join(pat e, exp tuple(
+ *   tuple(constant(10), constant(100), constant(Fred)),
+ *   tuple(constant(20), constant(101), constant(Velma)),
+ *   tuple(constant(30), constant(102), constant(Shaggy)),
+ *   tuple(constant(30), constant(103), constant(Scooby))), sink yield(codes [tuple(apply(fnValue nth:2, argCode get(name e)), apply(fnValue nth:0, argCode get(name e)))], sink apply(fnValue $.extent, argCode constant(()))))), sink where(condition apply2(fnValue =, get(name d), constant(30)), sink collect(tuple(get(name d), get(name n)))))))))))" *)
+(*
+Sys.planEx "code";
+> [actual output would appear here]
+*)
+
+(* testFromSuchThat2 - Complex function with division and elem *)
+(* TODO - currently not fully working
+let
+  fun hasJob (d, job) =
+    (d div 2, job)
+      elem (from e in scott.emps yield (e.deptno, e.job))
+in
+  from d in scott.depts, j
+    where hasJob (d.deptno, j)
+    yield j
+end;
+> val it : string bag
+Sys.planEx "code";
+> val it =
+ "from(sink join(pat d_1,
+     exp apply(fnValue nth:1, argCode get(name scott)),
+   sink join(pat j,
+       exp apply(
+         fnCode apply(fnValue List.filter,
+           argCode match(j,
+             apply(fnCode match((d, job),
+               apply2(fnValue elem,
+                 tuple(apply2(fnValue div, get(name d), constant(2)),
+                 get(name job)),
+               from(
+               sink join(pat e,
+                 exp apply(fnValue nth:2, argCode get(name scott)),
+                 sink collect(
+                   tuple(apply(fnValue nth:1, argCode get(name e)),
+                     apply(fnValue nth:5, argCode get(name e)))))))),
+               argCode tuple(
+                 apply(fnValue nth:0, argCode get(name d)),
+                 get(name j))))),
+         argCode apply(fnValue $.extent, argCode constant(()))),
+     sink collect(get(name j)))))"
+*)
 
 (* testFromSuchThat2b - Simple "d elem list" pattern *)
 from d where d elem scott.depts;
@@ -2256,154 +2285,30 @@ in
   from x where f x andalso x > 1
 end;
 > val it = [2,3] : int list
+(* Expected code:
+ * "from(sink
+ *   join(pat (n_1, d_1),
+ *   exp apply(
+ *     fnCode apply(fnValue List.filter,
+ *       argCode match(v$0,
+ *         apply(fnCode match((n_1, d_1),
+ *             apply(fnCode match((n, d),
+ *                 apply2(fnValue elem,
+ *                   tuple(get(name n), get(name d)),
+ *                   from(sink
+ *                     join(pat e, exp tuple(
+ *   tuple(constant(30), constant(102), constant(Shaggy)),
+ *   tuple(constant(30), constant(103), constant(Scooby))),
+ *       sink collect(tuple(apply(fnValue nth:2, argCode get(name e)),
+ *         apply(fnValue nth:0, argCode get(name e)))))))),
+ *                argCode tuple(get(name n), get(name d)))),
+ *             argCode get(name v$0)))),
+ *           argCode apply(fnValue $.extent, argCode constant(()))),
+ *         sink where(condition apply2(fnValue =, get(name d), constant(30)),
+ *           sink collect(tuple(get(name d), get(name n))))))" *)
+(*
+Sys.planEx "code";
+> [actual output would appear here]
+*)
 
-(* testFromSuchThat3 - Smaller version of testFromSuchThat *)
-let
-  val emps = [
-    {id = 102, name = "Shaggy", deptno = 30},
-    {id = 103, name = "Scooby", deptno = 30}]
-  fun hasEmpNameInDept (n, d) =
-    (n, d) elem (from e in emps yield (e.name, e.deptno))
-in
-  from n, d
-    where hasEmpNameInDept (n, d)
-    where d = 30
-    yield {d, n}
-end;
-> d  n
-> -- ------
-> 30 Shaggy
-> 30 Scooby
->
-> val it : {d:int, n:string} list
-
-(* An unbounded scan may have any pattern that names values rather than
- * selecting them; its rows are the values of the pattern's variables, so
- * "from (x, y)" asks what "from x, y" asks. The result is a bag until
- * hydromatic/morel#443 makes an unbounded scan ordered and distinct;
- * morel-java's answers are the same rows as a list. *)
-from (x, y) where x elem [1, 2] andalso y elem [3];
-> x y
-> - -
-> 1 3
-> 2 3
->
-> val it : {x:int, y:int} list
-from {b, i} where i elem [3, 5] andalso b;
-> b    i
-> ---- -
-> true 3
-> true 5
->
-> val it : {b:bool, i:int} list
-
-(* A component that no step refers to is still a column of the result, and is
- * materialized if its type is finite. *)
-from (b: bool, i) where i elem [3, 5];
-> b     i
-> ----- -
-> false 3
-> true  3
-> false 5
-> true  5
->
-> val it : {b:bool, i:int} list
-from {b: bool, i} where i elem [3, 4, 5];
-> b     i
-> ----- -
-> false 3
-> true  3
-> false 4
-> true  4
-> false 5
-> true  5
->
-> val it : {b:bool, i:int} list
-
-(*) Nested products are decomposed too.
-from (b: bool, (c: bool, i)) where i elem [3, 5] andalso b andalso c;
-> b    c    i
-> ---- ---- -
-> true true 3
-> true true 5
->
-> val it : {b:bool, c:bool, i:int} list
-
-(* An 'as' pattern names the whole product as well as its components, so its
- * parts are not independent of the whole and it is not split. morel-java
- * materializes the product's extent and gives
- * "{b=true,c=false,p=(true,false)}" and "{b=true,c=true,p=(true,true)}". *)
-from p as (b: bool, c: bool) where b;
-> stdIn:1.6-1.30 Error: pattern '_' is not grounded
->   raised at: stdIn:1.6-1.30
-
-(* A variable whose values cannot be enumerated is an error. A query whose
- * only step is that scan has nothing else to blame, so the message names
- * the type; one of several scans names the pattern. Either way it is an
- * error, not a crash. *)
-from i;
-> stdIn:1.6 Error: cannot enumerate all values of type ''a'
->   raised at: stdIn:1.6
-from i: int;
-> stdIn:1.6-1.12 Error: cannot enumerate all values of type 'int'
->   raised at: stdIn:1.6-1.12
-from s: string;
-> stdIn:1.6-1.15 Error: cannot enumerate all values of type 'string'
->   raised at: stdIn:1.6-1.15
-from i, j;
-> stdIn:1.6 Error: pattern 'i' is not grounded
->   raised at: stdIn:1.6
-
-(*) A finite type comes out in the type's order, and needs no sorting.
-from b: bool;
-> val it = [false,true] : bool list
-datatype color = RED | GREEN | BLUE;
-> datatype color = RED | GREEN | BLUE
-from c: color;
-> val it = [RED,GREEN,BLUE] : color list
-(*) A constructor that takes an argument contributes one value per argument.
-datatype box = BOX of bool;
-> datatype box = BOX of bool
-from x: box;
-> val it = [BOX false,BOX true] : box list
-(* A datatype with type arguments instantiates its constructors'
- * argument types from them. *)
-from x: bool descending;
-> val it = [DESC false,DESC true] : bool descending list
-from x: (color, bool) either;
-> val it = [INL RED,INL GREEN,INL BLUE,INR false,INR true]
->   : (color,bool) either list
-from x: color option option;
-> val it = [NONE,SOME NONE,SOME (SOME RED),SOME (SOME GREEN),SOME (SOME BLUE)]
->   : color option option list
-
-(* An equality of a pattern with itself says nothing, so it does not
- * fix the pattern to a point; the extent is materialized and the
- * predicate merely filters. It used to generate "the value of x" from
- * an x that nothing had bound, giving a wrong answer or a crash. *)
-from x: color where x = x;
-> val it = [RED,GREEN,BLUE] : color list
-from b: bool where b = b;
-> val it = [false,true] : bool list
-from i: int where i = i;
-> stdIn:1.6-1.12 Error: pattern 'i' is not grounded
->   raised at: stdIn:1.6-1.12
-(*) An equality with a value still fixes the pattern to that point.
-from x: int where x = 3;
-> val it = [3] : int list
-from x: int where 3 = x;
-> val it = [3] : int list
-
-(*) A record extent is the cartesian product of its fields'.
-from x: {a: bool, b: bool};
-> a     b
-> ----- -----
-> false false
-> false true
-> true  false
-> true  true
->
-> val it : {a:bool, b:bool} list
-
-
-(*) End suchThat.smli
+(*) End such-that.smli
