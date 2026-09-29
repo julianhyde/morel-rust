@@ -37,6 +37,7 @@ use crate::compile::library::{BuiltIn, BuiltInFunction};
 use crate::compile::pat_coverage;
 use crate::compile::postfix::{PostfixKind, peel_type, postfix_dispatch};
 use crate::compile::record_modifiers::{self, Source};
+use crate::compile::rel_expander;
 use crate::compile::rel_lowerer;
 use crate::compile::rel_printer;
 use crate::compile::rel_translator;
@@ -3821,7 +3822,16 @@ impl<'a> Resolver<'a> {
         if self.plan_of_depth.get() > 0 {
             return from;
         }
-        expander::expand_from(from, &self.type_map.datatype_map())
+        let datatypes = self.type_map.datatype_map();
+        // Grounded on its tree first, which is where a scan whose
+        // pattern is not a single variable can be grounded, and
+        // where the order the leaves are scanned in is the tree's to
+        // decide. What the tree declines the step-list grounder
+        // still sees, extent and all.
+        if let Some(grounded) = rel_expander::ground(&from, &datatypes) {
+            return grounded;
+        }
+        expander::expand_from(from, &datatypes)
     }
 
     /// Resolves a step in a query, adding it to a [FromBuilder].

@@ -985,7 +985,7 @@ fn create_finite_extent_generator(
 /// datatype, list, fn, …). Built-in types covered: `bool`,
 /// `'a option` for finite `'a`, tuples of finite components, and
 /// user datatypes whose constructors are all nullary.
-fn finite_extent(t: &Type, datatypes: &DatatypeMap) -> Option<Expr> {
+pub(crate) fn finite_extent(t: &Type, datatypes: &DatatypeMap) -> Option<Expr> {
     // A datatype named in an annotation arrives as an alias for
     // itself -- `from x: color` gives `Alias("color", Data("color",
     // []))` -- so peel before matching.
