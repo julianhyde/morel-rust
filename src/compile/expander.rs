@@ -37,6 +37,7 @@ use crate::compile::generators::{
     maybe_generator_with_scope, rewrite_infinite_range_scans, split_conjuncts,
 };
 use crate::compile::library::BuiltInFunction;
+use crate::compile::rel_expander;
 use crate::compile::span::Span;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
@@ -74,14 +75,6 @@ impl DatatypeMap {
             arg_types: arg_types.clone(),
         }
     }
-}
-
-/// Convenience wrapper for callers that don't have a function
-/// environment available (e.g. the resolver, which calls this
-/// before `expand_decl` runs the full tree-walk pass).
-pub fn expand_from(expr: Expr, datatypes: &DatatypeMap) -> Expr {
-    let env = FnEnv::new();
-    expand_from_with(expr, &env, datatypes)
 }
 
 /// If `expr` is a `From`, `Exists`, or `Forall` containing one or
@@ -312,6 +305,16 @@ fn walk_expr_with_scope(
             Expr::Let(t, new_decls, new_body)
         }
         Expr::From(_, _) => {
+            // Grounded on its tree first, which is where a scan
+            // whose pattern is not a single variable can be
+            // grounded, and where the order the leaves are scanned
+            // in is the tree's to decide. The query is grounded
+            // before what its steps hold, so that a constraint that
+            // reads a nested query reads it as written.
+            if let Some(grounded) = rel_expander::ground(&expr, datatypes, env)
+            {
+                return walk_query_steps(grounded, env, rec_env, datatypes);
+            }
             let inner = walk_query_steps(expr, env, rec_env, datatypes);
             expand_from_with_scope_rec(
                 inner,
