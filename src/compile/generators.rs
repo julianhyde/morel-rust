@@ -248,6 +248,9 @@ pub fn maybe_generator_with_scope(
         constraints,
         fn_env,
         datatypes,
+        outer_scope,
+        unbounded_siblings,
+        ungrounded,
     ) {
         return true;
     }
@@ -275,6 +278,9 @@ pub fn maybe_generator_with_scope(
         constraints,
         fn_env,
         datatypes,
+        outer_scope,
+        unbounded_siblings,
+        ungrounded,
     ) {
         return true;
     }
@@ -287,6 +293,9 @@ pub fn maybe_generator_with_scope(
         constraints,
         fn_env,
         datatypes,
+        outer_scope,
+        unbounded_siblings,
+        ungrounded,
     ) {
         return true;
     }
@@ -1398,6 +1407,7 @@ fn create_string_prefix_generator(
 ///   join p in Bag.tabulate(String.size s + 1,
 ///                          fn i => String.substring(s, 0, i))
 ///   yield p distinct`.
+#[allow(clippy::too_many_arguments)]
 fn maybe_exists(
     cache: &mut Cache,
     pat: &Pat,
@@ -1407,6 +1417,9 @@ fn maybe_exists(
     constraints: &[Expr],
     fn_env: &FnEnv,
     datatypes: &DatatypeMap,
+    outer_scope: &BTreeSet<String>,
+    unbounded_siblings: &BTreeSet<String>,
+    ungrounded: &BTreeSet<String>,
 ) -> bool {
     use crate::compile::core::{Step, StepEnv, StepKind};
 
@@ -1451,9 +1464,18 @@ fn maybe_exists(
         // a temporary cache so we can inspect the result before
         // adding to the real cache.
         let mut probe = Cache::new();
-        if !maybe_generator(
-            &mut probe, pat, pat_name, pat_type, ordered, &augmented, fn_env,
+        if !maybe_generator_with_scope(
+            &mut probe,
+            pat,
+            pat_name,
+            pat_type,
+            ordered,
+            &augmented,
+            fn_env,
             datatypes,
+            outer_scope,
+            unbounded_siblings,
+            ungrounded,
         ) {
             continue;
         }
@@ -1712,6 +1734,7 @@ fn maybe_function(
 /// Mixed-shape multi-arm (literal arms + a variable-arm with a
 /// non-trivial condition) needs a union strategy and lands in
 /// Phase 6's maybeUnion.
+#[allow(clippy::too_many_arguments)]
 fn maybe_case(
     cache: &mut Cache,
     pat: &Pat,
@@ -1721,19 +1744,22 @@ fn maybe_case(
     constraints: &[Expr],
     fn_env: &FnEnv,
     datatypes: &DatatypeMap,
+    outer_scope: &BTreeSet<String>,
+    unbounded_siblings: &BTreeSet<String>,
+    ungrounded: &BTreeSet<String>,
 ) -> bool {
     for (idx, c) in constraints.iter().enumerate() {
         let Expr::Case(_, subject, arms, _) = c else {
             continue;
         };
 
-        // 4a: single-arm case `case e of name => body` rebinds the
-        // subject to `name` inside `body`.
+        // 4a: a single-arm case rebinds the subject inside the
+        // body: `case e of name => body` binds the whole of it, and
+        // `case (e1, e2) of (a, b) => body` binds a component to
+        // each name, which is what the pattern says.
         if arms.len() == 1
-            && let Some(name) = arm_id_pat(&arms[0])
+            && let Some(subst_map) = arm_bindings(&arms[0], subject)
         {
-            let mut subst_map: HashMap<String, Expr> = HashMap::new();
-            subst_map.insert(name, (**subject).clone());
             let inlined = substitute(&arms[0].expr, &subst_map);
             let inner_conjuncts = split_conjuncts(&inlined);
             if try_recurse(
@@ -1748,6 +1774,9 @@ fn maybe_case(
                 fn_env,
                 datatypes,
                 c,
+                outer_scope,
+                unbounded_siblings,
+                ungrounded,
             ) {
                 return true;
             }
@@ -1778,6 +1807,9 @@ fn maybe_case(
             fn_env,
             datatypes,
             c,
+            outer_scope,
+            unbounded_siblings,
+            ungrounded,
         ) {
             return true;
         }
@@ -1885,6 +1917,9 @@ fn try_recurse(
     fn_env: &FnEnv,
     datatypes: &DatatypeMap,
     original: &Expr,
+    outer_scope: &BTreeSet<String>,
+    unbounded_siblings: &BTreeSet<String>,
+    ungrounded: &BTreeSet<String>,
 ) -> bool {
     let mut augmented: Vec<Expr> =
         Vec::with_capacity(constraints.len() - 1 + replacements.len());
@@ -1895,9 +1930,18 @@ fn try_recurse(
     }
     augmented.extend(replacements.iter().cloned());
     let mut probe = Cache::new();
-    if !maybe_generator(
-        &mut probe, pat, pat_name, pat_type, ordered, &augmented, fn_env,
+    if !maybe_generator_with_scope(
+        &mut probe,
+        pat,
+        pat_name,
+        pat_type,
+        ordered,
+        &augmented,
+        fn_env,
         datatypes,
+        outer_scope,
+        unbounded_siblings,
+        ungrounded,
     ) {
         return false;
     }
@@ -1908,6 +1952,38 @@ fn try_recurse(
     inner_gen.provenance.push(original.clone());
     cache.add(pat_name.to_string(), inner_gen);
     true
+}
+
+/// Where a single-arm `case`'s pattern binds the subject: the whole
+/// of it for a name, and a component for each name of a tuple
+/// pattern whose subject is a tuple of the same arity.
+///
+/// `None` where the pattern is one this cannot take apart.
+fn arm_bindings(arm: &Match, subject: &Expr) -> Option<HashMap<String, Expr>> {
+    let mut map = HashMap::new();
+    if let Some(name) = arm_id_pat(arm) {
+        map.insert(name, subject.clone());
+        return Some(map);
+    }
+    let Pat::Tuple(_, pats) = &arm.pat else {
+        return None;
+    };
+    let Expr::Tuple(_, args) = subject else {
+        return None;
+    };
+    if pats.len() != args.len() {
+        return None;
+    }
+    for (p, a) in pats.iter().zip(args.iter()) {
+        match p {
+            Pat::Identifier(_, name) => {
+                map.insert(name.clone(), a.clone());
+            }
+            Pat::Wildcard(_) => {}
+            _ => return None,
+        }
+    }
+    Some(map)
 }
 
 /// If a single-arm match is `name => body`, returns `name`.
@@ -2519,6 +2595,7 @@ fn build_map_constructor(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn maybe_union(
     cache: &mut Cache,
     pat: &Pat,
@@ -2528,6 +2605,9 @@ fn maybe_union(
     constraints: &[Expr],
     fn_env: &FnEnv,
     datatypes: &DatatypeMap,
+    outer_scope: &BTreeSet<String>,
+    unbounded_siblings: &BTreeSet<String>,
+    ungrounded: &BTreeSet<String>,
 ) -> bool {
     for c in constraints {
         let branches = split_orelse(c);
@@ -2542,7 +2622,7 @@ fn maybe_union(
             // `i < 10` as separate constraints.
             let branch_conjuncts = split_conjuncts(branch);
             let mut probe = Cache::new();
-            if !maybe_generator(
+            if !maybe_generator_with_scope(
                 &mut probe,
                 pat,
                 pat_name,
@@ -2551,6 +2631,9 @@ fn maybe_union(
                 &branch_conjuncts,
                 fn_env,
                 datatypes,
+                outer_scope,
+                unbounded_siblings,
+                ungrounded,
             ) {
                 all_ok = false;
                 break;
