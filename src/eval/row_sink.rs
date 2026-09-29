@@ -1287,8 +1287,23 @@ impl RowSink for GroupRowSink {
             self.map.insert(Val::List(Rc::new(vec![])), vec![]);
         }
 
+        // What the aggregate's output slots hold before any group is
+        // emitted. An aggregate named after the function it applies
+        // -- `my_sum over e.id`, with `my_sum` bound by a `let`
+        // around the query -- writes its result into the slot the
+        // function was read from, so the slots are put back before
+        // each group's aggregate is evaluated.
+        let saved: Vec<Val> = self
+            .agg_output_slots
+            .iter()
+            .map(|slot| f.vals[*slot].clone())
+            .collect();
+
         // For each group, evaluate aggregates and emit.
         for (key, rows) in &self.map {
+            for (slot, val) in self.agg_output_slots.iter().zip(&saved) {
+                f.vals[*slot] = val.clone();
+            }
             // 1. Bind group key fields to frame.
             if self.key_is_record {
                 // Record/tuple key: unpack each element into its slot.

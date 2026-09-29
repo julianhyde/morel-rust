@@ -3104,8 +3104,6 @@ end;
 > val it = [{deptno=10,size=1},{deptno=20,size=1},{deptno=30,size=2}]
 >   : {deptno:int, size:int} list
 
-set("mode", "validate");
-> val it = () : unit
 (*) user-defined aggregate function #3
 let
   fun my_sum [] = 0
@@ -3119,9 +3117,6 @@ end;
 >   [{deptno=10,my_sum=100},{deptno=20,my_sum=101},{deptno=30,my_sum=205}]
 >   : {deptno:int, my_sum:int} list
 
-
-set("mode", "evaluate");
-> val it = () : unit
 
 (*) Identity aggregate function (equivalent to SQL's COLLECT)
 (* TODO: Type inference gets confused because it doesn't
