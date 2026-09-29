@@ -54,7 +54,6 @@ use crate::eval::val::Val;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::ptr;
 use std::rc::Rc;
 
 /// Prints a line of the grounder's working, where the environment
@@ -832,7 +831,7 @@ impl<'a> Expander<'a> {
                         if !settled.infinite.contains(name) {
                             continue;
                         }
-                        maybe_generator_with_scope(
+                        let found = maybe_generator_with_scope(
                             &mut settled.cache,
                             pat,
                             name,
@@ -845,6 +844,23 @@ impl<'a> Expander<'a> {
                             &settled.infinite,
                             ungrounded,
                         );
+                        if !found {
+                            continue;
+                        }
+                        debugf(|| format!("    generator for {}", name));
+                        // A generator may bind several names: `(x, y)
+                        // elem pairs` grounds both. Each of them gets
+                        // it, so that one scan binds them all rather
+                        // than each enumerating the collection and
+                        // pairing every value with every other.
+                        let Some(g) = settled.cache.best(name).cloned() else {
+                            continue;
+                        };
+                        for (other, _) in pat_names(&g.pat) {
+                            if other != *name {
+                                settled.cache.add(other, g.clone());
+                            }
+                        }
                     }
                 }
             }
@@ -1229,7 +1245,7 @@ impl<'a> Expander<'a> {
                 }
                 match common {
                     None => common = Some(g),
-                    Some(c) if ptr::eq(c, g) => {}
+                    Some(c) if same_generator(c, g) => {}
                     Some(_) => return None,
                 }
             }
@@ -1552,6 +1568,13 @@ fn shift(e: &Expr, drop: usize, left: usize) -> Expr {
         return field_at(&Expr::Input(at.clone(), 0), slot - drop);
     }
     map_expr(e, &|x| shift(x, drop, left))
+}
+
+/// Returns whether two generators are the same one: a generator
+/// that binds several names is held once per name, and what makes
+/// them one is what they scan and what they bind.
+fn same_generator(a: &Generator, b: &Generator) -> bool {
+    key_of(&a.exp) == key_of(&b.exp) && pat_names(&a.pat) == pat_names(&b.pat)
 }
 
 /// Gives a collection a new element type, keeping whether it is a
