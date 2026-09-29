@@ -333,6 +333,16 @@ from t, f
 > 0 10
 >
 > val it : {f:int, t:int} list
+Sys.planEx "3";
+> val it =
+>   {_|
+> val it =
+>   project [{f = #2 $0, t = #1 $0}] : {f:int, t:int} list
+>     filter [#`*` Int (3, #1 $0) + #`*` Int (5, #2 $0) = 30] : (int * int) list
+>       join : (int * int) list
+>         #flatten Range ([CLOSED (0, 10)]) : int list
+>         #flatten Range ([CLOSED (0, 6)]) : int list
+> |_} : string
 
 (* A linear Diophantine equation with no solutions. FBBT bounds
  * 'x <= 7' and 'y <= 5'; enumerating that box finds nothing, which is
@@ -1338,6 +1348,18 @@ from s in ["abcd", "ant"], p where String.isPrefix p s;
 > ant  ant
 >
 > val it : {p:string, s:string} list
+Sys.planEx "999";
+> val it =
+>   {_|
+> val it =
+>   project [{p = #2 $0, s = #1 $0}] : t$0
+>     join [v$0] : (string * string) list
+>       ["abcd", "ant"] : string list
+>       #tabulate List (#size String v$0 + 1,
+>           fn i => #substring String (v$0, 0, i)) : string list
+>
+> t$0 {p:string, s:string} list
+> |_} : string
 
 from s in ["abcd", "ant"], p where String.isPrefix p s yield p distinct;
 > val it = ["","a","ab","abc","abcd","an","ant"] : string list
