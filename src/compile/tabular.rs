@@ -219,7 +219,16 @@ fn element_type(type_: &Type) -> Option<&Type> {
 }
 
 fn is_record_like(type_: &Type) -> bool {
-    matches!(type_, Type::Record(_, _) | Type::Tuple(_))
+    matches!(peel(type_), Type::Record(_, _) | Type::Tuple(_))
+}
+
+/// An alias abbreviates the type it names, so a table shows the
+/// fields of whatever it abbreviates.
+fn peel(type_: &Type) -> &Type {
+    match type_ {
+        Type::Alias(_, inner, _, _) => peel(inner),
+        _ => type_,
+    }
 }
 
 /// If `type_` is `T option` where `T` is a scalar, returns `T`;
@@ -278,7 +287,7 @@ fn option_string(s: &str, string_depth: i32) -> String {
 /// alphabetical order for a record, or positional names `"1"`, `"2"`, …
 /// for a tuple.
 fn field_name_types(type_: &Type) -> Vec<(String, Rc<Type>)> {
-    match type_ {
+    match peel(type_) {
         Type::Record(_, fields) => fields
             .iter()
             .map(|(k, v): (&Label, &Rc<Type>)| (k.to_string(), v.clone()))
