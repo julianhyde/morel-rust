@@ -33,9 +33,13 @@ Sys.set ("stringDepth", NONE);
 
 from i where i > 0 andalso i < 10;
 > val it = [1,2,3,4,5,6,7,8,9] : int list
+Sys.planEx "3";
+> val it = "val it = #flatten Range ([OPEN (0, 10)])" : string
 
 from i where i >= 0 andalso i <= 10;
 > val it = [0,1,2,3,4,5,6,7,8,9,10] : int list
+Sys.planEx "3";
+> val it = "val it = #flatten Range ([CLOSED (0, 10)])" : string
 
 from i where i >= 0 andalso i <= 5 orelse i = 8 orelse i > 20 andalso i < 22;
 > val it = [0,1,2,3,4,5,8,21] : int list
@@ -1288,6 +1292,12 @@ end;
  *)
 from p where String.isPrefix p "abcd";
 > val it = ["","a","ab","abc","abcd"] : string list
+Sys.planEx "999";
+> val it =
+>   {_|
+> val it =
+>   #tabulate List (#size String "abcd" + 1,
+>   fn i => #substring String ("abcd", 0, i))|_} : string
 
 from s in ["abcd", "ant"], p where String.isPrefix p s;
 > p    s

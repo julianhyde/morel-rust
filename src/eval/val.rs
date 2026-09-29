@@ -15,6 +15,7 @@
 // language governing permissions and limitations under the
 // License.
 
+use crate::compile::core::inlined;
 use crate::compile::library::BuiltInFunction;
 use crate::compile::lindig::Doc;
 use crate::compile::types::Type;
@@ -492,8 +493,13 @@ impl Display for Val {
                 // record-selector form, `#size String` or `#toString
                 // Int`, because in core a call like `String.size x` is
                 // `#size String x`.
+                // After inlining, morel-java holds the structure member
+                // a global name resolved to, and writes it as one:
+                // `#length List` where it wrote `length` before.
                 let name = func.plan_name();
-                if func.is_global() || func.is_constructor() {
+                if (func.is_global() && !(inlined() && func.parent().is_some()))
+                    || func.is_constructor()
+                {
                     write!(f, "{}", name)
                 } else if let Some(p) = func.package() {
                     write!(f, "{} {}", parser::selector_text(name), p)

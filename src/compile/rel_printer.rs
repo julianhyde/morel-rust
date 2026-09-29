@@ -43,9 +43,10 @@
 // R5 lands.
 #![allow(dead_code)]
 
-use crate::compile::core::{Expr, Rel};
+use crate::compile::core::{Decl, Expr, Rel, written_infix};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::lindig::{self, Doc};
+use crate::compile::rel_translator;
 use crate::compile::types::{Label, Type};
 use crate::eval::val::Val;
 use std::cell::RefCell;
@@ -64,6 +65,52 @@ use std::rc::Rc;
 /// above `int option list` and `{a:int, b:int} list`, and below a
 /// three-field record.
 const MONIKER_LIMIT: usize = 24;
+
+/// Returns a declaration as `Sys.planEx` prints it: `val it =` and
+/// the tree below it, indented two, where the value is a query; the
+/// value laid out to the width, with the relations inside it broken
+/// out below, where it is not.
+///
+/// A relational operator is the first non-whitespace on its line, so
+/// a tree cannot follow an `=` on the same line. Otherwise every plan
+/// of a query would begin `val it = r$0` and its one interesting line
+/// would be an indirection.
+pub fn plan_decl(decl: &Decl, line_width: usize) -> String {
+    let Decl::NonRecVal(bind) = decl else {
+        return format!("{}", decl);
+    };
+    let value = match &bind.expr {
+        Expr::From(t, steps) => rel_translator::translate(steps, t)
+            .unwrap_or_else(|| bind.expr.clone()),
+        other => rel_translator::trees_within(other),
+    };
+    let previous = FRAGMENTS.with(|cell| {
+        cell.replace(Some(Fragments {
+            outer: free_names_in(&value),
+            index: HashMap::new(),
+            defs: Vec::new(),
+        }))
+    });
+    let mut w = Writer::new(true, line_width);
+    if let Expr::Rel(_, _) = &value {
+        let _ = writeln!(w.out, "val {} =", bind.pat);
+        w.node(&value, 2);
+    } else {
+        // The value may start on the next line, indented two, which
+        // is what a `let` wants: `let` belongs at the head of a line
+        // of its own, not trailing an `=`.
+        let head = lindig::text(&format!("val {} =", bind.pat));
+        let doc = lindig::group(lindig::nest(
+            2,
+            lindig::hcat(vec![head, lindig::line(), doc(&value)]),
+        ));
+        w.out.push_str(&lindig::render(line_width as i32, doc));
+        w.out.push('\n');
+    }
+    let text = w.finish();
+    FRAGMENTS.with(|cell| cell.replace(previous));
+    text.trim_end_matches('\n').to_string()
+}
 
 /// Returns the plan of the tree rooted at `exp`.
 ///
@@ -371,6 +418,7 @@ fn doc_bounded(e: &Expr, left: u8, right: u8) -> Doc {
                 && let Expr::Tuple(_, args) = arg.as_ref()
                 && args.len() == 2
                 && let Some((op, op_left, op_right)) = func.infix_op()
+                && written_infix(func, op)
             {
                 let wrap = left > op_left || op_right < right;
                 let (left, right) = if wrap { (0, 0) } else { (left, right) };
