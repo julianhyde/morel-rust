@@ -164,16 +164,78 @@ pub fn resolve_with_session_fns_rec(
     (decl, pre_fn_env, resolver.errors.into_inner())
 }
 
-/// Walks `decl` after the expander pass and reports any
-/// `Scan(_, Expr::Extent(_, span), _)` reachable from a concrete
-/// query as an unbounded-variable compile error.
+/// Reduces an unbounded scan's pattern to the variables it binds.
 ///
-/// Function bodies are NOT recursed into — Extents there may
-/// be grounded later by the inliner at a concrete call site
-/// (the surrounding parameters become bindings only when the
-/// function is applied with real arguments). A user-visible
-/// error fires only at the call site, where the post-inline
-/// pass flagged the Extent on a real `from`.
+/// A scan yields the distinct values of the variables its pattern
+/// binds, so the shape of the pattern does not matter; only its
+/// variables do. The constructors, literals, wildcards and list
+/// brackets in between fall away, and what is scanned is the
+/// product of the variables' types: `from SOME (b: bool)` scans
+/// the two booleans, and `from 1` binds nothing and yields the one
+/// row that a query with no scan at all iterates over.
+///
+/// A pattern that is already a variable, or a tuple or record of
+/// them, keeps its shape: it says what to scan, and where the type
+/// is a named one with a condition, the name is what carries it. So
+/// does an `as` pattern, which names the whole product as well as
+/// its components, so the whole is what has to be materialized.
+fn extent_pat(pat: &CorePat) -> CorePat {
+    if binds_by_name(pat) {
+        return pat.clone();
+    }
+    let mut vars = Vec::new();
+    collect_vars(pat, &mut vars);
+    match vars.len() {
+        0 => CorePat::Wildcard(Rc::new(Type::Primitive(PrimitiveType::Unit))),
+        1 => vars.remove(0),
+        _ => {
+            let types = vars.iter().map(CorePat::type_).collect();
+            CorePat::Tuple(Rc::new(Type::Tuple(types)), vars)
+        }
+    }
+}
+
+/// Returns whether a pattern binds by name throughout: a variable,
+/// an `as`, or a tuple or record of those.
+fn binds_by_name(pat: &CorePat) -> bool {
+    match pat {
+        CorePat::As(_, _, _) | CorePat::Identifier(_, _) => true,
+        CorePat::Tuple(_, pats) => pats.iter().all(binds_by_name),
+        CorePat::Record(_, fields, _) => fields.iter().all(|f| match f {
+            CorePatField::Labeled(_, p) | CorePatField::Anonymous(p) => {
+                binds_by_name(p)
+            }
+        }),
+        _ => false,
+    }
+}
+
+/// Collects the variables a pattern binds, in the order it writes
+/// them.
+fn collect_vars(pat: &CorePat, out: &mut Vec<CorePat>) {
+    match pat {
+        CorePat::Identifier(_, _) => out.push(pat.clone()),
+        CorePat::As(_, _, _) => out.push(pat.clone()),
+        CorePat::Cons(_, head, tail) => {
+            collect_vars(head, out);
+            collect_vars(tail, out);
+        }
+        CorePat::Constructor(_, _, Some(inner)) => collect_vars(inner, out),
+        CorePat::List(_, pats) | CorePat::Tuple(_, pats) => {
+            pats.iter().for_each(|p| collect_vars(p, out))
+        }
+        CorePat::Record(_, fields, _) => {
+            for field in fields {
+                match field {
+                    CorePatField::Labeled(_, p)
+                    | CorePatField::Anonymous(p) => collect_vars(p, out),
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The message for an extent that could not be ground: the extent's
 /// type is the collection, so name the element type, whose values are
 /// the ones that cannot be enumerated.
@@ -185,6 +247,16 @@ fn unenumerable_message(t: &Rc<Type>) -> String {
     format!("cannot enumerate all values of type '{}'", element)
 }
 
+/// Walks `decl` after the expander pass and reports any
+/// `Scan(_, Expr::Extent(_, span), _)` reachable from a concrete
+/// query as an unbounded-variable compile error.
+///
+/// Function bodies are NOT recursed into — Extents there may
+/// be grounded later by the inliner at a concrete call site
+/// (the surrounding parameters become bindings only when the
+/// function is applied with real arguments). A user-visible
+/// error fires only at the call site, where the post-inline
+/// pass flagged the Extent on a real `from`.
 fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
     fn check_expr(e: &CoreExpr, errors: &mut Vec<(String, Span)>) {
         match e {
@@ -3967,7 +4039,7 @@ impl<'a> Resolver<'a> {
                 // variables its pattern binds, in natural order, so its
                 // collection is a list. A bounded scan is unaffected:
                 // `from i in [1, 2, 3, 2]` still has four elements.
-                let resolved_pat = self.resolve_pat(pat);
+                let resolved_pat = extent_pat(&self.resolve_pat(pat));
                 let elem_type = resolved_pat.type_();
                 let extent_type =
                     Rc::new(Type::List(Rc::new(elem_type.as_ref().clone())));
