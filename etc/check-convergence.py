@@ -113,9 +113,11 @@ ACCEPTED = {
         "prints the tree.",
     ),
     "such-that.smli": (
-        730,
-        "`Sys.planEx` still prints the step list where morel-java "
-        "prints the tree.",
+        692,
+        "a union of ranges is scanned as the concatenation of its "
+        "branches, deduplicated, where morel-java merges the branches "
+        "into one range and needs neither; and a plan whose value is "
+        "a tree does not end in a newline, as morel-java's does.",
     ),
     "use.sml.out": (
         2,

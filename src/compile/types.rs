@@ -269,6 +269,9 @@ impl Type {
     /// record or tuple.
     pub fn field_types(&self) -> Vec<Type> {
         match self {
+            // An alias abbreviates the type it names, whose fields
+            // are therefore its own.
+            Type::Alias(_, t, _, _) => t.field_types(),
             Type::Record(_, fields) => {
                 fields.values().map(|t| (**t).clone()).collect()
             }

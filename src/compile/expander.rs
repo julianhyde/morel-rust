@@ -4272,7 +4272,7 @@ fn topo_order(
 
 /// If a scan iterates over a list of numeric literals, adds conjuncts
 /// for the least and the greatest of them to `bounds`.
-fn list_bounds(pat: &Pat, source: &Expr, bounds: &mut Vec<Expr>) {
+pub(crate) fn list_bounds(pat: &Pat, source: &Expr, bounds: &mut Vec<Expr>) {
     let Pat::Identifier(t, name) = pat else {
         return;
     };

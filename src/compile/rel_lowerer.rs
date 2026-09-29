@@ -151,7 +151,7 @@ fn flip_expr(e: &Expr) -> Expr {
 /// was one: a `compute` is a keyless group whose one element is the
 /// query's value, and the step list says so with a `compute` step
 /// in the group's place.
-fn scalarize(lowered: Expr, want: &Rc<Type>) -> Expr {
+pub(crate) fn scalarize(lowered: Expr, want: &Rc<Type>) -> Expr {
     if element_type(want).is_some() {
         return lowered;
     }
@@ -849,7 +849,7 @@ fn components_of(node: &Expr, exp: Expr) -> Vec<Expr> {
 
 /// How many components a node's element has: a join's is its inputs'
 /// concatenated, and any other node's is one.
-fn component_count(node: &Expr) -> usize {
+pub(crate) fn component_count(node: &Expr) -> usize {
     match node {
         Expr::Rel(_, rel) => match rel.as_ref() {
             Rel::Join(_, _, _, left, right) => {
@@ -863,7 +863,7 @@ fn component_count(node: &Expr) -> usize {
 
 /// Reads component `i` (0-based) of an expression: the component
 /// itself where the expression is a tuple, and otherwise a selection.
-fn field_at(exp: &Expr, i: usize) -> Expr {
+pub(crate) fn field_at(exp: &Expr, i: usize) -> Expr {
     if let Expr::Tuple(_, args) = exp
         && i < args.len()
     {
@@ -908,7 +908,10 @@ fn replace_inputs(e: &Expr, zero: &Expr, one: &Expr) -> Expr {
     })
 }
 
-fn replace_inputs_with(e: &Expr, f: &dyn Fn(usize) -> Option<Expr>) -> Expr {
+pub(crate) fn replace_inputs_with(
+    e: &Expr,
+    f: &dyn Fn(usize) -> Option<Expr>,
+) -> Expr {
     match e {
         // lint: sort until '#}' where '##Expr::'
         Expr::Aggregate(t, a, b, s) => Expr::Aggregate(
@@ -990,7 +993,11 @@ fn replace_inputs_with(e: &Expr, f: &dyn Fn(usize) -> Option<Expr>) -> Expr {
 
 /// Replaces a name in an expression, through the nodes of a tree; a
 /// generated binder is shadowed by nothing.
-fn substitute_name(e: &Expr, name: &str, replacement: &Expr) -> Expr {
+pub(crate) fn substitute_name(
+    e: &Expr,
+    name: &str,
+    replacement: &Expr,
+) -> Expr {
     let sub = |x: &Expr| substitute_name(x, name, replacement);
     let sub_parts = |parts: &[(Label, Expr)]| {
         parts
@@ -1049,7 +1056,7 @@ fn substitute_name(e: &Expr, name: &str, replacement: &Expr) -> Expr {
 
 /// Rebuilds an expression with a function applied to each of its
 /// immediate sub-expressions.
-fn map_children(e: &Expr, f: &dyn Fn(&Expr) -> Expr) -> Expr {
+pub(crate) fn map_children(e: &Expr, f: &dyn Fn(&Expr) -> Expr) -> Expr {
     match e {
         // lint: sort until '#}' where '##Expr::'
         Expr::Aggregate(t, a, b, s) => Expr::Aggregate(
