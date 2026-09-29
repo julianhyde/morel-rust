@@ -700,6 +700,15 @@ from x, y in [0, 2, 9] where x > y andalso x < y + 5;
 (* Similar, but we know the values of x. *)
 from x in [3, 5, 7], y where x > y andalso x < y + 5 yield y;
 > val it = [~1,0,1,2,1,2,3,4,3,4,5,6] : int list
+Sys.planEx "3";
+> val it =
+>   {_|
+> val it =
+>   project [#2 $0] : int list
+>     join [v$0] : (int * int) list
+>       [3, 5, 7] : int list
+>       #flatten Range ([OPEN (#`-` Int (v$0, 5), v$0)]) : int list
+> |_} : string
 
 from x in [3, 5, 7], y
   where x > y andalso x < y + 5
@@ -1150,15 +1159,64 @@ from p as (b: bool, c: bool) where b;
 > true true  true true
 >
 > val it : {b:bool, c:bool, p:bool * bool} list
+
+(* An unbounded scan yields the distinct values of the variables its pattern
+ * binds, so the shape of the pattern does not matter; only its variables do.
+ * The constructors, literals and wildcards in between fall away, and what is
+ * scanned is the product of the variables' types. *)
+from SOME (b: bool);
+> val it = [false,true] : bool list
+from SOME (SOME (b: bool));
+> val it = [false,true] : bool list
 datatype t = A of bool | B of bool;
 > datatype t = A of bool | B of bool
+from A b;
+> val it = [false,true] : bool list
+from (b: bool, _);
+> val it = [false,true] : bool list
+from b1 :: b2 :: nil where b1;
+> b1   b2
+> ---- -----
+> true false
+> true true
+>
+> val it : {b1:bool, b2:bool} list
+from [b1: bool, b2];
+> b1    b2
+> ----- -----
+> false false
+> false true
+> true  false
+> true  true
+>
+> val it : {b1:bool, b2:bool} list
 
 (* A pattern that binds no variables matches exactly one value, so the scan
  * contributes one row and binds nothing, as "from" with no scans does. *)
 from;
 > val it = [()] : unit list
+from SOME 1;
+> val it = [()] : unit list
+from 1;
+> val it = [()] : unit list
 from ();
 > val it = [()] : unit list
+from _: bool;
+> val it = [()] : unit list
+from x in [1, 2] join SOME 1;
+> val it = [1,2] : int list
+
+(* A variable that cannot be enumerated is an error whatever pattern it sits
+ * in. *)
+from SOME (i: int);
+> stdIn:1.6-1.19 Error: cannot enumerate all values of type 'int'
+>   raised at: stdIn:1.6-1.19
+from i :: t;
+> stdIn:1.6-1.12 Error: pattern 'i' is not grounded
+>   raised at: stdIn:1.6-1.12
+from (i: int, ());
+> stdIn:1.6-1.18 Error: cannot enumerate all values of type 'int'
+>   raised at: stdIn:1.6-1.18
 
 (* A variable whose values cannot be enumerated is an error. Where the query
  * still has a scan, the expander names the pattern; where the query has one

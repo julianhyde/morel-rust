@@ -3116,10 +3116,18 @@ fn isolate_pat_offset(side: &Expr, pat_name: &str) -> Option<Expr> {
     }
 }
 
-/// `expr + delta`, simplified when `delta` is the literal `0`.
+/// `expr + delta`, simplified when `delta` is the literal `0` and
+/// written as a subtraction when it is a negation: adding `0 - k`
+/// is subtracting `k`, and that is how it reads.
 fn apply_offset(expr: Expr, delta: Expr) -> Expr {
     if matches!(&delta, Expr::Literal(_, Val::Int(0))) {
         return expr;
+    }
+    if let Some((a, b, BuiltInFunction::IntMinus)) =
+        call2_args_op(&delta, &[BuiltInFunction::IntMinus])
+        && matches!(a, Expr::Literal(_, Val::Int(0)))
+    {
+        return binop_int(BuiltInFunction::IntMinus, expr, b.clone());
     }
     binop_int(BuiltInFunction::IntPlus, expr, delta)
 }
