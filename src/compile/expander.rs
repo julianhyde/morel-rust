@@ -164,38 +164,6 @@ pub fn expand_from_with_scope_rec(
                 ),
             )
         }
-        Expr::Exists(t, steps) => {
-            let steps = prep(steps);
-            if !has_extent_scan(&steps) {
-                return Expr::Exists(t, steps);
-            }
-            Expr::Exists(
-                t,
-                expand_steps_with_scope(
-                    steps,
-                    env,
-                    rec_env,
-                    datatypes,
-                    outer_scope,
-                ),
-            )
-        }
-        Expr::Forall(t, steps) => {
-            let steps = prep(steps);
-            if !has_extent_scan(&steps) {
-                return Expr::Forall(t, steps);
-            }
-            Expr::Forall(
-                t,
-                expand_steps_with_scope(
-                    steps,
-                    env,
-                    rec_env,
-                    datatypes,
-                    outer_scope,
-                ),
-            )
-        }
         _ => expr,
     }
 }
@@ -343,7 +311,7 @@ fn walk_expr_with_scope(
             ));
             Expr::Let(t, new_decls, new_body)
         }
-        Expr::From(_, _) | Expr::Exists(_, _) | Expr::Forall(_, _) => {
+        Expr::From(_, _) => {
             let inner = walk_query_steps(expr, env, rec_env, datatypes);
             expand_from_with_scope_rec(
                 inner,
@@ -502,10 +470,8 @@ fn walk_query_steps(
     rec_env: &FnEnv,
     datatypes: &DatatypeMap,
 ) -> Expr {
-    let (kind, t, steps) = match expr {
-        Expr::From(t, s) => ('f', t, s),
-        Expr::Exists(t, s) => ('e', t, s),
-        Expr::Forall(t, s) => ('a', t, s),
+    let (t, steps) = match expr {
+        Expr::From(t, s) => (t, s),
         other => return other,
     };
     let outer_scope = BTreeSet::new();
@@ -591,11 +557,7 @@ fn walk_query_steps(
             Step::with_join(s.join_type, new_kind, s.env)
         })
         .collect();
-    match kind {
-        'f' => Expr::From(t, new_steps),
-        'e' => Expr::Exists(t, new_steps),
-        _ => Expr::Forall(t, new_steps),
-    }
+    Expr::From(t, new_steps)
 }
 
 /// Inspects a `Decl` and, for every value-binding whose RHS is a
@@ -1168,7 +1130,7 @@ fn build_iterate_for_recursive_v2(
     // f(<args>)` ending in an Exists step.
     let (base_case, recursive_case) = match_top_orelse(body)?;
     let inner_steps = match recursive_case {
-        Expr::From(_, st) | Expr::Exists(_, st) => st,
+        Expr::From(_, st) => st,
         _ => return None,
     };
     if !matches!(inner_steps.last().map(|s| &s.kind), Some(StepKind::Exists)) {
@@ -1521,9 +1483,7 @@ fn body_has_extent(expr: &Expr) -> bool {
             body_has_extent(subj)
                 || arms.iter().any(|m| body_has_extent(&m.expr))
         }
-        Expr::Exists(_, steps)
-        | Expr::Forall(_, steps)
-        | Expr::From(_, steps) => steps.iter().any(step_has_extent),
+        Expr::From(_, steps) => steps.iter().any(step_has_extent),
         Expr::Fn(_, arms, _) => arms.iter().any(|m| body_has_extent(&m.expr)),
         Expr::Let(_, _, body) => body_has_extent(body),
         Expr::List(_, items) | Expr::Tuple(_, items) => {
@@ -1596,7 +1556,7 @@ fn build_iterate_for_recursive(
     // post-expander shape (`Scan(z, sub_from, None)` produced by
     // inverting the step predicate, leaving only the self-call).
     let inner_steps = match recursive_case {
-        Expr::From(_, st) | Expr::Exists(_, st) => st,
+        Expr::From(_, st) => st,
         _ => return None,
     };
     if !matches!(inner_steps.last().map(|s| &s.kind), Some(StepKind::Exists)) {
@@ -1757,9 +1717,6 @@ fn simplify_tuple_projections(expr: &Expr) -> Expr {
                 .collect(),
             span.clone(),
         ),
-        Expr::Exists(t, steps) => {
-            Expr::Exists(t.clone(), simplify_tuple_projections_in_steps(steps))
-        }
         Expr::Fn(t, arms, span) => Expr::Fn(
             t.clone(),
             arms.iter()
@@ -1770,9 +1727,6 @@ fn simplify_tuple_projections(expr: &Expr) -> Expr {
                 .collect(),
             span.clone(),
         ),
-        Expr::Forall(t, steps) => {
-            Expr::Forall(t.clone(), simplify_tuple_projections_in_steps(steps))
-        }
         Expr::From(t, steps) => {
             Expr::From(t.clone(), simplify_tuple_projections_in_steps(steps))
         }
@@ -1909,9 +1863,7 @@ fn contains_self_call(body: &Expr, name: &str) -> bool {
             }
             Expr::Fn(_, arms, _) => arms.iter().any(|m| walk(&m.expr, name)),
             Expr::Let(_, _, body) => walk(body, name),
-            Expr::From(_, steps)
-            | Expr::Exists(_, steps)
-            | Expr::Forall(_, steps) => steps.iter().any(|s| match &s.kind {
+            Expr::From(_, steps) => steps.iter().any(|s| match &s.kind {
                 StepKind::Scan(_, src, cond) => {
                     walk(src, name)
                         || cond.as_ref().is_some_and(|c| walk(c, name))
@@ -2014,9 +1966,7 @@ fn contains_self_call_under_negation(body: &Expr, name: &str) -> bool {
                 arms.iter().any(|m| walk(&m.expr, name, neg))
             }
             Expr::Let(_, _, body) => walk(body, name, neg),
-            Expr::From(_, steps)
-            | Expr::Exists(_, steps)
-            | Expr::Forall(_, steps) => steps.iter().any(|s| match &s.kind {
+            Expr::From(_, steps) => steps.iter().any(|s| match &s.kind {
                 StepKind::Scan(_, src, cond) => {
                     walk(src, name, neg)
                         || cond.as_ref().is_some_and(|c| walk(c, name, neg))
@@ -3053,7 +3003,6 @@ fn lift_nested_exists_in_where(steps: Vec<Step>) -> Vec<Step> {
             // latter, where the trailing Exists turns a bag
             // into a bool.
             let inner_steps = match c {
-                Expr::Exists(_, s) => s,
                 Expr::From(_, s)
                     if matches!(
                         s.last().map(|s| &s.kind),

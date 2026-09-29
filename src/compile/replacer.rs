@@ -110,9 +110,6 @@ fn visit_expr(
             span.clone(),
         ),
         Expr::Current(t) => Expr::Current(t.clone()),
-        Expr::Exists(t, steps) => {
-            Expr::Exists(t.clone(), visit_steps(steps, map, shadow, selections))
-        }
         Expr::Extent(t, span) => Expr::Extent(t.clone(), span.clone()),
         Expr::Fn(t, arms, span) => Expr::Fn(
             t.clone(),
@@ -121,9 +118,6 @@ fn visit_expr(
                 .collect(),
             span.clone(),
         ),
-        Expr::Forall(t, steps) => {
-            Expr::Forall(t.clone(), visit_steps(steps, map, shadow, selections))
-        }
         Expr::From(t, steps) => {
             Expr::From(t.clone(), visit_steps(steps, map, shadow, selections))
         }

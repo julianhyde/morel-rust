@@ -213,9 +213,7 @@ impl Analyzer {
                     self.visit_expr(&m.expr);
                 }
             }
-            Expr::From(_, steps)
-            | Expr::Exists(_, steps)
-            | Expr::Forall(_, steps) => {
+            Expr::From(_, steps) => {
                 for step in steps {
                     self.visit_step(&step.kind);
                 }

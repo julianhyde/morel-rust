@@ -125,9 +125,7 @@ fn flip_expr(e: &Expr) -> Expr {
             flip_arms(arms),
             s.clone(),
         ),
-        Expr::Exists(t, steps) => Expr::Exists(t.clone(), flip_steps(steps)),
         Expr::Fn(t, arms, s) => Expr::Fn(t.clone(), flip_arms(arms), s.clone()),
-        Expr::Forall(t, steps) => Expr::Forall(t.clone(), flip_steps(steps)),
         Expr::From(t, steps) => Expr::From(t.clone(), flip_steps(steps)),
         Expr::Let(t, decls, body) => Expr::Let(
             t.clone(),
@@ -265,14 +263,8 @@ impl Lowerer {
                 self.all_arms(arms)?,
                 s.clone(),
             ),
-            Expr::Exists(t, steps) => {
-                Expr::Exists(t.clone(), self.all_steps(steps)?)
-            }
             Expr::Fn(t, arms, s) => {
                 Expr::Fn(t.clone(), self.all_arms(arms)?, s.clone())
-            }
-            Expr::Forall(t, steps) => {
-                Expr::Forall(t.clone(), self.all_steps(steps)?)
             }
             Expr::From(t, steps) => {
                 Expr::From(t.clone(), self.all_steps(steps)?)

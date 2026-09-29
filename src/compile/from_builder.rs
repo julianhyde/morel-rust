@@ -77,7 +77,7 @@ fn replace_current(expr: &Expr, repl: &Expr) -> Expr {
         // A tree is a query, and establishes its own `current`.
         Expr::Input(_, _) | Expr::Rel(_, _) => expr.clone(),
         // A nested query establishes its own `current`; leave it alone.
-        Expr::From(..) | Expr::Exists(..) | Expr::Forall(..) => expr.clone(),
+        Expr::From(..) => expr.clone(),
         // Leaves with no sub-expressions.
         Expr::Literal(..)
         | Expr::Identifier(..)
@@ -215,12 +215,6 @@ fn replace_ordinal(expr: &Expr, repl: &Expr) -> Expr {
         ),
         Expr::From(t, steps) => {
             Expr::From(t.clone(), replace_ordinal_steps(steps, repl))
-        }
-        Expr::Exists(t, steps) => {
-            Expr::Exists(t.clone(), replace_ordinal_steps(steps, repl))
-        }
-        Expr::Forall(t, steps) => {
-            Expr::Forall(t.clone(), replace_ordinal_steps(steps, repl))
         }
     }
 }
