@@ -143,7 +143,7 @@ fn translate_with(
     // none. Only a step asks for the leaf, so a query with no steps
     // asks here.
     let tree = t.tree.take().unwrap_or_else(unit_leaf);
-    if tree.type_() == *query_type {
+    if tree.type_() == *query_type && t.binders_are_the_element(&tree) {
         return Some(tree);
     }
     // A query that computes an aggregate is a value, not a collection:
@@ -1038,6 +1038,13 @@ impl Translator {
         if element_type(&left.type_()) != element_type(&operand.type_()) {
             let named = self.name_the_components(left, &operand.type_())?;
             left = named;
+            // The element is now the record the binders name, so each
+            // binder reads its own field of it.
+            self.bindings = self
+                .bindings
+                .iter()
+                .map(|(name, _)| (name.clone(), Path::field(name)))
+                .collect();
         }
         let mut all_inputs = vec![left];
         for operand in inputs {
@@ -1069,6 +1076,38 @@ impl Translator {
 
     /// Adds the projection that builds the query's row out of the
     /// components the tree's element holds.
+    /// Reports whether the query's binders read the element as it
+    /// is: one binder that is the whole element, or one binder per
+    /// field, each reading the field of its own name. A pattern that
+    /// permutes a record's fields, `{b = c, c = a, a = b}`, does not,
+    /// and needs the projection that names the components even
+    /// though the types agree.
+    fn binders_are_the_element(&self, tree: &Expr) -> bool {
+        match self.bindings.as_slice() {
+            [] => true,
+            [(_, path)] if path.0.is_empty() => true,
+            bindings => {
+                let Some(elem) = element_type(&tree.type_()) else {
+                    return false;
+                };
+                let Type::Record(_, fields) = peel(&elem) else {
+                    return false;
+                };
+                let labels: Vec<&Label> = fields.keys().collect();
+                bindings.len() == labels.len()
+                    && bindings.iter().all(|(name, path)| {
+                        match path.0.as_slice() {
+                            [Hop::Field(label)] => label == name,
+                            [Hop::Component(i)] => labels
+                                .get(i - 1)
+                                .is_some_and(|l| l.matches(name)),
+                            _ => false,
+                        }
+                    })
+            }
+        }
+    }
+
     fn name_the_components(
         &self,
         tree: Expr,

@@ -37,6 +37,7 @@ use crate::compile::library::{BuiltIn, BuiltInFunction};
 use crate::compile::pat_coverage;
 use crate::compile::postfix::{PostfixKind, peel_type, postfix_dispatch};
 use crate::compile::record_modifiers::{self, Source};
+use crate::compile::rel_lowerer;
 use crate::compile::rel_printer;
 use crate::compile::rel_translator;
 use crate::compile::rel_validator;
@@ -62,6 +63,7 @@ use crate::syntax::parser;
 use crate::unify::unifier::{ANON_CHECK_PREFIX, Var};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::env;
 use std::rc::Rc;
 
 /// Converts an AST to a Core tree.
@@ -126,6 +128,13 @@ pub fn resolve_with_session_fns_rec(
         session_fns,
         rec_session_fns,
     );
+    // With MOREL_REL_LOWER set, every query runs as the step list its
+    // tree lowers to: the check that the lowering preserves the rows.
+    let decl = if env::var_os("MOREL_REL_LOWER").is_some() {
+        rel_lowerer::flip_decl(decl)
+    } else {
+        decl
+    };
     // Any `Expr::Extent` that survived the expander represents an
     // unbounded variable predicate inversion couldn't ground. Surface
     // it as a compile-time error pointing at the original `from p`
