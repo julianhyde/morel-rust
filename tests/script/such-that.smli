@@ -693,6 +693,15 @@ from n where isSmall n orelse isLarge n;
  * Invert 'from x where x elem list' to 'from x in list'. *)
 from x where x elem [1, 2, 4];
 > val it = [1,2,4] : int list
+Sys.planEx "999";
+> val it =
+>   {_|
+> val it =
+>   sort [$0] : int list
+>     project [#x $0] : int list
+>       group [x = $0] : {x:int} list
+>         [1, 2, 4] : int list
+> |_} : string
 
 (* In the following case, we solve for x given a value of y. This
  * requires predicate-inversion because it cannot be solved using
