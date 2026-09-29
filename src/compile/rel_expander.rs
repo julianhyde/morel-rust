@@ -1441,6 +1441,11 @@ impl<'a> Expander<'a> {
     ) -> Option<Expr> {
         let exp = substitute(&g.exp, bound);
         if let Pat::Identifier(_, _) = &g.pat {
+            // A generator deduced by putting a function's body in
+            // place of a call may carry a test the body made that
+            // the collection does not: `e elem emps andalso e.job =
+            // "CLERK"` scans the employees and tests the job.
+            let exp = self.scanned(exp, g)?;
             return Some(self.dedup(g, name, exp));
         }
         let row = input_of(&exp)?;

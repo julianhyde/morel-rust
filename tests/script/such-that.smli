@@ -1780,6 +1780,17 @@ val edges = [(1, 2), (2, 3), (1, 4), (4, 2), (4, 3)];
 fun edge (x, y) = (x, y) elem edges;
 > val edge = fn : int * int -> bool
 
+from x, y where edge (x, y);
+> x y
+> - -
+> 1 2
+> 1 4
+> 2 3
+> 4 2
+> 4 3
+>
+> val it : {x:int, y:int} list
+
 (*) Return points that are 2 hops apart.
 let
   fun edge (x, y) = (x, y) elem edges

@@ -37,7 +37,6 @@ use crate::compile::library::{BuiltIn, BuiltInFunction};
 use crate::compile::pat_coverage;
 use crate::compile::postfix::{PostfixKind, peel_type, postfix_dispatch};
 use crate::compile::record_modifiers::{self, Source};
-use crate::compile::rel_expander;
 use crate::compile::rel_lowerer;
 use crate::compile::rel_printer;
 use crate::compile::rel_translator;
@@ -2394,12 +2393,9 @@ impl<'a> Resolver<'a> {
                 // Add an Exists step to signal that we want an ExistsRowSink.
                 builder.exists();
 
-                expander::expand_from(
-                    builder
-                        .build_simplify()
-                        .expect("Failed to build EXISTS expression"),
-                    &self.type_map.datatype_map(),
-                )
+                builder
+                    .build_simplify()
+                    .expect("Failed to build EXISTS expression")
             }
             ExprKind::Fn(matches) => CoreExpr::Fn(
                 t,
@@ -2421,12 +2417,9 @@ impl<'a> Resolver<'a> {
                 // Add an Exists step to short-circuit on first violation.
                 builder.exists();
 
-                let from_expr = expander::expand_from(
-                    builder
-                        .build_simplify()
-                        .expect("Failed to build FORALL expression"),
-                    &self.type_map.datatype_map(),
-                );
+                let from_expr = builder
+                    .build_simplify()
+                    .expect("Failed to build FORALL expression");
 
                 // Apply "not" to the exists result.
                 let fn_type = BuiltInFunction::BoolNot.get_type();
@@ -3902,25 +3895,20 @@ impl<'a> Resolver<'a> {
         )
     }
 
-    /// Grounds a query -- gives each unbounded variable a collection
-    /// to iterate -- unless the query is the argument of `Sys.planOf`,
-    /// whose plan shows the query as written.
+    /// Returns a query as the resolver built it.
+    ///
+    /// Grounding -- giving each unbounded variable a collection to
+    /// iterate -- is a pass over the whole declaration, and runs
+    /// once the whole of it is resolved. It cannot run here,
+    /// because the resolver builds a query from the inside out:
+    /// grounding a nested query would answer what its own
+    /// constraints say before the query that encloses it has been
+    /// seen, and the enclosing one may need to read them. `from x
+    /// where self_loop x` inverts `x` through the body of
+    /// `self_loop`, which is an `exists` whose constraints are gone
+    /// once it has been grounded on its own.
     fn ground(&self, from: CoreExpr) -> CoreExpr {
-        if self.plan_of_depth.get() > 0 {
-            return from;
-        }
-        let datatypes = self.type_map.datatype_map();
-        // Grounded on its tree first, which is where a scan whose
-        // pattern is not a single variable can be grounded, and
-        // where the order the leaves are scanned in is the tree's to
-        // decide. What the tree declines the step-list grounder
-        // still sees, extent and all.
-        if let Some(grounded) =
-            rel_expander::ground(&from, &datatypes, &self.fn_env.borrow())
-        {
-            return grounded;
-        }
-        expander::expand_from(from, &datatypes)
+        from
     }
 
     /// Resolves a step in a query, adding it to a [FromBuilder].
