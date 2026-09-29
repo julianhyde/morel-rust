@@ -152,9 +152,7 @@ fn ground_query(
 fn holds_extent(e: &Expr) -> bool {
     match e {
         Expr::Extent(_, _) => true,
-        Expr::Exists(_, steps)
-        | Expr::Forall(_, steps)
-        | Expr::From(_, steps) => steps.iter().any(step_holds_extent),
+        Expr::From(_, steps) => steps.iter().any(step_holds_extent),
         _ => {
             let mut found = false;
             for_each_child(e, &mut |c| found = found || holds_extent(c));

@@ -84,16 +84,14 @@ fn visit_expr(
             }
         }
         Expr::Current(_) | Expr::Ordinal(_) => {}
-        Expr::Exists(_, steps)
-        | Expr::Forall(_, steps)
-        | Expr::From(_, steps) => {
-            visit_steps(steps, bound, out);
-        }
         Expr::Extent(_, _) => {}
         Expr::Fn(_, arms, _) => {
             for arm in arms {
                 visit_match(arm, bound, out);
             }
+        }
+        Expr::From(_, steps) => {
+            visit_steps(steps, bound, out);
         }
         Expr::Identifier(_, name) => {
             if !bound.contains(name) {

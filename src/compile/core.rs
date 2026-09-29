@@ -90,8 +90,6 @@ pub enum Expr {
 
     // Relational expressions
     From(Rc<Type>, Vec<Step>),
-    Exists(Rc<Type>, Vec<Step>),
-    Forall(Rc<Type>, Vec<Step>),
 
     /// Placeholder for "all values of type `t`" — produced by lowering
     /// `from p` (no `in`) when the variable's source has not yet been
@@ -153,10 +151,8 @@ impl Expr {
             Expr::Apply(t, _, _, _) => t.clone(),
             Expr::Case(t, _, _, _) => t.clone(),
             Expr::Current(t) => t.clone(),
-            Expr::Exists(t, _) => t.clone(),
             Expr::Extent(t, _) => t.clone(),
             Expr::Fn(t, _, _) => t.clone(),
-            Expr::Forall(t, _) => t.clone(),
             Expr::From(t, _) => t.clone(),
             Expr::Identifier(t, _) => t.clone(),
             Expr::Input(t, _) => t.clone(),
@@ -183,9 +179,7 @@ impl Expr {
     pub(crate) fn uses_ordinal(&self) -> bool {
         match self {
             Expr::Ordinal(_) => true,
-            Expr::From(_, steps)
-            | Expr::Exists(_, steps)
-            | Expr::Forall(_, steps) => {
+            Expr::From(_, steps) => {
                 steps.iter().enumerate().any(|(i, step)| match &step.kind {
                     StepKind::Scan(_, e, _) if i == 0 => e.uses_ordinal(),
                     StepKind::Skip(e) | StepKind::Take(e) => e.uses_ordinal(),
@@ -377,7 +371,6 @@ impl Expr {
                 matches_doc(arms),
             ]),
             Expr::Current(_) => text("current"),
-            Expr::Exists(_, steps) => text(&format!("exists {:?}", steps)),
             Expr::Extent(t, _) => {
                 // The extent of a type is named by the type of its
                 // elements: `extent "int"` is every int.
@@ -385,7 +378,6 @@ impl Expr {
                 text(&format!("extent \"{}\"", elem))
             }
             Expr::Fn(_, arms, _) => beside(text("fn "), matches_doc(arms)),
-            Expr::Forall(_, steps) => beside(text("forall"), steps_doc(steps)),
             Expr::From(_, steps) => beside(text("from"), steps_doc(steps)),
             Expr::Identifier(_, name) => text(name),
             Expr::Input(_, i) => text(&format!("${}", i)),

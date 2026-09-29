@@ -294,9 +294,7 @@ fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
                 check_expr(l, errors);
                 check_expr(r, errors);
             }
-            CoreExpr::From(_, steps)
-            | CoreExpr::Exists(_, steps)
-            | CoreExpr::Forall(_, steps) => {
+            CoreExpr::From(_, steps) => {
                 // A query whose only step is an ungrounded scan has
                 // nothing else to blame, so it names the type whose
                 // values cannot be enumerated; one of several names

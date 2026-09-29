@@ -133,9 +133,7 @@ fn walk_expr(e: &mut Expr, env: &HashMap<String, Val>, file_root: &Rc<File>) {
                 walk_expr(x, env, file_root);
             }
         }
-        Expr::From(_, steps)
-        | Expr::Exists(_, steps)
-        | Expr::Forall(_, steps) => {
+        Expr::From(_, steps) => {
             for s in steps {
                 walk_step(s, env, file_root);
             }
@@ -256,10 +254,8 @@ fn set_expr_type(e: &mut Expr, t: Rc<Type>) {
         Expr::Apply(et, _, _, _) => *et = t,
         Expr::Case(et, _, _, _) => *et = t,
         Expr::Current(et) => *et = t,
-        Expr::Exists(et, _) => *et = t,
         Expr::Extent(et, _) => *et = t,
         Expr::Fn(et, _, _) => *et = t,
-        Expr::Forall(et, _) => *et = t,
         Expr::From(et, _) => *et = t,
         Expr::Identifier(et, _) => *et = t,
         Expr::Input(et, _) => *et = t,

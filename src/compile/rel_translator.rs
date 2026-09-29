@@ -262,9 +262,6 @@ fn shadow_expr(e: &Expr) {
         // A query, and then what its steps hold: a query nested inside
         // another is a query too, and is where the interesting cases
         // are.
-        Expr::Exists(_, steps) | Expr::Forall(_, steps) => {
-            steps.iter().for_each(shadow_step);
-        }
         Expr::From(_, steps) => {
             shadow_query(e, steps);
             steps.iter().for_each(shadow_step);
@@ -1588,11 +1585,6 @@ fn substitute_with(
         // missing coverage.
         Expr::Current(_) | Expr::Ordinal(_) => {
             return decline("a query that reads `ordinal` or `current`");
-        }
-        // A query that tests for existence short-circuits into a
-        // boolean, which no node does either.
-        Expr::Exists(_, _) | Expr::Forall(_, _) => {
-            return decline("a query that tests for existence");
         }
         Expr::Apply(t, f, a, span) => {
             let f = substitute_with(f, map, nested)?;
