@@ -658,6 +658,15 @@ from x, y where (y, x) elem [(1,true),(2,false)];
 >
 > val it : {x:bool, y:int} list
 
+(*) Reversed pattern via case
+from x, y where case (y, x) of (a, b) => (a, b) elem [(1,true),(2,false)];
+> x     y
+> ----- -
+> false 2
+> true  1
+>
+> val it : {x:bool, y:int} list
+
 (*) Record pattern
 from x, y where {y, x} elem [{y=1,x=true},{y=2,x=false}];
 > x     y
