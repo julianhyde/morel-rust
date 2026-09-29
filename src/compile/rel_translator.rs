@@ -76,6 +76,21 @@ thread_local! {
         const { RefCell::new(BTreeSet::new()) };
 }
 
+/// Returns `e` with every query inside it translated into a tree of
+/// its own, where the translation succeeds; a query it declines is
+/// left as it is. `e` itself is not a query, or is one the caller has
+/// translated already.
+pub fn trees_within(e: &Expr) -> Expr {
+    DECLINE.with(|cell| cell.set(None));
+    LEAKED.with(|cell| cell.borrow_mut().clear());
+    let counter = Rc::new(Cell::new(0));
+    let map = BTreeMap::new();
+    let mut nested = |t: &Rc<Type>, steps: &[Step]| {
+        translate_with(steps, t, BTreeMap::new(), Rc::clone(&counter))
+    };
+    substitute_with(e, &map, &mut nested).unwrap_or_else(|| e.clone())
+}
+
 /// Returns the binders the last [`translate`] failed to eliminate,
 /// which its tree must not read.
 pub fn leaked() -> BTreeSet<String> {

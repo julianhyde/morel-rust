@@ -486,6 +486,12 @@ thread_local! {
     static INLINED: Cell<bool> = const { Cell::new(false) };
 }
 
+/// Returns whether the expression being printed has been through the
+/// inliner; see [`print_inlined`].
+pub fn inlined() -> bool {
+    INLINED.with(Cell::get)
+}
+
 /// Prints `f` as a plan of an expression the inliner has been through,
 /// which is what `Sys.planEx` shows for a phase after inlining.
 pub fn print_inlined<T>(f: impl FnOnce() -> T) -> T {
@@ -508,7 +514,7 @@ pub fn print_inlined<T>(f: impl FnOnce() -> T) -> T {
 /// is a member from the start, `#`+` Word (0wxAB, 0wx1)`, because no
 /// global operator resolves to it. One function value stands for the
 /// global and the member here, so the stage of the plan decides.
-fn written_infix(func: &BuiltInFunction, op: &str) -> bool {
+pub(crate) fn written_infix(func: &BuiltInFunction, op: &str) -> bool {
     if func.parent() == Some("Word") {
         return false;
     }

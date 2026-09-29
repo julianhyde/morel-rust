@@ -27,6 +27,7 @@ use crate::compile::library::{
 };
 use crate::compile::lindig;
 use crate::compile::pretty::Pretty;
+use crate::compile::rel_printer::plan_decl;
 use crate::compile::span::Span;
 use crate::compile::type_env::Binding;
 use crate::compile::type_parser;
@@ -2662,6 +2663,12 @@ pub enum EagerF0 {
     TimeNow,
 }
 
+/// Returns the width a plan's lines wrap at, which is the session's
+/// `lineWidth`.
+fn line_width(r: &EvalEnv) -> usize {
+    r.shell.config.line_width.unwrap_or(79) as usize
+}
+
 impl EagerF0 {
     fn plan(&self) -> String {
         plan_label(&self.to_string())
@@ -3138,13 +3145,13 @@ impl EagerF1 {
                         .session
                         .pre_inline_decl
                         .as_ref()
-                        .map(|d| format!("{}", d))
+                        .map(|d| plan_decl(d, line_width(r)))
                         .unwrap_or_default(),
                     Ok(_) => print_inlined(|| {
                         r.session
                             .post_inline_decl
                             .as_ref()
-                            .map(|d| format!("{}", d))
+                            .map(|d| plan_decl(d, line_width(r)))
                             .unwrap_or_default()
                     }),
                     Err(_) => r
