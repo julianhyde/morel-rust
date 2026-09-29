@@ -260,6 +260,9 @@ pub fn maybe_generator_with_scope(
         constraints,
         fn_env,
         datatypes,
+        outer_scope,
+        unbounded_siblings,
+        ungrounded,
     ) {
         return true;
     }
@@ -1563,6 +1566,7 @@ fn maybe_exists(
 /// A small "in-progress" stack guards against infinite inlining
 /// of recursive functions; recursion stays unsupported in Phase 3
 /// (it lands in 3ec81171 / Phase 7).
+#[allow(clippy::too_many_arguments)]
 fn maybe_function(
     cache: &mut Cache,
     pat: &Pat,
@@ -1572,6 +1576,9 @@ fn maybe_function(
     constraints: &[Expr],
     fn_env: &FnEnv,
     datatypes: &DatatypeMap,
+    outer_scope: &BTreeSet<String>,
+    unbounded_siblings: &BTreeSet<String>,
+    ungrounded: &BTreeSet<String>,
 ) -> bool {
     if fn_env.is_empty() {
         return false;
@@ -1640,9 +1647,20 @@ fn maybe_function(
         // Pass an env *without* this fn so we don't recurse on it.
         let mut env2 = fn_env.clone();
         env2.remove(fn_name);
-        if !maybe_generator(
-            &mut probe, pat, pat_name, pat_type, ordered, &augmented, &env2,
+        // The body is read in the query's own scope: a name the
+        // query has yet to ground is still ungrounded inside it.
+        if !maybe_generator_with_scope(
+            &mut probe,
+            pat,
+            pat_name,
+            pat_type,
+            ordered,
+            &augmented,
+            &env2,
             datatypes,
+            outer_scope,
+            unbounded_siblings,
+            ungrounded,
         ) {
             continue;
         }

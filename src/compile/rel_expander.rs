@@ -77,7 +77,11 @@ thread_local! {
 ///
 /// A query this pass hands back is grounded on its step list
 /// instead, which is the older path and still the wider one.
-pub(crate) fn ground(exp: &Expr, datatypes: &DatatypeMap) -> Option<Expr> {
+pub(crate) fn ground(
+    exp: &Expr,
+    datatypes: &DatatypeMap,
+    fn_env: &FnEnv,
+) -> Option<Expr> {
     let Expr::From(t, steps) = exp else {
         return None;
     };
@@ -97,7 +101,7 @@ pub(crate) fn ground(exp: &Expr, datatypes: &DatatypeMap) -> Option<Expr> {
             _ => None,
         })
         .collect();
-    ground_query(t, steps, datatypes, &FnEnv::new(), pats)
+    ground_query(t, steps, datatypes, fn_env, pats)
 }
 
 /// Returns whether a step scans an extent, which is a variable that

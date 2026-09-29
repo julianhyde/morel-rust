@@ -418,6 +418,10 @@ pub struct Resolver<'a> {
     /// (or contains) `self`, so the postfix dispatcher can rewrite
     /// `x.name arg` into a direct application to `name`.
     self_fns: RefCell<HashSet<String>>,
+    /// The single-argument functions a `let` around the expression
+    /// being resolved has bound, so that grounding a query in its
+    /// body can inline a predicate the query calls.
+    fn_env: RefCell<expander::FnEnv>,
     /// Collection kind (`Some(true)` = bag, `Some(false)` = list) of the
     /// input to the `compute`/`group`/`into` step currently being resolved.
     /// Used to dispatch an overloaded aggregate function (e.g.
@@ -569,6 +573,7 @@ impl<'a> Resolver<'a> {
             errors: RefCell::new(Vec::new()),
             selector_receiver_span: RefCell::new(None),
             self_fns: RefCell::new(HashSet::new()),
+            fn_env: RefCell::new(expander::FnEnv::new()),
             aggregate_input_is_bag: Cell::new(None),
             temp_counter: Cell::new(0),
             plan_of_depth: Cell::new(0),
@@ -2597,7 +2602,19 @@ impl<'a> Resolver<'a> {
                 self.register_self_fns(decls);
                 let resolved_decls: Vec<_> =
                     decls.iter().map(|d| self.resolve_decl(d)).collect();
+                // The functions this `let` binds are in scope for its
+                // body, and grounding a query there may need to
+                // inline one: `where p x` says nothing about `x`
+                // until `p`'s body is put in its place.
+                let outer_fns = self.fn_env.borrow().clone();
+                {
+                    let mut fns = self.fn_env.borrow_mut();
+                    for d in &resolved_decls {
+                        expander::collect_session_fn_bindings(d, &mut fns);
+                    }
+                }
                 let mut result = self.resolve_expr(body);
+                *self.fn_env.borrow_mut() = outer_fns;
                 // Declarations in a `let` are sequential: each is in
                 // scope for those that follow it, so
                 // `let val x = 1 fun g y = x + y in g 5 end` must give
@@ -3900,7 +3917,9 @@ impl<'a> Resolver<'a> {
         // where the order the leaves are scanned in is the tree's to
         // decide. What the tree declines the step-list grounder
         // still sees, extent and all.
-        if let Some(grounded) = rel_expander::ground(&from, &datatypes) {
+        if let Some(grounded) =
+            rel_expander::ground(&from, &datatypes, &self.fn_env.borrow())
+        {
             return grounded;
         }
         expander::expand_from(from, &datatypes)
