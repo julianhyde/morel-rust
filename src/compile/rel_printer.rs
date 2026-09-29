@@ -92,7 +92,8 @@ pub fn plan_decl(decl: &Decl, line_width: usize) -> String {
         }))
     });
     let mut w = Writer::new(true, line_width);
-    if let Expr::Rel(_, _) = &value {
+    let is_tree = matches!(&value, Expr::Rel(_, _));
+    if is_tree {
         let _ = writeln!(w.out, "val {} =", bind.pat);
         w.node(&value, 2);
     } else {
@@ -109,6 +110,13 @@ pub fn plan_decl(decl: &Decl, line_width: usize) -> String {
     }
     let text = w.finish();
     FRAGMENTS.with(|cell| cell.replace(previous));
+    if is_tree {
+        // A tree is written a line per node, and the last line ends
+        // as the others do. An expression is written as one line,
+        // which the newline the writer puts after it does not
+        // belong to.
+        return text;
+    }
     text.trim_end_matches('\n').to_string()
 }
 
