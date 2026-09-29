@@ -2443,6 +2443,39 @@ fn maybe_union(
             continue;
         }
 
+        // Every branch a range or a point: the ranges merge into
+        // one, which enumerates the disjunction exactly and so
+        // subsumes it. Ranges that provably do not overlap
+        // concatenate; ones that may overlap go through a discrete
+        // set, whose set semantics deduplicate. Either way the
+        // generator is sealed and unique, and the disjunction stops
+        // being a filter.
+        if let Some(ctors) = merged_range_ctors(&sub_gens) {
+            let elem_t = pat.type_();
+            let exp = if ranges_disjoint(&ctors) {
+                range_scan_exp(&elem_t, ctors, ordered)
+            } else {
+                range_set_scan_exp(&elem_t, ctors, ordered)
+            };
+            let mut free: BTreeSet<String> = BTreeSet::new();
+            for g in &sub_gens {
+                free.extend(g.free_pats.iter().cloned());
+            }
+            cache.add(
+                pat_name.to_string(),
+                Generator::new(
+                    pat.clone(),
+                    exp,
+                    Cardinality::Finite,
+                    free,
+                    true,
+                    true,
+                    vec![c.clone()],
+                ),
+            );
+            return true;
+        }
+
         // Build `Bag.concat [g1.exp, g2.exp, ...]` (or
         // `List.concat …`).
         let elem_t = pat.type_();
@@ -2488,6 +2521,209 @@ fn maybe_union(
         return true;
     }
     false
+}
+
+/// The range constructors behind a disjunction's branch
+/// generators, or `None` where a branch is neither a range nor a
+/// point.
+fn merged_range_ctors(gens: &[Generator]) -> Option<Vec<Expr>> {
+    let mut ctors = Vec::new();
+    for g in gens {
+        ctors.extend(range_ctors(&g.exp)?);
+    }
+    Some(ctors)
+}
+
+/// The range constructors a generator's collection is made of: the
+/// items of a `Range.flatten`, or the one value of a point, which
+/// is the range `POINT v`.
+fn range_ctors(exp: &Expr) -> Option<Vec<Expr>> {
+    // An unordered scan takes a bag of the list the range gives.
+    if let Expr::Apply(_, f, arg, _) = exp
+        && as_builtin_fn(f) == Some(BuiltInFunction::BagFromList)
+    {
+        return range_ctors(arg);
+    }
+    match exp {
+        Expr::Apply(_, f, arg, _)
+            if as_builtin_fn(f) == Some(BuiltInFunction::RangeFlatten) =>
+        {
+            match arg.as_ref() {
+                Expr::List(_, items) => Some(items.clone()),
+                _ => None,
+            }
+        }
+        Expr::List(_, items) if items.len() == 1 => {
+            Some(vec![point_ctor(&items[0])])
+        }
+        _ => None,
+    }
+}
+
+/// Builds `POINT v`, the range of one value.
+fn point_ctor(v: &Expr) -> Expr {
+    let elem_t = v.type_();
+    let range_t = range_type(&elem_t);
+    Expr::Apply(
+        range_t.clone(),
+        Box::new(Expr::Literal(
+            Rc::new(Type::Fn(elem_t, range_t)),
+            Val::Fn(BuiltInFunction::RangePoint),
+        )),
+        Box::new(v.clone()),
+        Span::new(""),
+    )
+}
+
+fn range_type(elem_t: &Rc<Type>) -> Rc<Type> {
+    Rc::new(Type::Data("range".to_string(), vec![elem_t.clone()]))
+}
+
+/// Builds `Range.flatten [ctors]`, the values of ranges that do
+/// not overlap, in the order they are written.
+fn range_scan_exp(elem_t: &Rc<Type>, ctors: Vec<Expr>, ordered: bool) -> Expr {
+    let ranges_t = Rc::new(Type::List(range_type(elem_t)));
+    let list_t = Rc::new(Type::List(elem_t.clone()));
+    let flatten = Expr::Apply(
+        list_t.clone(),
+        Box::new(Expr::Literal(
+            Rc::new(Type::Fn(ranges_t.clone(), list_t.clone())),
+            Val::Fn(BuiltInFunction::RangeFlatten),
+        )),
+        Box::new(Expr::List(ranges_t, ctors)),
+        Span::new(""),
+    );
+    if ordered {
+        return flatten;
+    }
+    as_bag(flatten, elem_t)
+}
+
+/// Builds `Range.toList (Range.discreteSetOf [ctors])`, the values
+/// of ranges that may overlap, which the set deduplicates.
+fn range_set_scan_exp(
+    elem_t: &Rc<Type>,
+    ctors: Vec<Expr>,
+    ordered: bool,
+) -> Expr {
+    let ranges_t = Rc::new(Type::List(range_type(elem_t)));
+    let set_t =
+        Rc::new(Type::Data("discrete_set".to_string(), vec![elem_t.clone()]));
+    let set = Expr::Apply(
+        set_t.clone(),
+        Box::new(Expr::Literal(
+            Rc::new(Type::Fn(ranges_t.clone(), set_t.clone())),
+            Val::Fn(BuiltInFunction::RangeDsOf),
+        )),
+        Box::new(Expr::List(ranges_t, ctors)),
+        Span::new(""),
+    );
+    let (out_t, f) = if ordered {
+        (Type::List(elem_t.clone()), BuiltInFunction::RangeToList)
+    } else {
+        (Type::Bag(elem_t.clone()), BuiltInFunction::RangeToBag)
+    };
+    let out_t = Rc::new(out_t);
+    Expr::Apply(
+        out_t.clone(),
+        Box::new(Expr::Literal(
+            Rc::new(Type::Fn(set_t, out_t.clone())),
+            Val::Fn(f),
+        )),
+        Box::new(set),
+        Span::new(""),
+    )
+}
+
+/// Wraps a list as a bag, which is what an unordered scan takes.
+fn as_bag(list: Expr, elem_t: &Rc<Type>) -> Expr {
+    let list_t = list.type_();
+    let bag_t = Rc::new(Type::Bag(elem_t.clone()));
+    Expr::Apply(
+        bag_t.clone(),
+        Box::new(Expr::Literal(
+            Rc::new(Type::Fn(list_t, bag_t.clone())),
+            Val::Fn(BuiltInFunction::BagFromList),
+        )),
+        Box::new(list),
+        Span::new(""),
+    )
+}
+
+/// One range constructor's endpoints, for the disjointness test.
+struct Endpoints {
+    lo: i128,
+    hi: i128,
+    lo_open: bool,
+    hi_open: bool,
+}
+
+/// Returns whether the ranges provably do not overlap: every
+/// endpoint an integer literal and, in order of lower endpoint,
+/// each range strictly below the next. Touching closed endpoints
+/// count as overlapping.
+fn ranges_disjoint(ctors: &[Expr]) -> bool {
+    let mut eps = Vec::with_capacity(ctors.len());
+    for c in ctors {
+        match ctor_endpoints(c) {
+            Some(ep) => eps.push(ep),
+            None => return false,
+        }
+    }
+    eps.sort_by(|a, b| a.lo.cmp(&b.lo).then(b.lo_open.cmp(&a.lo_open)));
+    for w in eps.windows(2) {
+        let (a, b) = (&w[0], &w[1]);
+        if a.hi > b.lo {
+            return false;
+        }
+        if a.hi == b.lo && !a.hi_open && !b.lo_open {
+            return false;
+        }
+    }
+    true
+}
+
+/// A constructor's literal endpoints.
+fn ctor_endpoints(c: &Expr) -> Option<Endpoints> {
+    let Expr::Apply(_, f, arg, _) = c else {
+        return None;
+    };
+    let ctor = as_builtin_fn(f)?;
+    if ctor == BuiltInFunction::RangePoint {
+        let v = int_literal(arg)?;
+        return Some(Endpoints {
+            lo: v,
+            hi: v,
+            lo_open: false,
+            hi_open: false,
+        });
+    }
+    let Expr::Tuple(_, args) = arg.as_ref() else {
+        return None;
+    };
+    let [lo, hi] = args.as_slice() else {
+        return None;
+    };
+    let (lo_open, hi_open) = match ctor {
+        BuiltInFunction::RangeClosed => (false, false),
+        BuiltInFunction::RangeClosedOpen => (false, true),
+        BuiltInFunction::RangeOpen => (true, true),
+        BuiltInFunction::RangeOpenClosed => (true, false),
+        _ => return None,
+    };
+    Some(Endpoints {
+        lo: int_literal(lo)?,
+        hi: int_literal(hi)?,
+        lo_open,
+        hi_open,
+    })
+}
+
+fn int_literal(e: &Expr) -> Option<i128> {
+    match e {
+        Expr::Literal(_, Val::Int(n)) => Some(*n as i128),
+        _ => None,
+    }
 }
 
 /// Flattens `a orelse b orelse c …` into `[a, b, c, …]`.

@@ -43,6 +43,9 @@ Sys.planEx "3";
 
 from i where i >= 0 andalso i <= 5 orelse i = 8 orelse i > 20 andalso i < 22;
 > val it = [0,1,2,3,4,5,8,21] : int list
+Sys.planEx "3";
+> val it = "val it = #flatten Range ([CLOSED (0, 5), POINT 8, OPEN (20, 22)])"
+>   : string
 
 from i where i > 0 andalso i < 4 yield {j = i + 1};
 > j
@@ -76,6 +79,9 @@ from i where i = 0 orelse i = 12;
 
 from i where i > 0 andalso i < 10 orelse i > 12 andalso i <= 15;
 > val it = [1,2,3,4,5,6,7,8,9,13,14,15] : int list
+Sys.planEx "3";
+> val it = "val it = #flatten Range ([OPEN (0, 10), OPEN_CLOSED (12, 15)])"
+>   : string
 
 (*) Ranges over int * bool: point constraints merged into a single discreteSetOf.
 from t where t = (1, true) orelse t = (3, false);
@@ -85,6 +91,11 @@ from t where t = (1, true) orelse t = (3, false);
 > 3 false
 >
 > val it : (int * bool) list
+Sys.planEx "3";
+> val it =
+>   {_|
+> val it =
+>   #toList Range (#discreteSetOf Range ([POINT (1, true), POINT (3, false)]))|_} : string
 
 (*) Ranges over bool * int: a point and a range.
 from t where t = (true, 1) orelse t >= (false, 3) andalso t <= (false, 5);

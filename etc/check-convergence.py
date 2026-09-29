@@ -93,7 +93,7 @@ ACCEPTED = {
         "morel-java prints the tree.",
     ),
     "optimize.smli": (
-        158,
+        149,
         "tests of `inlinePassCount` added here and not yet in "
         "morel-java, to be propagated there; and `Sys.planEx` still "
         "prints the step list where morel-java prints the tree.",
@@ -113,10 +113,10 @@ ACCEPTED = {
         "prints the tree.",
     ),
     "such-that.smli": (
-        670,
-        "a union of ranges is scanned as the concatenation of its "
-        "branches, deduplicated, where morel-java merges the branches "
-        "into one range and needs neither.",
+        659,
+        "a range over tuples is enumerated value by value, so a "
+        "union that holds one is scanned as the concatenation of "
+        "its branches where morel-java merges them into one range.",
     ),
     "use.sml.out": (
         2,
