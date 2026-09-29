@@ -1098,6 +1098,21 @@ yield {dno = #deptno v, name = #dname v};
  * the extent known: 'from a: t' behaves as 'from a' where a has type t. *)
 type pair = {b: bool, u: unit};
 > type pair = {b:bool, u:unit}
+from p: pair;
+> b     u
+> ----- --
+> false ()
+> true  ()
+>
+> val it : pair list
+from i in [1, 2], p: pair where p.b;
+> i p
+>   b    u
+> - ---- --
+> 1 true ()
+> 2 true ()
+>
+> val it : {i:int, p:pair} list
 exists p: pair where p.b;
 > val it = true : bool
 
