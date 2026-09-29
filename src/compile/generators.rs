@@ -147,10 +147,16 @@ pub fn maybe_generator_with_scope(
                 // forward direction (`sibling = value`), and using
                 // both directions would create a cycle that
                 // topo_order can't resolve.
+                // A sibling that has a generator already is not
+                // part of a cycle: the value can be read once the
+                // sibling's scan has produced it, which is what a
+                // dependent join is for.
                 let lhs_free = free_names_in(lhs);
-                let cycles = lhs_free
-                    .iter()
-                    .any(|n| n != pat_name && unbounded_siblings.contains(n));
+                let cycles = lhs_free.iter().any(|n| {
+                    n != pat_name
+                        && unbounded_siblings.contains(n)
+                        && cache.best(n).is_none()
+                });
                 if !cycles {
                     point_match = Some(c);
                     point_value = Some(lhs);
