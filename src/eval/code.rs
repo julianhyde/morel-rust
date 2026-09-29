@@ -20,7 +20,7 @@
 // dead until variants land.
 #![allow(dead_code)]
 
-use crate::compile::core::print_inlined;
+use crate::compile::core::{print_inlined, register_relation};
 use crate::compile::library;
 use crate::compile::library::{
     BuiltIn, BuiltInExn, BuiltInFunction, BuiltInRecord,
@@ -6142,6 +6142,15 @@ impl LibBuilder {
         // with fields `bonuses`, `depts`, `emps`, `salgrades`, each a
         // bag of records.
         let (scott_type, scott_val) = build_scott();
+        // A plan names each of its relations rather than writing out
+        // the rows the inliner puts in place of the name.
+        if let (Type::Record(_, fields), Val::List(values)) =
+            (&scott_type, &scott_val)
+        {
+            for ((label, t), v) in fields.iter().zip(values.iter()) {
+                register_relation(&format!("#{} scott", label), t.clone(), v);
+            }
+        }
         structure_map
             .insert(BuiltInRecord::Scott, (intern(scott_type), scott_val));
 

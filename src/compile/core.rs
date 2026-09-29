@@ -27,7 +27,7 @@ use crate::compile::types::{self, Checks, Label, Type};
 use crate::eval::val::Val;
 use crate::syntax::ast::JoinType;
 use crate::syntax::parser;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::ops::Deref;
 use std::rc::Rc;
@@ -404,7 +404,13 @@ impl Expr {
             Expr::List(_, elems) => {
                 enclosed("[", "]", elems.iter().map(Expr::to_doc).collect())
             }
-            Expr::Literal(_, lit) => text(&literal_text(lit)),
+            Expr::Literal(t, lit) => match relation_name(t, lit) {
+                // A foreign relation is named, not written out: a
+                // plan says where the rows come from, and a table
+                // written into it says nothing and hides the rest.
+                Some(name) => text(&name),
+                None => text(&literal_text(lit)),
+            },
             Expr::Ordinal(_) => text("ordinal"),
             Expr::Raise(_, e, _) => beside(text("raise "), e.to_doc()),
             Expr::RecordSelector(t, slot) => {
@@ -476,6 +482,68 @@ impl Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         // No width: every group is laid out flat, on one line.
         write!(f, "{}", self.unparse(i32::MAX))
+    }
+}
+
+thread_local! {
+    /// The foreign relations a plan names rather than writes out,
+    /// each with the type and the rows that identify it.
+    static RELATIONS: RefCell<Vec<(String, Rc<Type>, String)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+/// Registers a relation that a plan names rather than writes out.
+///
+/// A foreign relation reaches the plan as the value it holds, because
+/// the inliner puts a constant in place of the name that stands for
+/// it. Writing a whole table into a plan says nothing about the query
+/// and crowds out what does, so the value is recognised on the way
+/// out and the name it came from is printed instead.
+///
+/// A relation is recognised by its type -- a collection of records --
+/// and by its rows, so a value that merely has the same shape is
+/// written out as any other value is.
+pub fn register_relation(name: &str, t: Rc<Type>, value: &Val) {
+    if !is_relation_type(&t) {
+        return;
+    }
+    let text = literal_text(value);
+    RELATIONS.with(|cell| {
+        let mut relations = cell.borrow_mut();
+        if !relations.iter().any(|(n, _, _)| n == name) {
+            relations.push((name.to_string(), t, text));
+        }
+    });
+}
+
+/// The name a plan gives a value, where it is a registered relation.
+fn relation_name(t: &Rc<Type>, value: &Val) -> Option<String> {
+    if !is_relation_type(t) {
+        return None;
+    }
+    RELATIONS.with(|cell| {
+        let relations = cell.borrow();
+        let candidates: Vec<&(String, Rc<Type>, String)> =
+            relations.iter().filter(|(_, rt, _)| rt == t).collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        let text = literal_text(value);
+        candidates
+            .iter()
+            .find(|(_, _, rows)| *rows == text)
+            .map(|(name, _, _)| name.clone())
+    })
+}
+
+/// Returns whether a type is one a relation has: a collection of
+/// records.
+fn is_relation_type(t: &Type) -> bool {
+    match t {
+        Type::Bag(elem) | Type::List(elem) => {
+            matches!(elem.as_ref(), Type::Record(_, _))
+        }
+        _ => false,
     }
 }
 
