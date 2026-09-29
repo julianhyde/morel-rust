@@ -649,6 +649,24 @@ from x in [1,2], y where y elem [x, x+1];
 >
 > val it : {x:int, y:int} list
 
+(*) Reversed pattern
+from x, y where (y, x) elem [(1,true),(2,false)];
+> x     y
+> ----- -
+> false 2
+> true  1
+>
+> val it : {x:bool, y:int} list
+
+(*) Record pattern
+from x, y where {y, x} elem [{y=1,x=true},{y=2,x=false}];
+> x     y
+> ----- -
+> false 2
+> true  1
+>
+> val it : {x:bool, y:int} list
+
 from x where (x, "b") elem [(1,"a"),(2,"b")];
 > val it = [2] : int list
 

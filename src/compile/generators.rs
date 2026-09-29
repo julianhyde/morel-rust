@@ -99,6 +99,7 @@ pub fn maybe_generator_with_scope(
     // Phase A: classify each conjunct.
     let mut elem_match: Option<&Expr> = None;
     let mut elem_collection: Option<&Expr> = None;
+    let mut elem_subject: Option<&Expr> = None;
 
     let mut point_match: Option<&Expr> = None;
     let mut point_value: Option<&Expr> = None;
@@ -112,10 +113,12 @@ pub fn maybe_generator_with_scope(
         if elem_match.is_none()
             && let Some((lhs, rhs)) =
                 call2_args(c, &[BuiltInFunction::ListElem])
-            && references(lhs, pat_name)
+            && (references(lhs, pat_name)
+                || binds_ungrounded_names(lhs, pat_name, ungrounded))
         {
             elem_match = Some(c);
             elem_collection = Some(rhs);
+            elem_subject = Some(lhs);
         }
         if point_match.is_none()
             && let Some((lhs, rhs)) = call2_args(
@@ -167,7 +170,21 @@ pub fn maybe_generator_with_scope(
     }
 
     // Phase B: synthesise leaf generators in priority order.
-    if let (Some(c), Some(coll)) = (elem_match, elem_collection) {
+    if let (Some(c), Some(coll), Some(subject)) =
+        (elem_match, elem_collection, elem_subject)
+    {
+        // `(y, x) elem coll` says where the pair goes, and so binds
+        // both names at once. One generator per name would pair
+        // every `y` with every `x`, which is not what it said, so
+        // the generator binds the tuple and is registered for each
+        // name in it.
+        if binds_ungrounded_names(subject, pat_name, ungrounded)
+            && let Some(tuple) = tuple_of_names(subject)
+        {
+            return create_tuple_elem_generator(
+                cache, &tuple, pat_name, coll, c,
+            );
+        }
         return create_collection_generator(cache, pat, pat_name, coll, c);
     }
     if maybe_record_elem_projection(
@@ -297,6 +314,94 @@ pub fn maybe_generator_with_scope(
 // ---------------------------------------------------------------------------
 // Leaf strategies
 // ---------------------------------------------------------------------------
+
+/// Returns whether an expression is a tuple of distinct variables,
+/// one of which is `name` and every one of which is still looking
+/// for a generator.
+///
+/// A name something else has already bound is not this
+/// generator's to bind: binding it here would say where a value
+/// the query has already placed must go.
+fn binds_ungrounded_names(
+    exp: &Expr,
+    name: &str,
+    ungrounded: &BTreeSet<String>,
+) -> bool {
+    let Some(Pat::Tuple(_, pats)) = tuple_of_names(exp) else {
+        return false;
+    };
+    let names: Vec<String> = pats.iter().filter_map(Pat::name).collect();
+    names.iter().any(|n| n == name)
+        && names.iter().all(|n| ungrounded.contains(n))
+}
+
+/// The pattern a tuple of distinct variables makes, or `None`
+/// where the expression is not one.
+fn tuple_of_names(exp: &Expr) -> Option<Pat> {
+    let Expr::Tuple(t, args) = exp else {
+        return None;
+    };
+    if args.len() < 2 {
+        return None;
+    }
+    let mut pats = Vec::with_capacity(args.len());
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for arg in args {
+        let Expr::Identifier(at, name) = arg else {
+            return None;
+        };
+        if !seen.insert(name) {
+            return None;
+        }
+        pats.push(Pat::Identifier(at.clone(), name.clone()));
+    }
+    Some(Pat::Tuple(t.clone(), pats))
+}
+
+/// Builds the generator of a tuple of names: the collection the
+/// tuple is drawn from, scanned under the tuple, which binds every
+/// name in it.
+fn create_tuple_elem_generator(
+    cache: &mut Cache,
+    tuple: &Pat,
+    pat_name: &str,
+    collection: &Expr,
+    source_constraint: &Expr,
+) -> bool {
+    let names: Vec<String> = match tuple {
+        Pat::Tuple(_, pats) => pats.iter().filter_map(Pat::name).collect(),
+        _ => return false,
+    };
+    if !names.iter().any(|n| n == pat_name) {
+        return false;
+    }
+    // The collection has to be of the tuple's own type, or scanning
+    // it would bind the names to something else.
+    let elem = match collection.type_().as_ref() {
+        Type::Bag(e) | Type::List(e) => e.clone(),
+        _ => return false,
+    };
+    if peel_type(&elem) != peel_type(&tuple.type_()) {
+        return false;
+    }
+    let mut free = free_names_in(collection);
+    for name in &names {
+        free.remove(name);
+    }
+    let generator = Generator::new(
+        tuple.clone(),
+        collection.clone(),
+        Cardinality::Finite,
+        free,
+        // A collection may hold the same tuple twice, and in no
+        // particular order; `distinct` and `order` follow the scan.
+        false,
+        true,
+        vec![source_constraint.clone()],
+    );
+    cache.add(pat_name.to_string(), generator);
+    true
+}
 
 fn create_collection_generator(
     cache: &mut Cache,
