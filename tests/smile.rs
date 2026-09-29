@@ -368,6 +368,11 @@ fn overload() {
 
 /// Postfix method-call syntax (hydromatic/morel#346).
 #[test]
+fn parse() {
+    run_script("tests/script/parse.smli");
+}
+
+#[test]
 fn postfix() {
     run_script("tests/script/postfix.smli");
 }

@@ -18,6 +18,7 @@
  *
  * Tests the "idempotent mode" for test scripts.
  *)
+
 "a string";
 > val it = "a string" : string
 
@@ -58,9 +59,10 @@ val gt = 3
  > 2;
 > val gt = true : bool
 
-(* TODO Output lines in comments should not be touched.
-   It's pretty important, because it allows us to comment out code
-   and expected results.
+(* Output lines in comments should not be touched.
+ * It's pretty important, because it allows us to comment out code
+ * and expected results. *)
+(*
 val x = 10 - 1;
 > val x = 9 : int
 *)

@@ -1,0 +1,275 @@
+(*
+ * Licensed to Julian Hyde under one or more contributor license
+ * agreements.  See the NOTICE file distributed with this work
+ * for additional information regarding copyright ownership.
+ * Julian Hyde licenses this file to you under the Apache
+ * License, Version 2.0 (the "License"); you may not use this
+ * file except in compliance with the License.  You may obtain a
+ * copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+ * either express or implied.  See the License for the specific
+ * language governing permissions and limitations under the
+ * License.
+ *
+ * Tests how Core nodes are unparsed. Each expression is parsed and
+ * resolved, and the Core is printed back through Sys.planEx with a
+ * phase that is not a number, which returns the Core as the resolver
+ * made it.
+ *)
+Sys.set ("lineWidth", 78);
+> val it = () : unit
+Sys.set ("printLength", NONE);
+> val it = () : unit
+Sys.set ("stringDepth", NONE);
+> val it = () : unit
+
+(* A call to the prefix operator "~" unparses as a prefix call, and "~"
+ * binds tighter than any binary operator, so "~x + 1" needs no
+ * parentheses and "~(x + 1)" keeps them. *)
+fn x => ~x + 1;
+> val it = fn : int -> int
+Sys.planEx "resolved";
+> val it = "val it = fn x => ~ x + 1" : string
+fn x => ~(x + 1);
+> val it = fn : int -> int
+Sys.planEx "resolved";
+> val it = "val it = fn x => ~ (x + 1)" : string
+fn x => 2 * (~x);
+> val it = fn : int -> int
+
+(* An infix operator applied to something other than a pair, "op + p", is
+ * written as an application, because it is not an infix call. *)
+fn p => op + p;
+> val it = fn : int * int -> int
+fn p => (op + p) * 2;
+> val it = fn : int * int -> int
+
+(*) Literals
+Sys.parseTree "1";
+> val it = "(int_literal 1)" : string
+Sys.parseTree "~1";
+> val it = "(int_literal ~1)" : string
+Sys.parseTree "1.5";
+> val it = "(real_literal 1.5)" : string
+Sys.parseTree "1e~2";
+> val it = "(real_literal 1e~2)" : string
+Sys.parseTree "\"ab\"";
+> val it = "(string_literal \"ab\")" : string
+Sys.parseTree "#\"a\"";
+> val it = "(char_literal #\"a\")" : string
+
+(*) Identifiers
+Sys.parseTree "x";
+> val it = "(id x)" : string
+Sys.parseTree "x'";
+> val it = "(id x')" : string
+
+(*) Application is left-associative
+Sys.parseTree "f 1";
+> val it = "(apply (id f) (int_literal 1))" : string
+Sys.parseTree "f 1 2";
+> val it = "(apply (apply (id f) (int_literal 1)) (int_literal 2))" : string
+Sys.parseTree "f x y";
+> val it = "(apply (apply (id f) (id x)) (id y))" : string
+Sys.parseTree "(1)";
+> val it = "(int_literal 1)" : string
+Sys.parseTree "(1, 2)";
+> val it = "(tuple (int_literal 1) (int_literal 2))" : string
+Sys.parseTree "f (1, 2)";
+> val it = "(apply (id f) (tuple (int_literal 1) (int_literal 2)))" : string
+
+(*) Lists
+Sys.parseTree "[]";
+> val it = "(list)" : string
+Sys.parseTree "[1, 2]";
+> val it = "(list (int_literal 1) (int_literal 2))" : string
+
+(*) Records keep source field order
+Sys.parseTree "{a = 1, b = 2}";
+> val it = "(record (a (int_literal 1)) (b (int_literal 2)))" : string
+Sys.parseTree "{b = 2, a = 1}";
+> val it = "(record (b (int_literal 2)) (a (int_literal 1)))" : string
+
+(*) Operator precedence
+Sys.parseTree "1 + 2 * 3";
+> val it = "(plus (int_literal 1) (times (int_literal 2) (int_literal 3)))" : string
+Sys.parseTree "1 - 2 - 3";
+> val it = "(minus (minus (int_literal 1) (int_literal 2)) (int_literal 3))" : string
+Sys.parseTree "1 div 2 mod 3";
+> val it = "(mod (div (int_literal 1) (int_literal 2)) (int_literal 3))" : string
+Sys.parseTree "f x + g y";
+> val it = "(plus (apply (id f) (id x)) (apply (id g) (id y)))" : string
+Sys.parseTree "x ^ y ^ z";
+> val it = "(caret (caret (id x) (id y)) (id z))" : string
+Sys.parseTree "f o g o h";
+> val it = "(compose (compose (id f) (id g)) (id h))" : string
+Sys.parseTree "a andalso b orelse c";
+> val it = "(orelse (andalso (id a) (id b)) (id c))" : string
+Sys.parseTree "a implies b";
+> val it = "(implies (id a) (id b))" : string
+Sys.parseTree "x elem xs";
+> val it = "(elem (id x) (id xs))" : string
+
+(*) Cons and append are right-associative
+Sys.parseTree "1 :: 2 :: xs";
+> val it = "(cons (int_literal 1) (cons (int_literal 2) (id xs)))" : string
+
+(* Negation binds tighter than any infix operator, so it takes the
+ * operand and not the chain: "~x div 2" is "(~x) div 2". Multiplication
+ * cannot tell the two apart -- "~(x * 2)" and "(~x) * 2" are the same
+ * number -- so "div" is the case that pins it, and 5 div 2 is the value
+ * that differs. Application binds tighter still: "~f x" negates the
+ * result of the call. *)
+Sys.parseTree "~x";
+> val it = "(negate (id x))" : string
+Sys.parseTree "~x * 2";
+> val it = "(times (negate (id x)) (int_literal 2))" : string
+Sys.parseTree "~x div 2";
+> val it = "(div (negate (id x)) (int_literal 2))" : string
+let val x = 5 in ~x div 2 end;
+> val it = ~3 : int
+Sys.parseTree "~~x";
+> val it = "(negate (negate (id x)))" : string
+Sys.parseTree "~a + b";
+> val it = "(plus (negate (id a)) (id b))" : string
+Sys.parseTree "1 + ~a";
+> val it = "(plus (int_literal 1) (negate (id a)))" : string
+
+(*) Conditionals
+Sys.parseTree "if a then b else c";
+> val it = "(if (id a) (id b) (id c))" : string
+Sys.parseTree "2 * if a then b else c";
+> val it = "(times (int_literal 2) (if (id a) (id b) (id c)))" : string
+
+(*) Functions and matches
+Sys.parseTree "fn x => x";
+> val it = "(fn (match (idPat x) (id x)))" : string
+Sys.parseTree "fn _ => 1";
+> val it = "(fn (match wildcard (int_literal 1)))" : string
+Sys.parseTree "fn x => x + 1";
+> val it = "(fn (match (idPat x) (plus (id x) (int_literal 1))))" : string
+
+(*) Patterns
+Sys.parseTree "fn (a, b) => a";
+> val it = "(fn (match (tuplePat (idPat a) (idPat b)) (id a)))" : string
+Sys.parseTree "fn () => 1";
+> val it = "(fn (match (tuplePat) (int_literal 1)))" : string
+
+(*) Val declarations
+Sys.parseTree "val x = 1";
+> val it = "(val (valBind (idPat x) (int_literal 1)))" : string
+Sys.parseTree "val rec f = fn x => x";
+> val it = "(val rec (valBind (idPat f) (fn (match (idPat x) (id x)))))" : string
+Sys.parseTree "val x = 1 and y = 2";
+> val it = "(val (valBind (idPat x) (int_literal 1)) (valBind (idPat y) (int_literal 2)))" : string
+Sys.parseTree "val (a, b) = p";
+> val it = "(val (valBind (tuplePat (idPat a) (idPat b)) (id p)))" : string
+
+(*) Fun declarations
+Sys.parseTree "fun f x = x";
+> val it = "(fun (funBind (funMatch f (idPat x) (id x))))" : string
+Sys.parseTree "fun f x y = x";
+> val it = "(fun (funBind (funMatch f (idPat x) (idPat y) (id x))))" : string
+Sys.parseTree "fun add (a, b) = a + b";
+> val it = "(fun (funBind (funMatch add (tuplePat (idPat a) (idPat b)) (plus (id a) (id b)))))" : string
+Sys.parseTree "fun f x = x and g y = y";
+> val it = "(fun (funBind (funMatch f (idPat x) (id x))) (funBind (funMatch g (idPat y) (id y))))" : string
+
+(*) Let expressions
+Sys.parseTree "let val x = 1 in x end";
+> val it = "(let (val (valBind (idPat x) (int_literal 1))) (id x))" : string
+Sys.parseTree "let val x = 1; val y = 2 in x + y end";
+> val it = "(let (val (valBind (idPat x) (int_literal 1))) (val (valBind (idPat y) (int_literal 2))) (plus (id x) (id y)))" : string
+
+(*) Type annotations
+Sys.parseTree "1 : int";
+> val it = "(annotatedExp (int_literal 1) (named int))" : string
+Sys.parseTree "1 + 2 : int";
+> val it = "(annotatedExp (plus (int_literal 1) (int_literal 2)) (named int))" : string
+Sys.parseTree "f : int -> int -> int";
+> val it = "(annotatedExp (id f) (fnType (named int) (fnType (named int) (named int))))" : string
+Sys.parseTree "x : int * bool * int";
+> val it = "(annotatedExp (id x) (tupleType (named int) (named bool) (named int)))" : string
+
+(*) Annotated patterns and return types
+Sys.parseTree "fn (x : int) => x";
+> val it = "(fn (match (annotatedPat (idPat x) (named int)) (id x)))" : string
+Sys.parseTree "val x : int = 1";
+> val it = "(val (valBind (annotatedPat (idPat x) (named int)) (int_literal 1)))" : string
+Sys.parseTree "fun f (x : int) : int = x";
+> val it = "(fun (funBind (funMatch f (annotatedPat (idPat x) (named int)) (named int) (id x))))" : string
+Sys.parseTree "type point = int * int";
+> val it = "(type_decl type point = int * int)" : string
+
+(*) Queries: scans, where, yield, join
+Sys.parseTree "from x in [1, 2]";
+> val it = "(from from x in [1, 2])" : string
+Sys.parseTree "from x in [1, 2] yield x + 1";
+> val it = "(from from x in [1, 2] yield x + 1)" : string
+Sys.parseTree "from x in xs where x > 1 yield x * 2";
+> val it = "(from from x in xs where x > 1 yield x * 2)" : string
+Sys.parseTree "from x in xs, y in ys";
+> val it = "(from from x in xs, y in ys)" : string
+Sys.parseTree "from x = 1";
+> val it = "(from from x = 1)" : string
+Sys.parseTree "from x";
+> val it = "(from from x)" : string
+Sys.parseTree "from (a, b) in ps";
+> val it = "(from from (a, b) in ps)" : string
+Sys.parseTree "from x in xs join y in ys on x = y";
+> val it = "(from from x in xs, y in ys on x = y)" : string
+Sys.parseTree "from x in xs yield {x, y = x + 1}";
+> val it = "(from from x in xs yield {x, y = x + 1})" : string
+Sys.parseTree "from e in emps yield e.name";
+> val it = "(from from e in emps yield #name e)" : string
+
+(*) Queries: group, compute, order
+Sys.parseTree "from x in xs group x mod 2";
+> val it = "(from from x in xs group x mod 2)" : string
+Sys.parseTree "from x in xs group {a = x} compute {c = count over ()}";
+> val it = "(from from x in xs group {a = x} compute {c = count over ()})" : string
+Sys.parseTree "from x in xs group g = {a = x} compute {c = count over ()}";
+> val it = "(from from x in xs group g = {a = x} compute {c = count over ()})" : string
+Sys.parseTree "from k in ks order DESC k";
+> val it = "(from from k in ks order DESC k)" : string
+
+(*) Queries: distinct, unorder, set operations, skip, take
+Sys.parseTree "from i in xs distinct";
+> val it = "(from from i in xs distinct)" : string
+Sys.parseTree "from x in xs unorder";
+> val it = "(from from x in xs unorder)" : string
+Sys.parseTree "from i in xs intersect ys except zs";
+> val it = "(from from i in xs intersect ys except zs)" : string
+Sys.parseTree "from i in xs union distinct ys";
+> val it = "(from from i in xs union distinct ys)" : string
+Sys.parseTree "from i in xs skip 2 take 3";
+> val it = "(from from i in xs skip 2 take 3)" : string
+Sys.parseTree "from i in xs into f";
+> val it = "(from from i in xs into f)" : string
+Sys.parseTree "from i in xs through p in f";
+> val it = "(from from i in xs through p in f)" : string
+
+(*) Quantifier queries
+Sys.parseTree "exists e in emps where e > 1";
+> val it = "(exists exists e in emps where e > 1)" : string
+Sys.parseTree "forall e in emps require e > 1";
+> val it = "(forall forall e in emps require e > 1)" : string
+Sys.parseTree "from x in xs yield current + 1";
+> val it = "(from from x in xs yield current + 1)" : string
+Sys.parseTree "`o`";
+> val it = "(id o)" : string
+Sys.parseTree "fun `<<` (a, b) = a";
+> val it = "(fun (funBind (funMatch << (tuplePat (idPat a) (idPat b)) (id a))))" : string
+
+(*) Hardening: empty queries, record update, typeof
+Sys.parseTree "(from)";
+> val it = "(from from)" : string
+Sys.parseTree "not exists";
+> val it = "(apply (id not) (exists exists))" : string
+
+(*) End parse.smli
