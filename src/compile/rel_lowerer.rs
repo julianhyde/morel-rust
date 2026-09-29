@@ -467,6 +467,15 @@ impl Lowerer {
                 if out.uses_ordinal() {
                     return Some(self.materialize(b, out));
                 }
+                if is_group(input) {
+                    // A group's element is a record whether it has one
+                    // label or many, so a projection over one says
+                    // "the field, not the record" -- a difference the
+                    // deferred element cannot carry, because a row of
+                    // one binding and that binding's value are the
+                    // same expression. The yield says it.
+                    return Some(self.yielded(b, out));
+                }
                 Some(out)
             }
             Rel::Skip(input, count) => {
@@ -645,6 +654,11 @@ impl Lowerer {
         if b.is_row(&element) {
             return element;
         }
+        self.yielded(b, element)
+    }
+
+    /// Yields an element, whether or not it is already the row.
+    fn yielded(&mut self, b: &mut Builder, element: Expr) -> Expr {
         let name = self.fresh_name();
         let t = element.type_();
         b.fb.yield_binder(&name, element);
@@ -1125,6 +1139,11 @@ pub(crate) fn map_children(e: &Expr, f: &dyn Fn(&Expr) -> Expr) -> Expr {
         }
         _ => e.clone(),
     }
+}
+
+/// Returns whether a node is a group.
+fn is_group(node: &Expr) -> bool {
+    matches!(node, Expr::Rel(_, rel) if matches!(rel.as_ref(), Rel::Group(..)))
 }
 
 /// Reports whether an expression is the one-unit list a scanless

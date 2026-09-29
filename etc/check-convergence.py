@@ -113,7 +113,7 @@ ACCEPTED = {
         "prints the tree.",
     ),
     "such-that.smli": (
-        568,
+        559,
         "a range over tuples is enumerated value by value, so a "
         "union that holds one is scanned as the concatenation of "
         "its branches where morel-java merges them into one range.",
