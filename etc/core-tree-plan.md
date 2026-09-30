@@ -86,25 +86,32 @@ Landed, each gated with `fullMake --no-clean` and
   declines has its calls written back to the step before the old
   passes run, and a function body is stored in that shape, because a
   body reaches those passes by being put in place of a call.
+* A tuple or record `elem` may have fixed positions: `(x, 2) elem
+  pairs` scans `pairs` under the pattern `(x, 2)`, whose literal
+  filters by matching. This is morel-go's `patForExp`, as
+  `generators.rs`'s `pat_for_exp`, except that anything neither a
+  variable, a literal nor a tuple declines rather than getting a
+  fresh name. A record is written as a tuple in `Core` but matched
+  by a `Pat::Record`, as in morel-java, so the tree grounder's
+  pattern walkers read either through `Pat::components`.
 * A query in a function body is left alone and grounded where the
   function is called. What bounds its variables may be an argument,
   and grounding it where it is written seals away the constraints the
   caller reads.
 
-Measured over the whole corpus, the tree grounder grounds 201
-queries and declines 58. (A further 36 report no tree; those are the
-fallback's step form being retried, and are benign.) The 58 have to
+Measured over the whole corpus, the tree grounder grounds 213
+queries and declines 46. (A further 36 report no tree; those are the
+fallback's step form being retried, and are benign.) The 46 have to
 reach about zero before the step list can go.
 
-## The 58, by cause
+## The 46, by cause
 
 | n | cause |
 | --- | --- |
 | 8 | recursive predicates and transitive closure: `path`, `isAncestor`, `odd_path`, `cousin` |
 | 8 | abs and nonlinear arithmetic: `abs x > 5`, `(x+2)*(x-3) = 0`, `x*y = 100`, `x+y = ~1`, `x < y andalso y < x+10` |
-| 7 | a tuple `elem` with a fixed position: `(x, 2) elem pairs`, `(x, "b") elem ...`, `(1, x) elem ...`, `(x, y, 3) elem ...` |
+| 1 | a tuple `elem` naming a variable bound already: `from x in [1, 2, 3], y where (x, y) elem pairs` |
 | 3 | a nested `exists` under a row binder: `let val v = $0 in nonEmpty (...) end` |
-| 2 | a record `elem` with a fixed field: `{deptno = x, dname = y, loc = "CHICAGO"} elem scott.depts` |
 | 2 | `Range.contains`: `#contains Range (AT_LEAST 1) x` |
 | 2 | a bare extent with no constraint, correctly ungroundable |
 
@@ -123,25 +130,6 @@ Pair each `ground: declined` with the `ground: tree` line above it to
 see which tree failed.
 
 ## Stages, in order
-
-**A3. A tuple `elem` with a fixed position.** Attempted twice and
-reverted twice, both times with the same invented design: scan the
-whole tuple under a pattern that names each fixed position `c$N` and
-test it. It panics -- "variable c$43 not found in frame" -- because
-such a name escapes the scan that binds it.
-
-morel-go does not do that. `generator.go`'s `patForExp` turns an
-expression into a pattern: an identifier gives its pattern, **a
-literal gives a `LiteralPat`**, a tuple recurses, and only something
-that is neither gives a fresh name plus an equality in `conds`
-(which is this port's `Generator::extra_filter`). So `(x, 2) elem
-pairs` scans under the pattern `(x, 2)`, and the constant filters by
-matching -- no generated name at all.
-
-This port already has the machinery: `rel_expander::pat_test` handles
-`Pat::Literal`, and `destructurable` is false for one, so `scanned`
-applies the test. Port `patForExp`, about 25 lines, and build the
-pattern with it.
 
 **B. `ordinal` in the tree.** 123 declines. Give the row nodes an
 optional ordinal binder, as morel-java's `RowRel` has. Keep printing

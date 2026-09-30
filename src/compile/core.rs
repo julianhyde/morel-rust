@@ -1252,6 +1252,34 @@ const BUILT_IN_CONSTRUCTOR_PATS: [&str; 7] =
     ["EQUAL", "GREATER", "INL", "INR", "LESS", "NONE", "SOME"];
 
 impl Pat {
+    /// Returns the sub-patterns of a tuple, or of a record that has
+    /// a pattern for every field, in the order of the slots of the
+    /// value they match; `None` for any other pattern.
+    pub fn components(&self) -> Option<Vec<&Pat>> {
+        match self {
+            Pat::Record(t, fields, false) => {
+                let Type::Record(_, labels) = t.as_ref() else {
+                    return None;
+                };
+                labels
+                    .keys()
+                    .map(|label| {
+                        fields.iter().find_map(|f| match f {
+                            PatField::Labeled(name, p)
+                                if label.matches(name) =>
+                            {
+                                Some(p.as_ref())
+                            }
+                            _ => None,
+                        })
+                    })
+                    .collect()
+            }
+            Pat::Tuple(_, args) => Some(args.iter().collect()),
+            _ => None,
+        }
+    }
+
     /// Returns the name of this pattern if it is an identifier or `as`,
     /// otherwise None.
     pub fn name(&self) -> Option<String> {

@@ -24,7 +24,7 @@
 //! constructor patterns.
 
 use crate::compile::core::{
-    Binding, Expr, Match, Pat, Step, StepEnv, StepKind,
+    Binding, Expr, Match, Pat, PatField, Step, StepEnv, StepKind,
 };
 use crate::compile::expander::{DatatypeMap, FnEnv, and_all, expr_eq};
 use crate::compile::free_finder::free_names_in;
@@ -185,7 +185,7 @@ pub fn maybe_generator_with_scope(
         // the generator binds the tuple and is registered for each
         // name in it.
         if binds_ungrounded_names(subject, pat_name, ungrounded)
-            && let Some(tuple) = tuple_of_names(subject)
+            && let Some(tuple) = tuple_pat(subject)
         {
             return create_tuple_elem_generator(
                 cache, &tuple, pat_name, coll, c,
@@ -333,9 +333,9 @@ pub fn maybe_generator_with_scope(
 // Leaf strategies
 // ---------------------------------------------------------------------------
 
-/// Returns whether an expression is a tuple of distinct variables,
-/// one of which is `name` and every one of which is still looking
-/// for a generator.
+/// Returns whether an expression is a tuple of variables and
+/// literals whose variables are distinct, one of which is `name`
+/// and every one of which is still looking for a generator.
 ///
 /// A name something else has already bound is not this
 /// generator's to bind: binding it here would say where a value
@@ -345,40 +345,81 @@ fn binds_ungrounded_names(
     name: &str,
     ungrounded: &BTreeSet<String>,
 ) -> bool {
-    let Some(Pat::Tuple(_, pats)) = tuple_of_names(exp) else {
+    let Some(pat) = tuple_pat(exp) else {
         return false;
     };
-    let names: Vec<String> = pats.iter().filter_map(Pat::name).collect();
+    let names = pat_names(&pat);
     names.iter().any(|n| n == name)
         && names.iter().all(|n| ungrounded.contains(n))
 }
 
-/// The pattern a tuple of distinct variables makes, or `None`
-/// where the expression is not one.
-fn tuple_of_names(exp: &Expr) -> Option<Pat> {
-    let Expr::Tuple(t, args) = exp else {
+/// The pattern that a tuple scans under, or `None` where the
+/// expression is not a tuple, or its variables are not distinct.
+fn tuple_pat(exp: &Expr) -> Option<Pat> {
+    let Expr::Tuple(_, args) = exp else {
         return None;
     };
     if args.len() < 2 {
         return None;
     }
-    let mut pats = Vec::with_capacity(args.len());
-    let mut seen: BTreeSet<&str> = BTreeSet::new();
-    for arg in args {
-        let Expr::Identifier(at, name) = arg else {
-            return None;
-        };
-        if !seen.insert(name) {
-            return None;
-        }
-        pats.push(Pat::Identifier(at.clone(), name.clone()));
+    let pat = pat_for_exp(exp)?;
+    let names = pat_names(&pat);
+    let distinct: BTreeSet<&String> = names.iter().collect();
+    if distinct.len() < names.len() {
+        return None;
     }
-    Some(Pat::Tuple(t.clone(), pats))
+    Some(pat)
 }
 
-/// Builds the generator of a tuple of names: the collection the
-/// tuple is drawn from, scanned under the tuple, which binds every
-/// name in it.
+/// Converts the element side of a membership conjunct to the
+/// pattern its scan binds: a variable to its pattern, a tuple or
+/// record to one of converted components, and a literal to a literal
+/// pattern, which filters the rows by matching. Anything else is
+/// `None`.
+fn pat_for_exp(exp: &Expr) -> Option<Pat> {
+    match exp {
+        // lint: sort until '#}' where '##Expr::'
+        Expr::Identifier(t, name) => {
+            Some(Pat::Identifier(t.clone(), name.clone()))
+        }
+        Expr::Literal(t, value)
+            if matches!(peel_type(t), Type::Primitive(_)) =>
+        {
+            Some(Pat::Literal(t.clone(), value.clone()))
+        }
+        Expr::Tuple(t, args) => {
+            let pats: Vec<Pat> =
+                args.iter().map(pat_for_exp).collect::<Option<_>>()?;
+            // A record is written as a tuple of its fields in slot
+            // order, but is matched by a record pattern.
+            if let Type::Record(_, labels) = t.as_ref() {
+                let fields = labels
+                    .keys()
+                    .zip(pats)
+                    .map(|(label, p)| {
+                        PatField::Labeled(label.to_string(), Box::new(p))
+                    })
+                    .collect();
+                return Some(Pat::Record(t.clone(), fields, false));
+            }
+            Some(Pat::Tuple(t.clone(), pats))
+        }
+        _ => None,
+    }
+}
+
+/// The names a pattern binds, in order.
+fn pat_names(pat: &Pat) -> Vec<String> {
+    let mut names = Vec::new();
+    pat.for_each_id_pat(&mut |(_, name): (&Type, &str)| {
+        names.push(name.to_string())
+    });
+    names
+}
+
+/// Builds the generator of a tuple of names and literals: the
+/// collection the tuple is drawn from, scanned under the tuple,
+/// which binds every name in it and whose literals filter the rows.
 fn create_tuple_elem_generator(
     cache: &mut Cache,
     tuple: &Pat,
@@ -386,10 +427,7 @@ fn create_tuple_elem_generator(
     collection: &Expr,
     source_constraint: &Expr,
 ) -> bool {
-    let names: Vec<String> = match tuple {
-        Pat::Tuple(_, pats) => pats.iter().filter_map(Pat::name).collect(),
-        _ => return false,
-    };
+    let names = pat_names(tuple);
     if !names.iter().any(|n| n == pat_name) {
         return false;
     }
