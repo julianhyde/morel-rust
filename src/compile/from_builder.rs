@@ -668,14 +668,6 @@ impl FromBuilder {
         self.add_step(step)
     }
 
-    /// Adds an "exists" step to signal short-circuit evaluation.
-    /// This is used for EXISTS queries to generate ExistsRowSink.
-    pub fn exists(&mut self) -> &mut Self {
-        let env = self.step_env();
-        let step = Step::new(StepKind::Exists, env);
-        self.add_step(step)
-    }
-
     /// Adds an "order" step. Always produces ordered (list) output.
     pub fn order(&mut self, exp: Expr) -> &mut Self {
         let exp = self.subst_current(exp);

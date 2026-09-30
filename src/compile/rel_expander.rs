@@ -82,6 +82,30 @@ pub(crate) fn ground(
     datatypes: &DatatypeMap,
     fn_env: &FnEnv,
 ) -> Option<Expr> {
+    ground_with(exp, datatypes, fn_env, true)
+}
+
+/// Grounds a query whose rows are only counted, or tested for
+/// existence, rather than read.
+///
+/// A side of a join that nothing constrains cannot change whether
+/// there is a row, so it need not be enumerated, and a variable
+/// nothing bounds need not be bounded: `exists w, x where x = 3`
+/// is whether there is an `x`, and says nothing about `w`.
+pub(crate) fn ground_counted(
+    exp: &Expr,
+    datatypes: &DatatypeMap,
+    fn_env: &FnEnv,
+) -> Option<Expr> {
+    ground_with(exp, datatypes, fn_env, false)
+}
+
+fn ground_with(
+    exp: &Expr,
+    datatypes: &DatatypeMap,
+    fn_env: &FnEnv,
+    rows_used: bool,
+) -> Option<Expr> {
     let Expr::From(t, steps) = exp else {
         return None;
     };
@@ -101,7 +125,7 @@ pub(crate) fn ground(
             _ => None,
         })
         .collect();
-    ground_query(t, steps, datatypes, fn_env, pats)
+    ground_query(t, steps, datatypes, fn_env, pats, rows_used)
 }
 
 /// Returns whether a step scans an extent, which is a variable that
@@ -119,6 +143,7 @@ fn ground_query(
     datatypes: &DatatypeMap,
     fn_env: &FnEnv,
     pats: Vec<Pat>,
+    rows_used: bool,
 ) -> Option<Expr> {
     let Some(tree) = rel_translator::translate(steps, t) else {
         debugf(|| "ground: no tree".to_string());
@@ -131,6 +156,11 @@ fn ground_query(
         pats
     };
     let mut x = Expander::new(datatypes, fn_env, pats);
+    x.rows_used = rows_used;
+    // A duplicate still changes which rows come through where the
+    // query takes or skips by position, even when the rows are only
+    // counted.
+    x.dedup_observable = rows_used || has_take_or_skip(&tree);
     let Some(grounded) = x.expand(&tree, &[]) else {
         debugf(|| format!("ground: declined -- {}", x.reason));
         return None;
@@ -321,6 +351,11 @@ struct Expander<'a> {
     /// How many components a dropped leaf took off the front of the
     /// element, and how many are left.
     dropped: Option<(usize, usize)>,
+    /// Whether the rows of the query are read, rather than only
+    /// counted or tested for existence. When they are not, a leaf
+    /// that no constraint mentions can be dropped rather than
+    /// grounded.
+    rows_used: bool,
     /// The names the query's own leaves bind.
     leaf_names: BTreeSet<String>,
     /// The conditions a sealed generator enforces, which the filter
@@ -346,6 +381,7 @@ impl<'a> Expander<'a> {
             next_leaf_pat: 0,
             destructure: false,
             dedup_observable: true,
+            rows_used: true,
             dropped: None,
             leaf_names: BTreeSet::new(),
             subsumed: BTreeSet::new(),
@@ -503,6 +539,12 @@ impl<'a> Expander<'a> {
         let pushed: Vec<Expr> =
             conditions.iter().map(|c| subst(c, exp, None)).collect();
         let input = self.expand(input, &pushed)?;
+        if !self.rows_used {
+            // Nothing reads the rows, so a projection is
+            // unobservable: it maps each row to a value and changes
+            // how many there are not at all.
+            return Some(input);
+        }
         Some(project_of(input, exp.clone()))
     }
 
@@ -563,6 +605,11 @@ impl<'a> Expander<'a> {
             // that follows every scan.
             frame.order.push(GroundStep::Constraint(constraint));
         }
+        // A condition a filter above the tree imposes says as much
+        // about the leaves as one inside it, and what reads a name
+        // is what says whether the leaf that binds it may be
+        // dropped.
+        frame.constraints = constraints.clone();
         // A leaf that is a list of numbers bounds its name, and FBBT
         // can carry that to another name. The bound is for FBBT to
         // read and not for the engine to apply -- the leaf enforces
@@ -1054,6 +1101,19 @@ impl<'a> Expander<'a> {
     ) -> Option<Expr> {
         let mid = lo + leaf_count(left);
         let hi = mid + leaf_count(right);
+        if !self.rows_used {
+            // Nothing looks at the rows, so a side that nothing
+            // constrains cannot affect the answer, and need not be
+            // enumerated.
+            if leaf_count(right) == 1 && self.droppable(mid, frame, settled) {
+                return self.rebuild(left, lo, frame, settled, bound);
+            }
+            if leaf_count(left) == 1 && self.droppable(lo, frame, settled) {
+                let survivor = self.rebuild(right, mid, frame, settled, bound);
+                self.dropped = Some((leaf_count(left), leaf_count(right)));
+                return survivor;
+            }
+        }
         if bound.is_empty()
             && let Some(common) =
                 self.common_generator(lo, hi, frame, settled, bound)
@@ -1330,6 +1390,31 @@ impl<'a> Expander<'a> {
             }
         }
         false
+    }
+
+    /// Returns whether a leaf is an extent that nothing bounds and
+    /// no constraint mentions, and can therefore be dropped when
+    /// the rows are not used.
+    fn droppable(&self, i: usize, frame: &Frame, settled: &Settled) -> bool {
+        let leaf = &frame.leaves[i];
+        if !leaf.extent
+            || finite_extent(&leaf.pat.type_(), self.datatypes).is_some()
+        {
+            return false;
+        }
+        for (name, _) in pat_names(&leaf.pat) {
+            if settled.best(&name).is_some() {
+                return false;
+            }
+            if frame
+                .constraints
+                .iter()
+                .any(|c| free_names_in(c).contains(&name))
+            {
+                return false;
+            }
+        }
+        true
     }
 
     /// Returns the generator of a leaf named by a single variable.
@@ -1699,6 +1784,19 @@ fn dedup_named(collection: Expr, name: &str) -> Option<Expr> {
     let row = input_of(&group)?;
     let project = project_of(group, field_at(&row, 0));
     node(Rel::Sort(Box::new(project), Box::new(element)))
+}
+
+/// Returns whether a tree takes or skips rows anywhere, where a
+/// duplicate changes which rows come through even when the rows
+/// are only counted.
+fn has_take_or_skip(tree: &Expr) -> bool {
+    let Expr::Rel(_, rel) = tree else {
+        return false;
+    };
+    if matches!(rel.as_ref(), Rel::Skip(_, _) | Rel::Take(_, _)) {
+        return true;
+    }
+    rel.inputs().iter().any(|input| has_take_or_skip(input))
 }
 
 /// Builds the expression for a node, with the type it derives.

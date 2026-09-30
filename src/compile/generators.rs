@@ -1414,6 +1414,32 @@ fn create_string_prefix_generator(
 ///                          fn i => String.substring(s, 0, i))
 ///   yield p distinct`.
 #[allow(clippy::too_many_arguments)]
+/// The steps of a query a constraint tests for existence, whether
+/// it is written as a call over the query or as a query whose last
+/// step tests for it.
+fn exists_steps(c: &Expr) -> Option<&[Step]> {
+    match c {
+        Expr::Apply(_, f, a, _)
+            if as_builtin_fn(f)
+                == Some(BuiltInFunction::RelationalNonEmpty) =>
+        {
+            match a.as_ref() {
+                Expr::From(_, steps) => Some(steps),
+                _ => None,
+            }
+        }
+        Expr::From(_, steps)
+            if matches!(
+                steps.last().map(|s| &s.kind),
+                Some(StepKind::Exists)
+            ) =>
+        {
+            Some(&steps[..steps.len() - 1])
+        }
+        _ => None,
+    }
+}
+
 fn maybe_exists(
     cache: &mut Cache,
     pat: &Pat,
@@ -1430,18 +1456,9 @@ fn maybe_exists(
     use crate::compile::core::{Step, StepEnv, StepKind};
 
     for (idx, c) in constraints.iter().enumerate() {
-        let Expr::From(from_t, steps) = c else {
+        let Some(inner_steps) = exists_steps(c) else {
             continue;
         };
-        // Last step must be `Exists` for this to be an
-        // `exists` expression.
-        if !matches!(steps.last().map(|s| &s.kind), Some(StepKind::Exists)) {
-            continue;
-        }
-
-        // Drop the trailing Exists; collect inner scans and
-        // where-conjuncts.
-        let inner_steps = &steps[..steps.len() - 1];
         let mut inner_scans: Vec<Step> = Vec::new();
         let mut inner_conjuncts: Vec<Expr> = Vec::new();
         for s in inner_steps {
@@ -1577,9 +1594,6 @@ fn maybe_exists(
             provenance,
         );
         cache.add(pat_name.to_string(), unsealed);
-        // Suppress unused `from_t` warning (the type is implicit
-        // in the new wrap).
-        let _ = from_t;
         return true;
     }
     false
