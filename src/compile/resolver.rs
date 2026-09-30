@@ -163,6 +163,24 @@ pub fn resolve_with_session_fns_rec(
     (decl, pre_fn_env, resolver.errors.into_inner())
 }
 
+/// Builds `Relational.nonEmpty query`: whether a query has a row.
+///
+/// It is what `exists` means, and `forall` is the negation of one.
+/// Writing them as a call over a query rather than as a step of one
+/// keeps existence out of the query, whose every operator gives
+/// back a collection.
+///
+/// The query keeps the collection type the builder gave it, which
+/// is what the step that tested for existence left it with too.
+fn non_empty(query: CoreExpr, t: Rc<Type>, span: &Span) -> CoreExpr {
+    let fn_type = Rc::new(Type::Fn(query.type_(), t.clone()));
+    let f = CoreExpr::Literal(
+        fn_type,
+        Val::Fn(BuiltInFunction::RelationalNonEmpty),
+    );
+    CoreExpr::Apply(t, Box::new(f), Box::new(query), span.clone())
+}
+
 /// Reduces an unbounded scan's pattern to the variables it binds.
 ///
 /// A scan yields the distinct values of the variables its pattern
@@ -2383,19 +2401,14 @@ impl<'a> Resolver<'a> {
             }
             ExprKind::Exists(steps) => {
                 // Translate "exists ..." as "from ... exists".
-                // The final Exists step signals the compiler to use
-                // ExistsRowSink.
                 let mut builder = FromBuilder::new();
                 for step in steps {
                     self.resolve_step(&mut builder, step);
                 }
-
-                // Add an Exists step to signal that we want an ExistsRowSink.
-                builder.exists();
-
-                builder
+                let query = builder
                     .build_simplify()
-                    .expect("Failed to build EXISTS expression")
+                    .expect("Failed to build EXISTS expression");
+                non_empty(query, t, &span)
             }
             ExprKind::Fn(matches) => CoreExpr::Fn(
                 t,
@@ -2413,13 +2426,14 @@ impl<'a> Resolver<'a> {
                 for step in steps {
                     self.resolve_step(&mut builder, step);
                 }
-
-                // Add an Exists step to short-circuit on first violation.
-                builder.exists();
-
-                let from_expr = builder
+                let query = builder
                     .build_simplify()
                     .expect("Failed to build FORALL expression");
+                let from_expr = non_empty(
+                    query,
+                    Rc::new(Type::Primitive(PrimitiveType::Bool)),
+                    &span,
+                );
 
                 // Apply "not" to the exists result.
                 let fn_type = BuiltInFunction::BoolNot.get_type();

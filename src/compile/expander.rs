@@ -41,6 +41,7 @@ use crate::compile::rel_expander;
 use crate::compile::span::Span;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
@@ -118,6 +119,12 @@ pub fn expand_from_with_scope_rec(
     datatypes: &DatatypeMap,
     outer_scope: &BTreeSet<String>,
 ) -> Expr {
+    // The step list says "whether this query has a row" with a step
+    // of the query, not with a call over it, and its passes read
+    // that shape: a nested `exists` in a `where` is lifted, and a
+    // recursive predicate is recognised, by the step. So a call is
+    // written back as the step before they run.
+    let expr = as_exists_steps(expr);
     // Make infinite single-constructor range scans (`from x in [1..]`)
     // finite. First fold a literal `where` bound into the range
     // constructor in place (works for int and char); any remaining
@@ -264,6 +271,158 @@ fn walk_decl_with_scope(
     }
 }
 
+thread_local! {
+    /// How many function bodies the walk is inside.
+    static FN_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Walks a function's body, which grounding leaves alone.
+fn in_fn<T>(f: impl FnOnce() -> T) -> T {
+    FN_DEPTH.with(|cell| cell.set(cell.get() + 1));
+    let out = f();
+    FN_DEPTH.with(|cell| cell.set(cell.get() - 1));
+    out
+}
+
+/// Returns whether the walk is inside a function body.
+fn in_fn_body() -> bool {
+    FN_DEPTH.with(Cell::get) > 0
+}
+
+/// Rewrites every `Relational.nonEmpty` over a query, anywhere in
+/// an expression, as a query whose last step tests for existence.
+///
+/// The two say the same thing. The call is what `Core` carries, and
+/// the step is what the step list's own passes read, so they are
+/// written back before those passes run.
+fn as_exists_steps(e: Expr) -> Expr {
+    if let Expr::Apply(_, f, a, _) = &e
+        && matches!(
+            f.as_ref(),
+            Expr::Literal(_, Val::Fn(BuiltInFunction::RelationalNonEmpty))
+        )
+        && matches!(a.as_ref(), Expr::From(_, _))
+    {
+        let Expr::Apply(_, _, a, _) = e else {
+            unreachable!("matched above");
+        };
+        return exists_step(as_exists_steps(*a));
+    }
+    match e {
+        // lint: sort until '#}' where '##Expr::'
+        Expr::Aggregate(t, a, b, s) => Expr::Aggregate(
+            t,
+            Box::new(as_exists_steps(*a)),
+            Box::new(as_exists_steps(*b)),
+            s,
+        ),
+        Expr::Apply(t, f, a, s) => Expr::Apply(
+            t,
+            Box::new(as_exists_steps(*f)),
+            Box::new(as_exists_steps(*a)),
+            s,
+        ),
+        Expr::Case(t, subject, arms, s) => Expr::Case(
+            t,
+            Box::new(as_exists_steps(*subject)),
+            arms.into_iter().map(as_exists_steps_arm).collect(),
+            s,
+        ),
+        Expr::Fn(t, arms, s) => {
+            Expr::Fn(t, arms.into_iter().map(as_exists_steps_arm).collect(), s)
+        }
+        Expr::From(t, steps) => {
+            Expr::From(t, steps.into_iter().map(as_exists_steps_step).collect())
+        }
+        Expr::Let(t, decls, body) => Expr::Let(
+            t,
+            decls.into_iter().map(as_exists_steps_decl).collect(),
+            Box::new(as_exists_steps(*body)),
+        ),
+        Expr::List(t, items) => {
+            Expr::List(t, items.into_iter().map(as_exists_steps).collect())
+        }
+        Expr::Raise(t, a, s) => {
+            Expr::Raise(t, Box::new(as_exists_steps(*a)), s)
+        }
+        Expr::Tuple(t, items) => {
+            Expr::Tuple(t, items.into_iter().map(as_exists_steps).collect())
+        }
+        other => other,
+    }
+}
+
+fn as_exists_steps_arm(m: Match) -> Match {
+    Match {
+        pat: m.pat,
+        expr: as_exists_steps(m.expr),
+    }
+}
+
+fn as_exists_steps_decl(d: Decl) -> Decl {
+    match d {
+        Decl::NonRecVal(b) => {
+            let mut bind = *b;
+            bind.expr = as_exists_steps(bind.expr);
+            Decl::NonRecVal(Box::new(bind))
+        }
+        Decl::RecVal(binds) => Decl::RecVal(
+            binds
+                .into_iter()
+                .map(|mut b| {
+                    b.expr = as_exists_steps(b.expr);
+                    b
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+fn as_exists_steps_step(step: Step) -> Step {
+    let each =
+        |es: Vec<Expr>| es.into_iter().map(as_exists_steps).collect::<Vec<_>>();
+    let kind = match step.kind {
+        // lint: sort until '#}' where '##StepKind::'
+        StepKind::Compute(e) => {
+            StepKind::Compute(Box::new(as_exists_steps(*e)))
+        }
+        StepKind::Except(d, args) => StepKind::Except(d, each(args)),
+        StepKind::Group(keys, aggs) => StepKind::Group(
+            Box::new(as_exists_steps(*keys)),
+            aggs.map(|a| Box::new(as_exists_steps(*a))),
+        ),
+        StepKind::Intersect(d, args) => StepKind::Intersect(d, each(args)),
+        StepKind::Order(e) => StepKind::Order(Box::new(as_exists_steps(*e))),
+        StepKind::Scan(pat, source, condition) => StepKind::Scan(
+            pat,
+            Box::new(as_exists_steps(*source)),
+            condition.map(|c| Box::new(as_exists_steps(*c))),
+        ),
+        StepKind::Skip(e) => StepKind::Skip(Box::new(as_exists_steps(*e))),
+        StepKind::Take(e) => StepKind::Take(Box::new(as_exists_steps(*e))),
+        StepKind::Union(d, args) => StepKind::Union(d, each(args)),
+        StepKind::Where(e) => StepKind::Where(Box::new(as_exists_steps(*e))),
+        StepKind::Yield(e) => StepKind::Yield(Box::new(as_exists_steps(*e))),
+        other => other,
+    };
+    Step { kind, ..step }
+}
+
+/// Returns a query with a step that tests for existence, which is
+/// how the step list says what a call over the query says.
+fn exists_step(query: Expr) -> Expr {
+    let Expr::From(t, mut steps) = query else {
+        return query;
+    };
+    let env = match steps.last() {
+        Some(step) => step.env.clone(),
+        None => StepEnv::new(Vec::new(), false, true),
+    };
+    steps.push(Step::new(StepKind::Exists, env));
+    Expr::From(t, steps)
+}
+
 fn walk_expr_with_scope(
     expr: Expr,
     env: &FnEnv,
@@ -315,9 +474,48 @@ fn walk_expr_with_scope(
             {
                 return walk_query_steps(grounded, env, rec_env, datatypes);
             }
+            // The tree declined, so the step list carries this
+            // query -- and every `exists` its steps hold goes back
+            // to the step that says it, before the walk reaches
+            // them, because the step list's passes read that shape
+            // and because grounding one on its own would seal away
+            // the constraints this query reads.
+            let expr = as_exists_steps(expr);
             let inner = walk_query_steps(expr, env, rec_env, datatypes);
             expand_from_with_scope_rec(
                 inner,
+                env,
+                rec_env,
+                datatypes,
+                outer_scope,
+            )
+        }
+        Expr::Apply(t, f, a, span)
+            if matches!(a.as_ref(), Expr::From(_, _))
+                && matches!(
+                    f.as_ref(),
+                    Expr::Literal(
+                        _,
+                        Val::Fn(BuiltInFunction::RelationalNonEmpty)
+                    )
+                ) =>
+        {
+            // Whether a query has a row: the rows are counted and
+            // not read, so a side that nothing constrains need not
+            // be enumerated and a variable that nothing bounds need
+            // not be bounded.
+            if !in_fn_body()
+                && let Some(grounded) =
+                    rel_expander::ground_counted(&a, datatypes, env)
+            {
+                let a = walk_query_steps(grounded, env, rec_env, datatypes);
+                return Expr::Apply(t, f, Box::new(a), span);
+            }
+            // The tree declined, so the query carries the test for
+            // existence as its last step, which is how the step
+            // list says it and what the step-list grounder reads.
+            walk_expr_with_scope(
+                exists_step(*a),
                 env,
                 rec_env,
                 datatypes,
@@ -404,9 +602,15 @@ fn walk_expr_with_scope(
                     collect_pat_names(&m.pat, &mut scope2);
                     Match {
                         pat: m.pat,
-                        expr: walk_expr_with_scope(
-                            m.expr, env, rec_env, datatypes, &scope2,
-                        ),
+                        // A query in a function body is grounded
+                        // where the function is called, not where
+                        // it is written: what bounds its variables
+                        // may be an argument.
+                        expr: in_fn(|| {
+                            walk_expr_with_scope(
+                                m.expr, env, rec_env, datatypes, &scope2,
+                            )
+                        }),
                     }
                 })
                 .collect(),
@@ -580,7 +784,13 @@ fn collect_fn_bindings(decl: &Decl, env: &mut FnEnv) {
             && arms.len() == 1
         {
             let Match { pat, expr } = &arms[0];
-            env.insert(name.clone(), (pat.clone(), expr.clone()));
+            // A body reaches the step list's passes by being put in
+            // place of a call, so it says what it says in the shape
+            // those passes read.
+            env.insert(
+                name.clone(),
+                (pat.clone(), as_exists_steps(expr.clone())),
+            );
         }
     }
 }

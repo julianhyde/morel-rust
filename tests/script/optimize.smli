@@ -496,6 +496,10 @@ from x, y
  * it is; the plan below has no 'group'. *)
 exists i where i elem [3, 1, 2];
 > val it = true : bool
+Sys.plan ();
+> val it =
+>   "apply(fnValue Relational.nonEmpty, argCode tuple(constant(3), constant(1), constant(2)))"
+>   : string
 forall i where i elem [2, 4] require i mod 2 = 0;
 > val it = true : bool
 
