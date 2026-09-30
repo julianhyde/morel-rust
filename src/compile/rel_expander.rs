@@ -1882,10 +1882,13 @@ fn push_pat_names(pat: &Pat, out: &mut Vec<(String, Rc<Type>)>) {
 
 /// The expression that a pattern's variables denote.
 fn pat_exp(pat: &Pat) -> Expr {
+    if let Some(args) = pat.components() {
+        return Expr::Tuple(
+            pat.type_(),
+            args.into_iter().map(pat_exp).collect(),
+        );
+    }
     match pat {
-        Pat::Tuple(t, args) => {
-            Expr::Tuple(t.clone(), args.iter().map(pat_exp).collect())
-        }
         Pat::Identifier(t, name) => Expr::Identifier(t.clone(), name.clone()),
         _ => Expr::Identifier(pat.type_(), format!("{:?}", pat)),
     }
@@ -1912,8 +1915,9 @@ fn path(pat: &Pat, element: &Expr, target: &str) -> Option<Expr> {
             }
         }
         Pat::Identifier(_, name) if name == target => Some(element.clone()),
-        Pat::Tuple(_, args) => args
-            .iter()
+        Pat::Record(..) | Pat::Tuple(..) => pat
+            .components()?
+            .into_iter()
             .enumerate()
             .find_map(|(i, a)| path(a, &field_at(element, i), target)),
         _ => None,
@@ -1966,8 +1970,8 @@ fn pat_test(pat: &Pat, row: &Expr, tests: &mut Vec<Expr>) -> Option<()> {
             }
             Some(())
         }
-        Pat::Tuple(_, args) => {
-            for (i, a) in args.iter().enumerate() {
+        Pat::Record(..) | Pat::Tuple(..) => {
+            for (i, a) in pat.components()?.into_iter().enumerate() {
                 pat_test(a, &field_at(row, i), tests)?;
             }
             Some(())
@@ -1981,12 +1985,14 @@ fn literal(t: &Rc<Type>, value: &Val) -> Expr {
 }
 
 /// Returns whether a pattern cannot fail to match: a variable, a
-/// wildcard, or a tuple of those.
+/// wildcard, or a tuple or record of those.
 fn destructurable(pat: &Pat) -> bool {
     match pat {
         Pat::As(_, _, inner) => destructurable(inner),
         Pat::Identifier(_, _) | Pat::Wildcard(_) => true,
-        Pat::Tuple(_, args) => args.iter().all(destructurable),
+        Pat::Record(..) | Pat::Tuple(..) => pat
+            .components()
+            .is_some_and(|args| args.into_iter().all(destructurable)),
         _ => false,
     }
 }
