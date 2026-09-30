@@ -83,6 +83,19 @@ If a morel-java commit uses old `[MOREL-NNN]` format, convert it
 to the new format `hydromatic/morel#NNN`. For example,
 `[MOREL-72] Join` becomes `Join (hydromatic/morel#72)`.
 
+## Current project: `Core` becomes the relational tree
+
+`Core` is to carry a relational tree and no step list, which is
+morel-java's issue 449 part 3. The plan, what has landed, what is
+still declined and why, and where to take each design from, are in
+[etc/core-tree-plan.md](etc/core-tree-plan.md). Read it before
+touching `rel_expander.rs`, `rel_translator.rs`, `rel_lowerer.rs`,
+`expander.rs` or `from_builder.rs`.
+
+Take the data model from morel-java and the algorithms from
+morel-go. Where this port has improvised between the two it has had
+to back the work out.
+
 ## Regular development
 
 Regular features (originating in morel-rust) use commit message that
