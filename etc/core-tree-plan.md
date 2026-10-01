@@ -158,15 +158,21 @@ see which tree failed.
 ## Stages, in order
 
 **B′. What `ordinal` and `current` still decline.** Of the 123
-the translator declined, 75 remain (count them with
+the translator declined, 43 remain (count them with
 `MOREL_SHADOW_TALLY=1 cargo test --test smile -- --nocapture`):
 
 | n | reason |
 | --- | --- |
-| 52 | `current`. morel-java resolves it as a path like any other: the element itself where the row is the element, otherwise the record rebuilt from the binders' paths; a nested tree reads it through a `let`. |
-| 17 | `ordinal` in a top-level `take`, `skip` or set operand, which the language rejects ("'ordinal' is only valid in a query"); correctly declined. |
-| 3 | `ordinal` in a later scan's source, which no node binds. |
+| 36 | `ordinal` or `current` where a query evaluates it once, before its first row -- a count, a set operand -- with no enclosing query: the language rejects it at the top level ("'ordinal' is only valid in a query"), and the shadow, which translates a nested query on its own as well, sees it there. Correctly declined. |
+| 4 | `ordinal` in a later scan's source, which no node binds. |
 | 3 | `ordinal` in a join condition; morel-java's `Join` has an ordinal binder, this port's `JoinRows` does not yet. |
+
+`current` translates as morel-java resolves it: the value of the
+one binder where the row is an atom, otherwise the record of the
+binders, which is the element itself where the element is that
+record. morel-java throws on `from i in ... yield i mod 3 distinct
+order DESC (current)` ("cannot change position: CURRENT"), so that
+plan has no oracle.
 
 **C. The resolver builds trees.** `resolve_step`, about 230 lines,
 replaces `from_builder.rs`'s 1319.
