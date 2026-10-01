@@ -45,6 +45,7 @@ use crate::compile::core::{
     fresh_name, rename,
 };
 use crate::compile::free_finder::free_names_in;
+use crate::compile::from_builder::ORDINAL_FIELD_PREFIX;
 use crate::compile::library::BuiltInFunction;
 use crate::compile::postfix::peel_type;
 use crate::compile::rel_lowerer::map_children;
@@ -144,6 +145,7 @@ fn translate_with(
         counter,
         in_scope: Vec::new(),
         nested,
+        atom: true,
     };
     for step in steps {
         t.step(step)?;
@@ -519,6 +521,12 @@ struct Translator {
     /// step binds it; where it cannot, the enclosing query declines.
     /// A query inside nothing has no enclosing step, and declines.
     nested: bool,
+    /// Whether the row is the one thing a single binder names, rather
+    /// than a record of what the binders name, which is what `current`
+    /// is. It is the step environment's to say, not the number of
+    /// binders: `yield {j = i + 1}` binds one name and the row is a
+    /// record.
+    atom: bool,
 }
 
 impl Translator {
@@ -532,6 +540,7 @@ impl Translator {
     /// nothing.
     fn step(&mut self, step: &Step) -> Option<()> {
         let result = self.translate_step(step);
+        self.atom = step.env.atom;
         self.in_scope = step
             .env
             .bindings
@@ -653,7 +662,9 @@ impl Translator {
                 // another.
                 let mut rows = JoinRows::placeholder();
                 let right;
-                if reads_a_binding(source, &self.bindings) {
+                if reads_a_binding(source, &self.bindings)
+                    || reads_current(source)
+                {
                     // A correlated outer join, or one carrying a
                     // condition as well, is more than this does.
                     if condition.is_some() || join_type != JoinType::Inner {
@@ -779,8 +790,12 @@ impl Translator {
 
     /// Rewrites a `skip` or `take` count, which is evaluated once,
     /// before any row, and so cannot read a row's position.
+    ///
+    /// Like a set operand it reads no binder of this query, and its
+    /// `current` is the enclosing query's row; see
+    /// [`Translator::rewrite_once`].
     fn count(&self, n: &Expr) -> Option<Expr> {
-        let n = self.rewrite(n)?;
+        let n = self.rewrite_once(n)?;
         if reads_ordinal(&n) && !self.nested {
             return decline("a count that reads `ordinal`");
         }
@@ -853,6 +868,47 @@ impl Translator {
         })
     }
 
+    /// Returns `current`, the row as the query sees it, read out of
+    /// `base`, the element: the value of the one binder where the row
+    /// is an atom, and otherwise the record of the binders.
+    ///
+    /// Where the element is that record already, it is the element
+    /// itself. morel-java says so too, and rebuilding the record would
+    /// not merely be longer: it is a projection that survives into the
+    /// plan.
+    fn current(&self, base: Expr) -> Option<Expr> {
+        // The field the resolver adds to carry `ordinal` is not one the
+        // query wrote, and is not in its row.
+        let bindings: Vec<&(String, Path)> = self
+            .bindings
+            .iter()
+            .filter(|(name, _)| !name.starts_with(ORDINAL_FIELD_PREFIX))
+            .collect();
+        if self.atom
+            && let [(_, path)] = bindings.as_slice()
+        {
+            return path.read_from(base);
+        }
+        if bindings.is_empty() {
+            return Some(base);
+        }
+        let mut fields: BTreeMap<Label, Expr> = BTreeMap::new();
+        for (name, path) in &bindings {
+            fields.insert(
+                Label::String(name.clone()),
+                path.read_from(base.clone())?,
+            );
+        }
+        let t = Rc::new(Type::Record(
+            false,
+            fields.iter().map(|(l, e)| (l.clone(), e.type_())).collect(),
+        ));
+        if t == base.type_() && is_each_field_of(&fields, &base) {
+            return Some(base);
+        }
+        Some(Expr::Tuple(t, fields.into_values().collect()))
+    }
+
     /// Returns a fresh name for a binder the translation invents.
     fn new_binder(&self) -> String {
         fresh_name()
@@ -871,7 +927,10 @@ impl Translator {
             return decline("a join whose left is not a collection");
         };
         let binder = Expr::Identifier(left_elem, name.to_string());
-        let outer = self.outer_through(&binder, None)?;
+        let mut outer = self.outer_through(&binder, None)?;
+        if reads_current(source) {
+            outer.insert(CURRENT.to_string(), self.current(binder.clone())?);
+        }
         let tree = match source {
             // The source is a query of its own, so it is a tree of its
             // own, whose `$0` is its own element.
@@ -1163,22 +1222,27 @@ impl Translator {
         Some(())
     }
 
-    /// Rewrites a set operator's operand.
+    /// Rewrites an expression the query evaluates once, before its
+    /// first row: a set operand, a `skip` or `take` count.
     ///
-    /// An operand is a collection compared with the tree element by
-    /// element, not an expression evaluated once per row, so it does
-    /// not read `$0` and the binders over `$0` are not in its map.
-    /// What it may read is `outer`, the row of an enclosing query --
-    /// which is how `from x in [10, 20] yield (from i in [1, 2] union
-    /// [current])` reaches `x` -- and a query it holds is a tree of
-    /// its own, translated here rather than left as the step list it
-    /// arrived as.
-    fn rewrite_operand(&self, e: &Expr) -> Option<Expr> {
+    /// It is not evaluated once per row, so it does not read `$0` and
+    /// the binders over `$0` are not in its map. What it may read is
+    /// `outer`, the row of an enclosing query -- which is how `from x in
+    /// [10, 20] yield (from i in [1, 2] union [current])` reaches `x` --
+    /// and a query it holds is a tree of its own, translated here
+    /// rather than left as the step list it arrived as.
+    fn rewrite_once(&self, e: &Expr) -> Option<Expr> {
         let counter = Rc::clone(&self.counter);
         let outer = self.outer.clone();
-        let operand = substitute_with(e, &self.outer, &mut |t, steps| {
+        substitute_with(e, &self.outer, &mut |t, steps| {
             translate_with(steps, t, outer.clone(), Rc::clone(&counter), true)
-        })?;
+        })
+    }
+
+    /// Rewrites a set operator's operand, which is evaluated once; see
+    /// [`Translator::rewrite_once`].
+    fn rewrite_operand(&self, e: &Expr) -> Option<Expr> {
+        let operand = self.rewrite_once(e)?;
         // An operand is evaluated once, so an `ordinal` in it counts
         // the rows of an enclosing step; see [`Translator::nested`].
         if reads_ordinal(&operand) && !self.nested {
@@ -1316,6 +1380,9 @@ impl Translator {
         for (name, path) in &self.bindings {
             map.insert(name.clone(), path.read(&elem)?);
         }
+        if reads_current(e) {
+            map.insert(CURRENT.to_string(), self.current(row_ref(&elem, 0))?);
+        }
         if let Some(plain) = substitute(e, &map) {
             return Some(plain);
         }
@@ -1336,7 +1403,13 @@ impl Translator {
         let binder = Expr::Identifier(elem.clone(), row_name.clone());
         let ordinal =
             Expr::Identifier(ordinal_ref().type_(), ordinal_name.clone());
-        let outer = self.outer_through(&binder, Some(&ordinal))?;
+        let mut outer = self.outer_through(&binder, Some(&ordinal))?;
+        if reads_current(e) {
+            // A query nested here reads its own row as `current`,
+            // except where it evaluates `current` once, before its
+            // first row; there it is this row, read through the `let`.
+            outer.insert(CURRENT.to_string(), self.current(binder.clone())?);
+        }
         let counter = Rc::clone(&self.counter);
         let Some(body) = substitute_with(e, &map, &mut |t, steps| {
             translate_with(steps, t, outer.clone(), Rc::clone(&counter), true)
@@ -1556,6 +1629,69 @@ fn ordinal_ref() -> Expr {
     )
 }
 
+/// The key under which a substitution's map holds what `current` is.
+/// A `$` cannot begin a name the query wrote, so it is no binder.
+const CURRENT: &str = "$current";
+
+/// Returns whether an expression reads `current`, anywhere in it.
+fn reads_current(e: &Expr) -> bool {
+    let found = Cell::new(false);
+    fn walk(e: &Expr, found: &Cell<bool>) {
+        if matches!(e, Expr::Current(_)) {
+            found.set(true);
+        }
+        if let Expr::From(_, steps) = e {
+            steps
+                .iter()
+                .for_each(|step| step_exprs(step, &mut |x| walk(x, found)));
+            return;
+        }
+        map_children(e, &|x| {
+            walk(x, found);
+            x.clone()
+        });
+    }
+    walk(e, &found);
+    found.get()
+}
+
+/// Calls `f` on each expression a step holds.
+fn step_exprs(step: &Step, f: &mut dyn FnMut(&Expr)) {
+    match &step.kind {
+        StepKind::Scan(_, source, condition) => {
+            f(source);
+            condition.iter().for_each(|c| f(c));
+        }
+        StepKind::Compute(e)
+        | StepKind::Order(e)
+        | StepKind::Skip(e)
+        | StepKind::Take(e)
+        | StepKind::Where(e)
+        | StepKind::Yield(e) => f(e),
+        StepKind::Group(keys, aggregates) => {
+            f(keys);
+            aggregates.iter().for_each(|a| f(a));
+        }
+        StepKind::Except(_, inputs)
+        | StepKind::Intersect(_, inputs)
+        | StepKind::Union(_, inputs) => inputs.iter().for_each(f),
+        _ => {}
+    }
+}
+
+/// Returns whether each of a record's fields is the field of the same
+/// label of `base`, a name, so that the record is `base`.
+fn is_each_field_of(fields: &BTreeMap<Label, Expr>, base: &Expr) -> bool {
+    let Expr::Identifier(_, base) = base else {
+        return false;
+    };
+    fields.values().enumerate().all(|(i, e)| {
+        matches!(e, Expr::Apply(_, f, a, _)
+            if matches!(f.as_ref(), Expr::RecordSelector(_, slot) if *slot == i)
+                && matches!(a.as_ref(), Expr::Identifier(_, n) if n == base))
+    })
+}
+
 /// Returns whether an expression reads the position placeholder,
 /// which only the node about to be built can bind.
 fn reads_ordinal(e: &Expr) -> bool {
@@ -1764,12 +1900,13 @@ fn substitute_with(
         // `ordinal` is the position of the row the step reads, which
         // the node the step becomes binds beside the row.
         Expr::Ordinal(_) => ordinal_ref(),
-        // `current` is the row itself, and none of `spec.md` §3's
-        // eleven constructors carries it. There is nothing to build,
-        // so this is not missing coverage.
-        Expr::Current(_) => {
-            return decline("a query that reads `current`");
-        }
+        // `current` is the row as the query sees it, which the map
+        // holds where the expression is evaluated once per row.
+        Expr::Current(t) => match map.get(CURRENT) {
+            Some(row) if peel(&row.type_()) == peel(t) => row.clone(),
+            Some(_) => return decline("a `current` of another type"),
+            None => return decline("a query that reads `current`"),
+        },
         Expr::Apply(t, f, a, span) => {
             let f = substitute_with(f, map, nested)?;
             let a = substitute_with(a, map, nested)?;
@@ -2056,6 +2193,24 @@ mod tests {
         );
     }
 
+    /// `current` is the row as the query sees it: the element where the
+    /// row is an atom, and after a join the record of the binders, read
+    /// out of the components.
+    #[test]
+    fn current_is_the_row() {
+        assert_eq!(
+            tree_of("from i in [3, 1, 2] where current mod 2 = 1").unwrap(),
+            "filter [$0 mod 2 = 1] : int list\n  [3, 1, 2] : int list\n"
+        );
+        assert!(
+            tree_of("from i in [1, 2] join j in [\"a\"] yield current")
+                .unwrap()
+                .starts_with(
+                    "project [{i = #1 $0, j = #2 $0}] : {i:int, j:string} list\n"
+                ),
+        );
+    }
+
     /// Every tree the translator builds passes the validator.
     #[test]
     fn what_it_builds_is_well_formed() {
@@ -2067,6 +2222,8 @@ mod tests {
             "from yield 1",
             "from i in [3, 1, 2] order i where ordinal > 0",
             "from x in [10, 20] yield (from i in [1, 2] take ordinal)",
+            "from x in [10, 20] yield (from i in [1, 2] take current)",
+            "from i in [1, 2], j in [current + 10, current + 20]",
         ] {
             let text = tree_of(code).unwrap_or_else(|| {
                 panic!("declined: {}", code);
