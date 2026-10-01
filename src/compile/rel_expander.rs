@@ -34,7 +34,8 @@
 //! query's to have written.
 
 use crate::compile::core::{
-    Expr, JoinKind, Pat, PatField, Rel, Step, StepKind, element_type,
+    Expr, JoinKind, JoinRows, Pat, PatField, RIGHT_ROW, ROW, Rel, Row, Step,
+    StepKind, element_type, fresh_name,
 };
 use crate::compile::expander::{DatatypeMap, FnEnv, and_all, list_bounds};
 use crate::compile::free_finder::free_names_in;
@@ -45,13 +46,13 @@ use crate::compile::generators::{
 use crate::compile::library::BuiltInFunction;
 use crate::compile::postfix::peel_type;
 use crate::compile::rel_lowerer::{
-    component_count, field_at, replace_inputs_with, substitute_name,
+    component_count, field_at, replace_names, substitute_name,
 };
 use crate::compile::span::Span;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::compile::{fbbt, rel_lowerer, rel_translator};
 use crate::eval::val::Val;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::rc::Rc;
@@ -62,13 +63,6 @@ fn debugf(line: impl FnOnce() -> String) {
     if env::var_os("MOREL_REL_DEBUG").is_some() {
         eprintln!("{}", line());
     }
-}
-
-thread_local! {
-    /// The counter the binders this pass makes are named from. It is
-    /// never reset: the compiler resolves a binder by name within a
-    /// scope, so two queries of one statement must not share one.
-    static NEXT_NAME: Cell<usize> = const { Cell::new(0) };
 }
 
 /// Grounds a query on its tree, or returns `None` where it has
@@ -112,9 +106,9 @@ fn ground_with(
     if !steps.iter().any(step_holds_extent) {
         return None;
     }
-    // The names to give the leaves: a tree carries none, and the
-    // scans the query wrote are the leaves in the order a walk
-    // reaches them. It matters beyond the plan text -- grounding
+    // The names to give the leaves: a tree carries none of the
+    // query's, and the scans the query wrote are the leaves in the
+    // order a walk reaches them. It matters beyond the plan text -- grounding
     // names what it builds after the leaf it bounds, and a group's
     // key record sorts its fields by label, so a generated name
     // puts the rows in a different order.
@@ -194,7 +188,8 @@ fn holds_extent(e: &Expr) -> bool {
 /// The names a tree's leaves had, read back from the projection at
 /// its root, or empty where the tree does not say.
 ///
-/// A tree carries no names -- a leaf is a bare expression -- but a
+/// A tree carries none of the query's names -- a leaf is a bare
+/// expression, and a node's row is a name of its own -- but a
 /// query with several binders ends in a projection that names its
 /// element's components after them. A join concatenates its inputs'
 /// components, so component `k` is leaf `k`, and the projection is
@@ -208,7 +203,7 @@ fn leaf_pats(tree: &Expr) -> Vec<Pat> {
     let Expr::Rel(_, rel) = tree else {
         return Vec::new();
     };
-    let Rel::Project(input, exp) = rel.as_ref() else {
+    let Rel::Project(_, input, exp) = rel.open() else {
         return Vec::new();
     };
     let Expr::Tuple(t, args) = exp.as_ref() else {
@@ -229,13 +224,13 @@ fn leaf_pats(tree: &Expr) -> Vec<Pat> {
         let Expr::RecordSelector(_, slot) = f.as_ref() else {
             return Vec::new();
         };
-        if !matches!(a.as_ref(), Expr::Input(_, 0)) {
+        if !is_row(a) {
             return Vec::new();
         }
         names.insert(*slot, label.to_string());
     }
     let mut leaves = Vec::new();
-    if !collect_leaves(input, &mut leaves) || leaves.len() != names.len() {
+    if !collect_leaves(&input, &mut leaves) || leaves.len() != names.len() {
         return Vec::new();
     }
     let mut pats = Vec::with_capacity(leaves.len());
@@ -257,7 +252,7 @@ fn leaf_pats(tree: &Expr) -> Vec<Pat> {
 fn collect_leaves(node: &Expr, leaves: &mut Vec<Expr>) -> bool {
     if let Expr::Rel(_, rel) = node {
         return match rel.as_ref() {
-            Rel::Filter(input, _) => collect_leaves(input, leaves),
+            Rel::Filter(_, input, _) => collect_leaves(input, leaves),
             Rel::Join(_, _, _, left, right) => {
                 collect_leaves(left, leaves) && collect_leaves(right, leaves)
             }
@@ -420,38 +415,45 @@ impl<'a> Expander<'a> {
             }
             return Some(exp.clone());
         };
-        match rel.as_ref() {
+        match &rel.open() {
             // lint: sort until '#}' where '##Rel::'
             Rel::Except(d, args) => {
                 let args = self.expand_each(args)?;
                 node(Rel::Except(*d, args))
             }
-            Rel::Filter(input, condition) => {
+            Rel::Filter(_, input, condition) => {
                 self.expand_filter(input, condition, conditions)
             }
-            Rel::Group(input, keys, aggs) => {
+            Rel::Group(row, input, keys, aggs) => {
                 // A group builds its element, so a condition above it
                 // says nothing about the element below; but what is
                 // below still has to be expanded, or an unbounded
                 // leaf survives under it.
                 let input = self.expand(input, &[])?;
-                node(Rel::Group(Box::new(input), keys.clone(), aggs.clone()))
+                node(Rel::Group(
+                    row.clone(),
+                    Box::new(input),
+                    keys.clone(),
+                    aggs.clone(),
+                ))
             }
             Rel::Intersect(d, args) => {
                 let args = self.expand_each(args)?;
                 node(Rel::Intersect(*d, args))
             }
             Rel::Join(_, _, _, _, _) => self.expand_join_tree(exp, conditions),
-            Rel::Project(input, e) => self.expand_project(input, e, conditions),
+            Rel::Project(_, input, e) => {
+                self.expand_project(input, e, conditions)
+            }
             // A node that neither changes the element nor drops rows
             // by position passes the conditions down.
             Rel::Skip(input, count) => {
                 let input = self.expand(input, conditions)?;
                 node(Rel::Skip(Box::new(input), count.clone()))
             }
-            Rel::Sort(input, key) => {
+            Rel::Sort(row, input, key) => {
                 let input = self.expand(input, conditions)?;
-                node(Rel::Sort(Box::new(input), key.clone()))
+                node(Rel::Sort(row.clone(), Box::new(input), key.clone()))
             }
             Rel::Take(input, count) => {
                 let input = self.expand(input, conditions)?;
@@ -668,16 +670,15 @@ impl<'a> Expander<'a> {
         let Expr::Rel(_, rel) = join else {
             return self.expand(join, &[]);
         };
-        let Rel::Join(kind, binder, condition, left, right) = rel.as_ref()
-        else {
+        let Rel::Join(kind, rows, condition, left, right) = rel.open() else {
             return self.expand(join, &[]);
         };
-        let left = self.expand(left, &[])?;
-        let right = self.expand(right, &[])?;
+        let left = self.expand(&left, &[])?;
+        let right = self.expand(&right, &[])?;
         node(Rel::Join(
-            *kind,
-            binder.clone(),
-            condition.clone(),
+            kind,
+            rows,
+            condition,
             Box::new(left),
             Box::new(right),
         ))
@@ -750,11 +751,11 @@ impl<'a> Expander<'a> {
     /// its nodes impose, in the order a walk reaches them.
     fn collect(&mut self, node: &Expr, lo: usize, frame: &mut Frame) {
         match node {
-            Expr::Rel(_, rel) => match rel.as_ref() {
+            Expr::Rel(_, rel) => match &rel.open() {
                 // A filter between two joins constrains the leaves
                 // below it just as a `where` between two scans
                 // constrains the patterns before it.
-                Rel::Filter(input, condition) => {
+                Rel::Filter(_, input, condition) => {
                     self.collect(input, lo, frame);
                     let n = frame.leaves.len() - lo;
                     let element = frame.element(lo, n);
@@ -995,7 +996,7 @@ impl<'a> Expander<'a> {
     ) {
         match node {
             Expr::Rel(_, rel) => match rel.as_ref() {
-                Rel::Filter(input, _) => {
+                Rel::Filter(_, input, _) => {
                     self.correlated_pats(input, lo, frame, pats)
                 }
                 Rel::Join(_, _, _, left, right) => {
@@ -1067,8 +1068,9 @@ impl<'a> Expander<'a> {
         let Expr::Rel(_, rel) = node else {
             return self.rebuild_leaf(lo, frame, settled, bound);
         };
-        match rel.as_ref() {
-            Rel::Filter(input, condition) => {
+        let dependent = rel.is_dependent();
+        match &rel.open() {
+            Rel::Filter(_, input, condition) => {
                 let input = self.rebuild(input, lo, frame, settled, bound)?;
                 let remaining =
                     self.remaining(&split_conjuncts(condition), false);
@@ -1077,11 +1079,10 @@ impl<'a> Expander<'a> {
                 }
                 Some(filter_of(input, and_all(remaining)))
             }
-            Rel::Join(kind, binder, condition, left, right) => self
-                .rebuild_join(
-                    *kind, binder, condition, left, right, lo, frame, settled,
-                    bound,
-                ),
+            Rel::Join(kind, rows, condition, left, right) => self.rebuild_join(
+                *kind, rows, dependent, condition, left, right, lo, frame,
+                settled, bound,
+            ),
             _ => self.rebuild_leaf(lo, frame, settled, bound),
         }
     }
@@ -1090,7 +1091,8 @@ impl<'a> Expander<'a> {
     fn rebuild_join(
         &mut self,
         kind: JoinKind,
-        binder: &Option<String>,
+        rows: &JoinRows,
+        dependent: bool,
         condition: &Expr,
         left: &Expr,
         right: &Expr,
@@ -1134,7 +1136,7 @@ impl<'a> Expander<'a> {
             );
         }
         let bounded_leaf = leaf_count(right) == 1 && !frame.leaves[mid].extent;
-        if (right_generator.is_some() || (bounded_leaf && binder.is_none()))
+        if (right_generator.is_some() || (bounded_leaf && !dependent))
             && is_true(condition)
             && self.reads(
                 lo,
@@ -1164,7 +1166,7 @@ impl<'a> Expander<'a> {
         let right = self.rebuild(right, mid, frame, settled, bound)?;
         node(Rel::Join(
             kind,
-            binder.clone(),
+            rows.clone(),
             Box::new(condition.clone()),
             Box::new(left),
             Box::new(right),
@@ -1231,7 +1233,7 @@ impl<'a> Expander<'a> {
         let left = self.rebuild(left, lo, frame, settled, bound)?;
         node(Rel::Join(
             kind,
-            Some(param),
+            JoinRows::dependent(param),
             Box::new(condition.clone()),
             Box::new(left),
             Box::new(collection),
@@ -1274,7 +1276,7 @@ impl<'a> Expander<'a> {
         let k = component_count(&left);
         let swapped = node(Rel::Join(
             kind,
-            Some(param),
+            JoinRows::dependent(param),
             Box::new(condition.clone()),
             Box::new(bounded_right),
             Box::new(left),
@@ -1467,7 +1469,7 @@ impl<'a> Expander<'a> {
                 None => component,
                 Some(p) => node(Rel::Join(
                     JoinKind::Inner,
-                    None,
+                    JoinRows::placeholder(),
                     Box::new(true_literal()),
                     Box::new(p),
                     Box::new(component),
@@ -1651,13 +1653,17 @@ impl<'a> Expander<'a> {
 fn shift(e: &Expr, drop: usize, left: usize) -> Expr {
     if let Expr::Apply(t, f, a, _) = e
         && let Expr::RecordSelector(_, slot) = f.as_ref()
-        && let Expr::Input(at, 0) = a.as_ref()
+        && let Expr::Identifier(at, name) = a.as_ref()
+        && name == ROW
         && *slot >= drop
     {
         if left == 1 {
-            return Expr::Input(t.clone(), 0);
+            return Expr::Identifier(t.clone(), ROW.to_string());
         }
-        return field_at(&Expr::Input(at.clone(), 0), slot - drop);
+        return field_at(
+            &Expr::Identifier(at.clone(), ROW.to_string()),
+            slot - drop,
+        );
     }
     map_expr(e, &|x| shift(x, drop, left))
 }
@@ -1699,15 +1705,21 @@ fn same_element(collection: &Expr, t: &Rc<Type>) -> bool {
 /// first.
 fn filter_of(input: Expr, condition: Expr) -> Expr {
     if let Expr::Rel(_, rel) = &input
-        && let Rel::Filter(inner, lower) = rel.as_ref()
+        && let Rel::Filter(_, inner, lower) = rel.open()
     {
-        let merged = and_all(vec![lower.as_ref().clone(), condition.clone()]);
-        if let Some(out) = node(Rel::Filter(inner.clone(), Box::new(merged))) {
+        let merged = and_all(vec![*lower, condition.clone()]);
+        if let Some(out) =
+            node(Rel::Filter(Row::placeholder(), inner, Box::new(merged)))
+        {
             return out;
         }
     }
-    node(Rel::Filter(Box::new(input.clone()), Box::new(condition)))
-        .unwrap_or(input)
+    node(Rel::Filter(
+        Row::placeholder(),
+        Box::new(input.clone()),
+        Box::new(condition),
+    ))
+    .unwrap_or(input)
 }
 
 /// Builds a projection, as the relational builder does: a projection
@@ -1715,18 +1727,25 @@ fn filter_of(input: Expr, condition: Expr) -> Expr {
 /// projection is one projection, the upper expression said over the
 /// lower one's.
 fn project_of(input: Expr, exp: Expr) -> Expr {
-    if matches!(exp, Expr::Input(_, 0)) {
+    if is_row(&exp) {
         return input;
     }
     if let Expr::Rel(_, rel) = &input
-        && let Rel::Project(inner, lower) = rel.as_ref()
+        && let Rel::Project(_, inner, lower) = rel.open()
     {
-        let merged = subst(&exp, lower, None);
-        if let Some(out) = node(Rel::Project(inner.clone(), Box::new(merged))) {
+        let merged = subst(&exp, &lower, None);
+        if let Some(out) =
+            node(Rel::Project(Row::placeholder(), inner, Box::new(merged)))
+        {
             return out;
         }
     }
-    node(Rel::Project(Box::new(input.clone()), Box::new(exp))).unwrap_or(input)
+    node(Rel::Project(
+        Row::placeholder(),
+        Box::new(input.clone()),
+        Box::new(exp),
+    ))
+    .unwrap_or(input)
 }
 
 /// Projects a join whose inputs were swapped back into the component
@@ -1760,7 +1779,12 @@ fn dedup_row(
     for (name, _) in &sorted {
         keys.push((Label::String(name.clone()), path(pat, &row, name)?));
     }
-    let group = node(Rel::Group(Box::new(collection), keys, Vec::new()))?;
+    let group = node(Rel::Group(
+        Row::placeholder(),
+        Box::new(collection),
+        keys,
+        Vec::new(),
+    ))?;
     let out = if sorted.len() == 1 {
         let element = input_of(&group)?;
         project_of(group, field_at(&element, 0))
@@ -1768,7 +1792,7 @@ fn dedup_row(
         group
     };
     let key = input_of(&out)?;
-    node(Rel::Sort(Box::new(out), Box::new(key)))
+    node(Rel::Sort(Row::placeholder(), Box::new(out), Box::new(key)))
 }
 
 /// Takes a collection's values distinct, in their own order, where a
@@ -1777,13 +1801,18 @@ fn dedup_row(
 fn dedup_named(collection: Expr, name: &str) -> Option<Expr> {
     let element = input_of(&collection)?;
     let group = node(Rel::Group(
+        Row::placeholder(),
         Box::new(collection),
         vec![(Label::String(name.to_string()), element.clone())],
         Vec::new(),
     ))?;
     let row = input_of(&group)?;
     let project = project_of(group, field_at(&row, 0));
-    node(Rel::Sort(Box::new(project), Box::new(element)))
+    node(Rel::Sort(
+        Row::placeholder(),
+        Box::new(project),
+        Box::new(element),
+    ))
 }
 
 /// Returns whether a tree takes or skips rows anywhere, where a
@@ -1799,24 +1828,35 @@ fn has_take_or_skip(tree: &Expr) -> bool {
     rel.inputs().iter().any(|input| has_take_or_skip(input))
 }
 
-/// Builds the expression for a node, with the type it derives.
+/// Builds the expression for a node, with the type it derives and
+/// names of its own for the rows its expressions read.
 fn node(rel: Rel) -> Option<Expr> {
+    let rel = rel.bind();
     let t = rel.derive_type()?;
     Some(Expr::Rel(t, Box::new(rel)))
 }
 
-/// The element of a collection, `$0`.
+/// The element of a collection, `$0`, as the node that is built over
+/// it reads it.
 fn input_of(collection: &Expr) -> Option<Expr> {
-    Some(Expr::Input(element_type(&collection.type_())?, 0))
+    Some(Expr::Identifier(
+        element_type(&collection.type_())?,
+        ROW.to_string(),
+    ))
+}
+
+/// Returns whether an expression is the element itself, `$0`.
+fn is_row(e: &Expr) -> bool {
+    matches!(e, Expr::Identifier(_, name) if name == ROW)
 }
 
 /// How many leaves a node of a join tree has.
 fn leaf_count(node: &Expr) -> usize {
     match node {
         Expr::Rel(_, rel) => match rel.as_ref() {
-            Rel::Filter(input, _)
+            Rel::Filter(_, input, _)
             | Rel::Skip(input, _)
-            | Rel::Sort(input, _)
+            | Rel::Sort(_, input, _)
             | Rel::Take(input, _)
             | Rel::Unorder(input) => leaf_count(input),
             Rel::Join(_, _, _, left, right) => {
@@ -1826,19 +1866,6 @@ fn leaf_count(node: &Expr) -> usize {
         },
         _ => 1,
     }
-}
-
-/// A fresh binder name.
-///
-/// The counter is never reset, so that no two binders in a statement
-/// share a name: what a plan prints is renumbered by first
-/// appearance, but the compiler resolves a binder by name.
-fn fresh_name() -> String {
-    NEXT_NAME.with(|c| {
-        let i = c.get();
-        c.set(i + 1);
-        format!("v${}", i)
-    })
 }
 
 fn ground_pat(t: &Rc<Type>) -> Pat {
@@ -2023,12 +2050,11 @@ fn reads_free(g: &Generator, name: &str) -> bool {
 /// expressions, and folds the selectors that then read a component
 /// off a tuple that holds it.
 fn subst(exp: &Expr, e0: &Expr, e1: Option<&Expr>) -> Expr {
-    let out = replace_inputs_with(exp, &|ordinal| match ordinal {
-        0 => Some(e0.clone()),
-        1 => e1.cloned(),
-        _ => None,
-    });
-    fold_selectors(&out)
+    let mut map = BTreeMap::from([(ROW.to_string(), e0.clone())]);
+    if let Some(e1) = e1 {
+        map.insert(RIGHT_ROW.to_string(), e1.clone());
+    }
+    fold_selectors(&replace_names(exp, &map))
 }
 
 /// Reads a component off the tuple that holds it: `#1 (a, b)` is
@@ -2086,52 +2112,9 @@ fn key_of(e: &Expr) -> String {
 /// Rebuilds an expression with a function applied to each of its
 /// immediate sub-expressions, through the nodes of a tree.
 fn map_expr(e: &Expr, f: &dyn Fn(&Expr) -> Expr) -> Expr {
-    let parts = |ps: &[(Label, Expr)]| {
-        ps.iter()
-            .map(|(l, x)| (l.clone(), f(x)))
-            .collect::<Vec<_>>()
-    };
     match e {
         Expr::Rel(t, rel) => {
-            let rel = match rel.as_ref() {
-                // lint: sort until '#}' where '##Rel::'
-                Rel::Except(d, args) => {
-                    Rel::Except(*d, args.iter().map(f).collect())
-                }
-                Rel::Filter(input, c) => {
-                    Rel::Filter(Box::new(f(input)), Box::new(f(c)))
-                }
-                Rel::Group(input, keys, aggs) => {
-                    Rel::Group(Box::new(f(input)), parts(keys), parts(aggs))
-                }
-                Rel::Intersect(d, args) => {
-                    Rel::Intersect(*d, args.iter().map(f).collect())
-                }
-                Rel::Join(k, b, c, l, r) => Rel::Join(
-                    *k,
-                    b.clone(),
-                    Box::new(f(c)),
-                    Box::new(f(l)),
-                    Box::new(f(r)),
-                ),
-                Rel::Project(input, x) => {
-                    Rel::Project(Box::new(f(input)), Box::new(f(x)))
-                }
-                Rel::Skip(input, x) => {
-                    Rel::Skip(Box::new(f(input)), Box::new(f(x)))
-                }
-                Rel::Sort(input, x) => {
-                    Rel::Sort(Box::new(f(input)), Box::new(f(x)))
-                }
-                Rel::Take(input, x) => {
-                    Rel::Take(Box::new(f(input)), Box::new(f(x)))
-                }
-                Rel::Union(d, args) => {
-                    Rel::Union(*d, args.iter().map(f).collect())
-                }
-                Rel::Unorder(input) => Rel::Unorder(Box::new(f(input))),
-            };
-            Expr::Rel(t.clone(), Box::new(rel))
+            Expr::Rel(t.clone(), Box::new(rel.map_children(f)))
         }
         _ => rel_lowerer::map_children(e, f),
     }

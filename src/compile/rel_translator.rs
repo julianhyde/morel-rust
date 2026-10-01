@@ -40,8 +40,8 @@
 #![allow(dead_code)]
 
 use crate::compile::core::{
-    Binding, Decl, Expr, JoinKind, Match, Pat, PatField, Rel, Step, StepEnv,
-    StepKind, ValBind, element_type,
+    Binding, Decl, Expr, JoinKind, JoinRows, Match, Pat, PatField, RIGHT_ROW,
+    ROW, Rel, Row, Step, StepEnv, StepKind, ValBind, element_type, fresh_name,
 };
 use crate::compile::free_finder::free_names_in;
 use crate::compile::library::BuiltInFunction;
@@ -289,7 +289,6 @@ fn shadow_expr(e: &Expr) {
         Expr::Current(_)
         | Expr::Extent(_, _)
         | Expr::Identifier(_, _)
-        | Expr::Input(_, _)
         | Expr::Literal(_, _)
         | Expr::Ordinal(_)
         | Expr::RecordSelector(_, _) => {}
@@ -393,7 +392,7 @@ impl Path {
     /// two inputs' elements, where every other expression sees only
     /// `$0`.
     fn read_at(&self, elem: &Rc<Type>, index: usize) -> Option<Expr> {
-        self.read_from(Expr::Input(elem.clone(), index))
+        self.read_from(row_ref(elem, index))
     }
 
     /// Returns the expression that reads this path out of `base`, which
@@ -474,10 +473,12 @@ struct Translator {
     /// names in the left element. A nested tree reads its enclosing row
     /// only this way, because `$0` is its own (spec.md §2 rule 3).
     outer: BTreeMap<String, Expr>,
-    /// Supplies the names for the binders the translation invents.
-    /// Shared with the translators of nested trees, so that no two
-    /// binders in one statement have the same name; uniqueness is all
-    /// allocation owes, because the printer renumbers what it prints.
+    /// Supplies the names of the parameters of the converters that
+    /// [`Translator::converted`] composes, `col$N`. Shared with the
+    /// translators of nested trees, so that no two in one statement
+    /// have the same name; uniqueness is all allocation owes, because
+    /// the printer renumbers what it prints. Every other binder the
+    /// translation invents is named by [`fresh_name`].
     counter: Rc<Cell<usize>>,
     /// What the previous step's environment bound, and therefore what
     /// this step's expressions may read and this step's rewrite must
@@ -522,12 +523,16 @@ impl Translator {
             }
             StepKind::Where(condition) => {
                 let condition = self.rewrite(condition)?;
-                self.wrap(|input| Rel::Filter(input, Box::new(condition)))
+                self.wrap(|input| {
+                    Rel::Filter(Row::placeholder(), input, Box::new(condition))
+                })
             }
             StepKind::Yield(e) => self.yield_(e, &step.env),
             StepKind::Order(e) => {
                 let key = self.rewrite(e)?;
-                self.wrap(|input| Rel::Sort(input, Box::new(key)))
+                self.wrap(|input| {
+                    Rel::Sort(Row::placeholder(), input, Box::new(key))
+                })
             }
             StepKind::Skip(n) => {
                 let n = self.rewrite(n)?;
@@ -612,7 +617,7 @@ impl Translator {
                 // that binder, which is why decorrelation is dropping
                 // the binder rather than rewriting one node into
                 // another.
-                let mut binder = None;
+                let mut rows = JoinRows::placeholder();
                 let right;
                 if reads_a_binding(source, &self.bindings) {
                     // A correlated outer join, or one carrying a
@@ -623,7 +628,7 @@ impl Translator {
                     }
                     let name = self.new_binder();
                     if let Some(tree) = self.correlated(source, &left, &name) {
-                        binder = Some(name);
+                        rows = JoinRows::dependent(name);
                         right = tree;
                     } else {
                         self.tree = Some(left);
@@ -660,7 +665,7 @@ impl Translator {
                 };
                 let join = Rel::Join(
                     kind,
-                    binder,
+                    rows,
                     Box::new(condition),
                     Box::new(left),
                     Box::new(right),
@@ -700,8 +705,10 @@ impl Translator {
         // A projection of the element itself changes nothing, and is
         // the `yield` that puts the row back after `ordinal` is done
         // with.
-        if !matches!(value, Expr::Input(_, 0)) {
-            self.wrap(|input| Rel::Project(input, Box::new(value)))?;
+        if !is_row(&value) {
+            self.wrap(|input| {
+                Rel::Project(Row::placeholder(), input, Box::new(value))
+            })?;
         }
         self.bindings = bindings_over(env, &elem)?;
         Some(())
@@ -755,9 +762,7 @@ impl Translator {
 
     /// Returns a fresh name for a binder the translation invents.
     fn new_binder(&self) -> String {
-        let i = self.counter.get();
-        self.counter.set(i + 1);
-        format!("v${}", i)
+        fresh_name()
     }
 
     /// Translates the right input of a dependent join: the scan's
@@ -848,8 +853,7 @@ impl Translator {
         };
         if self.bindings.is_empty() {
             let name = Label::String(self.new_binder());
-            return self
-                .group_parts(vec![(name, Expr::Input(elem, 0))], vec![]);
+            return self.group_parts(vec![(name, row_ref(&elem, 0))], vec![]);
         }
         let mut keys = Vec::with_capacity(self.bindings.len());
         for (name, path) in &self.bindings {
@@ -896,7 +900,9 @@ impl Translator {
             .map(|(label, _)| label.clone())
             .collect();
         let aggregates = self.converted(aggregates)?;
-        self.wrap(|input| Rel::Group(input, keys, aggregates))?;
+        self.wrap(|input| {
+            Rel::Group(Row::placeholder(), input, keys, aggregates)
+        })?;
         // The element is a record of the keys and the aggregates, a
         // record whether there is one field or many, so each is read
         // by its label. Where the query wants the bare value of its
@@ -1006,7 +1012,7 @@ impl Translator {
                 Rc::new(Type::Fn(t.clone(), t.clone())),
                 Val::Fn(BuiltInFunction::FnId),
             )),
-            Box::new(Expr::Input(elem, 0)),
+            Box::new(row_ref(&elem, 0)),
             Span::new(""),
         ))
     }
@@ -1122,7 +1128,11 @@ impl Translator {
         if let [(_, path)] = self.bindings.as_slice() {
             let value = path.read(&elem)?;
             if value.type_() == row {
-                return node(Rel::Project(Box::new(tree), Box::new(value)));
+                return node(Rel::Project(
+                    Row::placeholder(),
+                    Box::new(tree),
+                    Box::new(value),
+                ));
             }
         }
         let Type::Record(_, fields) = peel(&row) else {
@@ -1141,7 +1151,11 @@ impl Translator {
             values.push(path.read(&elem)?);
         }
         let value = Expr::Tuple(row, values);
-        node(Rel::Project(Box::new(tree), Box::new(value)))
+        node(Rel::Project(
+            Row::placeholder(),
+            Box::new(tree),
+            Box::new(value),
+        ))
     }
 
     /// Replaces the tree with a node built over it.
@@ -1211,7 +1225,7 @@ impl Translator {
         }) else {
             return decline("an expression over the binders");
         };
-        Some(let_binding(name, Expr::Input(elem, 0), body))
+        Some(let_binding(name, row_ref(&elem, 0), body))
     }
 }
 
@@ -1377,12 +1391,30 @@ fn unit_leaf() -> Expr {
 fn filtered(tree: Expr, test: Option<Expr>) -> Option<Expr> {
     match test {
         None => Some(tree),
-        Some(test) => node(Rel::Filter(Box::new(tree), Box::new(test))),
+        Some(test) => node(Rel::Filter(
+            Row::placeholder(),
+            Box::new(tree),
+            Box::new(test),
+        )),
     }
 }
 
-/// Builds the expression for a node, with the type it derives.
+/// Returns the placeholder that reads the element of a node's input
+/// `index` while the node is being built: `$0`, or a join's `$1`.
+fn row_ref(elem: &Rc<Type>, index: usize) -> Expr {
+    let name = if index == 0 { ROW } else { RIGHT_ROW };
+    Expr::Identifier(elem.clone(), name.to_string())
+}
+
+/// Returns whether an expression is the element itself, `$0`.
+fn is_row(e: &Expr) -> bool {
+    matches!(e, Expr::Identifier(_, name) if name == ROW)
+}
+
+/// Builds the expression for a node, with the type it derives and
+/// names of its own for the rows its expressions read.
 fn node(rel: Rel) -> Option<Expr> {
+    let rel = rel.bind();
     match rel.derive_type() {
         // A node whose type does not derive is one the datatype's own
         // rules reject, which is a finding rather than a gap.
@@ -1577,7 +1609,6 @@ fn substitute_with(
         },
         Expr::Literal(_, _)
         | Expr::RecordSelector(_, _)
-        | Expr::Input(_, _)
         | Expr::Extent(_, _) => e.clone(),
         // `ordinal` and `current` are the row's position and the row
         // itself, and none of `spec.md` §3's eleven constructors

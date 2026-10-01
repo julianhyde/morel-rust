@@ -164,9 +164,6 @@ impl Analyzer {
             Expr::Identifier(_, name) => {
                 self.entry(name).use_count += 1;
             }
-            // An input reference is not a variable, and so is not
-            // counted; see `Expr::Input`.
-            Expr::Input(_, _) => {}
             Expr::Rel(_, rel) => {
                 for child in rel.children() {
                     self.visit_expr(child);

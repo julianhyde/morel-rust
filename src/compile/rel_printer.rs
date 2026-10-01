@@ -43,11 +43,11 @@
 // R5 lands.
 #![allow(dead_code)]
 
-use crate::compile::core::{Decl, Expr, Rel, written_infix};
+use crate::compile::core::{Decl, Expr, RIGHT_ROW, ROW, Rel, written_infix};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::lindig::{self, Doc};
-use crate::compile::rel_translator;
 use crate::compile::types::{Label, Type};
+use crate::compile::{rel_lowerer, rel_translator};
 use crate::eval::val::Val;
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -262,6 +262,11 @@ struct Writer {
     /// Monikers that have been given a `t$N`, in the order they were
     /// first seen, which is the order they are numbered and listed.
     type_refs: Vec<String>,
+    /// The nodes opened for printing, kept until the plan is done. A
+    /// relation in one is broken out by its address, and an address
+    /// freed and used again by another would give that one the first
+    /// one's reference.
+    opened: Vec<Rc<Rel>>,
 }
 
 impl Writer {
@@ -271,6 +276,7 @@ impl Writer {
             with_types,
             line_width,
             type_refs: Vec::new(),
+            opened: Vec::new(),
         }
     }
 
@@ -279,7 +285,9 @@ impl Writer {
         let (mut docs, t) = match exp {
             Expr::Rel(t, rel) => {
                 let mut docs = vec![lindig::text(rel.op_name())];
-                for arg in args(rel) {
+                let open = Rc::new(opened(rel));
+                self.opened.push(Rc::clone(&open));
+                for arg in args(&open, rel.is_dependent()) {
                     docs.push(lindig::text(" ["));
                     docs.push(arg);
                     docs.push(lindig::text("]"));
@@ -474,9 +482,7 @@ fn doc_bounded(e: &Expr, left: u8, right: u8) -> Doc {
                     == "~"
             {
                 let operand = match arg.as_ref() {
-                    Expr::Identifier(_, _)
-                    | Expr::Input(_, _)
-                    | Expr::Literal(_, _) => doc(arg),
+                    Expr::Identifier(_, _) | Expr::Literal(_, _) => doc(arg),
                     _ => lindig::hcat(vec![
                         lindig::text("("),
                         doc(arg),
@@ -489,7 +495,6 @@ fn doc_bounded(e: &Expr, left: u8, right: u8) -> Doc {
             // already, which is `Display`'s rule.
             match arg.as_ref() {
                 Expr::Identifier(_, _)
-                | Expr::Input(_, _)
                 | Expr::Literal(_, _)
                 | Expr::RecordSelector(_, _)
                 | Expr::Tuple(_, _) => {
@@ -550,36 +555,41 @@ fn doc_bounded(e: &Expr, left: u8, right: u8) -> Doc {
 /// An argument that says nothing is left out: an inner join's kind, a
 /// join's `true` condition, an empty aggregate list, and the `all` of a
 /// set operator that does keep duplicates.
-fn args(rel: &Rel) -> Vec<Doc> {
+///
+/// `rel` is the node [`opened`], so that its rows print as `$0` and
+/// `$1` in its own arguments; anywhere else -- which is only where a
+/// dependent join's right input reads its left row, and where the join
+/// names that row as its binder -- a row prints as its own name.
+fn args(rel: &Rel, dependent: bool) -> Vec<Doc> {
     match rel {
-        Rel::Filter(_, condition) => vec![doc(condition)],
+        Rel::Filter(_, _, condition) => vec![doc(condition)],
         // A projection that builds the element it was given says
         // nothing, so it has no argument, as `spec.md` §6.3 lists
         // alongside an inner join's kind and a `true` condition.
-        Rel::Project(_, e) => {
-            if matches!(e.as_ref(), Expr::Input(_, 0)) {
+        Rel::Project(_, _, e) => {
+            if matches!(e.as_ref(), Expr::Identifier(_, name) if name == ROW) {
                 vec![]
             } else {
                 vec![doc(e)]
             }
         }
-        Rel::Sort(_, e) => vec![doc(e)],
+        Rel::Sort(_, _, e) => vec![doc(e)],
         Rel::Skip(_, n) | Rel::Take(_, n) => vec![doc(n)],
         Rel::Unorder(_) => vec![],
-        Rel::Group(_, keys, aggregates) => {
+        Rel::Group(_, _, keys, aggregates) => {
             let mut v = vec![labelled(keys)];
             if !aggregates.is_empty() {
                 v.push(labelled(aggregates));
             }
             v
         }
-        Rel::Join(kind, binder, condition, _, _) => {
+        Rel::Join(kind, rows, condition, _, _) => {
             let mut v = Vec::new();
             if let Some(name) = kind.name() {
                 v.push(lindig::text(name));
             }
-            if let Some(name) = binder {
-                v.push(lindig::text(name));
+            if dependent {
+                v.push(lindig::text(&rows.left));
             }
             if !is_true(condition) {
                 v.push(doc(condition));
@@ -595,6 +605,63 @@ fn args(rel: &Rel) -> Vec<Doc> {
                 vec![lindig::text("all")]
             }
         }
+    }
+}
+
+/// Returns a node with its rows renamed to the placeholders, which
+/// print as `$0` and `$1`, in its own expressions only: a node nested
+/// in one prints as a fragment of its own, where the rows it reads from
+/// outside print under their own names.
+fn opened(rel: &Rel) -> Rel {
+    let open = |e: &Expr, names: &[(&str, &str)]| {
+        names
+            .iter()
+            .fold(e.clone(), |e, (from, to)| rename_here(&e, from, to))
+    };
+    match rel {
+        Rel::Filter(row, input, c) => Rel::Filter(
+            row.clone(),
+            input.clone(),
+            Box::new(open(c, &[(&row.name, ROW)])),
+        ),
+        Rel::Group(row, input, keys, aggs) => {
+            let parts = |parts: &[(Label, Expr)]| {
+                parts
+                    .iter()
+                    .map(|(l, e)| (l.clone(), open(e, &[(&row.name, ROW)])))
+                    .collect()
+            };
+            Rel::Group(row.clone(), input.clone(), parts(keys), parts(aggs))
+        }
+        Rel::Join(kind, rows, c, left, right) => Rel::Join(
+            *kind,
+            rows.clone(),
+            Box::new(open(c, &[(&rows.left, ROW), (&rows.right, RIGHT_ROW)])),
+            left.clone(),
+            right.clone(),
+        ),
+        Rel::Project(row, input, e) => Rel::Project(
+            row.clone(),
+            input.clone(),
+            Box::new(open(e, &[(&row.name, ROW)])),
+        ),
+        Rel::Sort(row, input, e) => Rel::Sort(
+            row.clone(),
+            input.clone(),
+            Box::new(open(e, &[(&row.name, ROW)])),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Renames an identifier, stopping at a nested node.
+fn rename_here(e: &Expr, from: &str, to: &str) -> Expr {
+    match e {
+        Expr::Identifier(t, name) if name == from => {
+            Expr::Identifier(t.clone(), to.to_string())
+        }
+        Expr::Rel(_, _) => e.clone(),
+        _ => rel_lowerer::map_children(e, &|x| rename_here(x, from, to)),
     }
 }
 
@@ -784,7 +851,9 @@ fn generated_name(chars: &[char], i: usize) -> Option<(String, String, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compile::core::{Decl, JoinKind, Kind, Match, Pat, ValBind};
+    use crate::compile::core::{
+        Decl, JoinKind, JoinRows, Kind, Match, Pat, Row, ValBind,
+    };
     use crate::compile::library::BuiltInFunction;
     use crate::compile::span::Span;
     use crate::compile::types::{Label, PrimitiveType, Type};
@@ -858,8 +927,14 @@ mod tests {
     }
 
     fn node(rel: Rel) -> Expr {
+        let rel = rel.bind();
         let t = rel.derive_type().expect("derives a type");
         Expr::Rel(t, Box::new(rel))
+    }
+
+    /// The element a node is being built over, `$0`.
+    fn row(t: Rc<Type>) -> Expr {
+        Expr::Identifier(t, ROW.to_string())
     }
 
     /// A record type wide enough to need a reference.
@@ -878,6 +953,7 @@ mod tests {
     #[test]
     fn a_node_a_line_and_its_inputs_below_it() {
         let tree = node(Rel::Filter(
+            Row::placeholder(),
             Box::new(id("r", Kind::List.apply(int()))),
             Box::new(t()),
         ));
@@ -888,6 +964,7 @@ mod tests {
     #[test]
     fn with_types_every_node_says_its_type() {
         let tree = node(Rel::Filter(
+            Row::placeholder(),
             Box::new(id("r", Kind::List.apply(int()))),
             Box::new(t()),
         ));
@@ -905,25 +982,28 @@ mod tests {
         let right = id("b", Kind::List.apply(int()));
         let inner = node(Rel::Join(
             JoinKind::Inner,
-            None,
+            JoinRows::placeholder(),
             Box::new(t()),
             Box::new(left.clone()),
             Box::new(right.clone()),
         ));
         assert_eq!(plan(&inner, false, 78), "join\n  a\n  b\n");
 
-        // A left join says so, and a binder prints before the
+        // A left join says so, and where its right input reads the
+        // left row the row prints, under its own name, before the
         // condition.
+        let right_reads_left =
+            Expr::List(Kind::List.apply(int()), vec![id("v$7", int())]);
         let outer = node(Rel::Join(
             JoinKind::Left,
-            Some("v$7".to_string()),
+            JoinRows::dependent("v$7".to_string()),
             Box::new(id("p", bool_())),
             Box::new(left),
-            Box::new(right),
+            Box::new(right_reads_left),
         ));
         assert_eq!(
             plan(&outer, false, 78),
-            "join [left] [v$0] [p]\n  a\n  b\n"
+            "join [left] [v$0] [p]\n  a\n  [v$0]\n"
         );
     }
 
@@ -945,9 +1025,9 @@ mod tests {
     #[test]
     fn a_group_writes_its_keys_and_aggregates() {
         let input = id("r", Kind::Bag.apply(int()));
-        let keys =
-            vec![(Label::String("k".to_string()), Expr::Input(int(), 0))];
+        let keys = vec![(Label::String("k".to_string()), row(int()))];
         let with_aggregates = node(Rel::Group(
+            Row::placeholder(),
             Box::new(input.clone()),
             keys.clone(),
             vec![(Label::String("c".to_string()), id("n", int()))],
@@ -957,7 +1037,12 @@ mod tests {
             "group [k = $0] [c = n]\n  r\n"
         );
         // No aggregates, so no second argument. This is `distinct`.
-        let without = node(Rel::Group(Box::new(input), keys, vec![]));
+        let without = node(Rel::Group(
+            Row::placeholder(),
+            Box::new(input),
+            keys,
+            vec![],
+        ));
         assert_eq!(plan(&without, false, 78), "group [k = $0]\n  r\n");
     }
 
@@ -967,7 +1052,11 @@ mod tests {
     #[test]
     fn a_long_type_prints_in_a_legend() {
         let input = id("depts", Kind::Bag.apply(dept()));
-        let tree = node(Rel::Filter(Box::new(input), Box::new(t())));
+        let tree = node(Rel::Filter(
+            Row::placeholder(),
+            Box::new(input),
+            Box::new(t()),
+        ));
         assert_eq!(
             plan(&tree, true, 78),
             "filter [true] : t$0\n  \
@@ -983,10 +1072,11 @@ mod tests {
     #[test]
     fn a_line_folds_four_from_the_node() {
         let tree = node(Rel::Filter(
+            Row::placeholder(),
             Box::new(id("xs", Kind::List.apply(int()))),
             Box::new(and(
-                gt(Expr::Input(int(), 0), lit(100000)),
-                gt(Expr::Input(int(), 0), lit(200000)),
+                gt(row(int()), lit(100000)),
+                gt(row(int()), lit(200000)),
             )),
         ));
         // At a width that holds it, nothing moves.
@@ -1010,6 +1100,7 @@ mod tests {
             fields.insert(Label::String(name.to_string()), int());
         }
         let tree = node(Rel::Project(
+            Row::placeholder(),
             Box::new(id("xs", Kind::List.apply(int()))),
             Box::new(Expr::Tuple(
                 Rc::new(Type::Record(false, fields)),
@@ -1033,12 +1124,9 @@ mod tests {
     #[test]
     fn a_let_that_does_not_fit_opens() {
         let tree = node(Rel::Filter(
+            Row::placeholder(),
             Box::new(id("xs", Kind::List.apply(int()))),
-            Box::new(let_(
-                "v$5",
-                Expr::Input(int(), 0),
-                gt(Expr::Input(int(), 0), id("v$5", int())),
-            )),
+            Box::new(let_("v$5", row(int()), gt(row(int()), id("v$5", int())))),
         ));
         assert_eq!(
             plan(&tree, false, 45),
@@ -1064,8 +1152,9 @@ mod tests {
             pat: Pat::Literal(int(), Val::Int(i)),
             expr: lit(value),
         };
-        let subject = Expr::Input(int(), 0);
+        let subject = row(int());
         let tree = node(Rel::Project(
+            Row::placeholder(),
             Box::new(id("xs", Kind::List.apply(int()))),
             Box::new(Expr::Case(
                 int(),
@@ -1091,17 +1180,17 @@ mod tests {
         fields.insert(Label::String("a".to_string()), int());
         fields.insert(Label::String("b".to_string()), int());
         for e in [
-            gt(Expr::Input(int(), 0), lit(1)),
-            and(gt(Expr::Input(int(), 0), lit(1)), id("p", bool_())),
+            gt(row(int()), lit(1)),
+            and(gt(row(int()), lit(1)), id("p", bool_())),
             Expr::Tuple(
                 Rc::new(Type::Record(false, fields)),
                 vec![lit(1), lit(2)],
             ),
-            let_("v$5", Expr::Input(int(), 0), id("v$5", int())),
+            let_("v$5", row(int()), id("v$5", int())),
             Expr::Apply(
                 int(),
                 Box::new(id("f", int())),
-                Box::new(gt(Expr::Input(int(), 0), lit(1))),
+                Box::new(gt(row(int()), lit(1))),
                 Span::new(""),
             ),
         ] {
@@ -1135,19 +1224,21 @@ mod tests {
     #[test]
     fn a_relation_inside_an_expression_is_broken_out() {
         let inner = node(Rel::Filter(
+            Row::placeholder(),
             Box::new(Expr::List(Kind::List.apply(int()), vec![lit(3), lit(4)])),
-            Box::new(gt(Expr::Input(int(), 0), id("v$5", int()))),
+            Box::new(gt(row(int()), id("v$5", int()))),
         ));
         let mut fields = BTreeMap::new();
         fields.insert(Label::String("i".to_string()), int());
         fields.insert(Label::String("ys".to_string()), Kind::List.apply(int()));
         let element = Rc::new(Type::Record(false, fields));
         let tree = node(Rel::Project(
+            Row::placeholder(),
             Box::new(Expr::List(Kind::List.apply(int()), vec![lit(1), lit(2)])),
             Box::new(let_(
                 "v$5",
-                Expr::Input(int(), 0),
-                Expr::Tuple(element, vec![Expr::Input(int(), 0), inner]),
+                row(int()),
+                Expr::Tuple(element, vec![row(int()), inner]),
             )),
         ));
         assert_eq!(
@@ -1173,10 +1264,12 @@ mod tests {
     fn a_fragment_declares_what_it_reads_transitively() {
         let pairs = || id("pairs", Kind::List.apply(int()));
         let innermost = node(Rel::Filter(
+            Row::placeholder(),
             Box::new(pairs()),
-            Box::new(gt(Expr::Input(int(), 0), id("v$5", int()))),
+            Box::new(gt(row(int()), id("v$5", int()))),
         ));
         let middle = node(Rel::Filter(
+            Row::placeholder(),
             Box::new(pairs()),
             Box::new(Expr::Apply(
                 bool_(),
@@ -1186,10 +1279,11 @@ mod tests {
             )),
         ));
         let tree = node(Rel::Filter(
+            Row::placeholder(),
             Box::new(id("xs", Kind::List.apply(int()))),
             Box::new(let_(
                 "v$5",
-                Expr::Input(int(), 0),
+                row(int()),
                 Expr::Apply(
                     bool_(),
                     Box::new(id("nonEmpty", bool_())),
@@ -1219,11 +1313,13 @@ mod tests {
     fn equal_fragments_are_still_two_fragments() {
         let one = || {
             node(Rel::Filter(
+                Row::placeholder(),
                 Box::new(id("xs", Kind::List.apply(int()))),
                 Box::new(t()),
             ))
         };
         let tree = node(Rel::Filter(
+            Row::placeholder(),
             Box::new(id("ys", Kind::List.apply(int()))),
             Box::new(Expr::Tuple(
                 Rc::new(Type::Tuple(vec![
@@ -1259,10 +1355,12 @@ mod tests {
     #[test]
     fn a_nested_tree_continues_the_numbering() {
         let inner = node(Rel::Filter(
+            Row::placeholder(),
             Box::new(id("b", Kind::List.apply(int()))),
             Box::new(id("v$40", bool_())),
         ));
         let outer = node(Rel::Filter(
+            Row::placeholder(),
             Box::new(id("a", Kind::List.apply(int()))),
             Box::new(Expr::Apply(
                 bool_(),

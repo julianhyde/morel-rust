@@ -75,7 +75,7 @@ fn replace_current(expr: &Expr, repl: &Expr) -> Expr {
     match expr {
         Expr::Current(_) => repl.clone(),
         // A tree is a query, and establishes its own `current`.
-        Expr::Input(_, _) | Expr::Rel(_, _) => expr.clone(),
+        Expr::Rel(_, _) => expr.clone(),
         // A nested query establishes its own `current`; leave it alone.
         Expr::From(..) => expr.clone(),
         // Leaves with no sub-expressions.
@@ -159,7 +159,7 @@ fn replace_ordinal(expr: &Expr, repl: &Expr) -> Expr {
     match expr {
         Expr::Ordinal(_) => repl.clone(),
         // A tree is a query, and counts its own rows.
-        Expr::Input(_, _) | Expr::Rel(_, _) => expr.clone(),
+        Expr::Rel(_, _) => expr.clone(),
         Expr::Literal(..)
         | Expr::Identifier(..)
         | Expr::RecordSelector(..)
