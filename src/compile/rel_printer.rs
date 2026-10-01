@@ -43,7 +43,9 @@
 // R5 lands.
 #![allow(dead_code)]
 
-use crate::compile::core::{Decl, Expr, RIGHT_ROW, ROW, Rel, written_infix};
+use crate::compile::core::{
+    Decl, Expr, ORDINAL, RIGHT_ROW, ROW, Rel, Row, written_infix,
+};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::lindig::{self, Doc};
 use crate::compile::types::{Label, Type};
@@ -508,9 +510,6 @@ fn doc_bounded(e: &Expr, left: u8, right: u8) -> Doc {
                 ]),
             }
         }
-        // The row's position, which a node that counts its rows binds
-        // as `$ordinal`.
-        Expr::Ordinal(_) => lindig::text("$ordinal"),
         // A record or a tuple may break after a comma, one field to a
         // line, which is the other place a plan's lines get long.
         Expr::Tuple(t, elems) => {
@@ -618,17 +617,19 @@ fn opened(rel: &Rel) -> Rel {
             .iter()
             .fold(e.clone(), |e, (from, to)| rename_here(&e, from, to))
     };
+    let open_row = |e: &Expr, row: &Row| match &row.ordinal {
+        Some(o) => open(e, &[(&row.name, ROW), (o, ORDINAL)]),
+        None => open(e, &[(&row.name, ROW)]),
+    };
     match rel {
-        Rel::Filter(row, input, c) => Rel::Filter(
-            row.clone(),
-            input.clone(),
-            Box::new(open(c, &[(&row.name, ROW)])),
-        ),
+        Rel::Filter(row, input, c) => {
+            Rel::Filter(row.clone(), input.clone(), Box::new(open_row(c, row)))
+        }
         Rel::Group(row, input, keys, aggs) => {
             let parts = |parts: &[(Label, Expr)]| {
                 parts
                     .iter()
-                    .map(|(l, e)| (l.clone(), open(e, &[(&row.name, ROW)])))
+                    .map(|(l, e)| (l.clone(), open_row(e, row)))
                     .collect()
             };
             Rel::Group(row.clone(), input.clone(), parts(keys), parts(aggs))
@@ -640,16 +641,12 @@ fn opened(rel: &Rel) -> Rel {
             left.clone(),
             right.clone(),
         ),
-        Rel::Project(row, input, e) => Rel::Project(
-            row.clone(),
-            input.clone(),
-            Box::new(open(e, &[(&row.name, ROW)])),
-        ),
-        Rel::Sort(row, input, e) => Rel::Sort(
-            row.clone(),
-            input.clone(),
-            Box::new(open(e, &[(&row.name, ROW)])),
-        ),
+        Rel::Project(row, input, e) => {
+            Rel::Project(row.clone(), input.clone(), Box::new(open_row(e, row)))
+        }
+        Rel::Sort(row, input, e) => {
+            Rel::Sort(row.clone(), input.clone(), Box::new(open_row(e, row)))
+        }
         other => other.clone(),
     }
 }

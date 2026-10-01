@@ -25,9 +25,11 @@
 //! Mirrors morel-java's `compile.FreeFinder`.
 
 use crate::compile::core::{
-    Binding, Decl, Expr, Match, Pat, PatField, Rel, Step, StepKind,
+    Binding, Decl, Expr, Match, Pat, PatField, Rel, Row, Step, StepKind,
 };
 use std::collections::BTreeSet;
+use std::iter::once;
+use std::slice;
 
 /// Returns the names of identifiers that occur free in `expr`,
 /// relative to the bindings already in `env`.
@@ -49,9 +51,12 @@ pub fn free_names_in(expr: &Expr) -> BTreeSet<String> {
 /// node gives it: a node's row is bound in its own expressions, and a
 /// join's left row in its condition and its right input.
 fn visit_rel(rel: &Rel, bound: &mut Vec<String>, out: &mut BTreeSet<String>) {
-    let mut visit_under = |names: &[&String], e: &Expr| {
+    let row_names = |row: &Row| -> Vec<String> {
+        once(row.name.clone()).chain(row.ordinal.clone()).collect()
+    };
+    let mut visit_under = |names: &[String], e: &Expr| {
         let saved_len = bound.len();
-        bound.extend(names.iter().map(|n| (*n).clone()));
+        bound.extend(names.iter().cloned());
         visit_expr(e, bound, out);
         bound.truncate(saved_len);
     };
@@ -60,18 +65,18 @@ fn visit_rel(rel: &Rel, bound: &mut Vec<String>, out: &mut BTreeSet<String>) {
         | Rel::Project(row, input, e)
         | Rel::Sort(row, input, e) => {
             visit_under(&[], input);
-            visit_under(&[&row.name], e);
+            visit_under(&row_names(row), e);
         }
         Rel::Group(row, input, keys, aggregates) => {
             visit_under(&[], input);
             for (_, e) in keys.iter().chain(aggregates.iter()) {
-                visit_under(&[&row.name], e);
+                visit_under(&row_names(row), e);
             }
         }
         Rel::Join(_, rows, condition, left, right) => {
             visit_under(&[], left);
-            visit_under(&[&rows.left], right);
-            visit_under(&[&rows.left, &rows.right], condition);
+            visit_under(slice::from_ref(&rows.left), right);
+            visit_under(&[rows.left.clone(), rows.right.clone()], condition);
         }
         _ => {
             for child in rel.children() {

@@ -36,11 +36,11 @@
 //! end.
 
 use crate::compile::core::{
-    Decl, Expr, JoinKind, JoinRows, Match, Pat, Rel, Step, StepKind, ValBind,
-    element_type,
+    Decl, Expr, JoinKind, JoinRows, Match, Pat, Rel, Row, Step, StepKind,
+    ValBind, element_type,
 };
 use crate::compile::expander::expr_eq;
-use crate::compile::from_builder::FromBuilder;
+use crate::compile::from_builder::{FromBuilder, ORDINAL_FIELD_PREFIX};
 use crate::compile::library::BuiltInFunction;
 use crate::compile::postfix::peel_type;
 use crate::compile::rel_translator;
@@ -432,11 +432,12 @@ impl Lowerer {
             ),
             Rel::Filter(row, input, condition) => {
                 let element = self.into(b, input)?;
-                b.where_(replace_name(condition, &row.name, &element));
+                let (element, names) = self.counted(b, element, row);
+                b.where_(replace_names(condition, &names));
                 Some(element)
             }
             Rel::Group(row, input, keys, aggregates) => {
-                self.group(b, &row.name, input, keys, aggregates)
+                self.group(b, row, input, keys, aggregates)
             }
             Rel::Intersect(distinct, args) => self.set_rel(
                 b,
@@ -456,7 +457,8 @@ impl Lowerer {
                 // -- except for an ordinal, which counts rows: only a
                 // step evaluates its expression exactly once per row.
                 let element = self.into(b, input)?;
-                let out = replace_name(e, &row.name, &element);
+                let (_, names) = self.counted(b, element, row);
+                let out = replace_names(e, &names);
                 if out.uses_ordinal() {
                     return Some(self.materialize(b, out));
                 }
@@ -481,7 +483,8 @@ impl Lowerer {
                 // must be paid for here rather than deferred.
                 let element = self.into(b, input)?;
                 let element = self.materialize(b, element);
-                b.fb.order(replace_name(key, &row.name, &element));
+                let (element, names) = self.counted(b, element, row);
+                b.fb.order(replace_names(key, &names));
                 Some(element)
             }
             Rel::Take(input, count) => {
@@ -565,12 +568,13 @@ impl Lowerer {
     fn group(
         &mut self,
         b: &mut Builder,
-        row: &str,
+        row: &Row,
         input: &Expr,
         keys: &[(Label, Expr)],
         aggregates: &[(Label, Expr)],
     ) -> Option<Expr> {
         let element = self.into(b, input)?;
+        let (_, names) = self.counted(b, element, row);
         // A key the query named "current" is a row nothing named, and
         // the step list's builder treats a binding of that name as
         // the row rather than a field, so it is renamed.
@@ -586,13 +590,13 @@ impl Lowerer {
         let key_expr = if keys.is_empty() {
             Expr::Tuple(Rc::new(Type::Primitive(PrimitiveType::Unit)), vec![])
         } else {
-            labelled_record(&keys, |e| replace_name(e, row, &element))
+            labelled_record(&keys, |e| replace_names(e, &names))
         };
         let agg_expr = if aggregates.is_empty() {
             None
         } else {
             Some(labelled_record(aggregates, |e| {
-                replace_name(&aggregate_fns(e, &keys), row, &element)
+                replace_names(&aggregate_fns(e, &keys), &names)
             }))
         };
         b.fb.group(None, key_expr, agg_expr);
@@ -648,6 +652,60 @@ impl Lowerer {
         b.row.push((name.clone(), elem.clone()));
         b.started = true;
         Some(Expr::Identifier(elem, name))
+    }
+
+    /// Returns what a node's row and its position denote, as the steps
+    /// for the node's own expressions read them.
+    ///
+    /// A node that counts its rows has the position yielded beside the
+    /// element first, because only a yield evaluates its expression
+    /// exactly once for each row that reaches it; a counter read where
+    /// it is used -- in a sort's key, while the rows are being sorted --
+    /// would count something else. This is what the resolver does when
+    /// a step list's step reads `ordinal`. The element returned is the
+    /// one read out of what was yielded.
+    fn counted(
+        &mut self,
+        b: &mut Builder,
+        element: Expr,
+        row: &Row,
+    ) -> (Expr, BTreeMap<String, Expr>) {
+        let Some(ordinal) = &row.ordinal else {
+            let names = BTreeMap::from([(row.name.clone(), element.clone())]);
+            return (element, names);
+        };
+        // A record of two binders, the position's named as the
+        // resolver names the field it puts `ordinal` in, which is the
+        // shape the compiler knows a counted row by. A pair under one
+        // binder is not: a query nested in a yield that read an
+        // enclosing `let` through it read the wrong slot.
+        let element_name = self.fresh_name();
+        let ordinal_name = format!("{}{}", ORDINAL_FIELD_PREFIX, element_name);
+        let row_vars = vec![
+            (element_name.clone(), element.type_()),
+            (ordinal_name.clone(), int_type()),
+        ];
+        let Expr::Tuple(t, vars) = record_of(&row_vars) else {
+            unreachable!()
+        };
+        let values = vars
+            .into_iter()
+            .map(|var| match &var {
+                Expr::Identifier(_, n) if *n == ordinal_name => {
+                    Expr::Ordinal(int_type())
+                }
+                _ => element.clone(),
+            })
+            .collect();
+        b.fb.yield_(Expr::Tuple(t, values));
+        b.row = row_vars;
+        b.started = true;
+        let element = Expr::Identifier(element.type_(), element_name);
+        let names = BTreeMap::from([
+            (row.name.clone(), element.clone()),
+            (ordinal.clone(), Expr::Identifier(int_type(), ordinal_name)),
+        ]);
+        (element, names)
     }
 
     /// Makes the element the step list's row, where it is not that
@@ -901,13 +959,9 @@ pub(crate) fn field_at(exp: &Expr, i: usize) -> Expr {
     )
 }
 
-/// Replaces a row's name in an expression with the expression for the
-/// element, folding a selection of a component of it.
-fn replace_name(e: &Expr, name: &str, replacement: &Expr) -> Expr {
-    replace_names(
-        e,
-        &BTreeMap::from([(name.to_string(), replacement.clone())]),
-    )
+/// The type of a position, `int`.
+fn int_type() -> Rc<Type> {
+    Rc::new(Type::Primitive(PrimitiveType::Int))
 }
 
 /// Replaces several names at once, so that no substitution can see

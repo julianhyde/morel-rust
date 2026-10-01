@@ -40,12 +40,14 @@
 #![allow(dead_code)]
 
 use crate::compile::core::{
-    Binding, Decl, Expr, JoinKind, JoinRows, Match, Pat, PatField, RIGHT_ROW,
-    ROW, Rel, Row, Step, StepEnv, StepKind, ValBind, element_type, fresh_name,
+    Binding, Decl, Expr, JoinKind, JoinRows, Match, ORDINAL, Pat, PatField,
+    RIGHT_ROW, ROW, Rel, Row, Step, StepEnv, StepKind, ValBind, element_type,
+    fresh_name, rename,
 };
 use crate::compile::free_finder::free_names_in;
 use crate::compile::library::BuiltInFunction;
 use crate::compile::postfix::peel_type;
+use crate::compile::rel_lowerer::map_children;
 use crate::compile::rel_validator;
 use crate::compile::span::Span;
 use crate::compile::types::{Label, PrimitiveType, Type};
@@ -60,7 +62,13 @@ use std::rc::Rc;
 pub fn translate(steps: &[Step], query_type: &Rc<Type>) -> Option<Expr> {
     DECLINE.with(|cell| cell.set(None));
     LEAKED.with(|cell| cell.borrow_mut().clear());
-    translate_with(steps, query_type, BTreeMap::new(), Rc::new(Cell::new(0)))
+    translate_with(
+        steps,
+        query_type,
+        BTreeMap::new(),
+        Rc::new(Cell::new(0)),
+        false,
+    )
 }
 
 thread_local! {
@@ -86,7 +94,7 @@ pub fn trees_within(e: &Expr) -> Expr {
     let counter = Rc::new(Cell::new(0));
     let map = BTreeMap::new();
     let mut nested = |t: &Rc<Type>, steps: &[Step]| {
-        translate_with(steps, t, BTreeMap::new(), Rc::clone(&counter))
+        translate_with(steps, t, BTreeMap::new(), Rc::clone(&counter), false)
     };
     substitute_with(e, &map, &mut nested).unwrap_or_else(|| e.clone())
 }
@@ -121,11 +129,13 @@ fn forget_decline() {
 
 /// Translates a query whose expressions may read the names in `outer`,
 /// which is how a nested tree reads the row that encloses it.
+/// `nested` says whether the query is inside another being translated.
 fn translate_with(
     steps: &[Step],
     query_type: &Rc<Type>,
     outer: BTreeMap<String, Expr>,
     counter: Rc<Cell<usize>>,
+    nested: bool,
 ) -> Option<Expr> {
     let mut t = Translator {
         tree: None,
@@ -133,6 +143,7 @@ fn translate_with(
         outer,
         counter,
         in_scope: Vec::new(),
+        nested,
     };
     for step in steps {
         t.step(step)?;
@@ -364,6 +375,11 @@ impl Path {
         Path(vec![Hop::Ordinal])
     }
 
+    /// Returns whether this path is the row's position.
+    fn is_ordinal(&self) -> bool {
+        matches!(self.0.as_slice(), [Hop::Ordinal])
+    }
+
     /// Returns this path read from inside component `i` instead of
     /// from the element, which is what a join does to the paths its
     /// inputs' binders had.
@@ -451,10 +467,17 @@ impl Hop {
                 }
             }
             // The position is bound beside the element, not inside it,
-            // so the base is not read.
-            Hop::Ordinal => Some(Expr::Ordinal(Rc::new(Type::Primitive(
-                PrimitiveType::Int,
-            )))),
+            // so the base is not read; but only the node that counts
+            // the rows binds it, so it can be read only where the base
+            // is that node's row. Read through a join's component, or
+            // from a dependent join's right input, it would count
+            // other rows.
+            Hop::Ordinal => {
+                if !is_row(&base) {
+                    return decline("`ordinal` read where its rows are not");
+                }
+                Some(ordinal_ref())
+            }
         }
     }
 }
@@ -486,6 +509,16 @@ struct Translator {
     /// which is the translation's, so that a wrong `bindings` is caught
     /// rather than agreed with.
     in_scope: Vec<String>,
+    /// Whether this query is inside another that is being translated.
+    ///
+    /// An expression a query evaluates once rather than once per row
+    /// -- its first scan's source, a `skip` or `take` count, a set
+    /// operand -- reads `ordinal` as the position of the enclosing
+    /// step's row. Here no node binds that position, so the
+    /// placeholder is left for the enclosing query, whose node for that
+    /// step binds it; where it cannot, the enclosing query declines.
+    /// A query inside nothing has no enclosing step, and declines.
+    nested: bool,
 }
 
 impl Translator {
@@ -535,11 +568,11 @@ impl Translator {
                 })
             }
             StepKind::Skip(n) => {
-                let n = self.rewrite(n)?;
+                let n = self.count(n)?;
                 self.wrap(|input| Rel::Skip(input, Box::new(n)))
             }
             StepKind::Take(n) => {
-                let n = self.rewrite(n)?;
+                let n = self.count(n)?;
                 self.wrap(|input| Rel::Take(input, Box::new(n)))
             }
             StepKind::Unorder => self.wrap(Rel::Unorder),
@@ -606,7 +639,8 @@ impl Translator {
                 if condition.is_some() || join_type != JoinType::Inner {
                     return decline("a first scan with a condition or a kind");
                 }
-                self.tree = Some(filtered(self.source_tree(source)?, test)?);
+                self.tree =
+                    Some(filtered(self.source_tree(source, true)?, test)?);
                 self.bindings = paths;
             }
             Some(left) => {
@@ -635,7 +669,7 @@ impl Translator {
                         return None;
                     }
                 } else {
-                    right = self.source_tree(source)?;
+                    right = self.source_tree(source, false)?;
                 }
                 let right = filtered(right, test)?;
                 let n = components_of(&left) + 1;
@@ -743,21 +777,80 @@ impl Translator {
         ordinal
     }
 
+    /// Rewrites a `skip` or `take` count, which is evaluated once,
+    /// before any row, and so cannot read a row's position.
+    fn count(&self, n: &Expr) -> Option<Expr> {
+        let n = self.rewrite(n)?;
+        if reads_ordinal(&n) && !self.nested {
+            return decline("a count that reads `ordinal`");
+        }
+        Some(n)
+    }
+
     /// Translates a scan's source. A query of its own is a tree of its
     /// own, and anything else is a leaf whose names may need changing.
-    fn source_tree(&self, source: &Expr) -> Option<Expr> {
+    ///
+    /// The first scan's source is evaluated once, so an `ordinal` in it
+    /// counts the rows of an enclosing step; see [`Translator::nested`].
+    /// A later scan's is evaluated once per row of the scans before it,
+    /// and no node binds a position for those.
+    fn source_tree(&self, source: &Expr, first: bool) -> Option<Expr> {
+        let tree = self.source_tree2(source)?;
+        if reads_ordinal(&tree) && !(first && self.nested) {
+            return decline("a scan source that reads `ordinal`");
+        }
+        Some(tree)
+    }
+
+    fn source_tree2(&self, source: &Expr) -> Option<Expr> {
         match source {
             Expr::From(t, steps) => translate_with(
                 steps,
                 t,
                 self.outer.clone(),
                 Rc::clone(&self.counter),
+                true,
             ),
             leaf => match substitute(leaf, &self.outer) {
                 None => decline("a scan source over the enclosing row"),
                 some => some,
             },
         }
+    }
+
+    /// Returns the names a tree nested in this one reads, with the
+    /// query's binders read through `binder`, the name the row goes by
+    /// there, and a binder that is the row's position as `ordinal`.
+    ///
+    /// Where there is no name for the position -- a dependent join
+    /// binds none -- such a binder is left out, and
+    /// [`Translator::reads_skipped`] says whether the nested tree
+    /// wanted it.
+    fn outer_through(
+        &self,
+        binder: &Expr,
+        ordinal: Option<&Expr>,
+    ) -> Option<BTreeMap<String, Expr>> {
+        let mut outer = self.outer.clone();
+        for (bound, path) in &self.bindings {
+            if path.is_ordinal() {
+                if let Some(ordinal) = ordinal {
+                    outer.insert(bound.clone(), ordinal.clone());
+                }
+                continue;
+            }
+            outer.insert(bound.clone(), path.read_from(binder.clone())?);
+        }
+        Some(outer)
+    }
+
+    /// Returns whether an expression still reads a binder that
+    /// [`Translator::outer_through`] left out.
+    fn reads_skipped(&self, e: &Expr, outer: &BTreeMap<String, Expr>) -> bool {
+        let free = free_names_in(e);
+        self.bindings.iter().any(|(bound, _)| {
+            !outer.contains_key(bound) && free.contains(bound)
+        })
     }
 
     /// Returns a fresh name for a binder the translation invents.
@@ -778,19 +871,24 @@ impl Translator {
             return decline("a join whose left is not a collection");
         };
         let binder = Expr::Identifier(left_elem, name.to_string());
-        let mut outer = self.outer.clone();
-        for (bound, path) in &self.bindings {
-            outer.insert(bound.clone(), path.read_from(binder.clone())?);
-        }
-        match source {
+        let outer = self.outer_through(&binder, None)?;
+        let tree = match source {
             // The source is a query of its own, so it is a tree of its
             // own, whose `$0` is its own element.
-            Expr::From(t, steps) => {
-                translate_with(steps, t, outer, Rc::clone(&self.counter))
-            }
+            Expr::From(t, steps) => translate_with(
+                steps,
+                t,
+                outer.clone(),
+                Rc::clone(&self.counter),
+                true,
+            ),
             // Otherwise it is a leaf, and only its names change.
             leaf => substitute(leaf, &outer),
+        }?;
+        if reads_ordinal(&tree) || self.reads_skipped(&tree, &outer) {
+            return decline("a scan source that reads `ordinal`");
         }
+        Some(tree)
     }
 
     /// Rewrites a join's `on` condition. The binders the left input
@@ -815,7 +913,13 @@ impl Translator {
         for (bound, path) in paths {
             map.insert(bound.clone(), path.read_at(&right_elem, 1)?);
         }
-        substitute(condition, &map)
+        // A join's condition sees pairs of rows, and a join binds no
+        // position for either of them.
+        let condition = substitute(condition, &map)?;
+        if reads_ordinal(&condition) {
+            return decline("a join condition that reads `ordinal`");
+        }
+        Some(condition)
     }
 
     /// Translates a `group`: the keys and the aggregates, each a list
@@ -1072,9 +1176,15 @@ impl Translator {
     fn rewrite_operand(&self, e: &Expr) -> Option<Expr> {
         let counter = Rc::clone(&self.counter);
         let outer = self.outer.clone();
-        substitute_with(e, &self.outer, &mut |t, steps| {
-            translate_with(steps, t, outer.clone(), Rc::clone(&counter))
-        })
+        let operand = substitute_with(e, &self.outer, &mut |t, steps| {
+            translate_with(steps, t, outer.clone(), Rc::clone(&counter), true)
+        })?;
+        // An operand is evaluated once, so an `ordinal` in it counts
+        // the rows of an enclosing step; see [`Translator::nested`].
+        if reads_ordinal(&operand) && !self.nested {
+            return decline("a set operand that reads `ordinal`");
+        }
+        Some(operand)
     }
 
     /// Adds the projection that builds the query's row out of the
@@ -1212,20 +1322,46 @@ impl Translator {
         // That was an attempt, not a decision: an expression holding a
         // query declines here and succeeds below, so whatever it said
         // is about a path not taken.
+        //
+        // A nested tree binds its own row and position, so it reads
+        // this node's through names that a `let` binds first: the row's,
+        // and the position's -- which a nested query reads both where a
+        // binder holds it and where it evaluates `ordinal` once, before
+        // its first row. Each `let` is there only where the nested tree
+        // reads its name, the row's outside the position's, as
+        // morel-java writes them.
         forget_decline();
-        let name = self.new_binder();
-        let binder = Expr::Identifier(elem.clone(), name.clone());
-        let mut outer = self.outer.clone();
-        for (bound, path) in &self.bindings {
-            outer.insert(bound.clone(), path.read_from(binder.clone())?);
-        }
+        let row_name = self.new_binder();
+        let ordinal_name = self.new_binder();
+        let binder = Expr::Identifier(elem.clone(), row_name.clone());
+        let ordinal =
+            Expr::Identifier(ordinal_ref().type_(), ordinal_name.clone());
+        let outer = self.outer_through(&binder, Some(&ordinal))?;
         let counter = Rc::clone(&self.counter);
         let Some(body) = substitute_with(e, &map, &mut |t, steps| {
-            translate_with(steps, t, outer.clone(), Rc::clone(&counter))
+            translate_with(steps, t, outer.clone(), Rc::clone(&counter), true)
         }) else {
             return decline("an expression over the binders");
         };
-        Some(let_binding(name, row_ref(&elem, 0), body))
+        let body = rename_in_nested(&body, ORDINAL, &ordinal_name);
+        let free = free_names_in(&body);
+        let mut body = body;
+        if free.contains(&ordinal_name) {
+            body = let_binding(ordinal_name, ordinal_ref(), body);
+        }
+        if free.contains(&row_name) {
+            body = let_binding(row_name, row_ref(&elem, 0), body);
+        }
+        Some(body)
+    }
+}
+
+/// Returns `e` with `from` renamed `to` inside the trees nested in it,
+/// and nowhere else.
+fn rename_in_nested(e: &Expr, from: &str, to: &str) -> Expr {
+    match e {
+        Expr::Rel(_, _) => rename(e, from, to),
+        _ => map_children(e, &|x| rename_in_nested(x, from, to)),
     }
 }
 
@@ -1409,6 +1545,21 @@ fn row_ref(elem: &Rc<Type>, index: usize) -> Expr {
 /// Returns whether an expression is the element itself, `$0`.
 fn is_row(e: &Expr) -> bool {
     matches!(e, Expr::Identifier(_, name) if name == ROW)
+}
+
+/// Returns the placeholder that reads the position of the row a node
+/// is being built over, `$ordinal`; the node binds it.
+fn ordinal_ref() -> Expr {
+    Expr::Identifier(
+        Rc::new(Type::Primitive(PrimitiveType::Int)),
+        ORDINAL.to_string(),
+    )
+}
+
+/// Returns whether an expression reads the position placeholder,
+/// which only the node about to be built can bind.
+fn reads_ordinal(e: &Expr) -> bool {
+    free_names_in(e).contains(ORDINAL)
 }
 
 /// Builds the expression for a node, with the type it derives and
@@ -1610,12 +1761,14 @@ fn substitute_with(
         Expr::Literal(_, _)
         | Expr::RecordSelector(_, _)
         | Expr::Extent(_, _) => e.clone(),
-        // `ordinal` and `current` are the row's position and the row
-        // itself, and none of `spec.md` §3's eleven constructors
-        // carries either. There is nothing to build, so this is not
-        // missing coverage.
-        Expr::Current(_) | Expr::Ordinal(_) => {
-            return decline("a query that reads `ordinal` or `current`");
+        // `ordinal` is the position of the row the step reads, which
+        // the node the step becomes binds beside the row.
+        Expr::Ordinal(_) => ordinal_ref(),
+        // `current` is the row itself, and none of `spec.md` §3's
+        // eleven constructors carries it. There is nothing to build,
+        // so this is not missing coverage.
+        Expr::Current(_) => {
+            return decline("a query that reads `current`");
         }
         Expr::Apply(t, f, a, span) => {
             let f = substitute_with(f, map, nested)?;
@@ -1872,6 +2025,37 @@ mod tests {
         );
     }
 
+    /// A node that reads `ordinal` binds the position of its row in
+    /// its input, as `$ordinal`: here the sorted rows, which is why the
+    /// position is the filter's and not the scan's.
+    #[test]
+    fn a_node_that_reads_ordinal_binds_it() {
+        assert_eq!(
+            tree_of("from i in [3, 1, 2] order i where ordinal > 0").unwrap(),
+            "filter [$ordinal > 0] : int list\n  \
+             sort [$0] : int list\n    \
+             [3, 1, 2] : int list\n"
+        );
+    }
+
+    /// A query nested in a `yield` that counts with `ordinal` before
+    /// its first row counts the enclosing rows, and reads their
+    /// position through a `let`, as it reads the enclosing row.
+    #[test]
+    fn a_nested_query_reads_the_enclosing_ordinal_through_a_let() {
+        assert_eq!(
+            tree_of("from x in [10, 20] yield (from i in [1, 2] take ordinal)")
+                .unwrap(),
+            "project [let val v$0 = $ordinal in r$0[v$0] end] : \
+             int list list\n  \
+             [10, 20] : int list\n\
+             \n\
+             r$0[v$0] =\n  \
+             take [v$0] : int list\n    \
+             [1, 2] : int list\n"
+        );
+    }
+
     /// Every tree the translator builds passes the validator.
     #[test]
     fn what_it_builds_is_well_formed() {
@@ -1881,6 +2065,8 @@ mod tests {
             "from i in [3, 1, 2] order i skip 1 take 1",
             "from i in [1, 2] union [3]",
             "from yield 1",
+            "from i in [3, 1, 2] order i where ordinal > 0",
+            "from x in [10, 20] yield (from i in [1, 2] take ordinal)",
         ] {
             let text = tree_of(code).unwrap_or_else(|| {
                 panic!("declined: {}", code);

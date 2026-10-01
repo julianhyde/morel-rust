@@ -918,18 +918,31 @@ pub const ROW: &str = "$0";
 /// The placeholder for a join's right row; see [`ROW`].
 pub const RIGHT_ROW: &str = "$1";
 
-/// The name a one-input node binds its input's element to, for its
-/// expressions to read: `$0` as the plan prints it.
+/// The placeholder for a node's row's position; see [`ROW`].
+pub const ORDINAL: &str = "$ordinal";
+
+/// The names a one-input node binds for its expressions to read: its
+/// input's element, `$0` as the plan prints it, and, where the node
+/// counts its rows, the element's position, `$ordinal`.
+///
+/// The position is the element's in the node's input, from zero. It
+/// is bound beside the element rather than read out of it, which is
+/// why a node that reads it has to be told it does: a filter over a
+/// sort counts the sorted rows, and the same filter moved below the
+/// sort would count others.
 #[derive(Clone, Debug)]
 pub struct Row {
     pub name: String,
+    pub ordinal: Option<String>,
 }
 
 impl Row {
-    /// A row that [`Rel::bind`] will name.
+    /// A row that [`Rel::bind`] will name, and that counts its rows if
+    /// its node's expressions read [`ORDINAL`].
     pub fn placeholder() -> Row {
         Row {
             name: ROW.to_string(),
+            ordinal: None,
         }
     }
 }
@@ -1003,15 +1016,27 @@ impl Rel {
     /// A join's condition reads its left row as [`ROW`] whether or not
     /// the left row already has a name, which a dependent join's does.
     pub fn bind(self) -> Rel {
-        fn bind_row(row: Row, exps: Vec<&mut Expr>) -> Row {
-            if row.name != ROW {
-                return row;
+        fn bind_row(row: Row, mut exps: Vec<&mut Expr>) -> Row {
+            let mut name = row.name;
+            if name == ROW {
+                name = fresh_name();
+                for e in &mut exps {
+                    **e = rename(e, ROW, &name);
+                }
             }
-            let name = fresh_name();
-            for e in exps {
-                *e = rename(e, ROW, &name);
+            let mut ordinal = row.ordinal;
+            let reads_ordinal = exps
+                .iter()
+                .any(|e| free_finder::free_names_in(e).contains(ORDINAL));
+            if reads_ordinal && ordinal.as_deref().is_none_or(|o| o == ORDINAL)
+            {
+                let o = fresh_name();
+                for e in &mut exps {
+                    **e = rename(e, ORDINAL, &o);
+                }
+                ordinal = Some(o);
             }
-            Row { name }
+            Row { name, ordinal }
         }
         match self {
             Rel::Filter(row, input, mut c) => {
@@ -1073,7 +1098,13 @@ impl Rel {
     /// A join's left row keeps its name, because its right input may
     /// read it by that name; only the condition reads it as [`ROW`].
     pub fn open(&self) -> Rel {
-        let open = |row: &Row, e: &Expr| rename(e, &row.name, ROW);
+        let open = |row: &Row, e: &Expr| {
+            let e = rename(e, &row.name, ROW);
+            match &row.ordinal {
+                Some(o) => rename(&e, o, ORDINAL),
+                None => e,
+            }
+        };
         match self {
             Rel::Filter(row, input, c) => Rel::Filter(
                 Row::placeholder(),
@@ -2548,6 +2579,41 @@ mod tests {
         assert!(
             matches!(condition.as_ref(), Expr::Identifier(_, n) if n == ROW)
         );
+    }
+
+    /// A node counts its rows where its expressions read the position
+    /// placeholder, and not otherwise; the position is bound beside the
+    /// row, and reading it frees no name either.
+    #[test]
+    fn a_node_binds_an_ordinal_where_it_reads_one() {
+        use crate::compile::free_finder::free_names_in;
+        let position = Expr::Identifier(int(), ORDINAL.to_string());
+        let project = node(Rel::Project(
+            Row::placeholder(),
+            Box::new(leaf(int(), Kind::List)),
+            Box::new(position),
+        ));
+        let Expr::Rel(_, rel) = &project else {
+            panic!("a node");
+        };
+        let Rel::Project(bound, _, e) = rel.as_ref() else {
+            panic!("a projection");
+        };
+        let ordinal = bound.ordinal.clone().expect("binds an ordinal");
+        assert_ne!(ordinal, ORDINAL);
+        assert!(matches!(e.as_ref(), Expr::Identifier(_, n) if *n == ordinal));
+        assert_eq!(free_names_in(&project).len(), 1);
+
+        let plain = Rel::Project(
+            Row::placeholder(),
+            Box::new(leaf(int(), Kind::List)),
+            Box::new(row(int())),
+        )
+        .bind();
+        let Rel::Project(bound, _, _) = plain else {
+            panic!("a projection");
+        };
+        assert_eq!(bound.ordinal, None);
     }
 
     /// A join's left row is in scope in its right input, and reading it
