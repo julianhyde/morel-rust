@@ -60,7 +60,6 @@ pub fn widen(
 
 fn walk_expr(e: &mut Expr, env: &HashMap<String, Val>, file_root: &Rc<File>) {
     match e {
-        Expr::Input(_, _) => {}
         // Widening inside a tree needs the scoping rules that the
         // translator brings; nothing builds a tree yet. See plan.md R5.
         Expr::Rel(_, _) => todo!("widen inside a relational tree"),
@@ -258,7 +257,6 @@ fn set_expr_type(e: &mut Expr, t: Rc<Type>) {
         Expr::Fn(et, _, _) => *et = t,
         Expr::From(et, _) => *et = t,
         Expr::Identifier(et, _) => *et = t,
-        Expr::Input(et, _) => *et = t,
         Expr::Let(et, _, _) => *et = t,
         Expr::List(et, _) => *et = t,
         Expr::Literal(et, _) => *et = t,

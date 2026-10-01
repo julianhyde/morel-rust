@@ -94,6 +94,15 @@ Landed, each gated with `fullMake --no-clean` and
   fresh name. A record is written as a tuple in `Core` but matched
   by a `Pat::Record`, as in morel-java, so the tree grounder's
   pattern walkers read either through `Pat::components`.
+* A node binds named rows, as morel-java's does: `Row` on a
+  filter, projection, group and sort, `JoinRows` on a join, each a
+  unique `v$N` from `core::fresh_name`, and `Expr::Input` is gone. A
+  join is dependent when its right input reads its left row. A pass
+  builds a node over the placeholders `$0` and `$1`, which
+  `Rel::bind` names, and reads one through `Rel::open`, which puts
+  the placeholders back; so the grounder's reasoning is unchanged.
+  The printer opens a node to print its arguments, and the plan
+  text did not change.
 * A query in a function body is left alone and grounded where the
   function is called. What bounds its variables may be an argument,
   and grounding it where it is written seals away the constraints the
@@ -131,9 +140,9 @@ see which tree failed.
 
 ## Stages, in order
 
-**B. `ordinal` in the tree.** 123 declines. Give the row nodes an
-optional ordinal binder, as morel-java's `RowRel` has. Keep printing
-`$ordinal`.
+**B. `ordinal` in the tree.** 123 declines. The rows are named
+(above); what is left is to give `Row` an optional ordinal binder,
+as morel-java's `RowRel` has, and keep printing `$ordinal`.
 
 **C. The resolver builds trees.** `resolve_step`, about 230 lines,
 replaces `from_builder.rs`'s 1319.

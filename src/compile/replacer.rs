@@ -130,7 +130,6 @@ fn visit_expr(
                 Expr::Identifier(t.clone(), name.clone())
             }
         }
-        Expr::Input(_, _) => expr.clone(),
         Expr::Let(t, decls, body) => {
             // For Phase 0 we don't model decl-introduced bindings;
             // recurse into the body without shadowing. Phase 3+

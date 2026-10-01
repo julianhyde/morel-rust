@@ -1686,7 +1686,6 @@ fn from_has_extent(expr: &Expr) -> bool {
 fn body_has_extent(expr: &Expr) -> bool {
     match expr {
         Expr::Extent(_, _) => true,
-        Expr::Input(_, _) => false,
         Expr::Rel(_, rel) => rel.children().iter().any(|e| body_has_extent(e)),
         Expr::Aggregate(_, e1, e2, _) => {
             body_has_extent(e1) || body_has_extent(e2)
@@ -1897,7 +1896,6 @@ fn normalize_tuple_id_param(pat: &Pat, body: &Expr) -> (Pat, Expr) {
 /// to the component variable.
 fn simplify_tuple_projections(expr: &Expr) -> Expr {
     match expr {
-        Expr::Input(_, _) => expr.clone(),
         // Rewriting inside a tree needs the scoping rules that the
         // translator brings; nothing builds a tree yet. See plan.md R5.
         Expr::Rel(_, _) => todo!("simplify inside a relational tree"),

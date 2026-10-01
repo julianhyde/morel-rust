@@ -45,20 +45,39 @@ pub fn free_names_in(expr: &Expr) -> BTreeSet<String> {
     free_names(expr, &[])
 }
 
-/// Visits a relational node's sub-expressions, binding a dependent
-/// join's binder in its right input, where `spec.md` §2 rule 2 says it
-/// is in scope and nowhere else.
+/// Visits a relational node's sub-expressions, each in the scope its
+/// node gives it: a node's row is bound in its own expressions, and a
+/// join's left row in its condition and its right input.
 fn visit_rel(rel: &Rel, bound: &mut Vec<String>, out: &mut BTreeSet<String>) {
-    if let Rel::Join(_, Some(binder), condition, left, right) = rel {
-        visit_expr(left, bound, out);
-        bound.push(binder.clone());
-        visit_expr(right, bound, out);
-        bound.pop();
-        visit_expr(condition, bound, out);
-        return;
-    }
-    for child in rel.children() {
-        visit_expr(child, bound, out);
+    let mut visit_under = |names: &[&String], e: &Expr| {
+        let saved_len = bound.len();
+        bound.extend(names.iter().map(|n| (*n).clone()));
+        visit_expr(e, bound, out);
+        bound.truncate(saved_len);
+    };
+    match rel {
+        Rel::Filter(row, input, e)
+        | Rel::Project(row, input, e)
+        | Rel::Sort(row, input, e) => {
+            visit_under(&[], input);
+            visit_under(&[&row.name], e);
+        }
+        Rel::Group(row, input, keys, aggregates) => {
+            visit_under(&[], input);
+            for (_, e) in keys.iter().chain(aggregates.iter()) {
+                visit_under(&[&row.name], e);
+            }
+        }
+        Rel::Join(_, rows, condition, left, right) => {
+            visit_under(&[], left);
+            visit_under(&[&rows.left], right);
+            visit_under(&[&rows.left, &rows.right], condition);
+        }
+        _ => {
+            for child in rel.children() {
+                visit_under(&[], child);
+            }
+        }
     }
 }
 
@@ -98,10 +117,6 @@ fn visit_expr(
                 out.insert(name.clone());
             }
         }
-        // An input reference is not a variable, so it frees no name.
-        // That it is a node of its own rather than an identifier is
-        // what makes this true without being told; see `Expr::Input`.
-        Expr::Input(_, _) => {}
         Expr::Let(_, decls, body) => {
             let saved_len = bound.len();
             for decl in decls {

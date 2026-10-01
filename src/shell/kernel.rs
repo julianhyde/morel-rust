@@ -217,7 +217,6 @@ fn is_safe_for_cross_unit(name: &str, expr: &Expr, env: &Environment) -> bool {
 fn expr_contains_reference(expr: &Expr, name: &str) -> bool {
     match expr {
         Expr::Identifier(_, n) => n == name,
-        Expr::Input(_, _) => false,
         Expr::Rel(_, rel) => rel
             .children()
             .iter()

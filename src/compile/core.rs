@@ -15,11 +15,13 @@
 // language governing permissions and limitations under the
 // License.
 
+use crate::compile::free_finder;
 use crate::compile::library::BuiltInFunction;
 use crate::compile::lindig::{
     Doc, beside, group, hcat, line, punctuate, render, text,
 };
 use crate::compile::postfix::peel_type;
+use crate::compile::rel_lowerer;
 use crate::compile::rel_printer;
 use crate::compile::span::Span;
 use crate::compile::type_env::Id;
@@ -55,23 +57,6 @@ pub enum Expr {
     Case(Rc<Type>, Box<Expr>, Vec<Match>, Span),
     Let(Rc<Type>, Vec<Decl>, Box<Expr>),
     Fn(Rc<Type>, Vec<Match>, Span),
-
-    /// `Input(t, i)` names the element of the `i`th input of the
-    /// relational node that encloses it: `$0` for a one-input node's
-    /// input, and `$0` and `$1` for a join's left and right. `t` is that
-    /// element's type.
-    ///
-    /// It is a node of its own rather than an identifier, and that is
-    /// deliberate. morel-java made it an `Id` first, over a pattern
-    /// named `"$0"`, and every `$0` in a tree was then the same variable
-    /// to anything reasoning about free variables -- use counts,
-    /// substitution -- because a pattern compares by name and ordinal
-    /// and not by type. It does not announce itself when it is wrong: a
-    /// use count that is too high only makes the inliner decline, while
-    /// one that is too low makes it substitute across a node boundary.
-    /// See spec.md §2 and plan.md.
-    #[allow(dead_code)]
-    Input(Rc<Type>, usize),
 
     /// A node of a relational tree; see [`Rel`]. `t` is the collection
     /// type the node produces, so a node is an expression like any
@@ -155,7 +140,6 @@ impl Expr {
             Expr::Fn(t, _, _) => t.clone(),
             Expr::From(t, _) => t.clone(),
             Expr::Identifier(t, _) => t.clone(),
-            Expr::Input(t, _) => t.clone(),
             Expr::Let(t, _, _) => t.clone(),
             Expr::List(t, _) => t.clone(),
             Expr::Literal(t, _) => t.clone(),
@@ -337,9 +321,9 @@ impl Expr {
                         == "~"
                 {
                     let operand = match arg.as_ref() {
-                        Expr::Identifier(_, _)
-                        | Expr::Input(_, _)
-                        | Expr::Literal(_, _) => arg.to_doc(),
+                        Expr::Identifier(_, _) | Expr::Literal(_, _) => {
+                            arg.to_doc()
+                        }
                         _ => hcat(vec![text("("), arg.to_doc(), text(")")]),
                     };
                     return beside(text("~ "), operand);
@@ -350,7 +334,6 @@ impl Expr {
                 // `#flatten Range ([OPEN (0, 10)])`.
                 match arg.as_ref() {
                     Expr::Identifier(_, _)
-                    | Expr::Input(_, _)
                     | Expr::Literal(_, _)
                     | Expr::RecordSelector(_, _)
                     | Expr::Tuple(_, _) => {
@@ -380,7 +363,6 @@ impl Expr {
             Expr::Fn(_, arms, _) => beside(text("fn "), matches_doc(arms)),
             Expr::From(_, steps) => beside(text("from"), steps_doc(steps)),
             Expr::Identifier(_, name) => text(name),
-            Expr::Input(_, i) => text(&format!("${}", i)),
             Expr::Let(_, decls, body) => {
                 let decls_str = decls
                     .iter()
@@ -838,21 +820,34 @@ pub enum StepKind {
 /// literal -- anything. The boundary between the tree and the rest of
 /// Core is wherever the expression stops being a node.
 ///
-/// **A node holds no names.** Its expressions read their input's
-/// element as [`Expr::Input`], `$0`, which every node rebinds to its
-/// own input; a join's right element is `$1`. What a binder used to be
-/// called survives only in the projection that names it, which is why a
-/// query with several binders ends in one.
+/// **A node binds the names its expressions read.** A node that sees
+/// one row at a time -- a filter, a projection, a group, a sort --
+/// binds its input's element as a [`Row`], and a join binds both of
+/// its inputs' elements, as [`JoinRows`]. The expressions read them as
+/// ordinary identifiers. This is morel-java's model, whose `RowRel`
+/// binds a `row` pattern. The names are unique, made by
+/// [`fresh_name`], so that no two nodes bind the same one and a pass
+/// reasoning about free variables -- use counts, substitution -- sees
+/// each row as a variable of its own; and they print as `$0` and `$1`
+/// inside the node that binds them. A query's binders survive only in
+/// the projection that names them, which is why a query with several
+/// binders ends in one.
+///
+/// A pass that builds a node writes its expressions over the
+/// placeholders [`ROW`] and [`RIGHT_ROW`], and [`Rel::bind`] gives the
+/// node names of its own; a pass that reads one does the reverse,
+/// [`Rel::open`]. No stored tree holds a placeholder.
 ///
 /// Four things that look like constructors are not, and are spelled out
 /// here so that they are not added: `distinct` is a [`Rel::Group`]
 /// whose keys are the whole element; `compute` is a keyless `Group`
 /// plus the extraction the enclosing expression performs; `yieldAll` is
 /// a dependent join and a projection; and an outer apply is a
-/// [`Rel::Join`] of kind `Left` carrying a binder. Correlation is not a
-/// mode either: it is a free occurrence of a join's binder in its right
-/// input, so decorrelation drops the binder rather than rewriting one
-/// node into another.
+/// [`Rel::Join`] of kind `Left` whose right input reads its left row.
+/// Correlation is not a mode either: it is a free occurrence of a
+/// join's left row in its right input, so decorrelation rewrites the
+/// right input until it no longer reads the row, rather than rewriting
+/// one node into another.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub enum Rel {
@@ -861,51 +856,52 @@ pub enum Rel {
     Except(bool, Vec<Expr>),
 
     /// `filter [cond] r`: the elements of the input for which `cond` is
-    /// true. Fields are input, condition.
-    Filter(Box<Expr>, Box<Expr>),
+    /// true. Fields are row, input, condition.
+    Filter(Row, Box<Expr>, Box<Expr>),
 
     /// `group [keys] [aggregates] r`: one element per distinct key,
     /// whose value is a record of the keys and the aggregates -- or, if
     /// there is exactly one field in all, that field's value. Fields are
-    /// input, keys, aggregates.
+    /// row, input, keys, aggregates.
     ///
     /// `distinct` is this with the whole element as the key and no
     /// aggregates; `compute` is this with no keys.
-    Group(Box<Expr>, Vec<(Label, Expr)>, Vec<(Label, Expr)>),
+    Group(Row, Box<Expr>, Vec<(Label, Expr)>, Vec<(Label, Expr)>),
 
     /// `intersect [distinct] r0 r1 ...`
     Intersect(bool, Vec<Expr>),
 
     /// `join [kind] [binder] [cond] left right`: the pairs of elements
     /// for which `cond` is true, with the components of the two inputs
-    /// concatenated. Fields are kind, binder, condition, left, right.
+    /// concatenated. Fields are kind, rows, condition, left, right.
     ///
     /// A join has no yield. The projection above it is where the
     /// components are named.
     ///
-    /// The binder, where there is one, names the left element inside the
-    /// right input and nowhere else; its presence is what makes the join
-    /// dependent. The condition sees `$0` and `$1`, which are the left
+    /// The condition sees both rows, `$0` and `$1`, which are the left
     /// and right elements and are both present whatever the kind --
     /// whereas the *element* of an outer join wraps each component of a
-    /// side that may be absent in `option`, on its own.
-    Join(JoinKind, Option<String>, Box<Expr>, Box<Expr>, Box<Expr>),
+    /// side that may be absent in `option`, on its own. The left row is
+    /// in scope in the right input too, and a right input that reads it
+    /// is what makes the join dependent: the plan prints the left row
+    /// as the join's binder.
+    Join(JoinKind, JoinRows, Box<Expr>, Box<Expr>, Box<Expr>),
 
     /// `project [e] r`: one element per input element, the value of `e`.
-    /// Fields are input, expression.
-    Project(Box<Expr>, Box<Expr>),
+    /// Fields are row, input, expression.
+    Project(Row, Box<Expr>, Box<Expr>),
 
     /// `skip [n] r`: the input's elements after the first `n`. Fields
-    /// are input, count. The count is evaluated before the first element
-    /// and so cannot read `$0`.
+    /// are input, count. The count is evaluated before the first element,
+    /// so the node binds no row.
     Skip(Box<Expr>, Box<Expr>),
 
     /// `sort [e] r`: the input's elements ordered by `e`. Its output is
-    /// a `list` whatever its input was. Fields are input, key.
-    Sort(Box<Expr>, Box<Expr>),
+    /// a `list` whatever its input was. Fields are row, input, key.
+    Sort(Row, Box<Expr>, Box<Expr>),
 
     /// `take [n] r`: the input's first `n` elements. Fields are input,
-    /// count; the count cannot read `$0`.
+    /// count; like `skip`'s, the count reads no row.
     Take(Box<Expr>, Box<Expr>),
 
     /// `unorder r`: the input's elements, as a `bag`.
@@ -915,34 +911,285 @@ pub enum Rel {
     Union(bool, Vec<Expr>),
 }
 
+/// The placeholder for a node's row while the node is being built or
+/// read; see [`Rel::bind`] and [`Rel::open`].
+pub const ROW: &str = "$0";
+
+/// The placeholder for a join's right row; see [`ROW`].
+pub const RIGHT_ROW: &str = "$1";
+
+/// The name a one-input node binds its input's element to, for its
+/// expressions to read: `$0` as the plan prints it.
+#[derive(Clone, Debug)]
+pub struct Row {
+    pub name: String,
+}
+
+impl Row {
+    /// A row that [`Rel::bind`] will name.
+    pub fn placeholder() -> Row {
+        Row {
+            name: ROW.to_string(),
+        }
+    }
+}
+
+/// The names a join binds its inputs' elements to: `$0` and `$1` as
+/// the plan prints them in its condition. The left row is in scope in
+/// the right input as well, where it prints under its own name.
+#[derive(Clone, Debug)]
+pub struct JoinRows {
+    pub left: String,
+    pub right: String,
+}
+
+impl JoinRows {
+    /// Rows that [`Rel::bind`] will name.
+    pub fn placeholder() -> JoinRows {
+        JoinRows {
+            left: ROW.to_string(),
+            right: RIGHT_ROW.to_string(),
+        }
+    }
+
+    /// Rows whose left is already named, because the right input
+    /// reads it by that name, and whose right [`Rel::bind`] will name.
+    pub fn dependent(left: String) -> JoinRows {
+        JoinRows {
+            left,
+            right: RIGHT_ROW.to_string(),
+        }
+    }
+}
+
+thread_local! {
+    /// The counter that every generated binder is named from. One
+    /// counter, never reset, so that no two binders in a session share
+    /// a name; a plan renumbers what it prints, so the numbers are not
+    /// seen.
+    static NEXT_NAME: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Returns a binder name that nothing else has, `v$N`. A `$` cannot
+/// occur in an identifier the query wrote, so it cannot capture one.
+pub fn fresh_name() -> String {
+    NEXT_NAME.with(|c| {
+        let i = c.get();
+        c.set(i + 1);
+        format!("v${}", i)
+    })
+}
+
+/// Returns `e` with every identifier `from` renamed `to`, through the
+/// nodes of a tree. A row's name is unique, so nothing shadows it.
+pub fn rename(e: &Expr, from: &str, to: &str) -> Expr {
+    match e {
+        Expr::Identifier(t, name) if name == from => {
+            Expr::Identifier(t.clone(), to.to_string())
+        }
+        Expr::Rel(t, rel) => Expr::Rel(
+            t.clone(),
+            Box::new(rel.map_children(&|x| rename(x, from, to))),
+        ),
+        _ => rel_lowerer::map_children(e, &|x| rename(x, from, to)),
+    }
+}
+
 #[allow(dead_code)]
 impl Rel {
+    /// Returns this node with a name of its own for each row that is
+    /// still a placeholder, its expressions reading the name instead.
+    ///
+    /// A join's condition reads its left row as [`ROW`] whether or not
+    /// the left row already has a name, which a dependent join's does.
+    pub fn bind(self) -> Rel {
+        fn bind_row(row: Row, exps: Vec<&mut Expr>) -> Row {
+            if row.name != ROW {
+                return row;
+            }
+            let name = fresh_name();
+            for e in exps {
+                *e = rename(e, ROW, &name);
+            }
+            Row { name }
+        }
+        match self {
+            Rel::Filter(row, input, mut c) => {
+                let row = bind_row(row, vec![&mut c]);
+                Rel::Filter(row, input, c)
+            }
+            Rel::Group(row, input, mut keys, mut aggs) => {
+                let exps = keys
+                    .iter_mut()
+                    .chain(aggs.iter_mut())
+                    .map(|(_, e)| e)
+                    .collect();
+                let row = bind_row(row, exps);
+                Rel::Group(row, input, keys, aggs)
+            }
+            Rel::Join(kind, rows, c, left, right) => {
+                let left_name = if rows.left == ROW {
+                    fresh_name()
+                } else {
+                    rows.left
+                };
+                let right_name = if rows.right == RIGHT_ROW {
+                    fresh_name()
+                } else {
+                    rows.right
+                };
+                let c = rename(
+                    &rename(&c, ROW, &left_name),
+                    RIGHT_ROW,
+                    &right_name,
+                );
+                Rel::Join(
+                    kind,
+                    JoinRows {
+                        left: left_name,
+                        right: right_name,
+                    },
+                    Box::new(c),
+                    left,
+                    right,
+                )
+            }
+            Rel::Project(row, input, mut e) => {
+                let row = bind_row(row, vec![&mut e]);
+                Rel::Project(row, input, e)
+            }
+            Rel::Sort(row, input, mut e) => {
+                let row = bind_row(row, vec![&mut e]);
+                Rel::Sort(row, input, e)
+            }
+            other => other,
+        }
+    }
+
+    /// Returns this node with its rows renamed to the placeholders in
+    /// its expressions, which is the form a pass reasons about and
+    /// [`Rel::bind`] turns back into a node.
+    ///
+    /// A join's left row keeps its name, because its right input may
+    /// read it by that name; only the condition reads it as [`ROW`].
+    pub fn open(&self) -> Rel {
+        let open = |row: &Row, e: &Expr| rename(e, &row.name, ROW);
+        match self {
+            Rel::Filter(row, input, c) => Rel::Filter(
+                Row::placeholder(),
+                input.clone(),
+                Box::new(open(row, c)),
+            ),
+            Rel::Group(row, input, keys, aggs) => {
+                let parts = |parts: &[(Label, Expr)]| {
+                    parts
+                        .iter()
+                        .map(|(l, e)| (l.clone(), open(row, e)))
+                        .collect()
+                };
+                Rel::Group(
+                    Row::placeholder(),
+                    input.clone(),
+                    parts(keys),
+                    parts(aggs),
+                )
+            }
+            Rel::Join(kind, rows, c, left, right) => {
+                let c =
+                    rename(&rename(c, &rows.left, ROW), &rows.right, RIGHT_ROW);
+                Rel::Join(
+                    *kind,
+                    JoinRows::dependent(rows.left.clone()),
+                    Box::new(c),
+                    left.clone(),
+                    right.clone(),
+                )
+            }
+            Rel::Project(row, input, e) => Rel::Project(
+                Row::placeholder(),
+                input.clone(),
+                Box::new(open(row, e)),
+            ),
+            Rel::Sort(row, input, e) => Rel::Sort(
+                Row::placeholder(),
+                input.clone(),
+                Box::new(open(row, e)),
+            ),
+            other => other.clone(),
+        }
+    }
+
+    /// Returns this node with `f` applied to each of its inputs and
+    /// expressions, its rows unchanged.
+    pub fn map_children(&self, f: &dyn Fn(&Expr) -> Expr) -> Rel {
+        let b = |e: &Expr| Box::new(f(e));
+        let parts = |parts: &[(Label, Expr)]| {
+            parts.iter().map(|(l, e)| (l.clone(), f(e))).collect()
+        };
+        match self {
+            // lint: sort until '#}' where '##Rel::'
+            Rel::Except(d, args) => {
+                Rel::Except(*d, args.iter().map(f).collect())
+            }
+            Rel::Filter(row, input, c) => {
+                Rel::Filter(row.clone(), b(input), b(c))
+            }
+            Rel::Group(row, input, keys, aggs) => {
+                Rel::Group(row.clone(), b(input), parts(keys), parts(aggs))
+            }
+            Rel::Intersect(d, args) => {
+                Rel::Intersect(*d, args.iter().map(f).collect())
+            }
+            Rel::Join(k, rows, c, l, r) => {
+                Rel::Join(*k, rows.clone(), b(c), b(l), b(r))
+            }
+            Rel::Project(row, input, e) => {
+                Rel::Project(row.clone(), b(input), b(e))
+            }
+            Rel::Skip(input, n) => Rel::Skip(b(input), b(n)),
+            Rel::Sort(row, input, e) => Rel::Sort(row.clone(), b(input), b(e)),
+            Rel::Take(input, n) => Rel::Take(b(input), b(n)),
+            Rel::Union(d, args) => Rel::Union(*d, args.iter().map(f).collect()),
+            Rel::Unorder(input) => Rel::Unorder(b(input)),
+        }
+    }
+
+    /// Returns whether this is a join whose right input reads its left
+    /// row, which is what makes a join dependent.
+    pub fn is_dependent(&self) -> bool {
+        match self {
+            Rel::Join(_, rows, _, _, right) => {
+                free_finder::free_names_in(right).contains(&rows.left)
+            }
+            _ => false,
+        }
+    }
+
     /// Returns this node's sub-expressions: its inputs, and the
     /// expressions its arguments are made of, in the order they are
     /// written.
     ///
-    /// It is a flat view, and says nothing about scope: a join's binder
-    /// is in scope in its right input and nowhere else, and every node
-    /// rebinds `$0` for its own expressions. A pass that rewrites, or
-    /// that reasons about names, must walk the variants and honour
-    /// that; this serves the passes for which the answer is the same
-    /// either way, such as "does anything under here mention an
-    /// extent".
+    /// It is a flat view, and says nothing about scope: a join's left
+    /// row is in scope in its condition and its right input, and every
+    /// other row in its own node's expressions. A pass that reasons
+    /// about names must walk the variants and honour that; this serves
+    /// the passes for which the answer is the same either way, such as
+    /// "does anything under here mention an extent".
     pub fn children(&self) -> Vec<&Expr> {
         let mut v: Vec<&Expr> = Vec::new();
         match self {
             Rel::Except(_, inputs)
             | Rel::Intersect(_, inputs)
             | Rel::Union(_, inputs) => v.extend(inputs.iter()),
-            Rel::Filter(input, e)
-            | Rel::Project(input, e)
+            Rel::Filter(_, input, e)
+            | Rel::Project(_, input, e)
             | Rel::Skip(input, e)
-            | Rel::Sort(input, e)
+            | Rel::Sort(_, input, e)
             | Rel::Take(input, e) => {
                 v.push(input);
                 v.push(e);
             }
-            Rel::Group(input, keys, aggregates) => {
+            Rel::Group(_, input, keys, aggregates) => {
                 v.push(input);
                 v.extend(keys.iter().map(|(_, e)| e));
                 v.extend(aggregates.iter().map(|(_, e)| e));
@@ -970,13 +1217,13 @@ impl Rel {
     pub fn derive_element_type(&self) -> Option<Rc<Type>> {
         match self {
             // The element passes through unchanged.
-            Rel::Filter(input, _)
+            Rel::Filter(_, input, _)
             | Rel::Skip(input, _)
-            | Rel::Sort(input, _)
+            | Rel::Sort(_, input, _)
             | Rel::Take(input, _)
             | Rel::Unorder(input) => element_type(&input.type_()),
             // The element is what the expression builds.
-            Rel::Project(_, e) => Some(e.type_()),
+            Rel::Project(_, _, e) => Some(e.type_()),
             // A record of the keys and the aggregates -- a record
             // whether there is one field or many, because an element
             // whose shape depended on how many labels there were would
@@ -986,7 +1233,7 @@ impl Rel {
             // is silent about no fields at all, which `group ()` makes;
             // `record_type` answers `unit`, which is what a record of
             // nothing is in ML and what the query's own type says.
-            Rel::Group(_, keys, aggregates) => {
+            Rel::Group(_, _, keys, aggregates) => {
                 let mut fields: Vec<(Label, Rc<Type>)> = Vec::new();
                 for (label, e) in keys.iter().chain(aggregates.iter()) {
                     fields.push((label.clone(), e.type_()));
@@ -1010,12 +1257,12 @@ impl Rel {
         match self {
             // A sort orders, and an unorder forgets, whatever they were
             // given. These two are why the kind is in the signature.
-            Rel::Sort(_, _) => Some(Kind::List),
+            Rel::Sort(_, _, _) => Some(Kind::List),
             Rel::Unorder(_) => Some(Kind::Bag),
             // The input's kind passes through.
-            Rel::Filter(input, _)
-            | Rel::Group(input, _, _)
-            | Rel::Project(input, _)
+            Rel::Filter(_, input, _)
+            | Rel::Group(_, input, _, _)
+            | Rel::Project(_, input, _)
             | Rel::Skip(input, _)
             | Rel::Take(input, _) => Kind::of(&input.type_()),
             Rel::Join(_, _, _, left, right) => Some(Kind::all([
@@ -1042,11 +1289,11 @@ impl Rel {
             Rel::Except(_, inputs)
             | Rel::Intersect(_, inputs)
             | Rel::Union(_, inputs) => inputs.iter().collect(),
-            Rel::Filter(input, _)
-            | Rel::Group(input, _, _)
-            | Rel::Project(input, _)
+            Rel::Filter(_, input, _)
+            | Rel::Group(_, input, _, _)
+            | Rel::Project(_, input, _)
             | Rel::Skip(input, _)
-            | Rel::Sort(input, _)
+            | Rel::Sort(_, input, _)
             | Rel::Take(input, _)
             | Rel::Unorder(input) => vec![input],
             Rel::Join(_, _, _, left, right) => vec![left, right],
@@ -1057,13 +1304,13 @@ impl Rel {
     pub fn op_name(&self) -> &'static str {
         match self {
             Rel::Except(_, _) => "except",
-            Rel::Filter(_, _) => "filter",
-            Rel::Group(_, _, _) => "group",
+            Rel::Filter(_, _, _) => "filter",
+            Rel::Group(_, _, _, _) => "group",
             Rel::Intersect(_, _) => "intersect",
             Rel::Join(_, _, _, _, _) => "join",
-            Rel::Project(_, _) => "project",
+            Rel::Project(_, _, _) => "project",
             Rel::Skip(_, _) => "skip",
-            Rel::Sort(_, _) => "sort",
+            Rel::Sort(_, _, _) => "sort",
             Rel::Take(_, _) => "take",
             Rel::Unorder(_) => "unorder",
             Rel::Union(_, _) => "union",
@@ -2041,8 +2288,14 @@ mod tests {
     }
 
     fn node(rel: Rel) -> Expr {
+        let rel = rel.bind();
         let t = rel.derive_type().expect("derives a type");
         Expr::Rel(t, Box::new(rel))
+    }
+
+    /// The element a node is being built over, `$0`.
+    fn row(t: Rc<Type>) -> Expr {
+        Expr::Identifier(t, ROW.to_string())
     }
 
     fn option(t: Rc<Type>) -> Rc<Type> {
@@ -2056,29 +2309,44 @@ mod tests {
     fn one_input_nodes_derive_their_type() {
         let input = leaf(int(), Kind::List);
         let cond = Expr::Literal(bool_(), Val::Bool(true));
-        let filter =
-            Rel::Filter(Box::new(input.clone()), Box::new(cond.clone()));
+        let filter = Rel::Filter(
+            Row::placeholder(),
+            Box::new(input.clone()),
+            Box::new(cond.clone()),
+        );
         assert_eq!(*filter.derive_type().unwrap(), Type::List(int()));
 
         let bag_input = leaf(int(), Kind::Bag);
-        let on_bag = Rel::Filter(Box::new(bag_input.clone()), Box::new(cond));
+        let on_bag = Rel::Filter(
+            Row::placeholder(),
+            Box::new(bag_input.clone()),
+            Box::new(cond),
+        );
         assert_eq!(*on_bag.derive_type().unwrap(), Type::Bag(int()));
 
         // A sort's output is a list whatever its input was, and an
         // unorder's is a bag. These two are why the kind is derived
         // rather than carried.
-        let key = Expr::Input(int(), 0);
-        let sort =
-            Rel::Sort(Box::new(bag_input.clone()), Box::new(key.clone()));
+        let key = row(int());
+        let sort = Rel::Sort(
+            Row::placeholder(),
+            Box::new(bag_input.clone()),
+            Box::new(key.clone()),
+        );
         assert_eq!(*sort.derive_type().unwrap(), Type::List(int()));
         let unorder = Rel::Unorder(Box::new(input.clone()));
         assert_eq!(*unorder.derive_type().unwrap(), Type::Bag(int()));
 
         // `project`'s element is what its expression builds, so a
         // projection may change the element type.
-        let project = Rel::Project(Box::new(input.clone()), Box::new(key));
+        let project = Rel::Project(
+            Row::placeholder(),
+            Box::new(input.clone()),
+            Box::new(key),
+        );
         assert_eq!(*project.derive_type().unwrap(), Type::List(int()));
         let to_string = Rel::Project(
+            Row::placeholder(),
             Box::new(input),
             Box::new(Expr::Identifier(string(), "s".to_string())),
         );
@@ -2096,7 +2364,7 @@ mod tests {
         let join = |kind, left: Expr, right: Expr| {
             Rel::Join(
                 kind,
-                None,
+                JoinRows::placeholder(),
                 Box::new(t.clone()),
                 Box::new(left),
                 Box::new(right),
@@ -2130,7 +2398,7 @@ mod tests {
         let join = |kind, left: Expr, right: Expr| {
             Rel::Join(
                 kind,
-                None,
+                JoinRows::placeholder(),
                 Box::new(t.clone()),
                 Box::new(left),
                 Box::new(right),
@@ -2177,7 +2445,7 @@ mod tests {
         let join = |left: Expr, right: Expr| {
             Rel::Join(
                 JoinKind::Inner,
-                None,
+                JoinRows::placeholder(),
                 Box::new(t.clone()),
                 Box::new(left),
                 Box::new(right),
@@ -2215,9 +2483,10 @@ mod tests {
     #[test]
     fn group_builds_a_record() {
         let input = leaf(int(), Kind::Bag);
-        let key = Expr::Input(int(), 0);
+        let key = row(int());
         let total = Expr::Identifier(int(), "total".to_string());
         let two = Rel::Group(
+            Row::placeholder(),
             Box::new(input.clone()),
             vec![(Label::String("deptno".to_string()), key.clone())],
             vec![(Label::String("total".to_string()), total.clone())],
@@ -2234,6 +2503,7 @@ mod tests {
         // One aggregate and no keys: still a record, of one field; a
         // query that wants the bare value projects it out above.
         let one = Rel::Group(
+            Row::placeholder(),
             Box::new(input),
             vec![],
             vec![(Label::String("total".to_string()), total)],
@@ -2247,31 +2517,50 @@ mod tests {
         }
     }
 
-    /// An input reference is not a variable, so it frees no name. That
-    /// is the point of making it a node of its own.
+    /// A node binds its row, so reading it frees no name; and the name
+    /// is the node's own, not the placeholder it was built over.
     #[test]
-    fn input_reference_is_not_a_variable() {
+    fn a_row_is_bound_by_its_node() {
         use crate::compile::free_finder::free_names_in;
         let input = leaf(int(), Kind::List);
         let filter = node(Rel::Filter(
+            Row::placeholder(),
             Box::new(input),
-            Box::new(Expr::Input(int(), 0)),
+            Box::new(row(int())),
         ));
         assert!(free_names_in(&filter).contains("r"));
         assert_eq!(free_names_in(&filter).len(), 1);
+        let Expr::Rel(_, rel) = &filter else {
+            panic!("a node");
+        };
+        let Rel::Filter(row, _, condition) = rel.as_ref() else {
+            panic!("a filter");
+        };
+        assert_ne!(row.name, ROW);
+        assert!(
+            matches!(condition.as_ref(), Expr::Identifier(_, n) if *n == row.name)
+        );
+        // Opened, it reads the placeholder again.
+        let Rel::Filter(row, _, condition) = rel.open() else {
+            panic!("a filter");
+        };
+        assert_eq!(row.name, ROW);
+        assert!(
+            matches!(condition.as_ref(), Expr::Identifier(_, n) if n == ROW)
+        );
     }
 
-    /// A dependent join's binder is in scope in its right input, and
-    /// nowhere else.
+    /// A join's left row is in scope in its right input, and reading it
+    /// there is what makes the join dependent.
     #[test]
-    fn join_binder_is_bound_in_the_right_input() {
+    fn join_left_row_is_bound_in_the_right_input() {
         use crate::compile::free_finder::free_names_in;
         let left = Expr::Identifier(Kind::List.apply(int()), "l".to_string());
         let right_reads_binder =
             Expr::Identifier(Kind::List.apply(int()), "v".to_string());
         let join = node(Rel::Join(
             JoinKind::Inner,
-            Some("v".to_string()),
+            JoinRows::dependent("v".to_string()),
             Box::new(Expr::Literal(bool_(), Val::Bool(true))),
             Box::new(left),
             Box::new(right_reads_binder),
@@ -2279,5 +2568,9 @@ mod tests {
         let free = free_names_in(&join);
         assert!(free.contains("l"));
         assert!(!free.contains("v"), "the binder binds in the right input");
+        let Expr::Rel(_, rel) = &join else {
+            panic!("a node");
+        };
+        assert!(rel.is_dependent());
     }
 }

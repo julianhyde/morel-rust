@@ -36,7 +36,7 @@
 //! end.
 
 use crate::compile::core::{
-    Decl, Expr, JoinKind, Match, Pat, Rel, Step, StepKind, ValBind,
+    Decl, Expr, JoinKind, JoinRows, Match, Pat, Rel, Step, StepKind, ValBind,
     element_type,
 };
 use crate::compile::expander::expr_eq;
@@ -430,13 +430,13 @@ impl Lowerer {
                 },
                 *distinct,
             ),
-            Rel::Filter(input, condition) => {
+            Rel::Filter(row, input, condition) => {
                 let element = self.into(b, input)?;
-                b.where_(replace_input(condition, 0, &element));
+                b.where_(replace_name(condition, &row.name, &element));
                 Some(element)
             }
-            Rel::Group(input, keys, aggregates) => {
-                self.group(b, input, keys, aggregates)
+            Rel::Group(row, input, keys, aggregates) => {
+                self.group(b, &row.name, input, keys, aggregates)
             }
             Rel::Intersect(distinct, args) => self.set_rel(
                 b,
@@ -446,16 +446,17 @@ impl Lowerer {
                 },
                 *distinct,
             ),
-            Rel::Join(kind, binder, condition, left, right) => {
-                self.join(b, *kind, binder.as_deref(), condition, left, right)
+            Rel::Join(kind, rows, condition, left, right) => {
+                let dependent = rel.is_dependent();
+                self.join(b, *kind, rows, dependent, condition, left, right)
             }
-            Rel::Project(input, e) => {
+            Rel::Project(row, input, e) => {
                 // A projection changes the element, not the steps;
                 // nothing is emitted unless a later step needs the row
                 // -- except for an ordinal, which counts rows: only a
                 // step evaluates its expression exactly once per row.
                 let element = self.into(b, input)?;
-                let out = replace_input(e, 0, &element);
+                let out = replace_name(e, &row.name, &element);
                 if out.uses_ordinal() {
                     return Some(self.materialize(b, out));
                 }
@@ -475,12 +476,12 @@ impl Lowerer {
                 b.fb.skip(count.as_ref().clone());
                 Some(element)
             }
-            Rel::Sort(input, key) => {
+            Rel::Sort(row, input, key) => {
                 // A sort reads the element, so a projection above it
                 // must be paid for here rather than deferred.
                 let element = self.into(b, input)?;
                 let element = self.materialize(b, element);
-                b.fb.order(replace_input(key, 0, &element));
+                b.fb.order(replace_name(key, &row.name, &element));
                 Some(element)
             }
             Rel::Take(input, count) => {
@@ -506,22 +507,24 @@ impl Lowerer {
 
     /// Lowers a join: the right input becomes a scan beside the left's
     /// steps, which is what makes the whole left spine one step list.
+    #[allow(clippy::too_many_arguments)]
     fn join(
         &mut self,
         b: &mut Builder,
         kind: JoinKind,
-        binder: Option<&str>,
+        rows: &JoinRows,
+        dependent: bool,
         condition: &Expr,
         left: &Expr,
         right: &Expr,
     ) -> Option<Expr> {
         let left_element = self.into(b, left)?;
         let mut right_tree = right.clone();
-        if let Some(binder) = binder {
+        if dependent {
             // A dependent join reads the left element through its
-            // binder; in a step list the collection is an expression
-            // beside the bindings, so the binder becomes the element.
-            right_tree = substitute_name(right, binder, &left_element);
+            // left row; in a step list the collection is an expression
+            // beside the bindings, so the row becomes the element.
+            right_tree = substitute_name(right, &rows.left, &left_element);
         }
         let right_lowered = self.rel(&right_tree)?;
         let right_elem = element_type(&right_lowered.type_())?;
@@ -534,7 +537,13 @@ impl Lowerer {
             JoinKind::Left => JoinType::Left,
             JoinKind::Right => JoinType::Right,
         };
-        let tested = replace_inputs(condition, &left_element, &right_element);
+        let tested = replace_names(
+            condition,
+            &BTreeMap::from([
+                (rows.left.clone(), left_element.clone()),
+                (rows.right.clone(), right_element.clone()),
+            ]),
+        );
         if join_type == JoinType::Inner {
             b.fb.scan_with_join(join_type, pat, right_lowered, None);
             b.row.push((name, right_elem));
@@ -556,6 +565,7 @@ impl Lowerer {
     fn group(
         &mut self,
         b: &mut Builder,
+        row: &str,
         input: &Expr,
         keys: &[(Label, Expr)],
         aggregates: &[(Label, Expr)],
@@ -576,13 +586,13 @@ impl Lowerer {
         let key_expr = if keys.is_empty() {
             Expr::Tuple(Rc::new(Type::Primitive(PrimitiveType::Unit)), vec![])
         } else {
-            labelled_record(&keys, |e| replace_input(e, 0, &element))
+            labelled_record(&keys, |e| replace_name(e, row, &element))
         };
         let agg_expr = if aggregates.is_empty() {
             None
         } else {
             Some(labelled_record(aggregates, |e| {
-                replace_input(&aggregate_fns(e, &keys), 0, &element)
+                replace_name(&aggregate_fns(e, &keys), row, &element)
             }))
         };
         b.fb.group(None, key_expr, agg_expr);
@@ -891,109 +901,42 @@ pub(crate) fn field_at(exp: &Expr, i: usize) -> Expr {
     )
 }
 
-/// Replaces `$i` in an expression with another expression, folding a
-/// selection of a component of it. It stops at a nested node, which
-/// rebinds `$0` to its own input.
-fn replace_input(e: &Expr, i: usize, replacement: &Expr) -> Expr {
-    replace_inputs_with(e, &|ordinal| {
-        if ordinal == i {
-            Some(replacement.clone())
-        } else {
-            None
-        }
-    })
+/// Replaces a row's name in an expression with the expression for the
+/// element, folding a selection of a component of it.
+fn replace_name(e: &Expr, name: &str, replacement: &Expr) -> Expr {
+    replace_names(
+        e,
+        &BTreeMap::from([(name.to_string(), replacement.clone())]),
+    )
 }
 
-/// Replaces `$0` and `$1` at once, so that neither substitution can
-/// see the other's result.
-fn replace_inputs(e: &Expr, zero: &Expr, one: &Expr) -> Expr {
-    replace_inputs_with(e, &|ordinal| match ordinal {
-        0 => Some(zero.clone()),
-        1 => Some(one.clone()),
-        _ => None,
-    })
-}
-
-pub(crate) fn replace_inputs_with(
-    e: &Expr,
-    f: &dyn Fn(usize) -> Option<Expr>,
-) -> Expr {
+/// Replaces several names at once, so that no substitution can see
+/// another's result, folding a selection of a component of each: `#2
+/// v$0` where `v$0` is `(a, b)` is `b`. A row's name is unique, so
+/// nothing in the expression shadows it.
+pub(crate) fn replace_names(e: &Expr, map: &BTreeMap<String, Expr>) -> Expr {
     match e {
-        // lint: sort until '#}' where '##Expr::'
-        Expr::Aggregate(t, a, b, s) => Expr::Aggregate(
-            t.clone(),
-            Box::new(replace_inputs_with(a, f)),
-            Box::new(replace_inputs_with(b, f)),
-            s.clone(),
-        ),
-        Expr::Apply(t, fx, a, s) => {
-            if let Expr::RecordSelector(_, slot) = fx.as_ref()
-                && let Expr::Input(_, ordinal) = a.as_ref()
-                && let Some(replacement) = f(*ordinal)
-            {
-                return field_at(&replacement, *slot);
-            }
-            Expr::Apply(
-                t.clone(),
-                Box::new(replace_inputs_with(fx, f)),
-                Box::new(replace_inputs_with(a, f)),
-                s.clone(),
-            )
-        }
-        Expr::Case(t, subject, arms, s) => Expr::Case(
-            t.clone(),
-            Box::new(replace_inputs_with(subject, f)),
-            arms.iter()
-                .map(|m| Match {
-                    pat: m.pat.clone(),
-                    expr: replace_inputs_with(&m.expr, f),
-                })
-                .collect(),
-            s.clone(),
-        ),
-        Expr::Fn(t, arms, s) => Expr::Fn(
-            t.clone(),
-            arms.iter()
-                .map(|m| Match {
-                    pat: m.pat.clone(),
-                    expr: replace_inputs_with(&m.expr, f),
-                })
-                .collect(),
-            s.clone(),
-        ),
-        Expr::Input(_, ordinal) => match f(*ordinal) {
-            Some(replacement) => replacement,
+        Expr::Identifier(_, name) => match map.get(name) {
+            Some(replacement) => replacement.clone(),
             None => e.clone(),
         },
-        Expr::Let(t, decls, body) => Expr::Let(
+        Expr::Apply(_, fx, a, _)
+            if matches!(fx.as_ref(), Expr::RecordSelector(_, _))
+                && matches!(a.as_ref(), Expr::Identifier(_, n)
+                    if map.contains_key(n)) =>
+        {
+            let (Expr::RecordSelector(_, slot), Expr::Identifier(_, n)) =
+                (fx.as_ref(), a.as_ref())
+            else {
+                unreachable!()
+            };
+            field_at(&map[n], *slot)
+        }
+        Expr::Rel(t, rel) => Expr::Rel(
             t.clone(),
-            decls
-                .iter()
-                .map(|d| match d {
-                    Decl::NonRecVal(b) => {
-                        let mut bind = b.as_ref().clone();
-                        bind.expr = replace_inputs_with(&b.expr, f);
-                        Decl::NonRecVal(Box::new(bind))
-                    }
-                    other => other.clone(),
-                })
-                .collect(),
-            Box::new(replace_inputs_with(body, f)),
+            Box::new(rel.map_children(&|x| replace_names(x, map))),
         ),
-        Expr::List(t, items) => Expr::List(
-            t.clone(),
-            items.iter().map(|i| replace_inputs_with(i, f)).collect(),
-        ),
-        Expr::Raise(t, a, s) => Expr::Raise(
-            t.clone(),
-            Box::new(replace_inputs_with(a, f)),
-            s.clone(),
-        ),
-        Expr::Tuple(t, items) => Expr::Tuple(
-            t.clone(),
-            items.iter().map(|i| replace_inputs_with(i, f)).collect(),
-        ),
-        _ => e.clone(),
+        _ => map_children(e, &|x| replace_names(x, map)),
     }
 }
 
@@ -1005,56 +948,10 @@ pub(crate) fn substitute_name(
     replacement: &Expr,
 ) -> Expr {
     let sub = |x: &Expr| substitute_name(x, name, replacement);
-    let sub_parts = |parts: &[(Label, Expr)]| {
-        parts
-            .iter()
-            .map(|(l, x)| (l.clone(), sub(x)))
-            .collect::<Vec<_>>()
-    };
     match e {
         Expr::Identifier(_, n) if n == name => replacement.clone(),
         Expr::Rel(t, rel) => {
-            let rel = match rel.as_ref() {
-                // lint: sort until '#}' where '##Rel::'
-                Rel::Except(d, args) => {
-                    Rel::Except(*d, args.iter().map(sub).collect())
-                }
-                Rel::Filter(input, c) => {
-                    Rel::Filter(Box::new(sub(input)), Box::new(sub(c)))
-                }
-                Rel::Group(input, keys, aggs) => Rel::Group(
-                    Box::new(sub(input)),
-                    sub_parts(keys),
-                    sub_parts(aggs),
-                ),
-                Rel::Intersect(d, args) => {
-                    Rel::Intersect(*d, args.iter().map(sub).collect())
-                }
-                Rel::Join(k, b, c, l, r) => Rel::Join(
-                    *k,
-                    b.clone(),
-                    Box::new(sub(c)),
-                    Box::new(sub(l)),
-                    Box::new(sub(r)),
-                ),
-                Rel::Project(input, x) => {
-                    Rel::Project(Box::new(sub(input)), Box::new(sub(x)))
-                }
-                Rel::Skip(input, x) => {
-                    Rel::Skip(Box::new(sub(input)), Box::new(sub(x)))
-                }
-                Rel::Sort(input, x) => {
-                    Rel::Sort(Box::new(sub(input)), Box::new(sub(x)))
-                }
-                Rel::Take(input, x) => {
-                    Rel::Take(Box::new(sub(input)), Box::new(sub(x)))
-                }
-                Rel::Union(d, args) => {
-                    Rel::Union(*d, args.iter().map(sub).collect())
-                }
-                Rel::Unorder(input) => Rel::Unorder(Box::new(sub(input))),
-            };
-            Expr::Rel(t.clone(), Box::new(rel))
+            Expr::Rel(t.clone(), Box::new(rel.map_children(&sub)))
         }
         _ => map_children(e, &sub),
     }
