@@ -174,6 +174,53 @@ record. morel-java throws on `from i in ... yield i mod 3 distinct
 order DESC (current)` ("cannot change position: CURRENT"), so that
 plan has no oracle.
 
+**Before C: what the translator still declines.** C has the
+resolver build every query as a tree, with no step list to fall
+back to, so the translator's declines are a forecast of what C
+meets. On 2026-09-30 the shadow declined 354 queries. Reproduce the
+list by printing `reason` and `exp` from `shadow_query` for every
+`None` and running each script with `--idempotent`. They sort into
+three kinds.
+
+*Artifacts of the step list, which C and E dissolve: 210.*
+
+| n | reason | why it goes away |
+| --- | --- | --- |
+| 183 | a query that tests for existence | A query with no unbounded extent is not grounded on its tree, and the step-list path rewrites its `nonEmpty` calls back into `exists` steps (`as_exists_steps`). A resolver that builds trees emits `nonEmpty` over a tree. |
+| 14 | a tree whose type is not the query's | The step-list grounder's own output, such as the seed of a transitive closure, `from (x, y) in edges yield (x, y)` over records, which no user could write (it is a type error). Not every one was traced. |
+| 13 | a scan source over the enclosing row | The step-list grounder's transitive closures, `iterate (...) (fn (__tc_all, __tc_new) => ...)`. |
+
+The 9 "scan over something that is not a collection" are extents
+the grounder left unbounded: the 46 grounder declines, seen again.
+
+*Correct declines: 36.* `ordinal` or `current` evaluated once, in a
+count or a set operand, with no enclosing query; see B′.
+
+*Real gaps: 99.* morel-java gives the plan text for each, except
+the wildcard scans, on which it throws ("cannot change position:
+WILDCARD_PAT"), as it does on `... distinct order DESC (current)`.
+
+| n | gap | morel-java's plan |
+| --- | --- | --- |
+| 42 | a query whose value is a `compute`, not a collection | `#only Relational (r$0)` over `project [#sum $0]` over `group [] [sum = ...]` |
+| 8 | `compute elements`, `compute #id Fn over i` | the same, `project [#elements $0]` over `group [] [elements = #id Fn over $0]` |
+| 12 | a group key with no name: `group x + y`, `group (x + y, x - y)`, `compute 1 + 2` | the key labelled `v$0`, then `project [#\`v$0\` $0]` |
+| 12 | scans that bind nothing: `from (_) in ...`, `from (()) in ...`, `from ({}) in ...` | none; morel-java throws |
+| 5 | `distinct` followed by a set operator | `union [all]` over `project [#i $0]` over `group [i = $0]` |
+| 5 | a `let val rec` in a per-row expression | -- |
+| 4 | a query whose row names an unbound binder: 2 `compute elements` over a tuple pattern, 2 in `check.smli` not yet traced | -- |
+| 2 | a cons pattern, `from (hd :: tl) in lists` | `project [#hd List $0 + 1]` over `filter [not (#null List $0)]` |
+| 1 | a correlated outer join | -- |
+| 1 | a scan source that applies a function to a nested query (`descendants2 ... (from ...)` in `hybrid.smli`) | -- |
+| 7 | `ordinal` in a later scan's source or a join condition | see B′ |
+
+These are the ones to close in the translator before C. A gap closed
+there is a case `resolve_step` is known to need, with its plan text
+already checked against morel-java; a gap found during C is found
+in the middle of the rewrite. In order of size: the scalar
+`compute`, the unnamed key, the scans that bind nothing, then the
+rest.
+
 **C. The resolver builds trees.** `resolve_step`, about 230 lines,
 replaces `from_builder.rs`'s 1319.
 
