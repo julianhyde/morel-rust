@@ -202,8 +202,8 @@ WILDCARD_PAT"), as it does on `... distinct order DESC (current)`.
 
 | n | gap | morel-java's plan |
 | --- | --- | --- |
-| 42 | a query whose value is a `compute`, not a collection | `#only Relational (r$0)` over `project [#sum $0]` over `group [] [sum = ...]` |
-| 8 | `compute elements`, `compute #id Fn over i` | the same, `project [#elements $0]` over `group [] [elements = #id Fn over $0]` |
+| ~~42~~ | a query whose value is a `compute`, not a collection | closed: `#only Relational (r$0)` over `project [#sum $0]` over `group [] [sum = ...]` |
+| ~~8~~ | `compute elements`, `compute #id Fn over i` | closed: the same, `project [#elements $0]` over `group [] [elements = #id Fn over $0]` |
 | 12 | a group key with no name: `group x + y`, `group (x + y, x - y)`, `compute 1 + 2` | the key labelled `v$0`, then `project [#\`v$0\` $0]` |
 | 12 | scans that bind nothing: `from (_) in ...`, `from (()) in ...`, `from ({}) in ...` | none; morel-java throws |
 | 5 | `distinct` followed by a set operator | `union [all]` over `project [#i $0]` over `group [i = $0]` |
@@ -213,6 +213,17 @@ WILDCARD_PAT"), as it does on `... distinct order DESC (current)`.
 | 1 | a correlated outer join | -- |
 | 1 | a scan source that applies a function to a nested query (`descendants2 ... (from ...)` in `hybrid.smli`) | -- |
 | 7 | `ordinal` in a later scan's source or a join condition | see B′ |
+
+Closing the `compute` gap closed two more that the table did not
+show. A group's part that is not `f over e` -- `from r in elements
+compute sum over r.j`, `10 + 2 * sum over i`, `1 + 2` -- is
+computed by a projection after the group, which computes each
+aggregate the part holds under its function's name, and `elements`
+as `#id Fn over` the row where the part reads it; and `elements` is
+the row as the query sees it, `current`, not the bare element. Both
+are morel-java's plans. morel-java also does not fold a group's
+list of keys or aggregates between its items, and now neither does
+this port.
 
 These are the ones to close in the translator before C. A gap closed
 there is a case `resolve_step` is known to need, with its plan text

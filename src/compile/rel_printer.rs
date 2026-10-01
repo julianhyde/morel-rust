@@ -663,13 +663,13 @@ fn rename_here(e: &Expr, from: &str, to: &str) -> Expr {
 }
 
 /// Renders a list of labelled expressions, as a `group`'s keys and
-/// aggregates are written.
+/// aggregates are written. The list does not fold between its items,
+/// as morel-java's does not; an item may fold within itself.
 fn labelled(items: &[(Label, Expr)]) -> Doc {
     let mut inner = Vec::new();
     for (i, (label, e)) in items.iter().enumerate() {
         if i > 0 {
-            inner.push(lindig::text(","));
-            inner.push(lindig::line());
+            inner.push(lindig::text(", "));
         }
         inner.push(lindig::text(&format!("{} = ", label)));
         inner.push(doc(e));

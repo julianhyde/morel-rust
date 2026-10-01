@@ -144,6 +144,13 @@ fn ground_query(
         return None;
     };
     debugf(|| format!("ground: tree {}", tree));
+    // A query whose value is a `compute` is `Relational.only` over its
+    // tree; the tree is what is grounded.
+    let scalar = rel_translator::only_of(&tree).is_some();
+    let tree = match rel_translator::only_of(&tree) {
+        Some(inner) => inner.clone(),
+        None => tree,
+    };
     let pats = if pats.is_empty() {
         leaf_pats(&tree)
     } else {
@@ -163,6 +170,11 @@ fn ground_query(
         debugf(|| "ground: an extent survived".to_string());
         return None;
     }
+    let grounded = if scalar {
+        rel_translator::only(grounded, t)?
+    } else {
+        grounded
+    };
     let Some(lowered) = rel_lowerer::lower(&grounded) else {
         debugf(|| "ground: no lowering".to_string());
         return None;

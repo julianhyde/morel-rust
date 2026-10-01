@@ -149,13 +149,51 @@ fn flip_expr(e: &Expr) -> Expr {
 /// was one: a `compute` is a keyless group whose one element is the
 /// query's value, and the step list says so with a `compute` step
 /// in the group's place.
+///
+/// The tree says it with `Relational.only` over the group, and over a
+/// projection of the group's one field where the value is not a
+/// record; both become the `compute` step. A query the translator
+/// did not write that way is a collection, and is left alone.
 pub(crate) fn scalarize(lowered: Expr, want: &Rc<Type>) -> Expr {
-    if element_type(want).is_some() {
-        return lowered;
-    }
+    let lowered = match lowered {
+        Expr::Apply(_, f, a, _)
+            if matches!(
+                f.as_ref(),
+                Expr::Literal(_, Val::Fn(BuiltInFunction::RelationalOnly))
+            ) && matches!(a.as_ref(), Expr::From(_, _)) =>
+        {
+            *a
+        }
+        other if element_type(want).is_some() => return other,
+        other => other,
+    };
     let Expr::From(_, mut steps) = lowered else {
         return lowered;
     };
+    // A keyless group and a yield of what it computed -- one field,
+    // or an expression of several -- is the `compute` the yield's
+    // expression would be with each aggregate in place of its name.
+    if let [.., group, last] = steps.as_slice()
+        && let StepKind::Group(keys, Some(agg)) = &group.kind
+        && is_unit_key(keys)
+        && let StepKind::Yield(value) = &last.kind
+        && let Expr::Tuple(t, parts) = agg.as_ref()
+        && let Type::Record(_, fields) = t.as_ref()
+    {
+        let names: BTreeMap<String, Expr> = fields
+            .keys()
+            .map(Label::to_string)
+            .zip(parts.iter().cloned())
+            .collect();
+        let compute = Step {
+            kind: StepKind::Compute(Box::new(replace_names(value, &names))),
+            env: group.env.clone(),
+            join_type: group.join_type,
+        };
+        steps.truncate(steps.len() - 2);
+        steps.push(compute);
+        return Expr::From(want.clone(), steps);
+    }
     if let Some(last) = steps.last()
         && let StepKind::Group(_, Some(agg)) = &last.kind
     {
@@ -957,6 +995,12 @@ pub(crate) fn field_at(exp: &Expr, i: usize) -> Expr {
         Box::new(exp.clone()),
         Span::new(""),
     )
+}
+
+/// Returns whether a group's keys are none, `()`.
+fn is_unit_key(keys: &Expr) -> bool {
+    matches!(keys, Expr::Tuple(_, items) if items.is_empty())
+        || matches!(keys, Expr::Literal(_, Val::Unit))
 }
 
 /// The type of a position, `int`.

@@ -156,18 +156,18 @@ fn translate_with(
     // none. Only a step asks for the leaf, so a query with no steps
     // asks here.
     let tree = t.tree.take().unwrap_or_else(unit_leaf);
+    // A query that computes an aggregate is a value, not a collection:
+    // `compute` is a group with no keys, whose one element holds the
+    // value, and `Relational.only` takes it out, as morel-java writes
+    // it. Its type may itself be a collection -- `compute elements` is
+    // a list -- so it is the last step, not the type, that says so.
+    if matches!(steps.last().map(|s| &s.kind), Some(StepKind::Compute(_))) {
+        return only(t.value_of(tree, query_type)?, query_type);
+    }
     if tree.type_() == *query_type && t.binders_are_the_element(&tree) {
         return Some(tree);
     }
-    // A query that computes an aggregate is a value, not a collection:
-    // `compute` is a group with no keys, and the single element is
-    // taken out by the expression that holds the query. So the tree's
-    // *element* is what the query's type is, and there is nothing to
-    // name.
     if element_type(query_type).is_none() {
-        if element_type(&tree.type_()).as_ref() == Some(query_type) {
-            return Some(tree);
-        }
         return decline("a query whose type is not a collection");
     }
     // A query with several binders has a row that no step built: the
@@ -1051,32 +1051,105 @@ impl Translator {
                 .map(|(label, e)| Some((label, t.rewrite(&e)?)))
                 .collect::<Option<Vec<_>>>()
         };
-        let keys = rewrite(self, keys)?;
-        let aggregates = aggregates
-            .into_iter()
-            .map(|(label, e)| Some((label, self.rows(e)?)))
-            .collect::<Option<Vec<_>>>()?;
-        let aggregates = rewrite(self, aggregates)?;
         let names: Vec<Label> = keys
             .iter()
             .chain(aggregates.iter())
             .map(|(label, _)| label.clone())
             .collect();
-        let aggregates = self.converted(aggregates)?;
-        self.wrap(|input| {
-            Rel::Group(Row::placeholder(), input, keys, aggregates)
-        })?;
+        let keys = rewrite(self, keys)?;
+        // An aggregate is a function over the group's rows, `f over e`.
+        // Anything else that reads `elements` -- `from r in elements
+        // compute sum over r.j` -- is evaluated once the group is made:
+        // the group computes `elements` as an aggregate of its own, the
+        // row of each element it holds, and a projection after the
+        // group computes the expression from that. morel-java does the
+        // same, and the plan shows it.
+        //
+        // An expression made of aggregates, `10 + 2 * sum over i`, is
+        // the same: each aggregate in it is one of the group's, named
+        // after its function, and the projection reads it by that name.
+        let mut over = Vec::new();
+        let mut after = Vec::new();
+        for (label, e) in aggregates {
+            match self.rows(e)? {
+                e @ Expr::Aggregate(..) => over.push((label, e)),
+                e => after.push((label, e)),
+            }
+        }
+        let mut after_exprs = Vec::with_capacity(after.len());
+        for (label, e) in after {
+            let mut found = Vec::new();
+            let e = lift_aggregates(&e, &mut found);
+            for (name, aggregate) in found {
+                let name = Label::String(name);
+                if over.iter().any(|(l, _)| *l == name)
+                    || names.contains(&name)
+                    || self.bindings.iter().any(|(b, _)| name.matches(b))
+                {
+                    return decline("an aggregate whose name is taken");
+                }
+                over.push((name, aggregate));
+            }
+            after_exprs.push((label, e));
+        }
+        let after = after_exprs;
+        over.sort_by(|(a, _), (b, _)| a.cmp(b));
+        let elements = Label::String("elements".to_string());
+        if let Some(t) = after.iter().find_map(|(_, e)| elements_type(e))
+            && !over.iter().any(|(l, _)| *l == elements)
+        {
+            let Some(elem) =
+                self.tree.as_ref().and_then(|t| element_type(&t.type_()))
+            else {
+                return decline("a group over a tree that is not a collection");
+            };
+            let row = self.current(row_ref(&elem, 0))?;
+            over.push((elements.clone(), id_over(t, row)));
+            over.sort_by(|(a, _), (b, _)| a.cmp(b));
+        }
+        let over = rewrite(self, over)?;
+        let over = self.converted(over)?;
+        let group_names: Vec<Label> = keys
+            .iter()
+            .chain(over.iter())
+            .map(|(label, _)| label.clone())
+            .collect();
+        self.wrap(|input| Rel::Group(Row::placeholder(), input, keys, over))?;
         // The element is a record of the keys and the aggregates, a
         // record whether there is one field or many, so each is read
         // by its label. Where the query wants the bare value of its
         // one field, the projection that closes the query says so.
-        self.bindings = names
-            .iter()
-            .filter_map(|label| match label {
-                Label::String(name) => Some((name.clone(), Path::field(name))),
-                Label::Ordinal(_) => None,
-            })
-            .collect();
+        self.bindings = fields_of(&group_names);
+        if after.is_empty() {
+            return Some(());
+        }
+        let Some(elem) =
+            self.tree.as_ref().and_then(|t| element_type(&t.type_()))
+        else {
+            return decline("a group that is not a collection");
+        };
+        let mut values: BTreeMap<Label, Expr> = BTreeMap::new();
+        for label in &names {
+            let value =
+                if let Some((_, e)) = after.iter().find(|(l, _)| l == label) {
+                    self.rewrite(e)?
+                } else {
+                    let Label::String(name) = label else {
+                        return decline("a group's part that has no name");
+                    };
+                    Path::field(name).read(&elem)?
+                };
+            values.insert(label.clone(), value);
+        }
+        let t = Rc::new(Type::Record(
+            false,
+            values.iter().map(|(l, e)| (l.clone(), e.type_())).collect(),
+        ));
+        let value = Expr::Tuple(t, values.into_values().collect());
+        self.wrap(|input| {
+            Rel::Project(Row::placeholder(), input, Box::new(value))
+        })?;
+        self.bindings = fields_of(&names);
         Some(())
     }
 
@@ -1169,15 +1242,8 @@ impl Translator {
         else {
             return decline("`elements` over a tree that is not a collection");
         };
-        Some(Expr::Aggregate(
-            t.clone(),
-            Box::new(Expr::Literal(
-                Rc::new(Type::Fn(t.clone(), t.clone())),
-                Val::Fn(BuiltInFunction::FnId),
-            )),
-            Box::new(row_ref(&elem, 0)),
-            Span::new(""),
-        ))
+        // Each of the group's rows as the query sees it, `current`.
+        Some(id_over(t.clone(), self.current(row_ref(&elem, 0))?))
     }
 
     /// Translates a set operator: the tree so far, and the step's
@@ -1282,6 +1348,32 @@ impl Translator {
                         }
                     })
             }
+        }
+    }
+
+    /// Returns a `compute`'s group with the value it computes as its
+    /// element: the group's record where the query computes a record,
+    /// and otherwise the record's one field, projected out.
+    fn value_of(&self, tree: Expr, value_type: &Rc<Type>) -> Option<Expr> {
+        let Some(elem) = element_type(&tree.type_()) else {
+            return decline("a `compute` over a tree that is not a collection");
+        };
+        if elem == *value_type {
+            return Some(tree);
+        }
+        match peel(&elem) {
+            Type::Record(_, fields)
+                if fields.len() == 1
+                    && fields.values().next() == Some(value_type) =>
+            {
+                let field = selector(row_ref(&elem, 0), 0, value_type.clone());
+                node(Rel::Project(
+                    Row::placeholder(),
+                    Box::new(tree),
+                    Box::new(field),
+                ))
+            }
+            _ => decline("a `compute` whose value is not its group's"),
         }
     }
 
@@ -1608,6 +1700,128 @@ fn filtered(tree: Expr, test: Option<Expr>) -> Option<Expr> {
     }
 }
 
+/// Returns the binders of a record whose fields are `labels`, each
+/// read as its field.
+fn fields_of(labels: &[Label]) -> Vec<(String, Path)> {
+    labels
+        .iter()
+        .filter_map(|label| match label {
+            Label::String(name) => Some((name.clone(), Path::field(name))),
+            Label::Ordinal(_) => None,
+        })
+        .collect()
+}
+
+/// Returns an expression with each aggregate in it, `f over e`, read
+/// by a name instead, the name of its function, and adds the aggregate
+/// under that name to `found`.
+///
+/// An aggregate belongs to the nearest `group` or `compute` around it.
+/// So one in a query nested in the expression is lifted too, unless it
+/// is in that query's own `group` or `compute`, which makes it that
+/// query's: `group i compute {x = from j in [3, 4] yield j + (sum over
+/// i)}` sums the outer group's `i`.
+fn lift_aggregates(e: &Expr, found: &mut Vec<(String, Expr)>) -> Expr {
+    let lifted = RefCell::new(Vec::new());
+    fn walk(e: &Expr, lifted: &RefCell<Vec<(String, Expr)>>) -> Expr {
+        match e {
+            Expr::Aggregate(t, _, _, _) => match e.implicit_label() {
+                Some(name) => {
+                    lifted.borrow_mut().push((name.clone(), e.clone()));
+                    Expr::Identifier(t.clone(), name)
+                }
+                None => e.clone(),
+            },
+            Expr::From(t, steps) => Expr::From(
+                t.clone(),
+                steps
+                    .iter()
+                    .map(|step| match &step.kind {
+                        StepKind::Group(..) | StepKind::Compute(_) => {
+                            step.clone()
+                        }
+                        _ => map_step(step, &|x| walk(x, lifted)),
+                    })
+                    .collect(),
+            ),
+            _ => map_children(e, &|x| walk(x, lifted)),
+        }
+    }
+    let out = walk(e, &lifted);
+    found.extend(lifted.into_inner());
+    out
+}
+
+/// Returns the type of the `elements` an expression reads, if it reads
+/// it.
+fn elements_type(e: &Expr) -> Option<Rc<Type>> {
+    let found = RefCell::new(None);
+    fn walk(e: &Expr, found: &RefCell<Option<Rc<Type>>>) {
+        if let Expr::Identifier(t, name) = e
+            && name == "elements"
+        {
+            found.replace(Some(t.clone()));
+        }
+        if let Expr::From(_, steps) = e {
+            steps
+                .iter()
+                .for_each(|step| step_exprs(step, &mut |x| walk(x, found)));
+            return;
+        }
+        map_children(e, &|x| {
+            walk(x, found);
+            x.clone()
+        });
+    }
+    walk(e, &found);
+    found.into_inner()
+}
+
+/// Returns `#id Fn over row`, the aggregate whose value is the rows of
+/// the group, of type `t`.
+fn id_over(t: Rc<Type>, row: Expr) -> Expr {
+    Expr::Aggregate(
+        t.clone(),
+        Box::new(Expr::Literal(
+            Rc::new(Type::Fn(t.clone(), t)),
+            Val::Fn(BuiltInFunction::FnId),
+        )),
+        Box::new(row),
+        Span::new(""),
+    )
+}
+
+/// Returns `Relational.only tree`, the one element of a tree whose
+/// type is `t`'s collection.
+pub(crate) fn only(tree: Expr, t: &Rc<Type>) -> Option<Expr> {
+    let f = Expr::Literal(
+        Rc::new(Type::Fn(tree.type_(), t.clone())),
+        Val::Fn(BuiltInFunction::RelationalOnly),
+    );
+    Some(Expr::Apply(
+        t.clone(),
+        Box::new(f),
+        Box::new(tree),
+        Span::new(""),
+    ))
+}
+
+/// Returns the tree inside `Relational.only tree`, which is how the
+/// translator writes a query whose value is a `compute`.
+pub(crate) fn only_of(e: &Expr) -> Option<&Expr> {
+    match e {
+        Expr::Apply(_, f, tree, _)
+            if matches!(
+                f.as_ref(),
+                Expr::Literal(_, Val::Fn(BuiltInFunction::RelationalOnly))
+            ) && matches!(tree.as_ref(), Expr::Rel(_, _)) =>
+        {
+            Some(tree)
+        }
+        _ => None,
+    }
+}
+
 /// Returns the placeholder that reads the element of a node's input
 /// `index` while the node is being built: `$0`, or a join's `$1`.
 fn row_ref(elem: &Rc<Type>, index: usize) -> Expr {
@@ -1653,6 +1867,42 @@ fn reads_current(e: &Expr) -> bool {
     }
     walk(e, &found);
     found.get()
+}
+
+/// Returns a step with `f` applied to each expression it holds.
+fn map_step(step: &Step, f: &dyn Fn(&Expr) -> Expr) -> Step {
+    let b = |e: &Expr| Box::new(f(e));
+    let kind = match &step.kind {
+        StepKind::Scan(pat, source, condition) => StepKind::Scan(
+            pat.clone(),
+            b(source),
+            condition.as_ref().map(|c| b(c)),
+        ),
+        StepKind::Compute(e) => StepKind::Compute(b(e)),
+        StepKind::Order(e) => StepKind::Order(b(e)),
+        StepKind::Skip(e) => StepKind::Skip(b(e)),
+        StepKind::Take(e) => StepKind::Take(b(e)),
+        StepKind::Where(e) => StepKind::Where(b(e)),
+        StepKind::Yield(e) => StepKind::Yield(b(e)),
+        StepKind::Group(keys, aggregates) => {
+            StepKind::Group(b(keys), aggregates.as_ref().map(|a| b(a)))
+        }
+        StepKind::Except(d, inputs) => {
+            StepKind::Except(*d, inputs.iter().map(f).collect())
+        }
+        StepKind::Intersect(d, inputs) => {
+            StepKind::Intersect(*d, inputs.iter().map(f).collect())
+        }
+        StepKind::Union(d, inputs) => {
+            StepKind::Union(*d, inputs.iter().map(f).collect())
+        }
+        other => other.clone(),
+    };
+    Step {
+        kind,
+        env: step.env.clone(),
+        join_type: step.join_type,
+    }
 }
 
 /// Calls `f` on each expression a step holds.
@@ -2211,6 +2461,39 @@ mod tests {
         );
     }
 
+    /// A query whose value is a `compute` is the one element of its
+    /// group, as `Relational.only` says; a lone aggregate is the
+    /// group's one field, projected out.
+    #[test]
+    fn a_compute_is_the_only_element_of_its_group() {
+        assert_eq!(
+            tree_of("from i in [2, 1, 2] compute sum over i").unwrap(),
+            "#only Relational (r$0) : int\n\
+             \n\
+             r$0 =\n  \
+             project [#sum $0] : int list\n    \
+             group [] [sum = fn col$0 => sum (#fromList Bag col$0) over $0] \
+             : {sum:int} list\n      \
+             [2, 1, 2] : int list\n"
+        );
+    }
+
+    /// An expression made of aggregates is computed after the group,
+    /// which computes each aggregate in it under its function's name.
+    #[test]
+    fn an_expression_of_aggregates_is_projected_after_the_group() {
+        assert_eq!(
+            tree_of(
+                "from i in [1, 2] group i compute {r = 10 + 2 * sum over i}"
+            )
+            .unwrap(),
+            "project [{i = #i $0, r = 10 + 2 * #sum $0}] : {i:int, r:int} list\n  \
+             group [i = $0] [sum = fn col$0 => sum (#fromList Bag col$0) over $0] \
+             : {i:int, sum:int} list\n    \
+             [1, 2] : int list\n"
+        );
+    }
+
     /// Every tree the translator builds passes the validator.
     #[test]
     fn what_it_builds_is_well_formed() {
@@ -2224,6 +2507,9 @@ mod tests {
             "from x in [10, 20] yield (from i in [1, 2] take ordinal)",
             "from x in [10, 20] yield (from i in [1, 2] take current)",
             "from i in [1, 2], j in [current + 10, current + 20]",
+            "from i in [2, 1, 2] compute sum over i",
+            "from (i, j) in [(\"a\", 1)] group {i = i} \
+             compute {s = from r in elements compute sum over #j r}",
         ] {
             let text = tree_of(code).unwrap_or_else(|| {
                 panic!("declined: {}", code);
