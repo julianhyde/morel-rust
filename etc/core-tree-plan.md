@@ -55,11 +55,11 @@ and they dissolve rather than get solved:
   from morel-java's because `Sys.planEx` re-translates the lowered
   step list, and the lowering is not a round trip. With no step list
   there is nothing to re-translate.
-* `ordinal` has no home in the tree, so the translator declines 123
-  queries. morel-java's answer is the optional `ordinal` binder on a
-  row node. This port instead has `materialize_ordinal`,
+* `ordinal` had no home in the tree. It has one now, morel-java's
+  optional `ordinal` binder on a row node (stage B, landed). What
+  remains of the old answer -- `materialize_ordinal`,
   `drop_ordinal`, `replace_ordinal`, `ORDINAL_SLOT`, and two row
-  sinks.
+  sinks -- serves only the step list, and goes with it.
 * The reverse-equality cycle guard in `generators.rs` exists because
   the step list's `topo_order` cannot schedule a cycle. The tree
   makes a generator that reads another leaf into a dependent join, so
@@ -103,12 +103,29 @@ Landed, each gated with `fullMake --no-clean` and
   the placeholders back; so the grounder's reasoning is unchanged.
   The printer opens a node to print its arguments, and the plan
   text did not change.
+* A row node binds `ordinal` as morel-java's does: `Row.ordinal`,
+  which `Rel::bind` gives a node exactly when its expressions read
+  the `$ordinal` placeholder. The translator turns a step's
+  `ordinal` into the placeholder for the node the step becomes. A
+  query nested in a per-row expression that reads the enclosing
+  position -- a binder holding it, or `ordinal` where it evaluates
+  once, before its first row -- reads it through a `let`, as it
+  reads the enclosing row; each `let` is there only where the nested
+  tree reads its name, row outside position, and the plan text
+  matches morel-java's. The grounder keeps a conjunct that reads
+  `$ordinal` out of the constraints, and does not merge two filters
+  where either reads it. The lowerer yields a counted row as the
+  record `{w$N, ordinal$w$N}`, the shape the resolver gives it.
+  A pair under one binder ran, but a query nested in a yield that
+  read an enclosing `let` read the wrong slot through it: the step
+  list's compiler has a bug there that no query the resolver
+  builds reaches.
 * A query in a function body is left alone and grounded where the
   function is called. What bounds its variables may be an argument,
   and grounding it where it is written seals away the constraints the
   caller reads.
 
-Measured over the whole corpus, the tree grounder grounds 213
+Measured over the whole corpus, the tree grounder grounds 214
 queries and declines 46. (A further 36 report no tree; those are the
 fallback's step form being retried, and are benign.) The 46 have to
 reach about zero before the step list can go.
@@ -140,9 +157,16 @@ see which tree failed.
 
 ## Stages, in order
 
-**B. `ordinal` in the tree.** 123 declines. The rows are named
-(above); what is left is to give `Row` an optional ordinal binder,
-as morel-java's `RowRel` has, and keep printing `$ordinal`.
+**B′. What `ordinal` and `current` still decline.** Of the 123
+the translator declined, 75 remain (count them with
+`MOREL_SHADOW_TALLY=1 cargo test --test smile -- --nocapture`):
+
+| n | reason |
+| --- | --- |
+| 52 | `current`. morel-java resolves it as a path like any other: the element itself where the row is the element, otherwise the record rebuilt from the binders' paths; a nested tree reads it through a `let`. |
+| 17 | `ordinal` in a top-level `take`, `skip` or set operand, which the language rejects ("'ordinal' is only valid in a query"); correctly declined. |
+| 3 | `ordinal` in a later scan's source, which no node binds. |
+| 3 | `ordinal` in a join condition; morel-java's `Join` has an ordinal binder, this port's `JoinRows` does not yet. |
 
 **C. The resolver builds trees.** `resolve_step`, about 230 lines,
 replaces `from_builder.rs`'s 1319.

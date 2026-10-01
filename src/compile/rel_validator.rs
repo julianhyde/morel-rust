@@ -28,7 +28,9 @@
 // R5 lands.
 #![allow(dead_code)]
 
-use crate::compile::core::{Decl, Expr, RIGHT_ROW, ROW, Rel, element_type};
+use crate::compile::core::{
+    Decl, Expr, ORDINAL, RIGHT_ROW, ROW, Rel, Row, element_type,
+};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::rel_lowerer;
 use crate::compile::types::{Label, PrimitiveType, Type};
@@ -63,7 +65,11 @@ pub fn validate_eliminating(
     leaked: &BTreeSet<String>,
 ) -> Vec<String> {
     let mut errors = Vec::new();
-    let mut rows = BTreeSet::from([ROW.to_string(), RIGHT_ROW.to_string()]);
+    let mut rows = BTreeSet::from([
+        ROW.to_string(),
+        RIGHT_ROW.to_string(),
+        ORDINAL.to_string(),
+    ]);
     rows_of(exp, &mut rows);
     let mut scope = Scope {
         visible: BTreeMap::new(),
@@ -253,13 +259,13 @@ fn check_scope(rel: &Rel, scope: &mut Scope, errors: &mut Vec<String>) {
         | Rel::Project(row, input, e)
         | Rel::Sort(row, input, e) => {
             walk(input, scope, &what("input"), errors);
-            let saved = bind(op, &row.name, input, scope, errors);
+            let saved = bind_row(op, row, input, scope, errors);
             walk(e, scope, &what("expression"), errors);
             scope.visible = saved;
         }
         Rel::Group(row, input, keys, aggregates) => {
             walk(input, scope, &what("input"), errors);
-            let saved = bind(op, &row.name, input, scope, errors);
+            let saved = bind_row(op, row, input, scope, errors);
             for (_, e) in keys.iter().chain(aggregates.iter()) {
                 walk(e, scope, &what("expression"), errors);
             }
@@ -267,9 +273,9 @@ fn check_scope(rel: &Rel, scope: &mut Scope, errors: &mut Vec<String>) {
         }
         Rel::Join(_, rows, condition, left, right) => {
             walk(left, scope, &what("left input"), errors);
-            let saved = bind(op, &rows.left, left, scope, errors);
+            let saved = bind(op, &rows.left, &left.type_(), scope, errors);
             walk(right, scope, &what("right input"), errors);
-            bind(op, &rows.right, right, scope, errors);
+            bind(op, &rows.right, &right.type_(), scope, errors);
             walk(condition, scope, &what("condition"), errors);
             scope.visible = saved;
         }
@@ -284,17 +290,34 @@ fn check_scope(rel: &Rel, scope: &mut Scope, errors: &mut Vec<String>) {
     }
 }
 
-/// Brings a node's row into scope, as the element of `input`, and
-/// returns the scope as it was before.
-fn bind(
+/// Brings a one-input node's row, and its position where it counts
+/// its rows, into scope, and returns the scope as it was before.
+fn bind_row(
     op: &str,
-    name: &str,
+    row: &Row,
     input: &Expr,
     scope: &mut Scope,
     errors: &mut Vec<String>,
 ) -> BTreeMap<String, Rc<Type>> {
+    let saved = bind(op, &row.name, input.type_().as_ref(), scope, errors);
+    if let Some(ordinal) = &row.ordinal {
+        let int = Type::List(Rc::new(Type::Primitive(PrimitiveType::Int)));
+        bind(op, ordinal, &int, scope, errors);
+    }
+    saved
+}
+
+/// Brings a name into scope, as the element of a collection of type
+/// `collection`, and returns the scope as it was before.
+fn bind(
+    op: &str,
+    name: &str,
+    collection: &Type,
+    scope: &mut Scope,
+    errors: &mut Vec<String>,
+) -> BTreeMap<String, Rc<Type>> {
     let saved = scope.visible.clone();
-    if name == ROW || name == RIGHT_ROW {
+    if name == ROW || name == RIGHT_ROW || name == ORDINAL {
         errors.push(format!("{}: row '{}' is a placeholder", op, name));
     }
     if scope.visible.contains_key(name) {
@@ -303,7 +326,7 @@ fn bind(
             op, name
         ));
     }
-    if let Some(elem) = element_type(&input.type_()) {
+    if let Some(elem) = element_type(collection) {
         scope.visible.insert(name.to_string(), elem);
     }
     saved
@@ -319,6 +342,7 @@ fn rows_of(exp: &Expr, rows: &mut BTreeSet<String>) {
             | Rel::Project(row, _, _)
             | Rel::Sort(row, _, _) => {
                 rows.insert(row.name.clone());
+                rows.extend(row.ordinal.clone());
             }
             Rel::Join(_, join_rows, _, _, _) => {
                 rows.insert(join_rows.left.clone());
@@ -596,6 +620,7 @@ mod tests {
         let filter = node(Rel::Filter(
             Row {
                 name: "r0".to_string(),
+                ordinal: None,
             },
             Box::new(leaf(bool_(), Kind::List)),
             // The row is a bool here, whatever this says.

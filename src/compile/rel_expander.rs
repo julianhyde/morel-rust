@@ -34,8 +34,8 @@
 //! query's to have written.
 
 use crate::compile::core::{
-    Expr, JoinKind, JoinRows, Pat, PatField, RIGHT_ROW, ROW, Rel, Row, Step,
-    StepKind, element_type, fresh_name,
+    Expr, JoinKind, JoinRows, ORDINAL, Pat, PatField, RIGHT_ROW, ROW, Rel, Row,
+    Step, StepKind, element_type, fresh_name,
 };
 use crate::compile::expander::{DatatypeMap, FnEnv, and_all, list_bounds};
 use crate::compile::free_finder::free_names_in;
@@ -493,7 +493,15 @@ impl<'a> Expander<'a> {
         // written later. Order counts: where two constraints could
         // each generate a name, the engine keeps the first, so the
         // query's own order is the one to present them in.
-        let mut all = conjuncts.clone();
+        //
+        // A conjunct that reads the row's position says nothing about
+        // what the leaves below may hold, only about where a row came,
+        // so it stays in this filter.
+        let mut all: Vec<Expr> = conjuncts
+            .iter()
+            .filter(|c| !reads_ordinal(c))
+            .cloned()
+            .collect();
         all.extend_from_slice(conditions);
         let input = self.expand(input, &all)?;
         // A conjunct that a sealed generator subsumes is now
@@ -538,8 +546,13 @@ impl<'a> Expander<'a> {
         exp: &Expr,
         conditions: &[Expr],
     ) -> Option<Expr> {
-        let pushed: Vec<Expr> =
-            conditions.iter().map(|c| subst(c, exp, None)).collect();
+        // A condition that, said of the projection's input, reads the
+        // projection's position is no constraint on the leaves.
+        let pushed: Vec<Expr> = conditions
+            .iter()
+            .map(|c| subst(c, exp, None))
+            .filter(|c| !reads_ordinal(c))
+            .collect();
         let input = self.expand(input, &pushed)?;
         if !self.rows_used {
             // Nothing reads the rows, so a projection is
@@ -760,6 +773,9 @@ impl<'a> Expander<'a> {
                     let n = frame.leaves.len() - lo;
                     let element = frame.element(lo, n);
                     for conjunct in split_conjuncts(condition) {
+                        if reads_ordinal(&conjunct) {
+                            continue;
+                        }
                         let constraint = subst(&conjunct, &element, None);
                         frame.originals.insert(key_of(&constraint), conjunct);
                         frame.constraints.push(constraint.clone());
@@ -1702,10 +1718,13 @@ fn same_element(collection: &Expr, t: &Rc<Type>) -> bool {
 
 /// Builds a filter, as the relational builder does: a filter over a
 /// filter is one filter, their conditions conjoined, the lower one's
-/// first.
+/// first -- unless either reads the row's position, which the lower
+/// one counts before it drops rows and the upper one after.
 fn filter_of(input: Expr, condition: Expr) -> Expr {
     if let Expr::Rel(_, rel) = &input
         && let Rel::Filter(_, inner, lower) = rel.open()
+        && !reads_ordinal(&lower)
+        && !reads_ordinal(&condition)
     {
         let merged = and_all(vec![*lower, condition.clone()]);
         if let Some(out) =
@@ -1848,6 +1867,12 @@ fn input_of(collection: &Expr) -> Option<Expr> {
 /// Returns whether an expression is the element itself, `$0`.
 fn is_row(e: &Expr) -> bool {
     matches!(e, Expr::Identifier(_, name) if name == ROW)
+}
+
+/// Returns whether an expression reads the position of the row of the
+/// node it was opened from, `$ordinal`.
+fn reads_ordinal(e: &Expr) -> bool {
+    free_names_in(e).contains(ORDINAL)
 }
 
 /// How many leaves a node of a join tree has.
