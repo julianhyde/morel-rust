@@ -36,8 +36,8 @@
 //! end.
 
 use crate::compile::core::{
-    Decl, Expr, JoinKind, JoinRows, Match, Pat, Rel, Row, Step, StepKind,
-    ValBind, element_type,
+    Binding, Decl, Expr, JoinKind, JoinRows, Match, Pat, Rel, Row, Step,
+    StepEnv, StepKind, ValBind, element_type,
 };
 use crate::compile::expander::expr_eq;
 use crate::compile::from_builder::{FromBuilder, ORDINAL_FIELD_PREFIX};
@@ -45,6 +45,7 @@ use crate::compile::library::BuiltInFunction;
 use crate::compile::postfix::peel_type;
 use crate::compile::rel_translator;
 use crate::compile::span::Span;
+use crate::compile::type_env::Id;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
 use crate::syntax::ast::JoinType;
@@ -447,7 +448,9 @@ impl Lowerer {
         // The query has the type the tree had, whatever the steps'
         // bindings say it should be.
         Some(match built {
-            Expr::From(_, steps) => Expr::From(t.clone(), steps),
+            Expr::From(_, steps) => {
+                Expr::From(t.clone(), computed_after_group(steps))
+            }
             other => other,
         })
     }
@@ -995,6 +998,35 @@ pub(crate) fn field_at(exp: &Expr, i: usize) -> Expr {
         Box::new(exp.clone()),
         Span::new(""),
     )
+}
+
+/// Returns the steps with a group that computes nothing, and the
+/// yield after it, made one group that computes what the yield does:
+/// `group {} compute 1 + 2`, as the resolver writes it. The step list's
+/// compiler does not run a yield after a group of nothing.
+fn computed_after_group(mut steps: Vec<Step>) -> Vec<Step> {
+    if let [.., group, last] = steps.as_slice()
+        && let StepKind::Group(keys, None) = &group.kind
+        && is_unit_key(keys)
+        && let StepKind::Yield(value) = &last.kind
+    {
+        // The compiler finds the value under the name the resolver
+        // gives it: the expression's own label, or `agg`.
+        let name = value.implicit_label().unwrap_or_else(|| "agg".to_string());
+        let env = StepEnv::new(
+            vec![Binding::new(Id::new(&name, 0), value.type_())],
+            true,
+            last.env.ordered,
+        );
+        let step = Step {
+            kind: StepKind::Group(keys.clone(), Some(value.clone())),
+            env,
+            join_type: group.join_type,
+        };
+        steps.truncate(steps.len() - 2);
+        steps.push(step);
+    }
+    steps
 }
 
 /// Returns whether a group's keys are none, `()`.
