@@ -207,7 +207,7 @@ WILDCARD_PAT"), as it does on `... distinct order DESC (current)`.
 | ~~11~~ | a group key with no name: `group x + y`, `group ordinal mod 2`, `compute 1 + 2` | closed: the key labelled `v$0`, then `project [#\`v$0\` $0]`; an unnamed `compute` is `project [1 + 2]` over `group []`, and an aggregate whose function has no name is `aggregate` |
 | ~~1~~ | a tuple group key, `group (x + y, x - y)` | closed: `group [v$0 = (..., ...)]` |
 | 12 | scans that bind nothing: `from (_) in ...`, `from (()) in ...`, `from ({}) in ...` | none; morel-java throws |
-| 5 | `distinct` followed by a set operator | `union [all]` over `project [#i $0]` over `group [i = $0]` |
+| ~~5~~ | `distinct` followed by a set operator | closed: `union [all]` over `project [#i $0]` over `group [i = $0]` |
 | 5 | a `let val rec` in a per-row expression | -- |
 | 4 | a query whose row names an unbound binder: 2 `compute elements` over a tuple pattern, 2 in `check.smli` not yet traced | -- |
 | 2 | a cons pattern, `from (hd :: tl) in lists` | `project [#hd List $0 + 1]` over `filter [not (#null List $0)]` |

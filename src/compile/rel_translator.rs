@@ -1043,6 +1043,26 @@ impl Translator {
                 None,
             );
         }
+        // The keys are the row the query sees. Where the element is not
+        // that row -- a join's, which is its inputs' components -- the
+        // row is projected first, as morel-java does, so that the group
+        // is over the row.
+        let mut elem = elem;
+        if self.bindings.len() > 1
+            && let Some(tree) = &self.tree
+            && !self.binders_are_the_element(tree)
+        {
+            let row = self.current(row_ref(&elem, 0))?;
+            elem = row.type_();
+            self.wrap(|input| {
+                Rel::Project(Row::placeholder(), input, Box::new(row))
+            })?;
+            self.bindings = self
+                .bindings
+                .iter()
+                .map(|(name, _)| (name.clone(), Path::field(name)))
+                .collect();
+        }
         let mut keys = Vec::with_capacity(self.bindings.len());
         for (name, path) in &self.bindings {
             keys.push((Label::String(name.clone()), path.read(&elem)?));
@@ -1332,13 +1352,24 @@ impl Translator {
         if element_type(&left.type_()) != element_type(&operand.type_()) {
             let named = self.name_the_components(left, &operand.type_())?;
             left = named;
-            // The element is now the record the binders name, so each
-            // binder reads its own field of it.
-            self.bindings = self
-                .bindings
-                .iter()
-                .map(|(name, _)| (name.clone(), Path::field(name)))
-                .collect();
+            // The element is now the row the binders name: the one
+            // binder's value, where there is one and the row is it, and
+            // otherwise the record of them, each binder its own field.
+            let row = element_type(&operand.type_());
+            self.bindings = match self.bindings.as_slice() {
+                [(name, path)]
+                    if row.as_ref().is_some_and(|r| {
+                        !matches!(peel(r), Type::Record(..))
+                            || path.0.is_empty()
+                    }) =>
+                {
+                    vec![(name.clone(), Path::whole())]
+                }
+                bindings => bindings
+                    .iter()
+                    .map(|(name, _)| (name.clone(), Path::field(name)))
+                    .collect(),
+            };
         }
         let mut all_inputs = vec![left];
         for operand in inputs {
@@ -2592,6 +2623,29 @@ mod tests {
             "project [1 + 2] : int list\n  \
              group [] : unit list\n    \
              [1, 2] : int list\n"
+        );
+    }
+
+    /// `distinct` groups the row the query sees, so after a join the
+    /// row is projected first; and a set operator after it reads the
+    /// one binder as the element, not as a field of it.
+    #[test]
+    fn distinct_groups_the_row() {
+        assert_eq!(
+            tree_of("from i in [1, 2], j in [3] distinct").unwrap(),
+            "group [i = #i $0, j = #j $0] : {i:int, j:int} list\n  \
+             project [{i = #1 $0, j = #2 $0}] : {i:int, j:int} list\n    \
+             join : (int * int) list\n      \
+             [1, 2] : int list\n      \
+             [3] : int list\n"
+        );
+        assert_eq!(
+            tree_of("from i in [2, 1, 2, 3] distinct union [9]").unwrap(),
+            "union [all] : int list\n  \
+             project [#i $0] : int list\n    \
+             group [i = $0] : {i:int} list\n      \
+             [2, 1, 2, 3] : int list\n  \
+             [9] : int list\n"
         );
     }
 
