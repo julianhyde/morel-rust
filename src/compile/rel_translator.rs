@@ -355,6 +355,10 @@ enum Hop {
     /// element at all: a node that counts its rows binds it beside
     /// `$0`.
     Ordinal,
+    /// The head of a list, which a cons pattern binds.
+    Head,
+    /// The tail of a list, which a cons pattern binds.
+    Tail,
 }
 
 impl Path {
@@ -480,6 +484,22 @@ impl Hop {
                     return decline("`ordinal` read where its rows are not");
                 }
                 Some(ordinal_ref())
+            }
+            Hop::Head => {
+                let Type::List(e) = peel(&elem) else {
+                    return decline(
+                        "the head of an element that is not a list",
+                    );
+                };
+                Some(call(BuiltInFunction::ListHd, base, e.clone()))
+            }
+            Hop::Tail => {
+                if !matches!(peel(&elem), Type::List(_)) {
+                    return decline(
+                        "the tail of an element that is not a list",
+                    );
+                }
+                Some(call(BuiltInFunction::ListTl, base, elem.clone()))
             }
         }
     }
@@ -1681,6 +1701,17 @@ fn selector(e: Expr, slot: usize, t: Rc<Type>) -> Expr {
     )
 }
 
+/// Returns `f arg`, a built-in function applied, of type `t`.
+fn call(f: BuiltInFunction, arg: Expr, t: Rc<Type>) -> Expr {
+    let fn_type = Rc::new(Type::Fn(arg.type_(), t.clone()));
+    Expr::Apply(
+        t,
+        Box::new(Expr::Literal(fn_type, Val::Fn(f))),
+        Box::new(arg),
+        Span::new(""),
+    )
+}
+
 /// Returns the literal `true`, which a join with no condition carries
 /// and the printer omits.
 fn true_literal() -> Expr {
@@ -2175,6 +2206,11 @@ fn collect_paths(
                 collect_paths(p, &at.then(Hop::Field(label)), paths)?;
             }
         }
+        // `h :: t` binds the list's head and its tail.
+        Pat::Cons(_, head, tail) => {
+            collect_paths(head, &at.then(Hop::Head), paths)?;
+            collect_paths(tail, &at.then(Hop::Tail), paths)?;
+        }
         // A pattern that can fail becomes a filter and a projection,
         // which is more than this does.
         _ => return None,
@@ -2227,6 +2263,16 @@ fn pat_tests(
                 };
                 pat_tests(p, &at.then(Hop::Field(label)), elem, tests)?;
             }
+        }
+        // `h :: t` matches a list that is not empty, and whatever its
+        // head and tail match, as morel-java writes it.
+        Pat::Cons(_, head, tail) => {
+            let list = at.read(elem)?;
+            let boolean = Rc::new(Type::Primitive(PrimitiveType::Bool));
+            let null = call(BuiltInFunction::ListNull, list, boolean.clone());
+            tests.push(call(BuiltInFunction::BoolNot, null, boolean));
+            pat_tests(head, &at.then(Hop::Head), elem, tests)?;
+            pat_tests(tail, &at.then(Hop::Tail), elem, tests)?;
         }
         _ => return None,
     }
