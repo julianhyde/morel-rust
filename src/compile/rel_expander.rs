@@ -799,7 +799,9 @@ impl<'a> Expander<'a> {
                     let mid = frame.leaves.len();
                     self.collect(right, mid, frame);
                     let hi = frame.leaves.len();
-                    if !is_true(condition) {
+                    // A condition that reads the pair's position says
+                    // nothing about what the leaves may hold.
+                    if !is_true(condition) && !reads_ordinal(condition) {
                         let constraint = subst(
                             condition,
                             &frame.element(lo, mid - lo),

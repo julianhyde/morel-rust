@@ -685,8 +685,11 @@ impl Translator {
                 // another.
                 let mut rows = JoinRows::placeholder();
                 let right;
+                // A source that reads `ordinal` reads the position of the
+                // row before it, which only the join can give it.
                 if reads_a_binding(source, &self.bindings)
                     || reads_current(source)
+                    || source.uses_ordinal()
                 {
                     // A correlated join may carry a condition and a
                     // kind as any join may: the condition reads the
@@ -980,7 +983,7 @@ impl Translator {
                 })
             }
         }?;
-        if reads_ordinal(&tree) || self.reads_skipped(&tree, &outer) {
+        if self.reads_skipped(&tree, &outer) {
             return decline("a scan source that reads `ordinal`");
         }
         Some(tree)
@@ -1008,13 +1011,9 @@ impl Translator {
         for (bound, path) in paths {
             map.insert(bound.clone(), path.read_at(&right_elem, 1)?);
         }
-        // A join's condition sees pairs of rows, and a join binds no
-        // position for either of them.
-        let condition = substitute(condition, &map)?;
-        if reads_ordinal(&condition) {
-            return decline("a join condition that reads `ordinal`");
-        }
-        Some(condition)
+        // A join's condition sees pairs of rows, and `ordinal` there is
+        // the pair's position, which the join binds.
+        substitute(condition, &map)
     }
 
     /// Translates a `group`: the keys and the aggregates, each a list
@@ -2788,6 +2787,31 @@ mod tests {
              join : (int * bool) list\n    \
              [1] : int list\n    \
              [true] : bool list\n"
+        );
+    }
+
+    /// A join counts the pairs it considers where its condition reads
+    /// `ordinal`, and a later scan's source reads the position too,
+    /// under the join's name for it, as morel-java writes it.
+    #[test]
+    fn a_join_binds_an_ordinal() {
+        assert_eq!(
+            tree_of(
+                "from i in [10, 20, 30] join j in [1, 2] on ordinal mod 2 = 0"
+            )
+            .unwrap(),
+            "project [{i = #1 $0, j = #2 $0}] : {i:int, j:int} list\n  \
+             join [$ordinal mod 2 = 0] : (int * int) list\n    \
+             [10, 20, 30] : int list\n    \
+             [1, 2] : int list\n"
+        );
+        assert_eq!(
+            tree_of("from i in [10, 20, 30], j in [i + ordinal] yield j")
+                .unwrap(),
+            "project [#2 $0] : int list\n  \
+             join [v$0] : (int * int) list\n    \
+             [10, 20, 30] : int list\n    \
+             [v$0 + v$1] : int list\n"
         );
     }
 

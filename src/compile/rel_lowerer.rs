@@ -570,6 +570,13 @@ impl Lowerer {
             // beside the bindings, so the row becomes the element.
             right_tree = substitute_name(right, &rows.left, &left_element);
         }
+        // The join's position is `ordinal` where the step list reads
+        // it: in the scan's source, and in its condition, which the
+        // scan evaluates once for each pair it considers.
+        let ordinal = Expr::Ordinal(int_type());
+        if let Some(o) = &rows.ordinal {
+            right_tree = substitute_name(&right_tree, o, &ordinal);
+        }
         let right_lowered = self.rel(&right_tree)?;
         let right_elem = element_type(&right_lowered.type_())?;
         let name = self.fresh_name();
@@ -581,14 +588,17 @@ impl Lowerer {
             JoinKind::Left => JoinType::Left,
             JoinKind::Right => JoinType::Right,
         };
-        let tested = replace_names(
-            condition,
-            &BTreeMap::from([
-                (rows.left.clone(), left_element.clone()),
-                (rows.right.clone(), right_element.clone()),
-            ]),
-        );
-        if join_type == JoinType::Inner {
+        let mut names = BTreeMap::from([
+            (rows.left.clone(), left_element.clone()),
+            (rows.right.clone(), right_element.clone()),
+        ]);
+        if let Some(o) = &rows.ordinal {
+            names.insert(o.clone(), ordinal);
+        }
+        let tested = replace_names(condition, &names);
+        // A condition that reads the position stays the scan's own: a
+        // `where` after it would count only the pairs that survive.
+        if join_type == JoinType::Inner && !tested.uses_ordinal() {
             b.fb.scan_with_join(join_type, pat, right_lowered, None);
             b.row.push((name, right_elem));
             b.started = true;

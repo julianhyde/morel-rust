@@ -968,6 +968,13 @@ impl Row {
 pub struct JoinRows {
     pub left: String,
     pub right: String,
+    /// The position of the pair, where the join counts its pairs: in
+    /// the condition, the pair's position among those the join
+    /// considers, `$ordinal`; in the right input, which is evaluated
+    /// once for each left row, the position the next pair will have.
+    /// Like the left row, it is in scope in the condition and the right
+    /// input, and prints under its own name in the right input.
+    pub ordinal: Option<String>,
 }
 
 impl JoinRows {
@@ -976,6 +983,7 @@ impl JoinRows {
         JoinRows {
             left: ROW.to_string(),
             right: RIGHT_ROW.to_string(),
+            ordinal: None,
         }
     }
 
@@ -985,6 +993,7 @@ impl JoinRows {
         JoinRows {
             left,
             right: RIGHT_ROW.to_string(),
+            ordinal: None,
         }
     }
 }
@@ -1077,16 +1086,28 @@ impl Rel {
                 } else {
                     rows.right
                 };
-                let c = rename(
+                let mut c = rename(
                     &rename(&c, ROW, &left_name),
                     RIGHT_ROW,
                     &right_name,
                 );
+                let mut right = right;
+                // The join counts its pairs where its condition or its
+                // right input reads the position placeholder.
+                let mut ordinal = rows.ordinal.filter(|o| o != ORDINAL);
+                let reads =
+                    |e: &Expr| free_finder::free_names_in(e).contains(ORDINAL);
+                if reads(&c) || reads(&right) {
+                    let o = ordinal.get_or_insert_with(fresh_name).clone();
+                    c = rename(&c, ORDINAL, &o);
+                    right = Box::new(rename(&right, ORDINAL, &o));
+                }
                 Rel::Join(
                     kind,
                     JoinRows {
                         left: left_name,
                         right: right_name,
+                        ordinal,
                     },
                     Box::new(c),
                     left,
@@ -1140,11 +1161,20 @@ impl Rel {
                 )
             }
             Rel::Join(kind, rows, c, left, right) => {
-                let c =
+                let mut c =
                     rename(&rename(c, &rows.left, ROW), &rows.right, RIGHT_ROW);
+                // The position keeps its name, which the right input may
+                // read it by; only the condition reads it as the
+                // placeholder.
+                if let Some(o) = &rows.ordinal {
+                    c = rename(&c, o, ORDINAL);
+                }
                 Rel::Join(
                     *kind,
-                    JoinRows::dependent(rows.left.clone()),
+                    JoinRows {
+                        ordinal: rows.ordinal.clone(),
+                        ..JoinRows::dependent(rows.left.clone())
+                    },
                     Box::new(c),
                     left.clone(),
                     right.clone(),

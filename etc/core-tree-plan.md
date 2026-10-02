@@ -164,8 +164,8 @@ the translator declined, 43 remain (count them with
 | n | reason |
 | --- | --- |
 | 36 | `ordinal` or `current` where a query evaluates it once, before its first row -- a count, a set operand -- with no enclosing query: the language rejects it at the top level ("'ordinal' is only valid in a query"), and the shadow, which translates a nested query on its own as well, sees it there. Correctly declined. |
-| 4 | `ordinal` in a later scan's source, which no node binds. |
-| 3 | `ordinal` in a join condition; morel-java's `Join` has an ordinal binder, this port's `JoinRows` does not yet. |
+| ~~4~~ | `ordinal` in a later scan's source: closed, by `JoinRows.ordinal`. |
+| ~~3~~ | `ordinal` in a join condition: closed. `JoinRows` has an ordinal binder, as morel-java's `Join` does: in the condition it is the position of the pair among those the join considers, `$ordinal`; in the right input, which reads it under its own name, the position the next pair will have. The lowerer keeps such a condition as the scan's own, because a `where` after it would count only the pairs that survive. |
 
 `current` translates as morel-java resolves it: the value of the
 one binder where the row is an atom, otherwise the record of the
@@ -214,7 +214,7 @@ change position: CURRENT").
 | ~~1~~ | a correlated outer join | closed: `join [left] [v$0] [#units $1 > 2]` over the right input `#items v$0` |
 | ~~1~~ | a scan source that applies a function to a nested query (`descendants2 ... (from ...)` in `hybrid.smli`) | closed: `f ([]) (r$0)`, the nested query broken out |
 | ~~1~~ | `from n: nat in ...`, a type with a `check` | closed by comparing types with their aliases expanded; but an unbounded scan of `n: nat` prints `extent "nat"` and `nat list` where morel-java prints `extent "int"` and `int list`. The type is the resolver's, and the grounder reasons with it. |
-| 7 | `ordinal` in a later scan's source or a join condition | see B′ |
+| ~~7~~ | `ordinal` in a later scan's source or a join condition | closed; see B′ |
 
 Closing the `compute` gap closed two more that the table did not
 show. A group's part that is not `f over e` -- `from r in elements
@@ -226,6 +226,14 @@ the row as the query sees it, `current`, not the bare element. Both
 are morel-java's plans. morel-java also does not fold a group's
 list of keys or aggregates between its items, and now neither does
 this port.
+
+As of 2026-10-02 every real gap is closed. The translator declines
+nothing but the artifacts of the step list (183 + 26, the latter
+every one the step-list grounder's own output), the 9 extents the
+grounder leaves unbounded, and the 36 correct declines. Where a plan
+differs from morel-java's in text, the table says so; each such
+difference is upstream of the translator, in `Core` or in a type the
+resolver gives.
 
 These are the ones to close in the translator before C. A gap closed
 there is a case `resolve_step` is known to need, with its plan text
