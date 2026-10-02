@@ -648,7 +648,17 @@ fn opened(rel: &Rel) -> Rel {
         Rel::Join(kind, rows, c, left, right) => Rel::Join(
             *kind,
             rows.clone(),
-            Box::new(open(c, &[(&rows.left, ROW), (&rows.right, RIGHT_ROW)])),
+            Box::new(match &rows.ordinal {
+                Some(o) => open(
+                    c,
+                    &[
+                        (&rows.left, ROW),
+                        (&rows.right, RIGHT_ROW),
+                        (o, ORDINAL),
+                    ],
+                ),
+                None => open(c, &[(&rows.left, ROW), (&rows.right, RIGHT_ROW)]),
+            }),
             left.clone(),
             right.clone(),
         ),

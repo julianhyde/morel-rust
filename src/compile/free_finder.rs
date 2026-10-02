@@ -29,7 +29,6 @@ use crate::compile::core::{
 };
 use std::collections::BTreeSet;
 use std::iter::once;
-use std::slice;
 
 /// Returns the names of identifiers that occur free in `expr`,
 /// relative to the bindings already in `env`.
@@ -74,9 +73,16 @@ fn visit_rel(rel: &Rel, bound: &mut Vec<String>, out: &mut BTreeSet<String>) {
             }
         }
         Rel::Join(_, rows, condition, left, right) => {
+            let left_row: Vec<String> = once(rows.left.clone())
+                .chain(rows.ordinal.clone())
+                .collect();
             visit_under(&[], left);
-            visit_under(slice::from_ref(&rows.left), right);
-            visit_under(&[rows.left.clone(), rows.right.clone()], condition);
+            visit_under(&left_row, right);
+            let both: Vec<String> = left_row
+                .into_iter()
+                .chain(once(rows.right.clone()))
+                .collect();
+            visit_under(&both, condition);
         }
         _ => {
             for child in rel.children() {

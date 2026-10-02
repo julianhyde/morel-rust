@@ -274,6 +274,11 @@ fn check_scope(rel: &Rel, scope: &mut Scope, errors: &mut Vec<String>) {
         Rel::Join(_, rows, condition, left, right) => {
             walk(left, scope, &what("left input"), errors);
             let saved = bind(op, &rows.left, &left.type_(), scope, errors);
+            if let Some(ordinal) = &rows.ordinal {
+                let int =
+                    Type::List(Rc::new(Type::Primitive(PrimitiveType::Int)));
+                bind(op, ordinal, &int, scope, errors);
+            }
             walk(right, scope, &what("right input"), errors);
             bind(op, &rows.right, &right.type_(), scope, errors);
             walk(condition, scope, &what("condition"), errors);
@@ -347,6 +352,7 @@ fn rows_of(exp: &Expr, rows: &mut BTreeSet<String>) {
             Rel::Join(_, join_rows, _, _, _) => {
                 rows.insert(join_rows.left.clone());
                 rows.insert(join_rows.right.clone());
+                rows.extend(join_rows.ordinal.clone());
             }
             _ => {}
         }
