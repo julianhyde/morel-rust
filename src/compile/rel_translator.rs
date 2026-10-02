@@ -688,12 +688,10 @@ impl Translator {
                 if reads_a_binding(source, &self.bindings)
                     || reads_current(source)
                 {
-                    // A correlated outer join, or one carrying a
-                    // condition as well, is more than this does.
-                    if condition.is_some() || join_type != JoinType::Inner {
-                        self.tree = Some(left);
-                        return decline("a correlated outer join");
-                    }
+                    // A correlated join may carry a condition and a
+                    // kind as any join may: the condition reads the
+                    // left row as `$0` and the right as `$1`, and the
+                    // right input reads the left row by its name.
                     let name = self.new_binder();
                     if let Some(tree) = self.correlated(source, &left, &name) {
                         rows = JoinRows::dependent(name);
@@ -849,7 +847,9 @@ impl Translator {
                 Rc::clone(&self.counter),
                 true,
             ),
-            leaf => match substitute(leaf, &self.outer) {
+            // A query inside the source, `f [] (from e in ...)`, is a
+            // tree of its own, as an operand's is.
+            leaf => match self.rewrite_once(leaf) {
                 None => decline("a scan source over the enclosing row"),
                 some => some,
             },
@@ -964,8 +964,21 @@ impl Translator {
                 Rc::clone(&self.counter),
                 true,
             ),
-            // Otherwise it is a leaf, and only its names change.
-            leaf => substitute(leaf, &outer),
+            // Otherwise it is a leaf, and only its names change -- and
+            // a query inside it is a tree of its own.
+            leaf => {
+                let counter = Rc::clone(&self.counter);
+                let inner = outer.clone();
+                substitute_with(leaf, &outer, &mut |t, steps| {
+                    translate_with(
+                        steps,
+                        t,
+                        inner.clone(),
+                        Rc::clone(&counter),
+                        true,
+                    )
+                })
+            }
         }?;
         if reads_ordinal(&tree) || self.reads_skipped(&tree, &outer) {
             return decline("a scan source that reads `ordinal`");

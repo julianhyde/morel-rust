@@ -44,7 +44,8 @@
 #![allow(dead_code)]
 
 use crate::compile::core::{
-    Decl, Expr, ORDINAL, RIGHT_ROW, ROW, Rel, Row, written_infix,
+    Decl, Expr, ORDINAL, RIGHT_ROW, ROW, Rel, Row, needs_brackets_as_function,
+    written_infix,
 };
 use crate::compile::free_finder::free_names_in;
 use crate::compile::lindig::{self, Doc};
@@ -494,16 +495,26 @@ fn doc_bounded(e: &Expr, left: u8, right: u8) -> Doc {
                 return lindig::beside(lindig::text("~ "), operand);
             }
             // An argument is bracketed unless it is written as an atom
-            // already, which is `Display`'s rule.
+            // already, and a function unless it is one, which is
+            // `Display`'s rule.
+            let fx_doc = if needs_brackets_as_function(fx) {
+                lindig::hcat(vec![
+                    lindig::text("("),
+                    doc(fx),
+                    lindig::text(")"),
+                ])
+            } else {
+                doc(fx)
+            };
             match arg.as_ref() {
                 Expr::Identifier(_, _)
                 | Expr::Literal(_, _)
                 | Expr::RecordSelector(_, _)
                 | Expr::Tuple(_, _) => {
-                    lindig::hcat(vec![doc(fx), lindig::text(" "), doc(arg)])
+                    lindig::hcat(vec![fx_doc, lindig::text(" "), doc(arg)])
                 }
                 _ => lindig::hcat(vec![
-                    doc(fx),
+                    fx_doc,
                     lindig::text(" ("),
                     doc(arg),
                     lindig::text(")"),
