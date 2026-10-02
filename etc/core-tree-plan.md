@@ -188,7 +188,7 @@ three kinds.
 | --- | --- | --- |
 | 183 | a query that tests for existence | A query with no unbounded extent is not grounded on its tree, and the step-list path rewrites its `nonEmpty` calls back into `exists` steps (`as_exists_steps`). A resolver that builds trees emits `nonEmpty` over a tree. |
 | 14 | a tree whose type is not the query's | The step-list grounder's own output, such as the seed of a transitive closure, `from (x, y) in edges yield (x, y)` over records, which no user could write (it is a type error). Not every one was traced. |
-| 13 | a scan source over the enclosing row | The step-list grounder's transitive closures, `iterate (...) (fn (__tc_all, __tc_new) => ...)`. |
+| 13 | a scan source over the enclosing row | The step-list grounder's transitive closures, `iterate (...) (fn (__tc_all, __tc_new) => ...)`. Once a scan source may hold a query, these get further and decline as "a tree whose type is not the query's", which then counts 26, every one the step-list grounder's output. |
 
 The 9 "scan over something that is not a collection" are extents
 the grounder left unbounded: the 46 grounder declines, seen again.
@@ -211,8 +211,9 @@ change position: CURRENT").
 | ~~5~~ | a `let val rec` in a per-row expression | closed. morel-java's resolver writes a `val rec` that is not recursive as a `val`, and simultaneous non-function bindings as a tuple and a `case`; this port's keeps them as written, so those two plans differ in `Core`, not in the tree. |
 | ~~4~~ | a query whose row names an unbound binder: 2 `compute elements` over a tuple pattern, 2 in `check.smli` | closed: the first by `compute`; the second were a query declared with an alias (`depts = dept bag check ...`), whose tree's types carry no alias. The tree keeps its own type, as morel-java prints it. |
 | ~~2~~ | a cons pattern, `from (hd :: tl) in lists` | closed, with one difference of text: morel-java's resolver writes the pattern's calls as `List`'s members, `#hd List $0`, `not (#null List $0)`; this port's tree writes them `hd $0`, `not (null $0)`. A built-in function here prints bare where it has a global name, whoever wrote it, and the translator has no `List` structure to select from. The shape is morel-java's. |
-| 1 | a correlated outer join | -- |
-| 1 | a scan source that applies a function to a nested query (`descendants2 ... (from ...)` in `hybrid.smli`) | -- |
+| ~~1~~ | a correlated outer join | closed: `join [left] [v$0] [#units $1 > 2]` over the right input `#items v$0` |
+| ~~1~~ | a scan source that applies a function to a nested query (`descendants2 ... (from ...)` in `hybrid.smli`) | closed: `f ([]) (r$0)`, the nested query broken out |
+| ~~1~~ | `from n: nat in ...`, a type with a `check` | closed by comparing types with their aliases expanded; but an unbounded scan of `n: nat` prints `extent "nat"` and `nat list` where morel-java prints `extent "int"` and `int list`. The type is the resolver's, and the grounder reasons with it. |
 | 7 | `ordinal` in a later scan's source or a join condition | see B′ |
 
 Closing the `compute` gap closed two more that the table did not

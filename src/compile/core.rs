@@ -331,20 +331,24 @@ impl Expr {
                 // An argument is bracketed unless it is written as an
                 // atom already: a name, a literal, or something that
                 // carries its own brackets. `#rev List xs`, but
-                // `#flatten Range ([OPEN (0, 10)])`.
+                // `#flatten Range ([OPEN (0, 10)])`. A function that
+                // is not an atom is bracketed too: `(fn i => i >= 1)
+                // n`, whose body would otherwise take the argument.
+                let fx_doc = if needs_brackets_as_function(fx) {
+                    hcat(vec![text("("), fx.to_doc(), text(")")])
+                } else {
+                    fx.to_doc()
+                };
                 match arg.as_ref() {
                     Expr::Identifier(_, _)
                     | Expr::Literal(_, _)
                     | Expr::RecordSelector(_, _)
                     | Expr::Tuple(_, _) => {
-                        hcat(vec![fx.to_doc(), text(" "), arg.to_doc()])
+                        hcat(vec![fx_doc, text(" "), arg.to_doc()])
                     }
-                    _ => hcat(vec![
-                        fx.to_doc(),
-                        text(" ("),
-                        arg.to_doc(),
-                        text(")"),
-                    ]),
+                    _ => {
+                        hcat(vec![fx_doc, text(" ("), arg.to_doc(), text(")")])
+                    }
                 }
             }
             Expr::Case(_, e, arms, _) => hcat(vec![
@@ -580,6 +584,16 @@ pub(crate) fn written_infix(func: &BuiltInFunction, op: &str) -> bool {
 /// number keeps its `.0`, `1000.0`, so that it reads back as a real
 /// and not an int; a value prints `1000`, and that is a different
 /// thing in a different place.
+/// Returns whether an expression applied as a function must be written
+/// in brackets: one that is not an atom, whose last part would take the
+/// argument for its own.
+pub(crate) fn needs_brackets_as_function(fx: &Expr) -> bool {
+    matches!(
+        fx,
+        Expr::Fn(..) | Expr::Case(..) | Expr::Raise(..) | Expr::Aggregate(..)
+    )
+}
+
 fn literal_text(lit: &Val) -> String {
     let s = lit.to_string();
     match lit {
