@@ -164,7 +164,8 @@ fn translate_with(
     if matches!(steps.last().map(|s| &s.kind), Some(StepKind::Compute(_))) {
         return only(t.value_of(tree, query_type)?, query_type);
     }
-    if tree.type_() == *query_type && t.binders_are_the_element(&tree) {
+    if same_type(&tree.type_(), query_type) && t.binders_are_the_element(&tree)
+    {
         return Some(tree);
     }
     if element_type(query_type).is_none() {
@@ -180,7 +181,7 @@ fn translate_with(
     // `name_the_components` says why it could not, which is exact
     // where a reason written here would be coarse.
     let tree = t.name_the_components(tree, query_type)?;
-    if tree.type_() != *query_type {
+    if !same_type(&tree.type_(), query_type) {
         return decline("a tree whose type is not the query's");
     }
     Some(tree)
@@ -1486,7 +1487,7 @@ impl Translator {
         // pairs` answers a list of `x`, not of `{x = x}`.
         if let [(_, path)] = self.bindings.as_slice() {
             let value = path.read(&elem)?;
-            if value.type_() == row {
+            if same_type(&value.type_(), &row) {
                 return node(Rel::Project(
                     Row::placeholder(),
                     Box::new(tree),
@@ -1819,6 +1820,44 @@ fn is_unnamed(e: &Expr) -> bool {
         }
         Expr::Literal(_, Val::Unit) => false,
         _ => e.implicit_label().is_none(),
+    }
+}
+
+/// Returns whether two types are the same once their aliases are
+/// expanded. A tree has the types its nodes derive, which do not
+/// carry the aliases the query was declared with: `from d in ds`,
+/// where `ds : depts` and `depts = dept bag check ...`, is a tree of
+/// `{deptno:int, dname:string} bag`, as morel-java prints it.
+fn same_type(a: &Rc<Type>, b: &Rc<Type>) -> bool {
+    a == b || unaliased(a) == unaliased(b)
+}
+
+/// Returns a type with every alias in it replaced by what it names.
+fn unaliased(t: &Rc<Type>) -> Rc<Type> {
+    match t.as_ref() {
+        Type::Alias(_, body, _, _) => unaliased(body),
+        Type::Bag(e) => Rc::new(Type::Bag(unaliased(e))),
+        Type::List(e) => Rc::new(Type::List(unaliased(e))),
+        Type::Fn(a, b) => Rc::new(Type::Fn(unaliased(a), unaliased(b))),
+        Type::Tuple(ts) => {
+            Rc::new(Type::Tuple(ts.iter().map(unaliased).collect()))
+        }
+        Type::Record(progressive, fields) => Rc::new(Type::Record(
+            *progressive,
+            fields
+                .iter()
+                .map(|(l, t)| (l.clone(), unaliased(t)))
+                .collect(),
+        )),
+        Type::Named(args, name) => Rc::new(Type::Named(
+            args.iter().map(unaliased).collect(),
+            name.clone(),
+        )),
+        Type::Data(name, args) => Rc::new(Type::Data(
+            name.clone(),
+            args.iter().map(unaliased).collect(),
+        )),
+        _ => t.clone(),
     }
 }
 
@@ -2323,16 +2362,34 @@ fn substitute_with(
             let mut scope = map.clone();
             let mut bound = Vec::with_capacity(decls.len());
             for decl in decls {
-                // A `fun` is in scope in its own body, and a type or a
-                // datatype is not a value at all.
-                let Decl::NonRecVal(b) = decl else {
-                    return decline("a `let` that binds a function");
-                };
-                let mut bind = b.as_ref().clone();
-                bind.expr = substitute_with(&b.expr, &scope, nested)?;
-                bound.push(Decl::NonRecVal(Box::new(bind)));
-                for name in bound_by(&b.pat) {
-                    scope.remove(&name);
+                match decl {
+                    Decl::NonRecVal(b) => {
+                        let mut bind = b.as_ref().clone();
+                        bind.expr = substitute_with(&b.expr, &scope, nested)?;
+                        bound.push(Decl::NonRecVal(Box::new(bind)));
+                        for name in bound_by(&b.pat) {
+                            scope.remove(&name);
+                        }
+                    }
+                    // A `val rec` -- a `fun` -- is in scope in its own
+                    // bindings as well as after them.
+                    Decl::RecVal(binds) => {
+                        for b in binds {
+                            for name in bound_by(&b.pat) {
+                                scope.remove(&name);
+                            }
+                        }
+                        let mut out = Vec::with_capacity(binds.len());
+                        for b in binds {
+                            let mut bind = b.clone();
+                            bind.expr =
+                                substitute_with(&b.expr, &scope, nested)?;
+                            out.push(bind);
+                        }
+                        bound.push(Decl::RecVal(out));
+                    }
+                    // A type or a datatype is not a value at all.
+                    _ => return decline("a `let` that declares a type"),
                 }
             }
             let body = substitute_with(body, &scope, nested)?;
