@@ -1494,6 +1494,19 @@ impl Translator {
                 ));
             }
         }
+        // Scans that bind nothing, `from _ in ["a"], _ in [true]`, leave
+        // a row of nothing, which is unit; each element is that one
+        // value, as morel-java writes it.
+        if self.bindings.is_empty()
+            && matches!(peel(&row), Type::Primitive(PrimitiveType::Unit))
+        {
+            let unit = Expr::Literal(row.clone(), Val::Unit);
+            return node(Rel::Project(
+                Row::placeholder(),
+                Box::new(tree),
+                Box::new(unit),
+            ));
+        }
         let Type::Record(_, fields) = peel(&row) else {
             return decline("a query whose row is not a record");
         };
@@ -2649,6 +2662,19 @@ mod tests {
         );
     }
 
+    /// Scans that bind nothing leave a row of nothing, unit, and the
+    /// tree ends in a projection of `()`.
+    #[test]
+    fn scans_that_bind_nothing_project_unit() {
+        assert_eq!(
+            tree_of("from _ in [1], _ in [true]").unwrap(),
+            "project [()] : unit list\n  \
+             join : (int * bool) list\n    \
+             [1] : int list\n    \
+             [true] : bool list\n"
+        );
+    }
+
     /// Every tree the translator builds passes the validator.
     #[test]
     fn what_it_builds_is_well_formed() {
@@ -2663,6 +2689,7 @@ mod tests {
             "from x in [10, 20] yield (from i in [1, 2] take current)",
             "from i in [1, 2], j in [current + 10, current + 20]",
             "from i in [2, 1, 2] compute sum over i",
+            "from () in [()], () in [(), ()]",
             "from (i, j) in [(\"a\", 1)] group {i = i} \
              compute {s = from r in elements compute sum over #j r}",
         ] {
