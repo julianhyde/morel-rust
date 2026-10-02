@@ -597,12 +597,14 @@ impl Translator {
                 self.set_op(*all, inputs, Rel::Union)
             }
             StepKind::Group(keys, aggregates) => {
-                self.group(keys, aggregates.as_deref())
+                self.group(keys, aggregates.as_deref(), &step.env)
             }
             // `compute` is a group with no keys, plus the extraction of
             // the single element that the enclosing expression
             // performs.
-            StepKind::Compute(aggregates) => self.group_of(vec![], aggregates),
+            StepKind::Compute(aggregates) => {
+                self.group_of(vec![], aggregates, &step.env)
+            }
             // `distinct` is a group on every binder with no aggregate,
             // which is what the compiler makes of it too, so it needs
             // no node of its own.
@@ -983,15 +985,34 @@ impl Translator {
 
     /// Translates a `group`: the keys and the aggregates, each a list
     /// of labelled expressions over `$0`.
-    fn group(&mut self, keys: &Expr, aggregates: Option<&Expr>) -> Option<()> {
-        let Some(keys) = labelled_parts(keys) else {
-            return decline("a group's keys");
+    ///
+    /// A key the query did not name, `group x + y`, is the row nothing
+    /// names, and the resolver binds it as `current`; it takes a
+    /// generated label, as morel-java gives it. An aggregate the query
+    /// did not name, `group {} compute 1 + 2`, is the row's value; see
+    /// [`Translator::group_parts`].
+    fn group(
+        &mut self,
+        keys: &Expr,
+        aggregates: Option<&Expr>,
+        env: &StepEnv,
+    ) -> Option<()> {
+        let keys = if is_unnamed(keys) {
+            vec![(Label::String(self.new_binder()), keys.clone())]
+        } else {
+            let Some(keys) = labelled_parts(keys) else {
+                return decline("a group's keys");
+            };
+            keys
         };
         match aggregates {
-            None => self.group_parts(keys, vec![]),
+            None => self.group_parts(keys, vec![], None),
+            Some(aggregates) if is_unnamed(aggregates) => {
+                self.group_parts(keys, vec![], Some((env, aggregates.clone())))
+            }
             Some(aggregates) => match labelled_parts(aggregates) {
                 None => decline("a group's aggregates"),
-                Some(aggregates) => self.group_parts(keys, aggregates),
+                Some(aggregates) => self.group_parts(keys, aggregates, None),
             },
         }
     }
@@ -1016,13 +1037,17 @@ impl Translator {
         };
         if self.bindings.is_empty() {
             let name = Label::String(self.new_binder());
-            return self.group_parts(vec![(name, row_ref(&elem, 0))], vec![]);
+            return self.group_parts(
+                vec![(name, row_ref(&elem, 0))],
+                vec![],
+                None,
+            );
         }
         let mut keys = Vec::with_capacity(self.bindings.len());
         for (name, path) in &self.bindings {
             keys.push((Label::String(name.clone()), path.read(&elem)?));
         }
-        self.group_parts(keys, vec![])
+        self.group_parts(keys, vec![], None)
     }
 
     /// Translates a group whose aggregates are an expression and whose
@@ -1031,20 +1056,41 @@ impl Translator {
         &mut self,
         keys: Vec<(Label, Expr)>,
         aggregates: &Expr,
+        env: &StepEnv,
     ) -> Option<()> {
+        if is_unnamed(aggregates) {
+            return self.group_parts(
+                keys,
+                vec![],
+                Some((env, aggregates.clone())),
+            );
+        }
         let Some(aggregates) = labelled_parts(aggregates) else {
             return decline("a compute's aggregates");
         };
-        self.group_parts(keys, aggregates)
+        self.group_parts(keys, aggregates, None)
     }
 
     /// Builds the `group` node and rebinds the query's names to the
     /// record it produces.
+    ///
+    /// `bare` is an expression the query computes without naming it,
+    /// with the environment that binds what it computes. It is the
+    /// row: the group computes the aggregates it holds, and a
+    /// projection after the group computes the expression from them,
+    /// as morel-java writes `group {} compute 1 + 2`.
     fn group_parts(
         &mut self,
         keys: Vec<(Label, Expr)>,
         aggregates: Vec<(Label, Expr)>,
+        bare: Option<(&StepEnv, Expr)>,
     ) -> Option<()> {
+        let bare_label = Label::String("$bare".to_string());
+        let bare_env = bare.as_ref().map(|(env, _)| *env);
+        let mut aggregates = aggregates;
+        if let Some((_, e)) = bare {
+            aggregates.push((bare_label.clone(), e));
+        }
         let rewrite = |t: &Self, parts: Vec<(Label, Expr)>| {
             parts
                 .into_iter()
@@ -1055,6 +1101,7 @@ impl Translator {
             .iter()
             .chain(aggregates.iter())
             .map(|(label, _)| label.clone())
+            .filter(|label| *label != bare_label)
             .collect();
         let keys = rewrite(self, keys)?;
         // An aggregate is a function over the group's rows, `f over e`.
@@ -1072,7 +1119,9 @@ impl Translator {
         let mut after = Vec::new();
         for (label, e) in aggregates {
             match self.rows(e)? {
-                e @ Expr::Aggregate(..) => over.push((label, e)),
+                e @ Expr::Aggregate(..) if label != bare_label => {
+                    over.push((label, e))
+                }
                 e => after.push((label, e)),
             }
         }
@@ -1128,6 +1177,19 @@ impl Translator {
         else {
             return decline("a group that is not a collection");
         };
+        if let Some(env) = bare_env {
+            let Some((_, e)) = after.iter().find(|(l, _)| *l == bare_label)
+            else {
+                return decline("a group whose value is missing");
+            };
+            let value = self.rewrite(e)?;
+            let value_type = value.type_();
+            self.wrap(|input| {
+                Rel::Project(Row::placeholder(), input, Box::new(value))
+            })?;
+            self.bindings = bindings_over(env, &value_type)?;
+            return Some(());
+        }
         let mut values: BTreeMap<Label, Expr> = BTreeMap::new();
         for label in &names {
             let value =
@@ -1700,6 +1762,22 @@ fn filtered(tree: Expr, test: Option<Expr>) -> Option<Expr> {
     }
 }
 
+/// Returns whether a group's keys or aggregates are one expression the
+/// query did not name: not a record of named parts, not `()`, and not
+/// an expression that names itself, as `i` or `sum over i` does.
+///
+/// A tuple is one such expression, `group (x + y, x - y)`; only a
+/// record is a list of parts.
+fn is_unnamed(e: &Expr) -> bool {
+    match e {
+        Expr::Tuple(t, items) => {
+            !items.is_empty() && !matches!(peel(t), Type::Record(..))
+        }
+        Expr::Literal(_, Val::Unit) => false,
+        _ => e.implicit_label().is_none(),
+    }
+}
+
 /// Returns the binders of a record whose fields are `labels`, each
 /// read as its field.
 fn fields_of(labels: &[Label]) -> Vec<(String, Path)> {
@@ -1713,7 +1791,8 @@ fn fields_of(labels: &[Label]) -> Vec<(String, Path)> {
 }
 
 /// Returns an expression with each aggregate in it, `f over e`, read
-/// by a name instead, the name of its function, and adds the aggregate
+/// by a name instead, the name of its function or else `aggregate`,
+/// and adds the aggregate
 /// under that name to `found`.
 ///
 /// An aggregate belongs to the nearest `group` or `compute` around it.
@@ -1725,13 +1804,16 @@ fn lift_aggregates(e: &Expr, found: &mut Vec<(String, Expr)>) -> Expr {
     let lifted = RefCell::new(Vec::new());
     fn walk(e: &Expr, lifted: &RefCell<Vec<(String, Expr)>>) -> Expr {
         match e {
-            Expr::Aggregate(t, _, _, _) => match e.implicit_label() {
-                Some(name) => {
-                    lifted.borrow_mut().push((name.clone(), e.clone()));
-                    Expr::Identifier(t.clone(), name)
-                }
-                None => e.clone(),
-            },
+            // An aggregate whose function has no name of its own,
+            // `maxBy #hiredate over e`, is `aggregate`, as morel-java
+            // names it.
+            Expr::Aggregate(t, _, _, _) => {
+                let name = e
+                    .implicit_label()
+                    .unwrap_or_else(|| "aggregate".to_string());
+                lifted.borrow_mut().push((name.clone(), e.clone()));
+                Expr::Identifier(t.clone(), name)
+            }
             Expr::From(t, steps) => Expr::From(
                 t.clone(),
                 steps
@@ -2490,6 +2572,25 @@ mod tests {
             "project [{i = #i $0, r = 10 + 2 * #sum $0}] : {i:int, r:int} list\n  \
              group [i = $0] [sum = fn col$0 => sum (#fromList Bag col$0) over $0] \
              : {i:int, sum:int} list\n    \
+             [1, 2] : int list\n"
+        );
+    }
+
+    /// A key the query did not name takes a generated label, which the
+    /// projection that ends the query reads; an aggregate expression
+    /// it did not name is the row, computed after the group.
+    #[test]
+    fn an_unnamed_key_takes_a_generated_label() {
+        assert_eq!(
+            tree_of("from (x, y) in [(1, 2), (3, 4)] group x + y").unwrap(),
+            "project [#`v$0` $0] : int list\n  \
+             group [v$0 = #1 $0 + #2 $0] : {v$0:int} list\n    \
+             [(1, 2), (3, 4)] : (int * int) list\n"
+        );
+        assert_eq!(
+            tree_of("from i in [1, 2] group {} compute 1 + 2").unwrap(),
+            "project [1 + 2] : int list\n  \
+             group [] : unit list\n    \
              [1, 2] : int list\n"
         );
     }
