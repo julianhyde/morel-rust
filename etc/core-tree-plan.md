@@ -208,8 +208,8 @@ change position: CURRENT").
 | ~~1~~ | a tuple group key, `group (x + y, x - y)` | closed: `group [v$0 = (..., ...)]` |
 | ~~12~~ | scans that bind nothing: `from _ in ...`, `from () in ...`, `from {} in ...` | closed: `project [()]` over the join. (morel-java throws only on the shadow's printed form, `from (_) in ...`; written as source it prints this plan.) |
 | ~~5~~ | `distinct` followed by a set operator | closed: `union [all]` over `project [#i $0]` over `group [i = $0]` |
-| 5 | a `let val rec` in a per-row expression | -- |
-| 4 | a query whose row names an unbound binder: 2 `compute elements` over a tuple pattern, 2 in `check.smli` not yet traced | -- |
+| ~~5~~ | a `let val rec` in a per-row expression | closed. morel-java's resolver writes a `val rec` that is not recursive as a `val`, and simultaneous non-function bindings as a tuple and a `case`; this port's keeps them as written, so those two plans differ in `Core`, not in the tree. |
+| ~~4~~ | a query whose row names an unbound binder: 2 `compute elements` over a tuple pattern, 2 in `check.smli` | closed: the first by `compute`; the second were a query declared with an alias (`depts = dept bag check ...`), whose tree's types carry no alias. The tree keeps its own type, as morel-java prints it. |
 | 2 | a cons pattern, `from (hd :: tl) in lists` | `project [#hd List $0 + 1]` over `filter [not (#null List $0)]` |
 | 1 | a correlated outer join | -- |
 | 1 | a scan source that applies a function to a nested query (`descendants2 ... (from ...)` in `hybrid.smli`) | -- |
