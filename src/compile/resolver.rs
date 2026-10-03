@@ -322,6 +322,11 @@ fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
                     check_step(s, lone, errors);
                 }
             }
+            CoreExpr::Rel(_, rel) => {
+                for c in rel.children() {
+                    check_expr(c, errors);
+                }
+            }
             _ => {}
         }
     }
