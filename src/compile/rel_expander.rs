@@ -41,7 +41,8 @@ use crate::compile::expander::{DatatypeMap, FnEnv, and_all, list_bounds};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::generator::{Cache, Cardinality, Generator};
 use crate::compile::generators::{
-    finite_extent, maybe_generator_with_scope, split_conjuncts,
+    finite_extent, is_infinite_range, maybe_generator_with_scope,
+    split_conjuncts,
 };
 use crate::compile::library::BuiltInFunction;
 use crate::compile::postfix::peel_type;
@@ -100,26 +101,26 @@ fn ground_with(
     fn_env: &FnEnv,
     rows_used: bool,
 ) -> Option<Expr> {
-    let Expr::From(t, steps) = exp else {
-        return None;
+    let tree = match exp {
+        Expr::From(t, steps) => {
+            if !steps.iter().any(step_holds_extent) {
+                return None;
+            }
+            let Some(tree) = rel_translator::translate(steps, t) else {
+                debugf(|| "ground: no tree".to_string());
+                return None;
+            };
+            tree
+        }
+        // The root's type may name an alias, which the binding keeps
+        // for printing; grounding reads the element's structure, which
+        // the alias hides.
+        Expr::Rel(t, rel) => {
+            Expr::Rel(rel_translator::unaliased(t), rel.clone())
+        }
+        _ => exp.clone(),
     };
-    if !steps.iter().any(step_holds_extent) {
-        return None;
-    }
-    // The names to give the leaves: a tree carries none of the
-    // query's, and the scans the query wrote are the leaves in the
-    // order a walk reaches them. It matters beyond the plan text -- grounding
-    // names what it builds after the leaf it bounds, and a group's
-    // key record sorts its fields by label, so a generated name
-    // puts the rows in a different order.
-    let pats: Vec<Pat> = steps
-        .iter()
-        .filter_map(|step| match &step.kind {
-            StepKind::Scan(pat, _, _) => Some(pat.as_ref().clone()),
-            _ => None,
-        })
-        .collect();
-    ground_query(t, steps, datatypes, fn_env, pats, rows_used)
+    ground_query(&exp.type_(), tree, datatypes, fn_env, rows_used)
 }
 
 /// Returns whether a step scans an extent, which is a variable that
@@ -129,19 +130,18 @@ fn step_holds_extent(step: &Step) -> bool {
         StepKind::Scan(_, source, _) if holds_extent(source))
 }
 
-/// Grounds one query on its tree, and returns the grounded tree.
+/// Grounds one query on its tree, and returns the grounded tree, or
+/// `None` where the tree has nothing unbounded or grounding declines.
 fn ground_query(
     t: &Rc<Type>,
-    steps: &[Step],
+    tree: Expr,
     datatypes: &DatatypeMap,
     fn_env: &FnEnv,
-    pats: Vec<Pat>,
     rows_used: bool,
 ) -> Option<Expr> {
-    let Some(tree) = rel_translator::translate(steps, t) else {
-        debugf(|| "ground: no tree".to_string());
+    if !leaf_holds_extent(&tree) {
         return None;
-    };
+    }
     debugf(|| format!("ground: tree {}", tree));
     // A query whose value is a `compute` is `Relational.only` over its
     // tree; the tree is what is grounded.
@@ -150,11 +150,11 @@ fn ground_query(
         Some(inner) => inner.clone(),
         None => tree,
     };
-    let pats = if pats.is_empty() {
-        leaf_pats(&tree)
-    } else {
-        pats
-    };
+    // The names to give the leaves. It matters beyond the plan text:
+    // grounding names what it builds after the leaf it bounds, and a
+    // group's key record sorts its fields by label, so a generated
+    // name puts the rows in a different order.
+    let pats = leaf_pats(&tree);
     let mut x = Expander::new(datatypes, fn_env, pats);
     x.rows_used = rows_used;
     // A duplicate still changes which rows come through where the
@@ -200,6 +200,29 @@ fn holds_extent(e: &Expr) -> bool {
     }
 }
 
+/// Returns whether one of a tree's leaves holds an extent. A query
+/// nested in one of the tree's expressions is not a leaf: it is a root
+/// of its own, grounded when the walk reaches it.
+fn leaf_holds_extent(tree: &Expr) -> bool {
+    let tree = rel_translator::only_of(tree).unwrap_or(tree);
+    let mut leaves = Vec::new();
+    all_leaves(tree, &mut leaves);
+    leaves.iter().any(holds_extent)
+}
+
+/// Returns whether a tree has a leaf that needs grounding: an extent,
+/// or an infinite range such as `[1..]`, which the step list's range
+/// pushdown bounds. As [leaf_holds_extent], a nested query is not a
+/// leaf.
+pub(crate) fn has_unbounded_leaf(tree: &Expr) -> bool {
+    let tree = rel_translator::only_of(tree).unwrap_or(tree);
+    let mut leaves = Vec::new();
+    all_leaves(tree, &mut leaves);
+    leaves
+        .iter()
+        .any(|leaf| holds_extent(leaf) || is_infinite_range(leaf))
+}
+
 /// The names a tree's leaves had, read back from the projection at
 /// its root, or empty where the tree does not say.
 ///
@@ -215,6 +238,83 @@ fn holds_extent(e: &Expr) -> bool {
 /// by label, and a generated label sorts differently from the one
 /// the user wrote -- which puts a query's rows in a different order.
 fn leaf_pats(tree: &Expr) -> Vec<Pat> {
+    let pats = projected_pats(tree);
+    if pats.is_empty() {
+        extent_pats(tree)
+    } else {
+        pats
+    }
+}
+
+/// The names a tree's leaves had, read from the names its extents
+/// carry, for a tree with no projection to read them from: a query
+/// with one binder, or one whose binders are the components of one
+/// scan, as `from (b, i)`. Empty unless every leaf is an extent that
+/// names its element.
+fn extent_pats(tree: &Expr) -> Vec<Pat> {
+    let mut leaves = Vec::new();
+    all_leaves(tree, &mut leaves);
+    let mut pats = Vec::with_capacity(leaves.len());
+    for leaf in &leaves {
+        let Expr::Extent(t, _, names) = leaf else {
+            return Vec::new();
+        };
+        let Some(elem) = element_type(t) else {
+            return Vec::new();
+        };
+        match (names.as_slice(), peel_type(&elem)) {
+            ([name], _) => {
+                pats.push(Pat::Identifier(elem.clone(), name.clone()))
+            }
+            (_, Type::Tuple(types)) if types.len() == names.len() => {
+                pats.push(Pat::Tuple(
+                    elem.clone(),
+                    names
+                        .iter()
+                        .zip(types)
+                        .map(|(n, t)| Pat::Identifier(t.clone(), n.clone()))
+                        .collect(),
+                ));
+            }
+            (_, Type::Record(_, types))
+                if types.len() == names.len() && !names.is_empty() =>
+            {
+                pats.push(Pat::Record(
+                    elem.clone(),
+                    names
+                        .iter()
+                        .zip(types)
+                        .map(|(n, (label, t))| {
+                            PatField::Labeled(
+                                label.to_string(),
+                                Box::new(Pat::Identifier(t.clone(), n.clone())),
+                            )
+                        })
+                        .collect(),
+                    false,
+                ));
+            }
+            _ => return Vec::new(),
+        }
+    }
+    pats
+}
+
+/// Gathers every leaf under a node, left to right.
+fn all_leaves(node: &Expr, leaves: &mut Vec<Expr>) {
+    match node {
+        Expr::Rel(_, rel) => {
+            for input in rel.inputs() {
+                all_leaves(input, leaves);
+            }
+        }
+        _ => leaves.push(node.clone()),
+    }
+}
+
+/// The names a tree's leaves had, read back from the projection at
+/// its root, or empty where it has none that says.
+fn projected_pats(tree: &Expr) -> Vec<Pat> {
     let Expr::Rel(_, rel) = tree else {
         return Vec::new();
     };

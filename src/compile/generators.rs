@@ -3583,6 +3583,12 @@ pub fn has_infinite_range_scan(steps: &[Step]) -> bool {
     })
 }
 
+/// Returns whether a collection is an infinite single-constructor range
+/// list, such as `[1..]`.
+pub fn is_infinite_range(src: &Expr) -> bool {
+    match_infinite_range_scan(src).is_some()
+}
+
 /// If `src` is `Range.flatten [<single infinite constructor>]`, returns
 /// `(lower, strict, arg)`: whether the implied bound is a lower bound,
 /// whether it is strict, and the range endpoint expression. Finite
