@@ -156,10 +156,19 @@ fn visit_expr(
             span.clone(),
         ),
         Expr::RecordSelector(t, slot) => Expr::RecordSelector(t.clone(), *slot),
-        // Substituting inside a tree must not cross a node boundary,
-        // which every node is for `$0`. The rules come with the
-        // translator; nothing builds a tree yet. See plan.md R5.
-        Expr::Rel(_, _) => todo!("substitute inside a relational tree"),
+        // A node binds its rows in the children that read them, so they
+        // shadow a substitution there and nowhere else.
+        Expr::Rel(t, rel) => {
+            let base = shadow.clone();
+            Expr::Rel(
+                t.clone(),
+                Box::new(rel.map_scoped(&|e, names| {
+                    let mut inner = base.clone();
+                    inner.extend(names.iter().map(|(n, _)| n.clone()));
+                    visit_expr(e, map, &mut inner, selections)
+                })),
+            )
+        }
         Expr::Tuple(t, items) => Expr::Tuple(
             t.clone(),
             items
@@ -362,5 +371,46 @@ mod tests {
             },
             _ => panic!("expected Fn, got {:?}", r),
         }
+    }
+
+    /// A substitution reaches inside a tree, except where a node binds
+    /// the name: a row is a name of its own, which shadows.
+    #[test]
+    fn substitution_inside_a_tree_stops_at_a_row() {
+        use crate::compile::core::{Rel, Row};
+        let list = Rc::new(Type::List(t_int()));
+        let gt = |a: Expr, b: Expr| {
+            let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
+            Expr::Apply(
+                bool_t,
+                Box::new(Expr::Identifier(t_int(), "gt".to_string())),
+                Box::new(Expr::Tuple(
+                    Rc::new(Type::Tuple(vec![t_int(), t_int()])),
+                    vec![a, b],
+                )),
+                Span::new(""),
+            )
+        };
+        let rel = Rel::Filter(
+            Row {
+                name: "x".to_string(),
+                ordinal: None,
+            },
+            Box::new(Expr::Identifier(list.clone(), "xs".to_string())),
+            Box::new(gt(id("x"), id("y"))),
+        );
+        let tree = Expr::Rel(list, Box::new(rel));
+        let mut map = HashMap::new();
+        map.insert("x".to_string(), Expr::Literal(t_int(), Val::Int(1)));
+        map.insert("y".to_string(), Expr::Literal(t_int(), Val::Int(2)));
+        let out = substitute(&tree, &map);
+        let Expr::Rel(_, rel) = out else {
+            panic!("a node");
+        };
+        let Rel::Filter(_, _, condition) = rel.as_ref() else {
+            panic!("a filter");
+        };
+        // `x` is the filter's row, and stays; `y` is outer, and goes.
+        assert_eq!(format!("{}", condition), "gt (x, 2)");
     }
 }

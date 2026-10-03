@@ -265,7 +265,28 @@ Rerun the survey by pruning each shared file with
   where r elem [2.0, nanValue, 1.0, nanValue]`.
 
 **C. The resolver builds trees.** `resolve_step`, about 230 lines,
-replaces `from_builder.rs`'s 1319.
+replaces `from_builder.rs`'s 1319. In four steps, each leaving every
+script's output as it was except plan text meant to change:
+
+* **C1. Every pass from the resolver to the compiler accepts a tree.**
+  `Rel::scoped_children` and `Rel::map_scoped` give each child of a
+  node with the names the node binds there, and `replacer`,
+  `var_collector`, the inliner and `progressive_widen` walk a tree
+  through them, a node's rows shadowing as a `fn`'s parameter does.
+  The kernel lowers every tree after inlining and before compiling --
+  the compiler sizes its frames from the variables it finds before it
+  compiles, so it cannot lower as it goes -- and `Relational.only` over
+  a tree lowers to the resolver's `compute` step. No query reaches
+  these passes as a tree yet.
+* **C2. The grounder hands on the tree it grounded**, rather than
+  lowering it; the kernel's lowering takes over.
+* **C3. The resolver emits the tree** for every query the translator
+  can express. A function's body stays in step form for the step-list
+  grounder, which a query the tree grounder declines still takes, and
+  `check_unbounded_extents` learns trees. From here `Sys.planEx`
+  prints trees, which is what the corpus statements above check.
+* **C4. `resolve_step` builds the tree directly**, and `from_builder.rs`
+  leaves the resolver.
 
 **D. The compiler compiles `Rel`.** About 950 of `compiler.rs`'s 2968
 lines are step-list query compilation: the `Expr::From` arm (32),

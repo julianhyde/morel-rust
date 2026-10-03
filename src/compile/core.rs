@@ -925,6 +925,14 @@ pub enum Rel {
     Union(bool, Vec<Expr>),
 }
 
+/// The names a node binds where one of its children is, each with its
+/// type; see [`Rel::scoped_children`].
+pub type Bound = Vec<(String, Rc<Type>)>;
+
+/// A function of one of a node's children and the names the node binds
+/// there; see [`Rel::map_scoped`].
+pub type ScopedFn<'a> = dyn Fn(&Expr, &[(String, Rc<Type>)]) -> Expr + 'a;
+
 /// The placeholder for a node's row while the node is being built or
 /// read; see [`Rel::bind`] and [`Rel::open`].
 pub const ROW: &str = "$0";
@@ -1226,6 +1234,143 @@ impl Rel {
             Rel::Take(input, n) => Rel::Take(b(input), b(n)),
             Rel::Union(d, args) => Rel::Union(*d, args.iter().map(f).collect()),
             Rel::Unorder(input) => Rel::Unorder(b(input)),
+        }
+    }
+
+    /// Returns this node's children -- its inputs and its expressions --
+    /// each with the names the node binds where that child is: none
+    /// for an input or a count, the row (and the position, where the
+    /// node counts its rows) for a per-row expression, and for a join
+    /// the left row in its right input and both rows in its condition.
+    /// Each name comes with its type.
+    ///
+    /// It is what a pass that reasons about names walks, where
+    /// [`Rel::children`] says nothing about scope.
+    pub fn scoped_children(&self) -> Vec<(&Expr, Bound)> {
+        let elem = |e: &Expr| {
+            element_type(&e.type_()).unwrap_or_else(|| e.type_().clone())
+        };
+        let int = || Rc::new(Type::Primitive(types::PrimitiveType::Int));
+        let row_names = |row: &Row, input: &Expr| {
+            let mut names = vec![(row.name.clone(), elem(input))];
+            if let Some(o) = &row.ordinal {
+                names.push((o.clone(), int()));
+            }
+            names
+        };
+        let mut v: Vec<(&Expr, Bound)> = Vec::new();
+        match self {
+            // lint: sort until '#}' where '##Rel::'
+            Rel::Except(_, inputs)
+            | Rel::Intersect(_, inputs)
+            | Rel::Union(_, inputs) => {
+                v.extend(inputs.iter().map(|e| (e, vec![])));
+            }
+            Rel::Filter(row, input, e)
+            | Rel::Project(row, input, e)
+            | Rel::Sort(row, input, e) => {
+                v.push((input, vec![]));
+                v.push((e, row_names(row, input)));
+            }
+            Rel::Group(row, input, keys, aggregates) => {
+                v.push((input, vec![]));
+                for (_, e) in keys.iter().chain(aggregates.iter()) {
+                    v.push((e, row_names(row, input)));
+                }
+            }
+            Rel::Join(_, rows, condition, left, right) => {
+                let mut left_row = vec![(rows.left.clone(), elem(left))];
+                if let Some(o) = &rows.ordinal {
+                    left_row.push((o.clone(), int()));
+                }
+                let mut both = left_row.clone();
+                both.push((rows.right.clone(), elem(right)));
+                v.push((left, vec![]));
+                v.push((right, left_row));
+                v.push((condition, both));
+            }
+            Rel::Skip(input, n) | Rel::Take(input, n) => {
+                v.push((input, vec![]));
+                v.push((n, vec![]));
+            }
+            Rel::Unorder(input) => v.push((input, vec![])),
+        }
+        v
+    }
+
+    /// Returns this node with `f` applied to each of its children, each
+    /// with the names the node binds there; see [`Rel::scoped_children`].
+    /// The node's rows are unchanged.
+    pub fn map_scoped(&self, f: &ScopedFn<'_>) -> Rel {
+        let elem = |e: &Expr| {
+            element_type(&e.type_()).unwrap_or_else(|| e.type_().clone())
+        };
+        let int = || Rc::new(Type::Primitive(types::PrimitiveType::Int));
+        let row_names = |row: &Row, input: &Expr| {
+            let mut names = vec![(row.name.clone(), elem(input))];
+            if let Some(o) = &row.ordinal {
+                names.push((o.clone(), int()));
+            }
+            names
+        };
+        let none: &[(String, Rc<Type>)] = &[];
+        let b = |e: &Expr, names: &[(String, Rc<Type>)]| Box::new(f(e, names));
+        match self {
+            // lint: sort until '#}' where '##Rel::'
+            Rel::Except(d, args) => {
+                Rel::Except(*d, args.iter().map(|e| f(e, none)).collect())
+            }
+            Rel::Filter(row, input, c) => {
+                let names = row_names(row, input);
+                Rel::Filter(row.clone(), b(input, none), b(c, &names))
+            }
+            Rel::Group(row, input, keys, aggs) => {
+                let names = row_names(row, input);
+                let parts = |parts: &[(Label, Expr)]| {
+                    parts
+                        .iter()
+                        .map(|(l, e)| (l.clone(), f(e, &names)))
+                        .collect()
+                };
+                Rel::Group(
+                    row.clone(),
+                    b(input, none),
+                    parts(keys),
+                    parts(aggs),
+                )
+            }
+            Rel::Intersect(d, args) => {
+                Rel::Intersect(*d, args.iter().map(|e| f(e, none)).collect())
+            }
+            Rel::Join(k, rows, c, l, r) => {
+                let mut left_row = vec![(rows.left.clone(), elem(l))];
+                if let Some(o) = &rows.ordinal {
+                    left_row.push((o.clone(), int()));
+                }
+                let mut both = left_row.clone();
+                both.push((rows.right.clone(), elem(r)));
+                Rel::Join(
+                    *k,
+                    rows.clone(),
+                    b(c, &both),
+                    b(l, none),
+                    b(r, &left_row),
+                )
+            }
+            Rel::Project(row, input, e) => {
+                let names = row_names(row, input);
+                Rel::Project(row.clone(), b(input, none), b(e, &names))
+            }
+            Rel::Skip(input, n) => Rel::Skip(b(input, none), b(n, none)),
+            Rel::Sort(row, input, e) => {
+                let names = row_names(row, input);
+                Rel::Sort(row.clone(), b(input, none), b(e, &names))
+            }
+            Rel::Take(input, n) => Rel::Take(b(input, none), b(n, none)),
+            Rel::Union(d, args) => {
+                Rel::Union(*d, args.iter().map(|e| f(e, none)).collect())
+            }
+            Rel::Unorder(input) => Rel::Unorder(b(input, none)),
         }
     }
 
@@ -2658,6 +2803,67 @@ mod tests {
             panic!("a projection");
         };
         assert_eq!(bound.ordinal, None);
+    }
+
+    /// A node's children come with the names it binds there: none in
+    /// an input, the row in a per-row expression, and for a join the
+    /// left row in its right input and both rows in its condition.
+    #[test]
+    fn a_node_says_what_it_binds_where() {
+        let filter = node(Rel::Filter(
+            Row::placeholder(),
+            Box::new(leaf(int(), Kind::List)),
+            Box::new(Expr::Literal(bool_(), Val::Bool(true))),
+        ));
+        let Expr::Rel(_, rel) = &filter else {
+            panic!("a node");
+        };
+        let Rel::Filter(row, _, _) = rel.as_ref() else {
+            panic!("a filter");
+        };
+        let names: Vec<Vec<String>> = rel
+            .scoped_children()
+            .into_iter()
+            .map(|(_, names)| names.into_iter().map(|(n, _)| n).collect())
+            .collect();
+        assert_eq!(names, vec![vec![], vec![row.name.clone()]]);
+
+        let join = node(Rel::Join(
+            JoinKind::Inner,
+            JoinRows::dependent("v".to_string()),
+            Box::new(Expr::Literal(bool_(), Val::Bool(true))),
+            Box::new(leaf(int(), Kind::List)),
+            Box::new(leaf(int(), Kind::List)),
+        ));
+        let Expr::Rel(_, rel) = &join else {
+            panic!("a node");
+        };
+        let Rel::Join(_, rows, _, _, _) = rel.as_ref() else {
+            panic!("a join");
+        };
+        // `map_scoped` hands each child the same names, whatever order
+        // it builds the node in.
+        let seen = RefCell::new(Vec::new());
+        rel.map_scoped(&|e, names| {
+            seen.borrow_mut().push((
+                format!("{}", e),
+                names.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
+            ));
+            e.clone()
+        });
+        let mut seen = seen.into_inner();
+        seen.sort();
+        assert_eq!(
+            seen,
+            vec![
+                ("r".to_string(), vec![]),
+                ("r".to_string(), vec!["v".to_string()]),
+                (
+                    "true".to_string(),
+                    vec!["v".to_string(), rows.right.clone()]
+                ),
+            ]
+        );
     }
 
     /// A join's left row is in scope in its right input, and reading it

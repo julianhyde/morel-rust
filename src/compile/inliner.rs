@@ -760,11 +760,22 @@ impl Expr {
                 span.clone(),
             ),
             Expr::RecordSelector(_t, _) => self.clone(),
+            // A node's rows shadow an outer binding of the same name in
+            // the children that read them, as a `fn`'s parameter does.
+            Expr::Rel(t, rel) => Expr::Rel(
+                t.clone(),
+                Box::new(rel.map_scoped(&|child, names| {
+                    let mut child_env = env.clone();
+                    for (name, t) in names {
+                        child_env = child_env.child_none(name, t);
+                    }
+                    x.transform_expr(&child_env, child)
+                })),
+            ),
             Expr::Tuple(t, expr_list) => Expr::Tuple(
                 t.clone(),
                 Self::visit_list(env, x, expr_list).into_iter().collect(),
             ),
-            _ => todo!("inline {:}", self),
         }
     }
 

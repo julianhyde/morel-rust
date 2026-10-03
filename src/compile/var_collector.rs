@@ -292,7 +292,15 @@ impl Expr {
             Expr::RecordSelector(_, _) => {
                 // no variables
             }
-            _ => todo!("collect_vars {:?}", self),
+            // A node defines its rows in the children that read them.
+            Expr::Rel(_, rel) => {
+                for (child, names) in rel.scoped_children() {
+                    for (name, _) in &names {
+                        collector.add_def(Binding::of_name(name));
+                    }
+                    child.collect_vars(collector);
+                }
+            }
         }
     }
 }
