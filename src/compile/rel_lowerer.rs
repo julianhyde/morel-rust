@@ -79,81 +79,188 @@ pub fn lower_decl(decl: &Decl) -> Option<Decl> {
 /// check of the lowering: what runs is the tree's step list, and the
 /// answer says whether the lowering preserved the rows.
 pub fn flip_decl(decl: Decl) -> Decl {
-    match decl {
-        Decl::NonRecVal(b) => Decl::NonRecVal(Box::new(flip_bind(*b))),
-        Decl::RecVal(binds) => {
-            Decl::RecVal(binds.into_iter().map(flip_bind).collect())
+    Flip::Lower.decl(decl)
+}
+
+/// Replaces every query in a declaration by its tree, where the
+/// translation succeeds and the tree lowers; the kernel lowers it
+/// again before compiling.
+///
+/// A function's body keeps its step list: the step-list grounder,
+/// which grounds a query the tree grounder declines, reads it where
+/// the function is called.
+pub fn tree_decl(decl: Decl) -> Decl {
+    Flip::Tree.decl(decl)
+}
+
+/// What a flip makes of a query that translates.
+#[derive(Copy, Clone)]
+enum Flip {
+    /// The step list its tree lowers to.
+    Lower,
+    /// Its tree.
+    Tree,
+}
+
+impl Flip {
+    fn decl(self, decl: Decl) -> Decl {
+        match decl {
+            Decl::NonRecVal(b) => Decl::NonRecVal(Box::new(self.bind(*b))),
+            Decl::RecVal(binds) => {
+                Decl::RecVal(binds.into_iter().map(|b| self.bind(b)).collect())
+            }
+            other => other,
         }
-        other => other,
     }
-}
 
-fn flip_bind(mut b: ValBind) -> ValBind {
-    b.expr = flip_expr(&b.expr);
-    b
-}
-
-fn flip_arms(arms: &[Match]) -> Vec<Match> {
-    arms.iter()
-        .map(|m| Match {
-            pat: m.pat.clone(),
-            expr: flip_expr(&m.expr),
-        })
-        .collect()
-}
-
-/// Flips the queries in an expression, outermost first: a query that
-/// translates and lowers is replaced whole, and its nested queries
-/// went through the tree with it; one that does not has its nested
-/// queries flipped each on its own.
-fn flip_expr(e: &Expr) -> Expr {
-    if let Expr::From(t, steps) = e
-        && let Some(tree) = rel_translator::translate(steps, t)
-        && let Some(lowered) = lower(&tree)
-    {
-        let lowered = scalarize(lowered, t);
-        if env::var_os("MOREL_REL_DEBUG").is_some() {
-            eprintln!("lowered: {}", lowered);
-        }
-        return lowered;
+    fn bind(self, mut b: ValBind) -> ValBind {
+        b.expr = self.expr(&b.expr);
+        b
     }
-    match e {
-        // lint: sort until '#}' where '##Expr::'
-        Expr::Aggregate(t, a, b, s) => Expr::Aggregate(
-            t.clone(),
-            Box::new(flip_expr(a)),
-            Box::new(flip_expr(b)),
-            s.clone(),
-        ),
-        Expr::Apply(t, a, b, s) => Expr::Apply(
-            t.clone(),
-            Box::new(flip_expr(a)),
-            Box::new(flip_expr(b)),
-            s.clone(),
-        ),
-        Expr::Case(t, subject, arms, s) => Expr::Case(
-            t.clone(),
-            Box::new(flip_expr(subject)),
-            flip_arms(arms),
-            s.clone(),
-        ),
-        Expr::Fn(t, arms, s) => Expr::Fn(t.clone(), flip_arms(arms), s.clone()),
-        Expr::From(t, steps) => Expr::From(t.clone(), flip_steps(steps)),
-        Expr::Let(t, decls, body) => Expr::Let(
-            t.clone(),
-            decls.iter().cloned().map(flip_decl).collect(),
-            Box::new(flip_expr(body)),
-        ),
-        Expr::List(t, items) => {
-            Expr::List(t.clone(), items.iter().map(flip_expr).collect())
+
+    fn arms(self, arms: &[Match]) -> Vec<Match> {
+        arms.iter()
+            .map(|m| Match {
+                pat: m.pat.clone(),
+                expr: self.expr(&m.expr),
+            })
+            .collect()
+    }
+
+    fn each(self, es: &[Expr]) -> Vec<Expr> {
+        es.iter().map(|e| self.expr(e)).collect()
+    }
+
+    fn boxed(self, e: &Expr) -> Box<Expr> {
+        Box::new(self.expr(e))
+    }
+
+    /// The query an expression is, translated, or `None` where it is
+    /// not a query or does not translate and lower.
+    fn query(self, e: &Expr) -> Option<Expr> {
+        let Expr::From(t, steps) = e else {
+            return None;
+        };
+        let tree = rel_translator::translate(steps, t)?;
+        match self {
+            // The queries the tree's expressions hold went through
+            // the translation with it.
+            Flip::Lower => {
+                let lowered = scalarize(lower(&tree)?, t);
+                if env::var_os("MOREL_REL_DEBUG").is_some() {
+                    eprintln!("lowered: {}", lowered);
+                }
+                Some(lowered)
+            }
+            Flip::Tree => {
+                let tree = self.nested(&tree);
+                lower(&tree)?;
+                Some(tree)
+            }
         }
-        Expr::Raise(t, a, s) => {
-            Expr::Raise(t.clone(), Box::new(flip_expr(a)), s.clone())
+    }
+
+    /// A tree with the queries its expressions hold made trees in
+    /// turn; `only` over a tree is the tree's value.
+    fn nested(self, tree: &Expr) -> Expr {
+        match tree {
+            Expr::Rel(t, rel) => Expr::Rel(
+                t.clone(),
+                Box::new(rel.map_children(&|e| self.expr(e))),
+            ),
+            Expr::Apply(t, f, a, s) => Expr::Apply(
+                t.clone(),
+                f.clone(),
+                Box::new(self.nested(a)),
+                s.clone(),
+            ),
+            _ => tree.clone(),
         }
-        Expr::Tuple(t, items) => {
-            Expr::Tuple(t.clone(), items.iter().map(flip_expr).collect())
+    }
+
+    /// Flips the queries in an expression, outermost first: a query
+    /// that translates and lowers is replaced whole; one that does
+    /// not has its nested queries flipped each on its own.
+    fn expr(self, e: &Expr) -> Expr {
+        if let Some(q) = self.query(e) {
+            return q;
         }
-        _ => e.clone(),
+        match e {
+            // lint: sort until '#}' where '##Expr::'
+            Expr::Aggregate(t, a, b, s) => Expr::Aggregate(
+                t.clone(),
+                self.boxed(a),
+                self.boxed(b),
+                s.clone(),
+            ),
+            Expr::Apply(t, a, b, s) => {
+                Expr::Apply(t.clone(), self.boxed(a), self.boxed(b), s.clone())
+            }
+            Expr::Case(t, subject, arms, s) => Expr::Case(
+                t.clone(),
+                self.boxed(subject),
+                self.arms(arms),
+                s.clone(),
+            ),
+            Expr::Fn(t, arms, s) => match self {
+                Flip::Lower => Expr::Fn(t.clone(), self.arms(arms), s.clone()),
+                Flip::Tree => e.clone(),
+            },
+            Expr::From(t, steps) => Expr::From(t.clone(), self.steps(steps)),
+            Expr::Let(t, decls, body) => Expr::Let(
+                t.clone(),
+                decls.iter().cloned().map(|d| self.decl(d)).collect(),
+                self.boxed(body),
+            ),
+            Expr::List(t, items) => Expr::List(t.clone(), self.each(items)),
+            Expr::Raise(t, a, s) => {
+                Expr::Raise(t.clone(), self.boxed(a), s.clone())
+            }
+            Expr::Rel(_, _) => self.nested(e),
+            Expr::Tuple(t, items) => Expr::Tuple(t.clone(), self.each(items)),
+            _ => e.clone(),
+        }
+    }
+
+    fn steps(self, steps: &[Step]) -> Vec<Step> {
+        steps
+            .iter()
+            .map(|step| {
+                let kind = match &step.kind {
+                    // lint: sort until '#}' where '##StepKind::'
+                    StepKind::Compute(e) => StepKind::Compute(self.boxed(e)),
+                    StepKind::Except(d, es) => {
+                        StepKind::Except(*d, self.each(es))
+                    }
+                    StepKind::Group(k, a) => StepKind::Group(
+                        self.boxed(k),
+                        a.as_ref().map(|a| self.boxed(a)),
+                    ),
+                    StepKind::Intersect(d, es) => {
+                        StepKind::Intersect(*d, self.each(es))
+                    }
+                    StepKind::Order(e) => StepKind::Order(self.boxed(e)),
+                    StepKind::Scan(p, e, c) => StepKind::Scan(
+                        p.clone(),
+                        self.boxed(e),
+                        c.as_ref().map(|c| self.boxed(c)),
+                    ),
+                    StepKind::Skip(e) => StepKind::Skip(self.boxed(e)),
+                    StepKind::Take(e) => StepKind::Take(self.boxed(e)),
+                    StepKind::Union(d, es) => {
+                        StepKind::Union(*d, self.each(es))
+                    }
+                    StepKind::Where(e) => StepKind::Where(self.boxed(e)),
+                    StepKind::Yield(e) => StepKind::Yield(self.boxed(e)),
+                    other => other.clone(),
+                };
+                Step {
+                    kind,
+                    env: step.env.clone(),
+                    join_type: step.join_type,
+                }
+            })
+            .collect()
     }
 }
 
@@ -236,49 +343,6 @@ fn computed(steps: &[Step]) -> Option<Vec<Step>> {
         return Some(steps);
     }
     None
-}
-
-fn flip_steps(steps: &[Step]) -> Vec<Step> {
-    steps
-        .iter()
-        .map(|step| {
-            let kind = match &step.kind {
-                // lint: sort until '#}' where '##StepKind::'
-                StepKind::Compute(e) => {
-                    StepKind::Compute(Box::new(flip_expr(e)))
-                }
-                StepKind::Except(d, es) => {
-                    StepKind::Except(*d, es.iter().map(flip_expr).collect())
-                }
-                StepKind::Group(k, a) => StepKind::Group(
-                    Box::new(flip_expr(k)),
-                    a.as_ref().map(|a| Box::new(flip_expr(a))),
-                ),
-                StepKind::Intersect(d, es) => {
-                    StepKind::Intersect(*d, es.iter().map(flip_expr).collect())
-                }
-                StepKind::Order(e) => StepKind::Order(Box::new(flip_expr(e))),
-                StepKind::Scan(p, e, c) => StepKind::Scan(
-                    p.clone(),
-                    Box::new(flip_expr(e)),
-                    c.as_ref().map(|c| Box::new(flip_expr(c))),
-                ),
-                StepKind::Skip(e) => StepKind::Skip(Box::new(flip_expr(e))),
-                StepKind::Take(e) => StepKind::Take(Box::new(flip_expr(e))),
-                StepKind::Union(d, es) => {
-                    StepKind::Union(*d, es.iter().map(flip_expr).collect())
-                }
-                StepKind::Where(e) => StepKind::Where(Box::new(flip_expr(e))),
-                StepKind::Yield(e) => StepKind::Yield(Box::new(flip_expr(e))),
-                other => other.clone(),
-            };
-            Step {
-                kind,
-                env: step.env.clone(),
-                join_type: step.join_type,
-            }
-        })
-        .collect()
 }
 
 /// One lowering, of one tree.

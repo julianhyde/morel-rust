@@ -3154,11 +3154,13 @@ impl EagerF1 {
                             .map(|d| plan_decl(d, line_width(r)))
                             .unwrap_or_default()
                     }),
+                    // A named phase, such as "core", is the declaration
+                    // the resolver made, printed as a plan is.
                     Err(_) => r
                         .session
                         .pre_inline_decl
                         .as_ref()
-                        .map(|d| format!("{}", d))
+                        .map(|d| plan_decl(d, line_width(r)))
                         .unwrap_or_default(),
                 };
                 Ok(Val::String((s).into()))

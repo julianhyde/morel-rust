@@ -285,6 +285,15 @@ script's output as it was except plan text meant to change:
   grounder, which a query the tree grounder declines still takes, and
   `check_unbounded_extents` learns trees. From here `Sys.planEx`
   prints trees, which is what the corpus statements above check.
+  Done as a pass at the end of the resolver, after grounding
+  (`rel_lowerer::tree_decl`), which C4 moves into `resolve_step`;
+  `Sys.planEx "core"` prints a plan, as morel-java's does. The
+  `such-that.smli` plans that still differ do so for reasons of
+  their own: `Sys.planEx "N"` cannot yet replan to an intermediate
+  pass, so it shows the grounded tree where morel-java shows the
+  extent; a bag scanned where a list is wanted is `#toList Bag` in
+  morel-java and a bag here; and the grounder's shapes differ where
+  the decline ports below are still to do.
 * **C4. `resolve_step` builds the tree directly**, and `from_builder.rs`
   leaves the resolver.
 
