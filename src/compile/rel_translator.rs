@@ -58,6 +58,27 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
+/// The key, in a map of what the enclosing query's names become, that
+/// says there is an enclosing query but it is not yet known: a `current`
+/// that reads its row is left for it to substitute.
+const DEFERRED_CURRENT: &str = "$current?";
+
+/// Translates a query nested in another, on its own: the enclosing
+/// query's names are left free, for the enclosing query's translation to
+/// substitute when it meets the tree. Returns `None` where it declines.
+///
+/// Where the query evaluates `current` or `ordinal` once -- in a count,
+/// a set operand or its first scan's source -- they are the enclosing
+/// row's and its position, and are left too: as `current`, and as the
+/// placeholder of a position. An enclosing query that becomes a tree
+/// substitutes them, and one that stays steps gets them back as it
+/// wrote them when the tree is lowered.
+pub fn translate_nested(steps: &[Step], query_type: &Rc<Type>) -> Option<Expr> {
+    DECLINE.with(|cell| cell.set(None));
+    let outer = BTreeMap::from([(DEFERRED_CURRENT.to_string(), unit_leaf())]);
+    translate_with(steps, query_type, outer, Rc::new(Cell::new(0)), true)
+}
+
 /// Translates the query `from steps`, whose type is `query_type`, into
 /// a tree; or returns `None` where it declines.
 pub fn translate(steps: &[Step], query_type: &Rc<Type>) -> Option<Expr> {
@@ -94,8 +115,16 @@ pub fn trees_within(e: &Expr) -> Expr {
     LEAKED.with(|cell| cell.borrow_mut().clear());
     let counter = Rc::new(Cell::new(0));
     let map = BTreeMap::new();
-    let mut nested = |t: &Rc<Type>, steps: &[Step]| {
-        translate_with(steps, t, BTreeMap::new(), Rc::clone(&counter), false)
+    let mut nested = |e: &Expr| match e {
+        Expr::From(t, steps) => translate_with(
+            steps,
+            t,
+            BTreeMap::new(),
+            Rc::clone(&counter),
+            false,
+        ),
+        // A tree is a query translated already.
+        _ => Some(e.clone()),
     };
     substitute_with(e, &map, &mut nested).unwrap_or_else(|| e.clone())
 }
@@ -850,6 +879,7 @@ impl Translator {
                 Rc::clone(&self.counter),
                 true,
             ),
+            Expr::Rel(..) => substitute_tree(source, &self.outer),
             // A query inside the source, `f [] (from e in ...)`, is a
             // tree of its own, as an operand's is.
             leaf => match self.rewrite_once(leaf) {
@@ -967,19 +997,14 @@ impl Translator {
                 Rc::clone(&self.counter),
                 true,
             ),
+            Expr::Rel(..) => substitute_tree(source, &outer),
             // Otherwise it is a leaf, and only its names change -- and
             // a query inside it is a tree of its own.
             leaf => {
                 let counter = Rc::clone(&self.counter);
                 let inner = outer.clone();
-                substitute_with(leaf, &outer, &mut |t, steps| {
-                    translate_with(
-                        steps,
-                        t,
-                        inner.clone(),
-                        Rc::clone(&counter),
-                        true,
-                    )
+                substitute_with(leaf, &outer, &mut |x| {
+                    nest(x, &inner, &counter)
                 })
             }
         }?;
@@ -1462,9 +1487,7 @@ impl Translator {
     fn rewrite_once(&self, e: &Expr) -> Option<Expr> {
         let counter = Rc::clone(&self.counter);
         let outer = self.outer.clone();
-        substitute_with(e, &self.outer, &mut |t, steps| {
-            translate_with(steps, t, outer.clone(), Rc::clone(&counter), true)
-        })
+        substitute_with(e, &self.outer, &mut |x| nest(x, &outer, &counter))
     }
 
     /// Rewrites a set operator's operand, which is evaluated once; see
@@ -1678,9 +1701,9 @@ impl Translator {
             outer.insert(CURRENT.to_string(), self.current(binder.clone())?);
         }
         let counter = Rc::clone(&self.counter);
-        let Some(body) = substitute_with(e, &map, &mut |t, steps| {
-            translate_with(steps, t, outer.clone(), Rc::clone(&counter), true)
-        }) else {
+        let Some(body) =
+            substitute_with(e, &map, &mut |x| nest(x, &outer, &counter))
+        else {
             return decline("an expression over the binders");
         };
         let body = rename_in_nested(&body, ORDINAL, &ordinal_name);
@@ -1988,6 +2011,20 @@ fn lift_aggregates(e: &Expr, found: &mut Vec<(String, Expr)>) -> Expr {
                     })
                     .collect(),
             ),
+            // A nested tree's groups compute aggregates of their own,
+            // as a nested query's `group` and `compute` steps do.
+            Expr::Rel(t, rel) => Expr::Rel(
+                t.clone(),
+                Box::new(match rel.as_ref() {
+                    Rel::Group(row, input, keys, aggregates) => Rel::Group(
+                        row.clone(),
+                        Box::new(walk(input, lifted)),
+                        keys.clone(),
+                        aggregates.clone(),
+                    ),
+                    rel => rel.map_children(&|x| walk(x, lifted)),
+                }),
+            ),
             _ => map_children(e, &|x| walk(x, lifted)),
         }
     }
@@ -2010,6 +2047,10 @@ fn elements_type(e: &Expr) -> Option<Rc<Type>> {
             steps
                 .iter()
                 .for_each(|step| step_exprs(step, &mut |x| walk(x, found)));
+            return;
+        }
+        if let Expr::Rel(_, rel) = e {
+            rel.children().into_iter().for_each(|x| walk(x, found));
             return;
         }
         map_children(e, &|x| {
@@ -2102,6 +2143,12 @@ fn reads_current(e: &Expr) -> bool {
             steps
                 .iter()
                 .for_each(|step| step_exprs(step, &mut |x| walk(x, found)));
+            return;
+        }
+        // A tree translated on its own holds a `current` only where it
+        // left the enclosing row's.
+        if let Expr::Rel(_, rel) = e {
+            rel.children().into_iter().for_each(|x| walk(x, found));
             return;
         }
         map_children(e, &|x| {
@@ -2384,12 +2431,56 @@ fn reads_a_binding(source: &Expr, bindings: &[(String, Path)]) -> bool {
 /// to, and declines where an expression is not one it knows how to
 /// walk.
 fn substitute(e: &Expr, map: &BTreeMap<String, Expr>) -> Option<Expr> {
-    substitute_with(e, map, &mut |_, _| None)
+    substitute_with(e, map, &mut |_| None)
 }
 
-/// Translates a query nested inside an expression into a tree of its
-/// own, or declines.
-type Nested<'a> = dyn FnMut(&Rc<Type>, &[Step]) -> Option<Expr> + 'a;
+/// Makes a query nested inside an expression -- a step list, or a tree
+/// translated on its own -- a tree that reads the enclosing query, or
+/// declines.
+type Nested<'a> = dyn FnMut(&Expr) -> Option<Expr> + 'a;
+
+/// Makes a query nested in an expression a tree that reads the
+/// enclosing query's names through `outer`: a step list is translated
+/// with them, and a tree, which was translated on its own with them
+/// left free, has them substituted.
+fn nest(
+    e: &Expr,
+    outer: &BTreeMap<String, Expr>,
+    counter: &Rc<Cell<usize>>,
+) -> Option<Expr> {
+    match e {
+        Expr::From(t, steps) => {
+            translate_with(steps, t, outer.clone(), Rc::clone(counter), true)
+        }
+        Expr::Rel(..) => substitute_tree(e, outer),
+        _ => None,
+    }
+}
+
+/// Substitutes the names of an enclosing query into a tree translated
+/// on its own. The tree's rows are names of its own, which nothing
+/// outside it shares, so nothing in it shadows them; what it binds by a
+/// `let`, a `fn` or a `case` is respected as anywhere.
+fn substitute_tree(e: &Expr, outer: &BTreeMap<String, Expr>) -> Option<Expr> {
+    let Expr::Rel(t, rel) = e else {
+        return None;
+    };
+    let failed = Cell::new(false);
+    let rel = rel.map_children(&|child| {
+        let mut nested = |x: &Expr| match x {
+            Expr::Rel(..) => substitute_tree(x, outer),
+            _ => None,
+        };
+        substitute_with(child, outer, &mut nested).unwrap_or_else(|| {
+            failed.set(true);
+            child.clone()
+        })
+    });
+    if failed.get() {
+        return None;
+    }
+    Some(Expr::Rel(t.clone(), Box::new(rel)))
+}
 
 /// Substitutes as [`substitute`] does, and hands a nested query to
 /// `nested`, which translates it into a tree of its own or declines.
@@ -2414,6 +2505,9 @@ fn substitute_with(
         Expr::Current(t) => match map.get(CURRENT) {
             Some(row) if peel(&row.type_()) == peel(t) => row.clone(),
             Some(_) => return decline("a `current` of another type"),
+            // A query translated on its own leaves the enclosing row's
+            // `current` for the enclosing query to substitute.
+            None if map.contains_key(DEFERRED_CURRENT) => e.clone(),
             None => return decline("a query that reads `current`"),
         },
         Expr::Apply(t, f, a, span) => {
@@ -2446,7 +2540,7 @@ fn substitute_with(
         }
         // A query in an expression is a tree of its own; `nested` is
         // what makes one, and declines where nothing is expecting it.
-        Expr::From(t, steps) => nested(t, steps)?,
+        Expr::From(..) | Expr::Rel(..) => nested(e)?,
         // A `let` binds names of its own, and a name it binds is not
         // the binder it happens to share a spelling with, so the
         // substitution stops at it. Each declaration is in the scope
@@ -2505,7 +2599,6 @@ fn substitute_with(
             substitute_arms(arms, map, nested)?,
             span.clone(),
         ),
-        _ => return decline("an expression that is not walked"),
     })
 }
 
