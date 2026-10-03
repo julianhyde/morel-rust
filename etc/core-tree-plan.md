@@ -338,6 +338,14 @@ script's output as it was except plan text meant to change:
       queries in the scripts become trees this way; of the outermost,
       the 21 that are only an unbounded scan stay steps, and one that a
       dependent join's source reads `ordinal` in, which no node binds.
+      Then `QueryBuilder` takes `FromBuilder`'s place in the resolver,
+      as morel-java's `StepResolver` takes `FromResolver`'s: each step
+      is translated as soon as no later step can change it, which is
+      every step but the last, by `StepTranslator`, which `translate`
+      now runs on too. `FromBuilder` still shapes each step -- its
+      environment, the `current` it reads, the position it counts --
+      because the lowerer builds its step lists with it, and the step
+      list is kept beside the tree for a query the translator declines.
 
 **D. The compiler compiles `Rel`.** About 950 of `compiler.rs`'s 2968
 lines are step-list query compilation: the `Expr::From` arm (32),
