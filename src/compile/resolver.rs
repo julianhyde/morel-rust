@@ -130,10 +130,12 @@ pub fn resolve_with_session_fns_rec(
     );
     // With MOREL_REL_LOWER set, every query runs as the step list its
     // tree lowers to: the check that the lowering preserves the rows.
+    // Otherwise every query the translator can express goes on as
+    // its tree, which the kernel lowers before compiling.
     let decl = if env::var_os("MOREL_REL_LOWER").is_some() {
         rel_lowerer::flip_decl(decl)
     } else {
-        decl
+        rel_lowerer::tree_decl(decl)
     };
     // Any `Expr::Extent` that survived the expander represents an
     // unbounded variable predicate inversion couldn't ground. Surface
