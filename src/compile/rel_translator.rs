@@ -1068,13 +1068,26 @@ impl Translator {
                 "a `distinct` over a tree that is not a collection",
             );
         };
-        if self.bindings.is_empty() {
-            let name = Label::String(self.new_binder());
-            return self.group_parts(
-                vec![(name, row_ref(&elem, 0))],
+        // A row the query did not name -- `yield i mod 3 distinct`,
+        // which the resolver binds as `current`, or a query that binds
+        // nothing -- is keyed under a generated label, as morel-java
+        // does.
+        let unnamed = match self.bindings.as_slice() {
+            [] => true,
+            [(name, path)] => name == "current" && path.0.is_empty(),
+            _ => false,
+        };
+        if unnamed {
+            let label = self.new_binder();
+            let saved = std::mem::take(&mut self.bindings);
+            self.group_parts(
+                vec![(Label::String(label.clone()), row_ref(&elem, 0))],
                 vec![],
                 None,
-            );
+            )?;
+            self.unwrap_atom(&label)?;
+            self.bindings = saved;
+            return Some(());
         }
         // The keys are the row the query sees. Where the element is not
         // that row -- a join's, which is its inputs' components -- the
@@ -1100,7 +1113,30 @@ impl Translator {
         for (name, path) in &self.bindings {
             keys.push((Label::String(name.clone()), path.read(&elem)?));
         }
-        self.group_parts(keys, vec![], None)
+        let atom = self.atom && self.bindings.len() == 1;
+        self.group_parts(keys, vec![], None)?;
+        // Where one binder is the whole row, the row is that binder's
+        // value again at once, as morel-java writes it: what follows
+        // reads `$0`, not a field of the group's record.
+        if atom && let [(name, _)] = self.bindings.clone().as_slice() {
+            self.unwrap_atom(name)?;
+            self.bindings = vec![(name.clone(), Path::whole())];
+        }
+        Some(())
+    }
+
+    /// Adds the projection that takes the one field, `label`, out of a
+    /// group's record, so that the element is the field's value.
+    fn unwrap_atom(&mut self, label: &str) -> Option<()> {
+        let Some(elem) =
+            self.tree.as_ref().and_then(|t| element_type(&t.type_()))
+        else {
+            return decline("a `distinct` that is not a collection");
+        };
+        let value = Path::field(label).read(&elem)?;
+        self.wrap(|input| {
+            Rel::Project(Row::placeholder(), input, Box::new(value))
+        })
     }
 
     /// Translates a group whose aggregates are an expression and whose
@@ -2812,6 +2848,29 @@ mod tests {
              join [v$0] : (int * int) list\n    \
              [10, 20, 30] : int list\n    \
              [v$0 + v$1] : int list\n"
+        );
+    }
+
+    /// Where one binder is the whole row, `distinct` makes the row that
+    /// binder's value again at once, so what follows reads `$0`; and a
+    /// row the query did not name is keyed under a generated label.
+    #[test]
+    fn distinct_over_an_atom_projects_at_once() {
+        assert_eq!(
+            tree_of("from i in [3, 1, 2, 3] distinct order DESC i").unwrap(),
+            "sort [DESC $0] : int list\n  \
+             project [#i $0] : int list\n    \
+             group [i = $0] : {i:int} list\n      \
+             [3, 1, 2, 3] : int list\n"
+        );
+        assert_eq!(
+            tree_of("from i in [0, 1, 2, 3] yield i mod 3 distinct order DESC current")
+                .unwrap(),
+            "sort [DESC $0] : int list\n  \
+             project [#`v$0` $0] : int list\n    \
+             group [v$0 = $0] : {v$0:int} list\n      \
+             project [$0 mod 3] : int list\n        \
+             [0, 1, 2, 3] : int list\n"
         );
     }
 
