@@ -170,9 +170,12 @@ the translator declined, 43 remain (count them with
 `current` translates as morel-java resolves it: the value of the
 one binder where the row is an atom, otherwise the record of the
 binders, which is the element itself where the element is that
-record. morel-java throws on `from i in ... yield i mod 3 distinct
-order DESC (current)` ("cannot change position: CURRENT"), so that
-plan has no oracle.
+record. (`... yield i mod 3 distinct order DESC current` gives
+morel-java's plan; `distinct` over a row that is an atom projects the
+value straight after the group, keyed `v$0` where the query named
+nothing. morel-java throws on the shadow's printed form, `DESC
+(current)`, because its parser cannot put `current` or `_` in
+parentheses: hydromatic/morel#496.)
 
 **Before C: what the translator still declines.** C has the
 resolver build every query as a tree, with no step list to fall
@@ -197,8 +200,10 @@ the grounder left unbounded: the 46 grounder declines, seen again.
 count or a set operand, with no enclosing query; see B′.
 
 *Real gaps: 99.* morel-java gives the plan text for each, except
-one: it throws on `... distinct order DESC (current)` ("cannot
-change position: CURRENT").
+one; morel-java's parser throws on `current`, `_` and thirteen other
+kinds of node in parentheses, which is how the shadow prints some
+queries (hydromatic/morel#496), so those must be given to it as
+source.
 
 | n | gap | morel-java's plan |
 | --- | --- | --- |
@@ -206,7 +211,7 @@ change position: CURRENT").
 | ~~8~~ | `compute elements`, `compute #id Fn over i` | closed: the same, `project [#elements $0]` over `group [] [elements = #id Fn over $0]` |
 | ~~11~~ | a group key with no name: `group x + y`, `group ordinal mod 2`, `compute 1 + 2` | closed: the key labelled `v$0`, then `project [#\`v$0\` $0]`; an unnamed `compute` is `project [1 + 2]` over `group []`, and an aggregate whose function has no name is `aggregate` |
 | ~~1~~ | a tuple group key, `group (x + y, x - y)` | closed: `group [v$0 = (..., ...)]` |
-| ~~12~~ | scans that bind nothing: `from _ in ...`, `from () in ...`, `from {} in ...` | closed: `project [()]` over the join. (morel-java throws only on the shadow's printed form, `from (_) in ...`; written as source it prints this plan.) |
+| ~~12~~ | scans that bind nothing: `from _ in ...`, `from () in ...`, `from {} in ...` | closed: `project [()]` over the join. (morel-java throws only on the shadow's printed form, `from (_) in ...`, hydromatic/morel#496; written as source it prints this plan.) |
 | ~~5~~ | `distinct` followed by a set operator | closed: `union [all]` over `project [#i $0]` over `group [i = $0]` |
 | ~~5~~ | a `let val rec` in a per-row expression | closed. morel-java's resolver writes a `val rec` that is not recursive as a `val`, and simultaneous non-function bindings as a tuple and a `case`; this port's keeps them as written, so those two plans differ in `Core`, not in the tree. |
 | ~~4~~ | a query whose row names an unbound binder: 2 `compute elements` over a tuple pattern, 2 in `check.smli` | closed: the first by `compute`; the second were a query declared with an alias (`depts = dept bag check ...`), whose tree's types carry no alias. The tree keeps its own type, as morel-java prints it. |
