@@ -110,7 +110,9 @@ fn visit_expr(
             span.clone(),
         ),
         Expr::Current(t) => Expr::Current(t.clone()),
-        Expr::Extent(t, span) => Expr::Extent(t.clone(), span.clone()),
+        Expr::Extent(t, span, names) => {
+            Expr::Extent(t.clone(), span.clone(), names.clone())
+        }
         Expr::Fn(t, arms, span) => Expr::Fn(
             t.clone(),
             arms.iter()

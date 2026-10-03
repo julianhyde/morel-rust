@@ -36,8 +36,8 @@
 //! end.
 
 use crate::compile::core::{
-    Binding, Decl, Expr, JoinKind, JoinRows, Match, Pat, Rel, Row, Step,
-    StepEnv, StepKind, ValBind, element_type,
+    Binding, Decl, Expr, JoinKind, JoinRows, Match, Pat, PatField, Rel, Row,
+    Step, StepEnv, StepKind, ValBind, element_type,
 };
 use crate::compile::expander::expr_eq;
 use crate::compile::from_builder::{FromBuilder, ORDINAL_FIELD_PREFIX};
@@ -72,6 +72,16 @@ pub fn lower(exp: &Expr) -> Option<Expr> {
 /// and after inlining, so that the core a plan prints is the tree.
 pub fn lower_decl(decl: &Decl) -> Option<Decl> {
     Lowerer {}.all_decl(decl)
+}
+
+/// A query translated to its tree and lowered back to steps, or `None`
+/// where either declines.
+pub fn relowered(e: &Expr) -> Option<Expr> {
+    let Expr::From(t, steps) = e else {
+        return None;
+    };
+    let tree = rel_translator::translate(steps, t)?;
+    Some(unlet(&scalarize(lower(&tree)?, t)))
 }
 
 /// Replaces every query in a declaration by its tree lowered back
@@ -223,44 +233,75 @@ impl Flip {
     }
 
     fn steps(self, steps: &[Step]) -> Vec<Step> {
-        steps
-            .iter()
-            .map(|step| {
-                let kind = match &step.kind {
-                    // lint: sort until '#}' where '##StepKind::'
-                    StepKind::Compute(e) => StepKind::Compute(self.boxed(e)),
-                    StepKind::Except(d, es) => {
-                        StepKind::Except(*d, self.each(es))
-                    }
-                    StepKind::Group(k, a) => StepKind::Group(
-                        self.boxed(k),
-                        a.as_ref().map(|a| self.boxed(a)),
-                    ),
-                    StepKind::Intersect(d, es) => {
-                        StepKind::Intersect(*d, self.each(es))
-                    }
-                    StepKind::Order(e) => StepKind::Order(self.boxed(e)),
-                    StepKind::Scan(p, e, c) => StepKind::Scan(
-                        p.clone(),
-                        self.boxed(e),
-                        c.as_ref().map(|c| self.boxed(c)),
-                    ),
-                    StepKind::Skip(e) => StepKind::Skip(self.boxed(e)),
-                    StepKind::Take(e) => StepKind::Take(self.boxed(e)),
-                    StepKind::Union(d, es) => {
-                        StepKind::Union(*d, self.each(es))
-                    }
-                    StepKind::Where(e) => StepKind::Where(self.boxed(e)),
-                    StepKind::Yield(e) => StepKind::Yield(self.boxed(e)),
-                    other => other.clone(),
-                };
-                Step {
-                    kind,
-                    env: step.env.clone(),
-                    join_type: step.join_type,
+        map_steps(steps, &|e| self.expr(e))
+    }
+}
+
+/// Rebuilds a step list with a function applied to each expression its
+/// steps hold.
+fn map_steps(steps: &[Step], f: &dyn Fn(&Expr) -> Expr) -> Vec<Step> {
+    let each = |es: &[Expr]| es.iter().map(f).collect::<Vec<_>>();
+    let boxed = |e: &Expr| Box::new(f(e));
+    steps
+        .iter()
+        .map(|step| {
+            let kind = match &step.kind {
+                // lint: sort until '#}' where '##StepKind::'
+                StepKind::Compute(e) => StepKind::Compute(boxed(e)),
+                StepKind::Except(d, es) => StepKind::Except(*d, each(es)),
+                StepKind::Group(k, a) => {
+                    StepKind::Group(boxed(k), a.as_ref().map(|a| boxed(a)))
                 }
-            })
-            .collect()
+                StepKind::Intersect(d, es) => StepKind::Intersect(*d, each(es)),
+                StepKind::Order(e) => StepKind::Order(boxed(e)),
+                StepKind::Scan(p, e, c) => StepKind::Scan(
+                    p.clone(),
+                    boxed(e),
+                    c.as_ref().map(|c| boxed(c)),
+                ),
+                StepKind::Skip(e) => StepKind::Skip(boxed(e)),
+                StepKind::Take(e) => StepKind::Take(boxed(e)),
+                StepKind::Union(d, es) => StepKind::Union(*d, each(es)),
+                StepKind::Where(e) => StepKind::Where(boxed(e)),
+                StepKind::Yield(e) => StepKind::Yield(boxed(e)),
+                other => other.clone(),
+            };
+            Step {
+                kind,
+                env: step.env.clone(),
+                join_type: step.join_type,
+            }
+        })
+        .collect()
+}
+
+/// Returns whether an expression is a name, or a tuple or record of
+/// them.
+fn is_names(e: &Expr) -> bool {
+    match e {
+        Expr::Identifier(..) => true,
+        Expr::Tuple(_, args) => args.iter().all(is_names),
+        _ => false,
+    }
+}
+
+/// Substitutes each name a `let` binds to another name back into the
+/// `let`'s body, undoing what the translation does to give a nested
+/// query the enclosing row. The step-list grounder reads a nested query
+/// as the query's author wrote it, which reads the enclosing scan's
+/// name.
+fn unlet(e: &Expr) -> Expr {
+    match e {
+        Expr::Let(_, decls, body)
+            if decls.len() == 1
+                && let Decl::NonRecVal(bind) = &decls[0]
+                && let Pat::Identifier(_, name) = &bind.pat
+                && is_names(&bind.expr) =>
+        {
+            unlet(&substitute_name(body, name, &bind.expr))
+        }
+        Expr::From(t, steps) => Expr::From(t.clone(), map_steps(steps, &unlet)),
+        _ => map_children(e, &unlet),
     }
 }
 
@@ -691,9 +732,8 @@ impl Lowerer {
         }
         let right_lowered = self.rel(&right_tree)?;
         let right_elem = element_type(&right_lowered.type_())?;
-        let name = self.fresh_name();
-        let pat = Pat::Identifier(right_elem.clone(), name.clone());
-        let right_element = Expr::Identifier(right_elem.clone(), name.clone());
+        let (pat, right_element, right_row) =
+            self.binding(&right_tree, &right_elem);
         let join_type = match kind {
             JoinKind::Full => JoinType::Full,
             JoinKind::Inner => JoinType::Inner,
@@ -712,7 +752,7 @@ impl Lowerer {
         // `where` after it would count only the pairs that survive.
         if join_type == JoinType::Inner && !tested.uses_ordinal() {
             b.fb.scan_with_join(join_type, pat, right_lowered, None);
-            b.row.push((name, right_elem));
+            b.row.extend(right_row);
             b.started = true;
             b.where_(tested);
         } else {
@@ -720,7 +760,7 @@ impl Lowerer {
             // pairs, where both elements are present, so it reads them
             // as they are.
             b.fb.scan_with_join(join_type, pat, right_lowered, Some(tested));
-            b.row.push((name, right_elem));
+            b.row.extend(right_row);
             b.started = true;
         }
         Some(join_element(left, right, left_element, right_element))
@@ -809,12 +849,89 @@ impl Lowerer {
         }
         let lowered = self.rel(collection)?;
         let elem = element_type(&lowered.type_())?;
-        let name = self.fresh_name();
-        let pat = Pat::Identifier(elem.clone(), name.clone());
+        let (pat, element, row) = self.binding(collection, &elem);
         b.fb.scan(pat, lowered);
-        b.row.push((name.clone(), elem.clone()));
+        b.row.extend(row);
         b.started = true;
-        Some(Expr::Identifier(elem, name))
+        Some(element)
+    }
+
+    /// Returns the pattern a scan of a collection binds, the expression
+    /// that denotes its element, and the binders it leaves.
+    ///
+    /// An extent is scanned under the names its pattern bound, which is
+    /// what grounding reads and what an error about it says; any other
+    /// collection under a fresh name.
+    fn binding(
+        &mut self,
+        collection: &Expr,
+        elem: &Rc<Type>,
+    ) -> (Pat, Expr, Vec<(String, Rc<Type>)>) {
+        let elem = elem.clone();
+        if let Expr::Extent(_, _, names) = collection
+            && names.len() > 1
+            && let Type::Tuple(types) = peel_type(&elem).clone()
+            && types.len() == names.len()
+        {
+            let ids: Vec<Expr> = names
+                .iter()
+                .zip(types.iter())
+                .map(|(n, t)| Expr::Identifier(t.clone(), n.clone()))
+                .collect();
+            let pats = names
+                .iter()
+                .zip(types.iter())
+                .map(|(n, t)| Pat::Identifier(t.clone(), n.clone()))
+                .collect();
+            let row = names
+                .iter()
+                .zip(types.iter())
+                .map(|(n, t)| (n.clone(), t.clone()));
+            return (
+                Pat::Tuple(elem.clone(), pats),
+                Expr::Tuple(elem, ids),
+                row.collect(),
+            );
+        }
+        if let Expr::Extent(_, _, names) = collection
+            && let Type::Record(_, types) = peel_type(&elem).clone()
+            && types.len() == names.len()
+            && !names.is_empty()
+        {
+            let ids: Vec<Expr> = names
+                .iter()
+                .zip(types.values())
+                .map(|(n, t)| Expr::Identifier(t.clone(), n.clone()))
+                .collect();
+            let fields = names
+                .iter()
+                .zip(types.iter())
+                .map(|(n, (label, t))| {
+                    PatField::Labeled(
+                        label.to_string(),
+                        Box::new(Pat::Identifier(t.clone(), n.clone())),
+                    )
+                })
+                .collect();
+            let row = names
+                .iter()
+                .zip(types.values())
+                .map(|(n, t)| (n.clone(), t.clone()));
+            return (
+                Pat::Record(elem.clone(), fields, false),
+                Expr::Tuple(elem, ids),
+                row.collect(),
+            );
+        }
+        let name = match collection {
+            Expr::Extent(_, _, names) if names.len() == 1 => names[0].clone(),
+            _ => self.fresh_name(),
+        };
+        (
+            Pat::Identifier(elem.clone(), name.clone()),
+            Expr::Identifier(elem.clone(), name.clone()),
+            vec![(name, elem)],
+        )
     }
 
     /// Returns what a node's row and its position denote, as the steps
@@ -1172,17 +1289,10 @@ pub(crate) fn replace_names(e: &Expr, map: &BTreeMap<String, Expr>) -> Expr {
             Some(replacement) => replacement.clone(),
             None => e.clone(),
         },
-        Expr::Apply(_, fx, a, _)
-            if matches!(fx.as_ref(), Expr::RecordSelector(_, _))
-                && matches!(a.as_ref(), Expr::Identifier(_, n)
-                    if map.contains_key(n)) =>
+        Expr::Apply(t, fx, a, s)
+            if let Expr::RecordSelector(_, slot) = fx.as_ref() =>
         {
-            let (Expr::RecordSelector(_, slot), Expr::Identifier(_, n)) =
-                (fx.as_ref(), a.as_ref())
-            else {
-                unreachable!()
-            };
-            field_at(&map[n], *slot)
+            selected(t, fx, replace_names(a, map), *slot, s)
         }
         Expr::Rel(t, rel) => Expr::Rel(
             t.clone(),
@@ -1201,11 +1311,38 @@ pub(crate) fn substitute_name(
 ) -> Expr {
     let sub = |x: &Expr| substitute_name(x, name, replacement);
     match e {
+        Expr::Apply(t, fx, a, s)
+            if let Expr::RecordSelector(_, slot) = fx.as_ref() =>
+        {
+            selected(t, fx, sub(a), *slot, s)
+        }
+        Expr::From(t, steps) => Expr::From(t.clone(), map_steps(steps, &sub)),
         Expr::Identifier(_, n) if n == name => replacement.clone(),
         Expr::Rel(t, rel) => {
             Expr::Rel(t.clone(), Box::new(rel.map_children(&sub)))
         }
         _ => map_children(e, &sub),
+    }
+}
+
+/// Applies a selector to an argument that substitution has rewritten,
+/// folding the selection where the argument has become a tuple: `#2
+/// v$0` where `v$0` is `(a, b)` is `b`.
+fn selected(
+    t: &Rc<Type>,
+    selector: &Expr,
+    arg: Expr,
+    slot: usize,
+    span: &Span,
+) -> Expr {
+    match arg {
+        Expr::Tuple(_, args) if slot < args.len() => args[slot].clone(),
+        arg => Expr::Apply(
+            t.clone(),
+            Box::new(selector.clone()),
+            Box::new(arg),
+            span.clone(),
+        ),
     }
 }
 

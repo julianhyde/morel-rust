@@ -1446,7 +1446,7 @@ impl<'a> Compiler<'a> {
                     Code::new_get_local(&cx.frame_def, slot)
                 }
             }
-            Expr::Extent(t, _) => {
+            Expr::Extent(t, ..) => {
                 // Reached only when a `from p` (no `in`) survives all
                 // earlier passes — i.e. predicate inversion failed
                 // to resolve the unbounded variable. Phase 1+ will
@@ -2079,7 +2079,8 @@ impl<'a> Compiler<'a> {
                 // runtime fallback below catches the rare case
                 // where a function with an ungrounded body Extent
                 // is actually invoked.
-                let expr_code = if let Expr::Extent(_, span) = expr.as_ref() {
+                let expr_code = if let Expr::Extent(_, span, _) = expr.as_ref()
+                {
                     let name = match pat.as_ref() {
                         Pat::Identifier(_, n) => n.clone(),
                         _ => "_".to_string(),

@@ -148,7 +148,7 @@ fn walk_expr(e: &mut Expr, env: &HashMap<String, Val>, file_root: &Rc<File>) {
             walk_expr(inner, env, file_root);
         }
         Expr::Current(_)
-        | Expr::Extent(_, _)
+        | Expr::Extent(..)
         | Expr::Identifier(_, _)
         | Expr::Literal(_, _)
         | Expr::Ordinal(_)
@@ -260,7 +260,7 @@ fn set_expr_type(e: &mut Expr, t: Rc<Type>) {
         Expr::Apply(et, _, _, _) => *et = t,
         Expr::Case(et, _, _, _) => *et = t,
         Expr::Current(et) => *et = t,
-        Expr::Extent(et, _) => *et = t,
+        Expr::Extent(et, ..) => *et = t,
         Expr::Fn(et, _, _) => *et = t,
         Expr::From(et, _) => *et = t,
         Expr::Identifier(et, _) => *et = t,

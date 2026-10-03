@@ -25,7 +25,7 @@ use crate::compile::core::{
     ConBind as CoreConBind, DatatypeBind as CoreDatatypeBind, Decl as CoreDecl,
     Expr as CoreExpr, Match as CoreMatch, Pat as CorePat,
     PatField as CorePatField, Step as CoreStep, StepKind as CoreStepKind,
-    TypeBind as CoreTypeBind, ValBind as CoreValBind,
+    TypeBind as CoreTypeBind, ValBind as CoreValBind, extent_names,
 };
 use crate::compile::expander;
 use crate::compile::expander::and_all;
@@ -289,7 +289,7 @@ fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
                     check_expr(&m.expr, errors);
                 }
             }
-            CoreExpr::Extent(t, span) => {
+            CoreExpr::Extent(t, span, _) => {
                 // An extent that is not under a scan at all: nothing
                 // names it but its type.
                 errors.push((unenumerable_message(t), span.clone()));
@@ -335,7 +335,7 @@ fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
     fn check_step(s: &CoreStep, lone: bool, errors: &mut Vec<(String, Span)>) {
         match &s.kind {
             CoreStepKind::Scan(pat, src, cond) => {
-                if let CoreExpr::Extent(t, span) = src.as_ref() {
+                if let CoreExpr::Extent(t, span, _) = src.as_ref() {
                     if lone {
                         errors.push((unenumerable_message(t), span.clone()));
                     } else {
@@ -4073,7 +4073,11 @@ impl<'a> Resolver<'a> {
                     &pat.span.to_pest_span(),
                     self.base_line,
                 );
-                let extent = CoreExpr::Extent(extent_type, span.clone());
+                let extent = CoreExpr::Extent(
+                    extent_type,
+                    span.clone(),
+                    extent_names(&resolved_pat),
+                );
                 builder.scan_with_condition(resolved_pat.clone(), extent, None);
                 // The type's condition becomes a step of its own rather
                 // than part of the scan's condition, which only a join

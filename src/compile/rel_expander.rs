@@ -190,7 +190,7 @@ fn ground_query(
 /// is a variable that nothing has bounded.
 fn holds_extent(e: &Expr) -> bool {
     match e {
-        Expr::Extent(_, _) => true,
+        Expr::Extent(..) => true,
         Expr::From(_, steps) => steps.iter().any(step_holds_extent),
         _ => {
             let mut found = false;
@@ -425,7 +425,7 @@ impl<'a> Expander<'a> {
             return None;
         }
         let Expr::Rel(_, rel) = exp else {
-            if matches!(exp, Expr::Extent(_, _)) {
+            if matches!(exp, Expr::Extent(..)) {
                 return self.bound(exp, conditions);
             }
             return Some(exp.clone());
@@ -822,7 +822,7 @@ impl<'a> Expander<'a> {
 
     fn add_leaf(&mut self, leaf: &Expr, frame: &mut Frame) {
         let pat = self.element_pat(leaf);
-        let extent = matches!(leaf, Expr::Extent(_, _));
+        let extent = matches!(leaf, Expr::Extent(..));
         frame.leaves.push(Leaf {
             exp: leaf.clone(),
             pat,

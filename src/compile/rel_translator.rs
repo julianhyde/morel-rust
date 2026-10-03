@@ -301,7 +301,7 @@ fn shadow_expr(e: &Expr) {
         Expr::Raise(_, a, _) => shadow_expr(a),
         Expr::Rel(_, rel) => rel.children().into_iter().for_each(shadow_expr),
         Expr::Current(_)
-        | Expr::Extent(_, _)
+        | Expr::Extent(..)
         | Expr::Identifier(_, _)
         | Expr::Literal(_, _)
         | Expr::Ordinal(_)
@@ -2403,9 +2403,9 @@ fn substitute_with(
             Some(replacement) => replacement.clone(),
             None => e.clone(),
         },
-        Expr::Literal(_, _)
-        | Expr::RecordSelector(_, _)
-        | Expr::Extent(_, _) => e.clone(),
+        Expr::Literal(_, _) | Expr::RecordSelector(_, _) | Expr::Extent(..) => {
+            e.clone()
+        }
         // `ordinal` is the position of the row the step reads, which
         // the node the step becomes binds beside the row.
         Expr::Ordinal(_) => ordinal_ref(),

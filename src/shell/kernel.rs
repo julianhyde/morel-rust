@@ -246,7 +246,7 @@ fn expr_contains_reference(expr: &Expr, name: &str) -> bool {
             .any(|m| expr_contains_reference(&m.expr, name)),
         Expr::From(_, _) => false,
         Expr::Raise(_, e, _) => expr_contains_reference(e, name),
-        Expr::Extent(_, _) => false,
+        Expr::Extent(..) => false,
     }
 }
 

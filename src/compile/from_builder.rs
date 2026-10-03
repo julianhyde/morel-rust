@@ -1237,7 +1237,7 @@ impl FromBuilder {
             && self.steps.len() == 1
             && let StepKind::Scan(pat, exp, None) = &self.steps[0].kind
             && matches!(**pat, Pat::Identifier(_, _))
-            && !matches!(**exp, Expr::Extent(_, _))
+            && !matches!(**exp, Expr::Extent(..))
         {
             return Ok((**exp).clone());
         }
