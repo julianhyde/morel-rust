@@ -664,6 +664,20 @@ fn walk_expr_with_scope(
             )),
             s,
         ),
+        // A grounded tree: the queries its expressions hold are
+        // grounded in turn.
+        Expr::Rel(t, rel) => Expr::Rel(
+            t,
+            Box::new(rel.map_children(&|e| {
+                walk_expr_with_scope(
+                    e.clone(),
+                    env,
+                    rec_env,
+                    datatypes,
+                    outer_scope,
+                )
+            })),
+        ),
         other => other,
     }
 }
@@ -677,11 +691,19 @@ fn walk_query_steps(
     rec_env: &FnEnv,
     datatypes: &DatatypeMap,
 ) -> Expr {
+    let outer_scope = BTreeSet::new();
     let (t, steps) = match expr {
         Expr::From(t, s) => (t, s),
-        other => return other,
+        other => {
+            return walk_expr_with_scope(
+                other,
+                env,
+                rec_env,
+                datatypes,
+                &outer_scope,
+            );
+        }
     };
-    let outer_scope = BTreeSet::new();
     let new_steps: Vec<Step> = steps
         .into_iter()
         .map(|s| {
@@ -1896,9 +1918,6 @@ fn normalize_tuple_id_param(pat: &Pat, body: &Expr) -> (Pat, Expr) {
 /// to the component variable.
 fn simplify_tuple_projections(expr: &Expr) -> Expr {
     match expr {
-        // Rewriting inside a tree needs the scoping rules that the
-        // translator brings; nothing builds a tree yet. See plan.md R5.
-        Expr::Rel(_, _) => todo!("simplify inside a relational tree"),
         Expr::Aggregate(t, e1, e2, s) => Expr::Aggregate(
             t.clone(),
             Box::new(simplify_tuple_projections(e1)),
@@ -1958,6 +1977,11 @@ fn simplify_tuple_projections(expr: &Expr) -> Expr {
             t.clone(),
             Box::new(simplify_tuple_projections(e)),
             span.clone(),
+        ),
+        // A fold reads no names, so a node's rows need no care.
+        Expr::Rel(t, rel) => Expr::Rel(
+            t.clone(),
+            Box::new(rel.map_children(&simplify_tuple_projections)),
         ),
         Expr::Current(_)
         | Expr::Extent(_, _)

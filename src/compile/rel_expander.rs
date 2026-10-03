@@ -129,8 +129,7 @@ fn step_holds_extent(step: &Step) -> bool {
         StepKind::Scan(_, source, _) if holds_extent(source))
 }
 
-/// Grounds one query: its tree is grounded and lowered back to the
-/// steps that run it.
+/// Grounds one query on its tree, and returns the grounded tree.
 fn ground_query(
     t: &Rc<Type>,
     steps: &[Step],
@@ -170,6 +169,10 @@ fn ground_query(
         debugf(|| "ground: an extent survived".to_string());
         return None;
     }
+    // The tree is what goes on; the kernel lowers it to the step
+    // list that runs it, after inlining. That it lowers is checked
+    // here, so that a query whose tree would not run takes the step
+    // list instead.
     let grounded = if scalar {
         rel_translator::only(grounded, t)?
     } else {
@@ -180,7 +183,7 @@ fn ground_query(
         return None;
     };
     debugf(|| format!("grounded: {}", lowered));
-    Some(rel_lowerer::scalarize(lowered, t))
+    Some(grounded)
 }
 
 /// Returns whether an expression holds a scan over an extent, which
