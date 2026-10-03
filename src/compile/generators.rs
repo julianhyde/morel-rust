@@ -24,7 +24,7 @@
 //! constructor patterns.
 
 use crate::compile::core::{
-    Binding, Expr, Match, Pat, PatField, Step, StepEnv, StepKind,
+    Binding, Expr, Match, Pat, PatField, Step, StepEnv, StepKind, extent_names,
 };
 use crate::compile::expander::{DatatypeMap, FnEnv, and_all, expr_eq};
 use crate::compile::free_finder::free_names_in;
@@ -2514,8 +2514,12 @@ fn derive_payload_generator(
                 );
                 steps.push(Step::new(
                     StepKind::Scan(
-                        Box::new(Pat::Identifier(t.clone(), n)),
-                        Box::new(Expr::Extent(t.clone(), Span::new(""))),
+                        Box::new(Pat::Identifier(t.clone(), n.clone())),
+                        Box::new(Expr::Extent(
+                            t.clone(),
+                            Span::new(""),
+                            vec![n],
+                        )),
                         None,
                     ),
                     scan_env,
@@ -2562,7 +2566,7 @@ fn derive_payload_generator(
                     matches!(
                         &s.kind,
                         StepKind::Scan(_, src, _) if matches!(
-                            src.as_ref(), Expr::Extent(_, _)
+                            src.as_ref(), Expr::Extent(..)
                         )
                     )
                 })
@@ -3526,6 +3530,7 @@ pub fn rewrite_infinite_range_scans(steps: Vec<Step>) -> Vec<Step> {
             let ext = Expr::Extent(
                 Rc::new(Type::List(elem_t.clone())),
                 Span::new(""),
+                extent_names(pat),
             );
             new_steps.push(Step::new(
                 StepKind::Scan(pat.clone(), Box::new(ext), cond.clone()),

@@ -28,7 +28,8 @@
 //! function inlining, no case/exists/string-prefix).
 
 use crate::compile::core::{
-    Binding, Decl, Expr, Match, Pat, PatField, Step, StepEnv, StepKind, ValBind,
+    Binding, Decl, Expr, Match, Pat, PatField, Step, StepEnv, StepKind,
+    ValBind, extent_names,
 };
 use crate::compile::fbbt;
 use crate::compile::generator::Cache;
@@ -38,6 +39,7 @@ use crate::compile::generators::{
 };
 use crate::compile::library::BuiltInFunction;
 use crate::compile::rel_expander;
+use crate::compile::rel_lowerer;
 use crate::compile::span::Span;
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::val::Val;
@@ -480,6 +482,10 @@ fn walk_expr_with_scope(
             // them, because the step list's passes read that shape
             // and because grounding one on its own would seal away
             // the constraints this query reads.
+            // The step list it is grounded on is the one its tree
+            // lowers to, which is the only step list there will be once
+            // the resolver builds trees.
+            let expr = rel_lowerer::relowered(&expr).unwrap_or(expr);
             let expr = as_exists_steps(expr);
             let inner = walk_query_steps(expr, env, rec_env, datatypes);
             expand_from_with_scope_rec(
@@ -832,7 +838,7 @@ fn split_extent_patterns(steps: Vec<Step>) -> Vec<Step> {
         matches!(&s.kind,
             StepKind::Scan(p, source, cond)
                 if cond.is_none()
-                    && matches!(source.as_ref(), Expr::Extent(_, _))
+                    && matches!(source.as_ref(), Expr::Extent(..))
                     && !matches!(p.as_ref(), Pat::Identifier(_, _))
                     && names_only(p))
     }) {
@@ -842,11 +848,11 @@ fn split_extent_patterns(steps: Vec<Step>) -> Vec<Step> {
     for step in steps {
         match &step.kind {
             StepKind::Scan(p, source, None)
-                if matches!(source.as_ref(), Expr::Extent(_, _))
+                if matches!(source.as_ref(), Expr::Extent(..))
                     && !matches!(p.as_ref(), Pat::Identifier(_, _))
                     && names_only(p) =>
             {
-                let Expr::Extent(_, span) = source.as_ref() else {
+                let Expr::Extent(_, span, _) = source.as_ref() else {
                     unreachable!("guarded by the arm above")
                 };
                 let mut vars: Vec<(Rc<Type>, String)> = Vec::new();
@@ -857,6 +863,7 @@ fn split_extent_patterns(steps: Vec<Step>) -> Vec<Step> {
                     let extent = Expr::Extent(
                         Rc::new(Type::Bag(t.clone())),
                         span.clone(),
+                        vec![name.clone()],
                     );
                     out.push(Step::new(
                         StepKind::Scan(
@@ -899,7 +906,7 @@ fn has_extent_scan(steps: &[Step]) -> bool {
     steps.iter().any(|s| {
         matches!(&s.kind,
             StepKind::Scan(_, source, _)
-                if matches!(source.as_ref(), Expr::Extent(_, _)))
+                if matches!(source.as_ref(), Expr::Extent(..)))
     })
 }
 
@@ -1183,7 +1190,7 @@ fn try_invert_recursive_predicates(
                     let scan_idx = steps.iter().position(|st| {
                         matches!(&st.kind,
                             StepKind::Scan(p, src, None)
-                                if matches!(src.as_ref(), Expr::Extent(_, _))
+                                if matches!(src.as_ref(), Expr::Extent(..))
                                 && matches!(p.as_ref(),
                                     Pat::Identifier(_, nn) if nn == n))
                     });
@@ -1200,7 +1207,7 @@ fn try_invert_recursive_predicates(
                         let Some(idx) = steps.iter().position(|st| {
                             matches!(&st.kind,
                                 StepKind::Scan(p, src, None)
-                                    if matches!(src.as_ref(), Expr::Extent(_, _))
+                                    if matches!(src.as_ref(), Expr::Extent(..))
                                     && matches!(p.as_ref(),
                                         Pat::Identifier(_, nn) if nn == n))
                         }) else {
@@ -1378,7 +1385,7 @@ fn build_iterate_for_recursive_v2(
     for step in inner_steps {
         match &step.kind {
             StepKind::Scan(p, src, None)
-                if matches!(src.as_ref(), Expr::Extent(_, _)) =>
+                if matches!(src.as_ref(), Expr::Extent(..)) =>
             {
                 match p.as_ref() {
                     Pat::Identifier(t, n) => {
@@ -1469,7 +1476,11 @@ fn build_iterate_for_recursive_v2(
         seed_steps.push(Step::new(
             StepKind::Scan(
                 Box::new(Pat::Identifier(t.clone(), n.clone())),
-                Box::new(Expr::Extent(t.clone(), Span::new(""))),
+                Box::new(Expr::Extent(
+                    t.clone(),
+                    Span::new(""),
+                    vec![n.clone()],
+                )),
                 None,
             ),
             mk_env(bs_for(&bound)),
@@ -1577,7 +1588,11 @@ fn build_iterate_for_recursive_v2(
         update_steps.push(Step::new(
             StepKind::Scan(
                 Box::new(Pat::Identifier(t.clone(), n.clone())),
-                Box::new(Expr::Extent(t.clone(), Span::new(""))),
+                Box::new(Expr::Extent(
+                    t.clone(),
+                    Span::new(""),
+                    vec![n.clone()],
+                )),
                 None,
             ),
             mk_env(bs_for(&bound2)),
@@ -1588,7 +1603,11 @@ fn build_iterate_for_recursive_v2(
         update_steps.push(Step::new(
             StepKind::Scan(
                 Box::new(Pat::Identifier(t.clone(), n.clone())),
-                Box::new(Expr::Extent(t.clone(), Span::new(""))),
+                Box::new(Expr::Extent(
+                    t.clone(),
+                    Span::new(""),
+                    vec![n.clone()],
+                )),
                 None,
             ),
             mk_env(bs_for(&bound2)),
@@ -1696,7 +1715,7 @@ fn from_has_extent(expr: &Expr) -> bool {
     steps.iter().any(|s| {
         matches!(&s.kind,
             StepKind::Scan(_, src, _)
-                if matches!(src.as_ref(), Expr::Extent(_, _)))
+                if matches!(src.as_ref(), Expr::Extent(..)))
     })
 }
 
@@ -1707,7 +1726,7 @@ fn from_has_extent(expr: &Expr) -> bool {
 /// predicate inversion to ground the variables.
 fn body_has_extent(expr: &Expr) -> bool {
     match expr {
-        Expr::Extent(_, _) => true,
+        Expr::Extent(..) => true,
         Expr::Rel(_, rel) => rel.children().iter().any(|e| body_has_extent(e)),
         Expr::Aggregate(_, e1, e2, _) => {
             body_has_extent(e1) || body_has_extent(e2)
@@ -1744,7 +1763,7 @@ fn step_has_extent(s: &Step) -> bool {
             body_has_extent(k) || agg.as_deref().is_some_and(body_has_extent)
         }
         StepKind::Scan(_, src, cond) => {
-            matches!(src.as_ref(), Expr::Extent(_, _))
+            matches!(src.as_ref(), Expr::Extent(..))
                 || body_has_extent(src)
                 || cond.as_deref().is_some_and(body_has_extent)
         }
@@ -1984,7 +2003,7 @@ fn simplify_tuple_projections(expr: &Expr) -> Expr {
             Box::new(rel.map_children(&simplify_tuple_projections)),
         ),
         Expr::Current(_)
-        | Expr::Extent(_, _)
+        | Expr::Extent(..)
         | Expr::Identifier(_, _)
         | Expr::Literal(_, _)
         | Expr::Ordinal(_)
@@ -2784,7 +2803,7 @@ fn try_mixed_tuple_tc(
                 let scan_idx = steps.iter().position(|st| {
                     matches!(&st.kind,
                         StepKind::Scan(p, src, None)
-                            if matches!(src.as_ref(), Expr::Extent(_, _))
+                            if matches!(src.as_ref(), Expr::Extent(..))
                             && matches!(p.as_ref(),
                                 Pat::Identifier(_, nn) if nn == n))
                 })?;
@@ -2932,7 +2951,7 @@ fn destructure_tuple_extents_for_fn_calls(
         if cond.is_some() {
             continue;
         }
-        let Expr::Extent(_, span) = source.as_ref() else {
+        let Expr::Extent(_, span, _) = source.as_ref() else {
             continue;
         };
         let Pat::Identifier(t, name) = p.as_ref() else {
@@ -2990,7 +3009,11 @@ fn destructure_tuple_extents_for_fn_calls(
             // destructured component's Extent so a downstream
             // "pattern not grounded" error points at the user's
             // source location, not an empty span.
-            let source = Expr::Extent((*t).clone(), span.clone());
+            let source = Expr::Extent(
+                (*t).clone(),
+                span.clone(),
+                vec![fresh_name.clone()],
+            );
             new_kinds.push(StepKind::Scan(
                 Box::new(pat),
                 Box::new(source),
@@ -3168,7 +3191,7 @@ fn unground_outer_point_scan(
     {
         return None;
     }
-    let extent = Expr::Extent(pat_t.clone(), Span::new(""));
+    let extent = Expr::Extent(pat_t.clone(), Span::new(""), extent_names(pat));
     let extent_step =
         StepKind::Scan(Box::new(pat.clone()), Box::new(extent), None);
     let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
@@ -3604,7 +3627,7 @@ fn prune_unused_scan_extents(steps: Vec<Step>) -> Vec<Step> {
         .into_iter()
         .filter(|s| match &s.kind {
             StepKind::Scan(p, source, _)
-                if matches!(source.as_ref(), Expr::Extent(_, _)) =>
+                if matches!(source.as_ref(), Expr::Extent(..)) =>
             {
                 if let Pat::Identifier(_, n) = p.as_ref() {
                     referenced.contains(n)
@@ -3759,7 +3782,7 @@ fn decompose_tuple_elems_once(steps: Vec<Step>) -> Vec<Step> {
     let mut already_bound: HashMap<String, usize> = HashMap::new();
     for (i, step) in steps.iter().enumerate() {
         if let StepKind::Scan(p, source, _) = &step.kind {
-            if matches!(source.as_ref(), Expr::Extent(_, _))
+            if matches!(source.as_ref(), Expr::Extent(..))
                 && let Pat::Identifier(_, n) = p.as_ref()
             {
                 extent_index.insert(n.clone(), i);
@@ -4120,7 +4143,7 @@ fn expand_steps_with_scope(
         .iter()
         .filter_map(|s| match &s.kind {
             StepKind::Scan(p, source, _)
-                if matches!(source.as_ref(), Expr::Extent(_, _)) =>
+                if matches!(source.as_ref(), Expr::Extent(..)) =>
             {
                 Some(((**p).clone(), s.env.clone()))
             }
@@ -4271,8 +4294,11 @@ fn expand_steps_with_scope(
                             }
                         }
                     } else {
-                        let extent =
-                            Expr::Extent(next_pat.type_(), orig_span.clone());
+                        let extent = Expr::Extent(
+                            next_pat.type_(),
+                            orig_span.clone(),
+                            extent_names(&next_pat),
+                        );
                         out.push(Step::new(
                             StepKind::Scan(
                                 Box::new(next_pat),
@@ -4291,10 +4317,10 @@ fn expand_steps_with_scope(
     for step in steps {
         match step.kind {
             StepKind::Scan(pat, source, cond)
-                if matches!(source.as_ref(), Expr::Extent(_, _)) =>
+                if matches!(source.as_ref(), Expr::Extent(..)) =>
             {
                 let extent_span = match source.as_ref() {
-                    Expr::Extent(_, s) => s.clone(),
+                    Expr::Extent(_, s, _) => s.clone(),
                     _ => Span::new(""),
                 };
                 if !matches!(pat.as_ref(), Pat::Identifier(_, _))
@@ -4386,7 +4412,8 @@ fn expand_steps_with_scope(
     // as "pattern X is not grounded" at compile time, pointing at
     // the original `from p` step's span.
     for (next_pat, next_env, cond, orig_span) in deferred {
-        let extent = Expr::Extent(next_pat.type_(), orig_span);
+        let extent =
+            Expr::Extent(next_pat.type_(), orig_span, extent_names(&next_pat));
         out.push(Step::new(
             StepKind::Scan(Box::new(next_pat), Box::new(extent), cond),
             next_env,
@@ -4535,7 +4562,7 @@ fn ungrounded_pats(steps: &[Step]) -> BTreeSet<String> {
     for step in steps {
         if let StepKind::Scan(p, source, _) = &step.kind
             && let Pat::Identifier(_, name) = p.as_ref()
-            && (matches!(source.as_ref(), Expr::Extent(_, _))
+            && (matches!(source.as_ref(), Expr::Extent(..))
                 || free_names_in(source).iter().any(|n| pats.contains(n)))
         {
             pats.insert(name.clone());
@@ -4567,7 +4594,7 @@ fn derive_generators(
         .iter()
         .filter_map(|s| match &s.kind {
             StepKind::Scan(p, source, _)
-                if matches!(source.as_ref(), Expr::Extent(_, _)) =>
+                if matches!(source.as_ref(), Expr::Extent(..)) =>
             {
                 if let Pat::Identifier(t, n) = p.as_ref() {
                     Some((n.clone(), t.clone()))
@@ -4591,7 +4618,7 @@ fn derive_generators(
     let mut implied: Vec<Expr> = Vec::new();
     for step in steps {
         if let StepKind::Scan(p, source, _) = &step.kind
-            && !matches!(source.as_ref(), Expr::Extent(_, _))
+            && !matches!(source.as_ref(), Expr::Extent(..))
         {
             list_bounds(p, source, &mut implied);
         }
@@ -4619,14 +4646,14 @@ fn derive_generators(
     // Use a copy of the constraints so each pattern sees the full set.
     for step in steps {
         if let StepKind::Scan(pat, source, _) = &step.kind
-            && matches!(source.as_ref(), Expr::Extent(_, _))
+            && matches!(source.as_ref(), Expr::Extent(..))
             && let Pat::Identifier(t, name) = pat.as_ref()
         {
             // The current `from` is a bag if any Scan source is a
             // bag, otherwise a list. For Phase 1 we're conservative:
             // unbounded extents default to bag, matching the type
             // resolver's `deduce_scan_extent_step_type`.
-            let ordered = matches!(source.as_ref(), Expr::Extent(t, _)
+            let ordered = matches!(source.as_ref(), Expr::Extent(t, ..)
                 if matches!(t.as_ref(), Type::List(_)));
             maybe_generator_with_scope(
                 cache,
@@ -4670,7 +4697,7 @@ pub(crate) fn expr_eq(a: &Expr, b: &Expr) -> bool {
             xs.len() == ys.len()
                 && xs.iter().zip(ys.iter()).all(|(x, y)| expr_eq(x, y))
         }
-        (Expr::Extent(t1, _), Expr::Extent(t2, _)) => t1 == t2,
+        (Expr::Extent(t1, ..), Expr::Extent(t2, ..)) => t1 == t2,
         _ => false,
     }
 }

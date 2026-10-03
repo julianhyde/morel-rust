@@ -224,7 +224,7 @@ impl Expr {
                 // 'current' refers to the primary element already in the
                 // frame; no additional frame slot is needed.
             }
-            Expr::Extent(_, _) => {
+            Expr::Extent(..) => {
                 // No variables. The Extent placeholder represents
                 // "all values of type T" and will be replaced by a
                 // generator scan during predicate inversion.

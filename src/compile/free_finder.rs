@@ -114,7 +114,7 @@ fn visit_expr(
             }
         }
         Expr::Current(_) | Expr::Ordinal(_) => {}
-        Expr::Extent(_, _) => {}
+        Expr::Extent(..) => {}
         Expr::Fn(_, arms, _) => {
             for arm in arms {
                 visit_match(arm, bound, out);

@@ -296,6 +296,23 @@ script's output as it was except plan text meant to change:
   the decline ports below are still to do.
 * **C4. `resolve_step` builds the tree directly**, and `from_builder.rs`
   leaves the resolver.
+  In two steps:
+  * **C4a. The step-list grounder reads what a tree lowers to**, so that
+    the resolver's step list is not needed once the resolver builds
+    trees. An `Extent` carries the names its pattern bound, as
+    morel-java's does, and the lowerer scans an extent under them --
+    one name, a tuple or a record of names -- so grounding and its
+    errors name what the user wrote. The lowerer folds a selection of
+    a tuple however deep the substitution that made it, and the
+    step-list grounder's input has the translator's `let val v$N =
+    x in ...`, which hands a nested query the enclosing row, undone.
+  * **C4b. The resolver builds the tree**, as morel-java's
+    `StepResolver` does: a nested query reads the enclosing query's
+    row while it is resolved, which is how `current` and `ordinal` in
+    a nested `take`, `skip` or set operand translate (35 of the
+    resolver's 1539 queries decline when translated alone, every one
+    of them that). A function's body is a tree too, lowered where the
+    step-list grounder reads it.
 
 **D. The compiler compiles `Rel`.** About 950 of `compiler.rs`'s 2968
 lines are step-list query compilation: the `Expr::From` arm (32),

@@ -84,8 +84,10 @@ pub enum Expr {
     /// to an `Extent` errors with "unbounded variable in `from`".
     /// `span` points at the source `from p` step so the runtime
     /// "pattern not grounded" error can pinpoint the offending
-    /// site.
-    Extent(Rc<Type>, Span),
+    /// site. `names` are what the scan's pattern bound, which a
+    /// tree, whose leaves are not named, reads back; see
+    /// [extent_names].
+    Extent(Rc<Type>, Span, Vec<String>),
 }
 
 /// Returns the body of a chain of `let` expressions; `exp` itself if it
@@ -136,7 +138,7 @@ impl Expr {
             Expr::Apply(t, _, _, _) => t.clone(),
             Expr::Case(t, _, _, _) => t.clone(),
             Expr::Current(t) => t.clone(),
-            Expr::Extent(t, _) => t.clone(),
+            Expr::Extent(t, ..) => t.clone(),
             Expr::Fn(t, _, _) => t.clone(),
             Expr::From(t, _) => t.clone(),
             Expr::Identifier(t, _) => t.clone(),
@@ -358,7 +360,7 @@ impl Expr {
                 matches_doc(arms),
             ]),
             Expr::Current(_) => text("current"),
-            Expr::Extent(t, _) => {
+            Expr::Extent(t, ..) => {
                 // The extent of a type is named by the type of its
                 // elements: `extent "int"` is every int.
                 let elem = element_type(t).unwrap_or_else(|| t.clone());
@@ -1583,6 +1585,55 @@ impl Kind {
 /// Returns the element type of a collection, or `None` if `t` is not a
 /// collection.
 #[allow(dead_code)]
+/// Returns the names an extent's pattern binds, which is how a tree,
+/// whose leaves carry no names, says what a leaf was called: one
+/// name for a pattern that is one, a name per component for a tuple
+/// of them, and none otherwise.
+pub fn extent_names(pat: &Pat) -> Vec<String> {
+    match pat {
+        Pat::Identifier(_, name) => vec![name.clone()],
+        Pat::Tuple(_, args) => {
+            let names: Vec<String> = args
+                .iter()
+                .filter_map(|arg| match arg {
+                    Pat::Identifier(_, name) => Some(name.clone()),
+                    _ => None,
+                })
+                .collect();
+            if names.len() == args.len() {
+                names
+            } else {
+                Vec::new()
+            }
+        }
+        // A record of names, in the order of its type's fields, which
+        // is the order of the components a tree reads it by.
+        Pat::Record(t, fields, false) => {
+            let Type::Record(_, types) = peel_type(t) else {
+                return Vec::new();
+            };
+            let mut names = Vec::new();
+            for label in types.keys() {
+                let name = fields.iter().find_map(|f| match f {
+                    PatField::Labeled(l, p) if *l == label.to_string() => {
+                        match p.as_ref() {
+                            Pat::Identifier(_, n) => Some(n.clone()),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                });
+                match name {
+                    Some(n) => names.push(n),
+                    None => return Vec::new(),
+                }
+            }
+            names
+        }
+        _ => Vec::new(),
+    }
+}
+
 pub fn element_type(t: &Type) -> Option<Rc<Type>> {
     match t {
         Type::Bag(e) | Type::List(e) => Some(e.clone()),
@@ -2080,7 +2131,7 @@ fn steps_doc(steps: &[Step]) -> Doc {
                 // A scan over an extent has no source to name; what it
                 // enumerates is the values of the pattern's type.
                 match source.as_ref() {
-                    Expr::Extent(_, _) => {
+                    Expr::Extent(..) => {
                         docs.push(text(&format!(" : {}", pat.type_())));
                     }
                     _ => docs.push(beside(text(" in "), source.to_doc())),
