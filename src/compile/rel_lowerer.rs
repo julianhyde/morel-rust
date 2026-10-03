@@ -80,8 +80,54 @@ pub fn relowered(e: &Expr) -> Option<Expr> {
     let Expr::From(t, steps) = e else {
         return None;
     };
-    let tree = rel_translator::translate(steps, t)?;
-    Some(unlet(&scalarize(lower(&tree)?, t)))
+    as_steps(&rel_translator::translate(steps, t)?)
+}
+
+/// Returns a query's tree, where the translation succeeds and the tree
+/// lowers, with the queries nested in it made trees too.
+pub fn tree_of(e: &Expr) -> Option<Expr> {
+    Flip::Tree.query(e)
+}
+
+/// Returns whether an expression is a query as a tree: a node, or
+/// `only` over one, which is a query whose value is a `compute`.
+pub fn is_query_tree(e: &Expr) -> bool {
+    match e {
+        Expr::Rel(_, _) => true,
+        Expr::Apply(_, f, a, _) => {
+            matches!(
+                f.as_ref(),
+                Expr::Literal(_, Val::Fn(BuiltInFunction::RelationalOnly))
+            ) && matches!(a.as_ref(), Expr::Rel(_, _))
+        }
+        _ => false,
+    }
+}
+
+/// Returns a query tree as the step list the step-list grounder reads:
+/// lowered, with its value a `compute` where it is one, and with the
+/// translator's hand-over of an enclosing row undone.
+pub fn as_steps(tree: &Expr) -> Option<Expr> {
+    Some(unlet(&scalarize(lower(tree)?, &tree.type_())))
+}
+
+/// Replaces every query tree in an expression by its step list, which
+/// is how the step-list grounder reads a function's body.
+pub fn steps_within(e: &Expr) -> Expr {
+    if is_query_tree(e)
+        && let Some(steps) = as_steps(e)
+    {
+        return steps;
+    }
+    match e {
+        Expr::From(t, steps) => {
+            Expr::From(t.clone(), map_steps(steps, &steps_within))
+        }
+        Expr::Rel(t, rel) => {
+            Expr::Rel(t.clone(), Box::new(rel.map_children(&steps_within)))
+        }
+        _ => map_children(e, &steps_within),
+    }
 }
 
 /// Replaces every query in a declaration by its tree lowered back

@@ -1907,12 +1907,12 @@ fn is_unnamed(e: &Expr) -> bool {
 /// carry the aliases the query was declared with: `from d in ds`,
 /// where `ds : depts` and `depts = dept bag check ...`, is a tree of
 /// `{deptno:int, dname:string} bag`, as morel-java prints it.
-fn same_type(a: &Rc<Type>, b: &Rc<Type>) -> bool {
+pub(crate) fn same_type(a: &Rc<Type>, b: &Rc<Type>) -> bool {
     a == b || unaliased(a) == unaliased(b)
 }
 
 /// Returns a type with every alias in it replaced by what it names.
-fn unaliased(t: &Rc<Type>) -> Rc<Type> {
+pub(crate) fn unaliased(t: &Rc<Type>) -> Rc<Type> {
     match t.as_ref() {
         Type::Alias(_, body, _, _) => unaliased(body),
         Type::Bag(e) => Rc::new(Type::Bag(unaliased(e))),

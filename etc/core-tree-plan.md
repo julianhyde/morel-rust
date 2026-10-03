@@ -312,7 +312,20 @@ script's output as it was except plan text meant to change:
     a nested `take`, `skip` or set operand translate (35 of the
     resolver's 1539 queries decline when translated alone, every one
     of them that). A function's body is a tree too, lowered where the
-    step-list grounder reads it.
+    step-list grounder reads it. In two steps:
+    * **C4b-1. The resolver's output is the tree.** The outermost
+      query -- `from`, `exists`, `forall` -- is translated as soon as
+      it is built, and the queries in it with it; a query whose tree is
+      only an unbounded leaf stays steps, because a leaf says nothing
+      to ground. The expander grounds a tree whose leaves need it, and
+      otherwise walks it; one the tree grounder declines goes to the
+      step list it lowers to. The grounder takes the leaves' names
+      from the tree, as morel-java's `leafPats` does. A tree keeps
+      the query's aliased type, which the binding prints; grounding
+      reads the type without its aliases, and the compiler takes an
+      element whose type is an alias of its one binding's as that
+      binding.
+    * **C4b-2. A builder replaces `FromBuilder` in `resolve_step`.**
 
 **D. The compiler compiles `Rel`.** About 950 of `compiler.rs`'s 2968
 lines are step-list query compilation: the `Expr::From` arm (32),

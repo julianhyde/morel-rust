@@ -23,6 +23,7 @@ use crate::compile::core::{
 use crate::compile::library::{self, BuiltInExn, BuiltInFunction, name_to_rec};
 use crate::compile::postfix::peel_type;
 use crate::compile::pretty::Pretty;
+use crate::compile::rel_translator::unaliased;
 use crate::compile::span::Span;
 use crate::compile::type_env::{Binding, Id};
 use crate::compile::type_resolver::TypeMap;
@@ -2477,8 +2478,10 @@ impl<'a> Compiler<'a> {
             .collect();
         field_names.sort();
 
+        // An alias names a type and does not change it: a binding of
+        // `int` is the element of a `nat list`.
         if field_names.len() == 1
-            && step_env.bindings[0].type_.as_ref() == element_type
+            && alias_of(&step_env.bindings[0].type_, element_type)
         {
             let name = &field_names[0];
             let slot = if name == "current" {
@@ -2518,8 +2521,10 @@ impl<'a> Compiler<'a> {
             .collect();
         field_names.sort();
 
+        // An alias names a type and does not change it: a binding of
+        // `int` is the element of a `nat list`.
         if field_names.len() == 1
-            && step_env.bindings[0].type_.as_ref() == element_type
+            && alias_of(&step_env.bindings[0].type_, element_type)
         {
             // Single binding matching the element type - just get that
             // variable.
@@ -2966,4 +2971,9 @@ fn check_kind(f: BuiltInFunction) -> Option<code::CheckKind> {
         BuiltInFunction::ZRequire => Some(code::CheckKind::Require),
         _ => None,
     }
+}
+
+/// Returns whether two types are the same but for the aliases they name.
+fn alias_of(a: &Rc<Type>, b: &Type) -> bool {
+    a.as_ref() == b || unaliased(a) == unaliased(&Rc::new(b.clone()))
 }

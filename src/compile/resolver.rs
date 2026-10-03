@@ -39,7 +39,7 @@ use crate::compile::postfix::{PostfixKind, peel_type, postfix_dispatch};
 use crate::compile::record_modifiers::{self, Source};
 use crate::compile::rel_lowerer;
 use crate::compile::rel_printer;
-use crate::compile::rel_translator;
+use crate::compile::rel_translator::{self, same_type};
 use crate::compile::rel_validator;
 use crate::compile::span::Span;
 use crate::compile::type_resolver::{
@@ -458,6 +458,12 @@ pub struct Resolver<'a> {
     /// written, which is what morel-java prints: its grounding runs
     /// after its resolver.
     plan_of_depth: Cell<usize>,
+    /// How many queries -- `from`, `exists`, `forall` -- are being
+    /// resolved. The outermost becomes its tree once it is built; the
+    /// queries inside it are translated with it, because only the
+    /// translation of the query that encloses one can give it the
+    /// enclosing row.
+    query_depth: Cell<usize>,
 }
 
 /// Builds `F elem`, where `F` is the functor of `map` (`ListMap`, `BagMap`,
@@ -598,6 +604,7 @@ impl<'a> Resolver<'a> {
             fn_env: RefCell::new(expander::FnEnv::new()),
             aggregate_input_is_bag: Cell::new(None),
             temp_counter: Cell::new(0),
+            query_depth: Cell::new(0),
             plan_of_depth: Cell::new(0),
         }
     }
@@ -1990,16 +1997,18 @@ impl<'a> Resolver<'a> {
                             expr_type.as_ref().clone()
                         }
                         (Type::List(_) | Type::Bag(_), _)
-                            if matches!(pe.expr, CoreExpr::From(_, _))
-                                && !pe.expr.steps().is_some_and(|steps| {
-                                    steps.iter().any(|s| {
-                                        matches!(
-                                            s.kind,
-                                            CoreStepKind::Exists
-                                                | CoreStepKind::Compute(_)
-                                        )
-                                    })
-                                }) =>
+                            if matches!(
+                                pe.expr,
+                                CoreExpr::From(_, _) | CoreExpr::Rel(_, _)
+                            ) && !pe.expr.steps().is_some_and(|steps| {
+                                steps.iter().any(|s| {
+                                    matches!(
+                                        s.kind,
+                                        CoreStepKind::Exists
+                                            | CoreStepKind::Compute(_)
+                                    )
+                                })
+                            }) =>
                         {
                             expr_type.as_ref().clone()
                         }
@@ -2409,12 +2418,17 @@ impl<'a> Resolver<'a> {
             ExprKind::Exists(steps) => {
                 // Translate "exists ..." as "from ... exists".
                 let mut builder = FromBuilder::new();
+                let outermost = self.enter_query();
                 for step in steps {
                     self.resolve_step(&mut builder, step);
                 }
-                let query = builder
-                    .build_simplify()
-                    .expect("Failed to build EXISTS expression");
+                self.leave_query();
+                let query = self.finish_query(
+                    outermost,
+                    builder
+                        .build_simplify()
+                        .expect("Failed to build EXISTS expression"),
+                );
                 non_empty(query, t, &span)
             }
             ExprKind::Fn(matches) => CoreExpr::Fn(
@@ -2430,12 +2444,17 @@ impl<'a> Resolver<'a> {
                 // violation exists. If no violations exist, then all rows
                 // satisfy the requirement.
                 let mut builder = FromBuilder::new();
+                let outermost = self.enter_query();
                 for step in steps {
                     self.resolve_step(&mut builder, step);
                 }
-                let query = builder
-                    .build_simplify()
-                    .expect("Failed to build FORALL expression");
+                self.leave_query();
+                let query = self.finish_query(
+                    outermost,
+                    builder
+                        .build_simplify()
+                        .expect("Failed to build FORALL expression"),
+                );
                 let from_expr = non_empty(
                     query,
                     Rc::new(Type::Primitive(PrimitiveType::Bool)),
@@ -3860,10 +3879,13 @@ impl<'a> Resolver<'a> {
         {
             // Process all steps except the last (Into).
             let mut builder = FromBuilder::new();
+            let outermost = self.enter_query();
             for step in &steps[..steps.len() - 1] {
                 self.resolve_step(&mut builder, step);
             }
-            let from_result = self.ground(
+            self.leave_query();
+            let from_result = self.finish_query(
+                outermost,
                 builder
                     .build_simplify()
                     .expect("Failed to build From expression"),
@@ -3904,32 +3926,50 @@ impl<'a> Resolver<'a> {
 
         // Normal query processing (no INTO).
         let mut builder = FromBuilder::new();
-
+        let outermost = self.enter_query();
         for step in steps {
             self.resolve_step(&mut builder, step);
         }
-
-        self.ground(
+        self.leave_query();
+        self.finish_query(
+            outermost,
             builder
                 .build_simplify()
                 .expect("Failed to build From expression"),
         )
     }
 
-    /// Returns a query as the resolver built it.
-    ///
-    /// Grounding -- giving each unbounded variable a collection to
-    /// iterate -- is a pass over the whole declaration, and runs
-    /// once the whole of it is resolved. It cannot run here,
-    /// because the resolver builds a query from the inside out:
-    /// grounding a nested query would answer what its own
-    /// constraints say before the query that encloses it has been
-    /// seen, and the enclosing one may need to read them. `from x
-    /// where self_loop x` inverts `x` through the body of
-    /// `self_loop`, which is an `exists` whose constraints are gone
-    /// once it has been grounded on its own.
-    fn ground(&self, from: CoreExpr) -> CoreExpr {
-        from
+    /// Notes that a query is being resolved, and returns whether it is
+    /// the outermost.
+    fn enter_query(&self) -> bool {
+        let depth = self.query_depth.get();
+        self.query_depth.set(depth + 1);
+        depth == 0
+    }
+
+    fn leave_query(&self) {
+        self.query_depth.set(self.query_depth.get() - 1);
+    }
+
+    /// Returns a query as the resolver hands it on: the outermost as
+    /// its tree, where the translator can express it, and a nested one
+    /// as its steps, for the enclosing query's translation to take.
+    fn finish_query(&self, outermost: bool, query: CoreExpr) -> CoreExpr {
+        if !outermost {
+            return query;
+        }
+        match rel_lowerer::tree_of(&query) {
+            // A query that is only an unbounded scan has a leaf for a
+            // tree, which says nothing to ground: it stays steps.
+            Some(CoreExpr::Extent(..)) | None => query,
+            // The query's type is the resolver's, which keeps the
+            // aliases the user wrote; the translation's is the same
+            // type with them spelled out.
+            Some(CoreExpr::Rel(t, rel)) if same_type(&t, &query.type_()) => {
+                CoreExpr::Rel(query.type_(), rel)
+            }
+            Some(tree) => tree,
+        }
     }
 
     /// Resolves a step in a query, adding it to a [FromBuilder].

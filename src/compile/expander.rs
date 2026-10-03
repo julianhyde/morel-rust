@@ -465,6 +465,34 @@ fn walk_expr_with_scope(
             ));
             Expr::Let(t, new_decls, new_body)
         }
+        e if rel_lowerer::is_query_tree(&e) => {
+            // A query the resolver built as a tree: grounded on it if
+            // the tree grounder can, and otherwise carried by the step
+            // list it lowers to, as a query the resolver built as steps
+            // is.
+            if !rel_expander::has_unbounded_leaf(&e) {
+                return walk_tree_children(
+                    e,
+                    env,
+                    rec_env,
+                    datatypes,
+                    outer_scope,
+                );
+            }
+            if let Some(grounded) = rel_expander::ground(&e, datatypes, env) {
+                return walk_query_steps(grounded, env, rec_env, datatypes);
+            }
+            let Some(steps) = rel_lowerer::as_steps(&e) else {
+                return walk_tree_children(
+                    e,
+                    env,
+                    rec_env,
+                    datatypes,
+                    outer_scope,
+                );
+            };
+            on_steps(steps, env, rec_env, datatypes, outer_scope)
+        }
         Expr::From(_, _) => {
             // Grounded on its tree first, which is where a scan
             // whose pattern is not a single variable can be
@@ -476,25 +504,56 @@ fn walk_expr_with_scope(
             {
                 return walk_query_steps(grounded, env, rec_env, datatypes);
             }
-            // The tree declined, so the step list carries this
-            // query -- and every `exists` its steps hold goes back
-            // to the step that says it, before the walk reaches
-            // them, because the step list's passes read that shape
-            // and because grounding one on its own would seal away
-            // the constraints this query reads.
-            // The step list it is grounded on is the one its tree
-            // lowers to, which is the only step list there will be once
-            // the resolver builds trees.
+            // The tree declined, so the step list carries this query:
+            // the one its tree lowers to, which is the only step list
+            // there will be once the resolver builds trees.
             let expr = rel_lowerer::relowered(&expr).unwrap_or(expr);
-            let expr = as_exists_steps(expr);
-            let inner = walk_query_steps(expr, env, rec_env, datatypes);
-            expand_from_with_scope_rec(
-                inner,
-                env,
-                rec_env,
-                datatypes,
-                outer_scope,
-            )
+            on_steps(expr, env, rec_env, datatypes, outer_scope)
+        }
+        Expr::Apply(t, f, a, span)
+            if rel_lowerer::is_query_tree(&a)
+                && matches!(
+                    f.as_ref(),
+                    Expr::Literal(
+                        _,
+                        Val::Fn(BuiltInFunction::RelationalNonEmpty)
+                    )
+                ) =>
+        {
+            // Whether a query built as a tree has a row: grounded as
+            // the step list's is, below, and otherwise carried by the
+            // step list it lowers to.
+            if !rel_expander::has_unbounded_leaf(&a) {
+                let a = walk_tree_children(
+                    *a,
+                    env,
+                    rec_env,
+                    datatypes,
+                    outer_scope,
+                );
+                return Expr::Apply(t, f, Box::new(a), span);
+            }
+            if !in_fn_body()
+                && let Some(grounded) =
+                    rel_expander::ground_counted(&a, datatypes, env)
+            {
+                let a = walk_query_steps(grounded, env, rec_env, datatypes);
+                return Expr::Apply(t, f, Box::new(a), span);
+            }
+            // The query carries the test for existence as its last
+            // step, as one built as steps does where its tree declines.
+            if let Some(steps) = rel_lowerer::as_steps(&a) {
+                return on_steps(
+                    exists_step(steps),
+                    env,
+                    rec_env,
+                    datatypes,
+                    outer_scope,
+                );
+            }
+            let a =
+                walk_tree_children(*a, env, rec_env, datatypes, outer_scope);
+            Expr::Apply(t, f, Box::new(a), span)
         }
         Expr::Apply(t, f, a, span)
             if matches!(a.as_ref(), Expr::From(_, _))
@@ -670,19 +729,69 @@ fn walk_expr_with_scope(
             )),
             s,
         ),
-        // A grounded tree: the queries its expressions hold are
-        // grounded in turn.
+        other => other,
+    }
+}
+
+/// Grounds a query on its step list, which is where a query goes when
+/// grounding its tree declines -- and every `exists` its steps hold goes
+/// back to the step that says it, before the walk reaches them, because
+/// the step list's passes read that shape and because grounding one on
+/// its own would seal away the constraints this query reads.
+fn on_steps(
+    expr: Expr,
+    env: &FnEnv,
+    rec_env: &FnEnv,
+    datatypes: &DatatypeMap,
+    outer_scope: &BTreeSet<String>,
+) -> Expr {
+    let expr = as_exists_steps(expr);
+    let inner = walk_query_steps(expr, env, rec_env, datatypes);
+    expand_from_with_scope_rec(inner, env, rec_env, datatypes, outer_scope)
+}
+
+/// Walks the expressions of a grounded tree, grounding the queries they
+/// hold in turn; `only` over a tree is the tree's value.
+fn walk_tree_children(
+    e: Expr,
+    env: &FnEnv,
+    rec_env: &FnEnv,
+    datatypes: &DatatypeMap,
+    outer_scope: &BTreeSet<String>,
+) -> Expr {
+    match e {
+        // An input is a tree, grounded with this one; an expression is
+        // walked, which grounds the queries it holds.
         Expr::Rel(t, rel) => Expr::Rel(
             t,
-            Box::new(rel.map_children(&|e| {
-                walk_expr_with_scope(
+            Box::new(rel.map_children(&|e| match e {
+                Expr::Rel(..) => walk_tree_children(
                     e.clone(),
                     env,
                     rec_env,
                     datatypes,
                     outer_scope,
-                )
+                ),
+                _ => walk_expr_with_scope(
+                    e.clone(),
+                    env,
+                    rec_env,
+                    datatypes,
+                    outer_scope,
+                ),
             })),
+        ),
+        Expr::Apply(t, f, a, span) => Expr::Apply(
+            t,
+            f,
+            Box::new(walk_tree_children(
+                *a,
+                env,
+                rec_env,
+                datatypes,
+                outer_scope,
+            )),
+            span,
         ),
         other => other,
     }
@@ -701,7 +810,7 @@ fn walk_query_steps(
     let (t, steps) = match expr {
         Expr::From(t, s) => (t, s),
         other => {
-            return walk_expr_with_scope(
+            return walk_tree_children(
                 other,
                 env,
                 rec_env,
@@ -817,7 +926,10 @@ fn collect_fn_bindings(decl: &Decl, env: &mut FnEnv) {
             // those passes read.
             env.insert(
                 name.clone(),
-                (pat.clone(), as_exists_steps(expr.clone())),
+                (
+                    pat.clone(),
+                    as_exists_steps(rel_lowerer::steps_within(expr)),
+                ),
             );
         }
     }
