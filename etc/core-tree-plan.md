@@ -247,6 +247,23 @@ in the middle of the rewrite. In order of size: the scalar
 `compute`, the unnamed key, the scans that bind nothing, then the
 rest.
 
+**What C and D must reproduce from the corpus** (surveyed
+2026-10-03; morel-java `a8bcab470`, morel-go.0 `48fd1265`). Of
+morel-java's `.smli` statements, about 95 that morel-go reproduces and
+this port does not are this work's; `~/dev/plan.md` lists the rest.
+Rerun the survey by pruning each shared file with
+`etc/pull-passing.py`'s `prune` and listing what it drops.
+
+* `Sys.planEx "N"` -- the core as text after inlining pass N, now a
+  tree: about 25 in `such-that.smli`, 9 in `optimize.smli`, 2 in
+  `built-in/sys.smli`. C's to match.
+* `Sys.plan ()` -- the plan of the compiled code, about 30 across
+  `built-in/*.smli`, `optimize.smli` and `built-in.smli`. It changes
+  when the compiler compiles `Rel`, so D's.
+* Grounding, in `such-that.smli`: `from {b: bool, i} where i elem [3,
+  4, 5]`, `from p where tuPair p` (an expected error), and `from r
+  where r elem [2.0, nanValue, 1.0, nanValue]`.
+
 **C. The resolver builds trees.** `resolve_step`, about 230 lines,
 replaces `from_builder.rs`'s 1319.
 
