@@ -36,8 +36,8 @@
 //! end.
 
 use crate::compile::core::{
-    Binding, Decl, Expr, JoinKind, JoinRows, Match, Pat, PatField, Rel, Row,
-    Step, StepEnv, StepKind, ValBind, element_type,
+    Binding, Decl, Expr, JoinKind, JoinRows, Match, ORDINAL, Pat, PatField,
+    Rel, Row, Step, StepEnv, StepKind, ValBind, element_type,
 };
 use crate::compile::expander::expr_eq;
 use crate::compile::from_builder::{FromBuilder, ORDINAL_FIELD_PREFIX};
@@ -506,6 +506,12 @@ impl Lowerer {
             }
             Expr::From(t, steps) => {
                 Expr::From(t.clone(), self.all_steps(steps)?)
+            }
+            // The position of an enclosing step's row, which a query
+            // nested in a step list evaluates once and the tree left for
+            // the enclosing query: in a step list it is `ordinal`.
+            Expr::Identifier(t, name) if name == ORDINAL => {
+                Expr::Ordinal(t.clone())
             }
             Expr::Let(t, decls, body) => {
                 let mut out = Vec::with_capacity(decls.len());

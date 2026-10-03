@@ -3951,12 +3951,22 @@ impl<'a> Resolver<'a> {
         self.query_depth.set(self.query_depth.get() - 1);
     }
 
-    /// Returns a query as the resolver hands it on: the outermost as
-    /// its tree, where the translator can express it, and a nested one
-    /// as its steps, for the enclosing query's translation to take.
+    /// Returns a query as the resolver hands it on, as its tree where
+    /// the translator can express it.
+    ///
+    /// A nested query is translated on its own, with the names of the
+    /// queries around it left free, for the enclosing query's
+    /// translation to substitute; the outermost has the queries nested in
+    /// it made trees too, and is checked to lower.
     fn finish_query(&self, outermost: bool, query: CoreExpr) -> CoreExpr {
         if !outermost {
-            return query;
+            let CoreExpr::From(t, steps) = &query else {
+                return query;
+            };
+            return match rel_translator::translate_nested(steps, t) {
+                Some(CoreExpr::Extent(..)) | None => query,
+                Some(tree) => tree,
+            };
         }
         match rel_lowerer::tree_of(&query) {
             // A query that is only an unbounded scan has a leaf for a

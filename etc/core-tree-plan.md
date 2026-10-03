@@ -326,6 +326,18 @@ script's output as it was except plan text meant to change:
       element whose type is an alias of its one binding's as that
       binding.
     * **C4b-2. A builder replaces `FromBuilder` in `resolve_step`.**
+      First, every query becomes its tree as soon as it is built,
+      nested ones included: a nested query is translated on its own,
+      the names of the queries around it left free and the `current`
+      and `ordinal` it evaluates once left as placeholders, and the
+      enclosing query's translation substitutes them into the tree
+      through the binder it would have handed a nested step list -- as
+      morel-java's nested resolver reads an enclosing binder by lexical
+      scope. Where the enclosing query stays steps, lowering gives the
+      placeholders back as `ordinal` and `current`. All 167 nested
+      queries in the scripts become trees this way; of the outermost,
+      the 21 that are only an unbounded scan stay steps, and one that a
+      dependent join's source reads `ordinal` in, which no node binds.
 
 **D. The compiler compiles `Rel`.** About 950 of `compiler.rs`'s 2968
 lines are step-list query compilation: the `Expr::From` arm (32),
