@@ -30,16 +30,16 @@ use crate::compile::core::{
 use crate::compile::expander;
 use crate::compile::expander::and_all;
 use crate::compile::free_finder::free_names_in;
-use crate::compile::from_builder::FromBuilder;
 use crate::compile::inliner::Env;
 use crate::compile::library;
 use crate::compile::library::{BuiltIn, BuiltInFunction};
 use crate::compile::pat_coverage;
 use crate::compile::postfix::{PostfixKind, peel_type, postfix_dispatch};
+use crate::compile::query_builder::QueryBuilder;
 use crate::compile::record_modifiers::{self, Source};
 use crate::compile::rel_lowerer;
 use crate::compile::rel_printer;
-use crate::compile::rel_translator::{self, same_type};
+use crate::compile::rel_translator;
 use crate::compile::rel_validator;
 use crate::compile::span::Span;
 use crate::compile::type_resolver::{
@@ -1962,26 +1962,24 @@ impl<'a> Resolver<'a> {
                 let resolved_val_decl = self.resolve_val_decl(val_binds, *rec);
 
                 // Use the expression's type for the val binding.
-                // For query expressions (From), the FromBuilder
-                // computes the authoritative collection type
-                // (List vs Bag) via the `ordered` flag.
+                // For a query, the query builder computes the
+                // authoritative collection type (List vs Bag).
                 let to_val_bind = |pe: &PatExpr| {
-                    // For query expressions (From) whose type is a
-                    // collection (List or Bag), use the expr's type
-                    // which has the correct collection kind from
-                    // FromBuilder's `ordered` flag.
+                    // For a query whose type is a collection (List or
+                    // Bag), use the expr's type, which has the correct
+                    // collection kind from the query builder.
                     // For other expressions (including exists/forall
                     // which return bool), use the pat's type which
                     // preserves type aliases.
-                    // Use FromBuilder's type only for queries that
+                    // Use the query's type only for queries that
                     // return a collection. Queries ending in Exists
                     // (returns bool), Compute (returns scalar), or
                     // Into (returns fn result) have non-collection
                     // output types.
                     // Use the expr's type when it's a collection and
                     // differs from the pat's type in list/bag wrapping.
-                    // This handles both From expressions (with ordered
-                    // flag from FromBuilder) and simplified queries
+                    // This handles both queries (with the collection kind
+                    // from the query builder) and simplified queries
                     // (where build_simplify returns the scan expression
                     // directly, e.g. `from i in intBag yield i` →
                     // `intBag`).
@@ -2417,18 +2415,12 @@ impl<'a> Resolver<'a> {
             }
             ExprKind::Exists(steps) => {
                 // Translate "exists ..." as "from ... exists".
-                let mut builder = FromBuilder::new();
-                let outermost = self.enter_query();
+                let mut builder = QueryBuilder::new(self.enter_query());
                 for step in steps {
                     self.resolve_step(&mut builder, step);
                 }
                 self.leave_query();
-                let query = self.finish_query(
-                    outermost,
-                    builder
-                        .build_simplify()
-                        .expect("Failed to build EXISTS expression"),
-                );
+                let query = builder.build();
                 non_empty(query, t, &span)
             }
             ExprKind::Fn(matches) => CoreExpr::Fn(
@@ -2443,18 +2435,12 @@ impl<'a> Resolver<'a> {
                 // translated to "where not e", so we're checking if any
                 // violation exists. If no violations exist, then all rows
                 // satisfy the requirement.
-                let mut builder = FromBuilder::new();
-                let outermost = self.enter_query();
+                let mut builder = QueryBuilder::new(self.enter_query());
                 for step in steps {
                     self.resolve_step(&mut builder, step);
                 }
                 self.leave_query();
-                let query = self.finish_query(
-                    outermost,
-                    builder
-                        .build_simplify()
-                        .expect("Failed to build FORALL expression"),
-                );
+                let query = builder.build();
                 let from_expr = non_empty(
                     query,
                     Rc::new(Type::Primitive(PrimitiveType::Bool)),
@@ -3869,8 +3855,8 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Resolves a From query using FromBuilder for optimization.
-    /// This is analogous to the Java FromResolver inner class.
+    /// Resolves a query, building its tree as its steps are resolved.
+    /// This is analogous to morel-java's `StepResolver`.
     fn resolve_query(&self, steps: &[AstStep]) -> CoreExpr {
         // Check if the last step is Into.
         // If so, we need to apply the function to the query result.
@@ -3878,24 +3864,19 @@ impl<'a> Resolver<'a> {
             && let AstStepKind::Into(func_expr) = &last_step.kind
         {
             // Process all steps except the last (Into).
-            let mut builder = FromBuilder::new();
-            let outermost = self.enter_query();
+            let mut builder = QueryBuilder::new(self.enter_query());
             for step in &steps[..steps.len() - 1] {
                 self.resolve_step(&mut builder, step);
             }
             self.leave_query();
-            let from_result = self.finish_query(
-                outermost,
-                builder
-                    .build_simplify()
-                    .expect("Failed to build From expression"),
-            );
+            let ordered = builder.is_ordered();
+            let from_result = builder.build();
 
             // Apply the function to the query result. If the function is an
             // overloaded aggregate (e.g. `Test.overCount`), dispatch it to
             // the variant matching the query's collection kind.
             let func = self
-                .dispatch_collection_fn(func_expr, !builder.is_ordered())
+                .dispatch_collection_fn(func_expr, !ordered)
                 .unwrap_or_else(|| self.resolve_expr(func_expr));
 
             // The application's type is the function's *result* type, not
@@ -3925,18 +3906,12 @@ impl<'a> Resolver<'a> {
         }
 
         // Normal query processing (no INTO).
-        let mut builder = FromBuilder::new();
-        let outermost = self.enter_query();
+        let mut builder = QueryBuilder::new(self.enter_query());
         for step in steps {
             self.resolve_step(&mut builder, step);
         }
         self.leave_query();
-        self.finish_query(
-            outermost,
-            builder
-                .build_simplify()
-                .expect("Failed to build From expression"),
-        )
+        builder.build()
     }
 
     /// Notes that a query is being resolved, and returns whether it is
@@ -3951,39 +3926,8 @@ impl<'a> Resolver<'a> {
         self.query_depth.set(self.query_depth.get() - 1);
     }
 
-    /// Returns a query as the resolver hands it on, as its tree where
-    /// the translator can express it.
-    ///
-    /// A nested query is translated on its own, with the names of the
-    /// queries around it left free, for the enclosing query's
-    /// translation to substitute; the outermost has the queries nested in
-    /// it made trees too, and is checked to lower.
-    fn finish_query(&self, outermost: bool, query: CoreExpr) -> CoreExpr {
-        if !outermost {
-            let CoreExpr::From(t, steps) = &query else {
-                return query;
-            };
-            return match rel_translator::translate_nested(steps, t) {
-                Some(CoreExpr::Extent(..)) | None => query,
-                Some(tree) => tree,
-            };
-        }
-        match rel_lowerer::tree_of(&query) {
-            // A query that is only an unbounded scan has a leaf for a
-            // tree, which says nothing to ground: it stays steps.
-            Some(CoreExpr::Extent(..)) | None => query,
-            // The query's type is the resolver's, which keeps the
-            // aliases the user wrote; the translation's is the same
-            // type with them spelled out.
-            Some(CoreExpr::Rel(t, rel)) if same_type(&t, &query.type_()) => {
-                CoreExpr::Rel(query.type_(), rel)
-            }
-            Some(tree) => tree,
-        }
-    }
-
-    /// Resolves a step in a query, adding it to a [FromBuilder].
-    fn resolve_step(&self, builder: &mut FromBuilder, step: &AstStep) {
+    /// Resolves a step in a query, adding it to the query's tree.
+    fn resolve_step(&self, builder: &mut QueryBuilder, step: &AstStep) {
         match &step.kind {
             // lint: sort until '#}' where '##AstStepKind::'
             AstStepKind::Compute(expr) => {
@@ -4149,9 +4093,7 @@ impl<'a> Resolver<'a> {
             AstStepKind::Through(pat, expr) => {
                 // Desugar "from ... through p in f"
                 // to "from p in f (from ...)".
-                let from_expr = builder
-                    .build_simplify()
-                    .expect("Failed to build From expression");
+                let from_expr = builder.build_steps();
                 builder.clear();
                 let fn_expr = self.resolve_expr(expr);
                 let resolved_pat = self.resolve_pat(pat);

@@ -83,10 +83,12 @@ pub fn relowered(e: &Expr) -> Option<Expr> {
     as_steps(&rel_translator::translate(steps, t)?)
 }
 
-/// Returns a query's tree, where the translation succeeds and the tree
-/// lowers, with the queries nested in it made trees too.
-pub fn tree_of(e: &Expr) -> Option<Expr> {
-    Flip::Tree.query(e)
+/// Returns a query's tree with the queries nested in it made trees too,
+/// or `None` where the tree does not lower.
+pub fn finished(tree: &Expr) -> Option<Expr> {
+    let tree = Flip::Tree.nested(tree);
+    lower(&tree)?;
+    Some(tree)
 }
 
 /// Returns whether an expression is a query as a tree: a node, or
@@ -208,11 +210,7 @@ impl Flip {
                 }
                 Some(lowered)
             }
-            Flip::Tree => {
-                let tree = self.nested(&tree);
-                lower(&tree)?;
-                Some(tree)
-            }
+            Flip::Tree => finished(&tree),
         }
     }
 

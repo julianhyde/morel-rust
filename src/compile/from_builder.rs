@@ -468,6 +468,11 @@ impl FromBuilder {
         self.ordinal_seq = 0;
     }
 
+    /// Returns the steps added so far.
+    pub(crate) fn steps(&self) -> &[Step] {
+        &self.steps
+    }
+
     /// Returns the environment available after the most recent step.
     pub fn step_env(&self) -> StepEnv {
         let ordered = self.steps.last().is_none_or(|s| s.env.ordered);

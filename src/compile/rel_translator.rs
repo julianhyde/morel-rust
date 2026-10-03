@@ -74,23 +74,21 @@ const DEFERRED_CURRENT: &str = "$current?";
 /// substitutes them, and one that stays steps gets them back as it
 /// wrote them when the tree is lowered.
 pub fn translate_nested(steps: &[Step], query_type: &Rc<Type>) -> Option<Expr> {
-    DECLINE.with(|cell| cell.set(None));
-    let outer = BTreeMap::from([(DEFERRED_CURRENT.to_string(), unit_leaf())]);
-    translate_with(steps, query_type, outer, Rc::new(Cell::new(0)), true)
+    let mut t = StepTranslator::nested();
+    for step in steps {
+        t.step(step);
+    }
+    t.finish(query_type)
 }
 
 /// Translates the query `from steps`, whose type is `query_type`, into
 /// a tree; or returns `None` where it declines.
 pub fn translate(steps: &[Step], query_type: &Rc<Type>) -> Option<Expr> {
-    DECLINE.with(|cell| cell.set(None));
-    LEAKED.with(|cell| cell.borrow_mut().clear());
-    translate_with(
-        steps,
-        query_type,
-        BTreeMap::new(),
-        Rc::new(Cell::new(0)),
-        false,
-    )
+    let mut t = StepTranslator::outermost();
+    for step in steps {
+        t.step(step);
+    }
+    t.finish(query_type)
 }
 
 thread_local! {
@@ -167,53 +165,117 @@ fn translate_with(
     counter: Rc<Cell<usize>>,
     nested: bool,
 ) -> Option<Expr> {
-    let mut t = Translator {
-        tree: None,
-        bindings: Vec::new(),
-        outer,
-        counter,
-        in_scope: Vec::new(),
-        nested,
-        atom: true,
-    };
+    let mut t = StepTranslator::new(outer, counter, nested);
     for step in steps {
-        t.step(step)?;
+        t.step(step);
     }
-    // A query with no steps iterates over one unit row, and `[()]` is
-    // that row: `from` is `[()]`, and the leaf its author did not
-    // write is the whole of why the answer has one row rather than
-    // none. Only a step asks for the leaf, so a query with no steps
-    // asks here.
-    let tree = t.tree.take().unwrap_or_else(unit_leaf);
-    // A query that computes an aggregate is a value, not a collection:
-    // `compute` is a group with no keys, whose one element holds the
-    // value, and `Relational.only` takes it out, as morel-java writes
-    // it. Its type may itself be a collection -- `compute elements` is
-    // a list -- so it is the last step, not the type, that says so.
-    if matches!(steps.last().map(|s| &s.kind), Some(StepKind::Compute(_))) {
-        return only(t.value_of(tree, query_type)?, query_type);
+    t.finish(query_type)
+}
+
+/// A translation that takes a query's steps one at a time, as they are
+/// built, and makes the tree of the whole once they all have been.
+pub struct StepTranslator {
+    t: Translator,
+    /// Whether a step has declined, after which the others are not
+    /// translated.
+    declined: bool,
+    /// Whether the last step was a `compute`, which makes the query a
+    /// value rather than a collection.
+    computes: bool,
+}
+
+impl StepTranslator {
+    fn new(
+        outer: BTreeMap<String, Expr>,
+        counter: Rc<Cell<usize>>,
+        nested: bool,
+    ) -> StepTranslator {
+        StepTranslator {
+            t: Translator {
+                tree: None,
+                bindings: Vec::new(),
+                outer,
+                counter,
+                in_scope: Vec::new(),
+                nested,
+                atom: true,
+            },
+            declined: false,
+            computes: false,
+        }
     }
-    if same_type(&tree.type_(), query_type) && t.binders_are_the_element(&tree)
-    {
-        return Some(tree);
+
+    /// Starts the translation of a query inside no other, as
+    /// [`translate`] does.
+    pub fn outermost() -> StepTranslator {
+        DECLINE.with(|cell| cell.set(None));
+        LEAKED.with(|cell| cell.borrow_mut().clear());
+        StepTranslator::new(BTreeMap::new(), Rc::new(Cell::new(0)), false)
     }
-    if element_type(query_type).is_none() {
-        return decline("a query whose type is not a collection");
+
+    /// Starts the translation of a query nested in another, on its own,
+    /// as [`translate_nested`] does.
+    pub fn nested() -> StepTranslator {
+        DECLINE.with(|cell| cell.set(None));
+        let outer =
+            BTreeMap::from([(DEFERRED_CURRENT.to_string(), unit_leaf())]);
+        StepTranslator::new(outer, Rc::new(Cell::new(0)), true)
     }
-    // A query with several binders has a row that no step built: the
-    // step list carries the binders in an environment, and the tree's
-    // element is its inputs' components. So it ends in a projection
-    // that names them -- which is where the names a tree does not hold
-    // come back. This is also the check: if the projection does not
-    // give the query's own type, the translation is wrong and declines
-    // rather than printing a plan for a different query.
-    // `name_the_components` says why it could not, which is exact
-    // where a reason written here would be coarse.
-    let tree = t.name_the_components(tree, query_type)?;
-    if !same_type(&tree.type_(), query_type) {
-        return decline("a tree whose type is not the query's");
+
+    /// Translates the next step, unless an earlier one declined.
+    pub fn step(&mut self, step: &Step) {
+        self.computes = matches!(step.kind, StepKind::Compute(_));
+        if !self.declined && self.t.step(step).is_none() {
+            self.declined = true;
+        }
     }
-    Some(tree)
+
+    /// Returns the tree of the query, whose type is `query_type`, or
+    /// `None` where a step declined or the whole does not translate.
+    pub fn finish(mut self, query_type: &Rc<Type>) -> Option<Expr> {
+        if self.declined {
+            return None;
+        }
+        let t = &mut self.t;
+        // A query with no steps iterates over one unit row, and `[()]`
+        // is that row: `from` is `[()]`, and the leaf its author did not
+        // write is the whole of why the answer has one row rather than
+        // none. Only a step asks for the leaf, so a query with no steps
+        // asks here.
+        let tree = t.tree.take().unwrap_or_else(unit_leaf);
+        // A query that computes an aggregate is a value, not a
+        // collection: `compute` is a group with no keys, whose one
+        // element holds the value, and `Relational.only` takes it out,
+        // as morel-java writes it. Its type may itself be a collection
+        // -- `compute elements` is a list -- so it is the last step, not
+        // the type, that says so.
+        if self.computes {
+            return only(t.value_of(tree, query_type)?, query_type);
+        }
+        if same_type(&tree.type_(), query_type)
+            && t.binders_are_the_element(&tree)
+        {
+            return Some(tree);
+        }
+        if element_type(query_type).is_none() {
+            return decline("a query whose type is not a collection");
+        }
+        // A query with several binders has a row that no step built:
+        // the step list carries the binders in an environment, and the
+        // tree's element is its inputs' components. So it ends in a
+        // projection that names them -- which is where the names a tree
+        // does not hold come back. This is also the check: if the
+        // projection does not give the query's own type, the
+        // translation is wrong and declines rather than printing a plan
+        // for a different query. `name_the_components` says why it
+        // could not, which is exact where a reason written here would be
+        // coarse.
+        let tree = t.name_the_components(tree, query_type)?;
+        if !same_type(&tree.type_(), query_type) {
+            return decline("a tree whose type is not the query's");
+        }
+        Some(tree)
+    }
 }
 
 thread_local! {

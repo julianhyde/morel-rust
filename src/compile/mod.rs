@@ -32,6 +32,7 @@ mod pat_coverage;
 pub mod postfix;
 pub mod pretty;
 pub mod progressive_widen;
+pub mod query_builder;
 pub mod record_modifiers;
 pub mod rel_expander;
 pub mod rel_lowerer;
