@@ -32,7 +32,7 @@ use crate::compile::span::Span;
 use crate::compile::type_env::{Binding, EmptyTypeEnv, FunTypeEnv, TypeEnv};
 use crate::compile::type_resolver::Resolved;
 use crate::compile::types::{PrimitiveType, Type};
-use crate::compile::{compiler, inliner};
+use crate::compile::{compiler, inliner, rel_lowerer};
 use crate::eval::big_int::BigInt;
 use crate::eval::code::Effect;
 use crate::eval::link_table::LinkTable;
@@ -1226,12 +1226,16 @@ impl Kernel {
             session.post_inline_decl = Some(decl2.clone());
         }
 
+        // The compiler compiles step lists, so a tree that reached it
+        // is lowered to one first.
+        let decl3 =
+            rel_lowerer::lower_decl(&decl2).unwrap_or_else(|| decl2.clone());
         let compiled_statement = {
             let mut link_table = self.link_table.borrow_mut();
             compiler::compile_statement(
                 &resolved.type_map,
                 &self.environment,
-                &decl2,
+                &decl3,
                 &mut link_table,
             )
         };

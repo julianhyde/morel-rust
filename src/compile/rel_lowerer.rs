@@ -63,6 +63,17 @@ pub fn lower(exp: &Expr) -> Option<Expr> {
     l.all(&out)
 }
 
+/// Returns a declaration with every tree in it lowered to the step
+/// list that runs it, or `None` where a tree does not lower.
+///
+/// The compiler compiles step lists, and sizes each frame from the
+/// variables it finds before it compiles anything, so a tree is
+/// lowered before compilation rather than as the compiler meets it;
+/// and after inlining, so that the core a plan prints is the tree.
+pub fn lower_decl(decl: &Decl) -> Option<Decl> {
+    Lowerer {}.all_decl(decl)
+}
+
 /// Replaces every query in a declaration by its tree lowered back
 /// to steps, where the translation and the lowering both succeed. A
 /// check of the lowering: what runs is the tree's step list, and the
@@ -156,24 +167,40 @@ fn flip_expr(e: &Expr) -> Expr {
 /// record; both become the `compute` step. A query the translator
 /// did not write that way is a collection, and is left alone.
 pub(crate) fn scalarize(lowered: Expr, want: &Rc<Type>) -> Expr {
-    let lowered = match lowered {
-        Expr::Apply(_, f, a, _)
-            if matches!(
-                f.as_ref(),
-                Expr::Literal(_, Val::Fn(BuiltInFunction::RelationalOnly))
-            ) && matches!(a.as_ref(), Expr::From(_, _)) =>
-        {
-            *a
-        }
-        other if element_type(want).is_some() => return other,
-        other => other,
-    };
-    let Expr::From(_, mut steps) = lowered else {
+    // `only` over a query is a `compute` only where the query is a
+    // keyless group; a user may apply `only` to any query, and that
+    // `only` stays.
+    if let Expr::Apply(_, f, a, _) = &lowered
+        && matches!(
+            f.as_ref(),
+            Expr::Literal(_, Val::Fn(BuiltInFunction::RelationalOnly))
+        )
+        && let Expr::From(_, steps) = a.as_ref()
+    {
+        return match computed(steps) {
+            Some(steps) => Expr::From(want.clone(), steps),
+            None => lowered,
+        };
+    }
+    if element_type(want).is_some() {
+        return lowered;
+    }
+    let Expr::From(_, steps) = &lowered else {
         return lowered;
     };
-    // A keyless group and a yield of what it computed -- one field,
-    // or an expression of several -- is the `compute` the yield's
-    // expression would be with each aggregate in place of its name.
+    match computed(steps) {
+        Some(steps) => Expr::From(want.clone(), steps),
+        None => Expr::From(want.clone(), steps.clone()),
+    }
+}
+
+/// Returns a query's steps with the keyless group that ends them, and
+/// the yield of what it computed if one follows, written as the one
+/// `compute` step they are: a yield's expression with each aggregate in
+/// place of its name, or the group's aggregates where nothing follows.
+/// `None` where the steps do not end in a keyless group.
+fn computed(steps: &[Step]) -> Option<Vec<Step>> {
+    let mut steps = steps.to_vec();
     if let [.., group, last] = steps.as_slice()
         && let StepKind::Group(keys, Some(agg)) = &group.kind
         && is_unit_key(keys)
@@ -193,10 +220,11 @@ pub(crate) fn scalarize(lowered: Expr, want: &Rc<Type>) -> Expr {
         };
         steps.truncate(steps.len() - 2);
         steps.push(compute);
-        return Expr::From(want.clone(), steps);
+        return Some(steps);
     }
     if let Some(last) = steps.last()
-        && let StepKind::Group(_, Some(agg)) = &last.kind
+        && let StepKind::Group(keys, Some(agg)) = &last.kind
+        && is_unit_key(keys)
     {
         let compute = Step {
             kind: StepKind::Compute(agg.clone()),
@@ -205,8 +233,9 @@ pub(crate) fn scalarize(lowered: Expr, want: &Rc<Type>) -> Expr {
         };
         steps.pop();
         steps.push(compute);
+        return Some(steps);
     }
-    Expr::From(want.clone(), steps)
+    None
 }
 
 fn flip_steps(steps: &[Step]) -> Vec<Step> {
@@ -290,6 +319,25 @@ impl Lowerer {
                 Box::new(self.all(b)?),
                 s.clone(),
             ),
+            // A query whose value is a `compute` is `only` over its
+            // tree, and the step list says it with a `compute` step.
+            Expr::Apply(t, a, b, _)
+                if matches!(
+                    a.as_ref(),
+                    Expr::Literal(_, Val::Fn(BuiltInFunction::RelationalOnly))
+                ) && matches!(b.as_ref(), Expr::Rel(_, _)) =>
+            {
+                let lowered = self.rel(b)?;
+                self.all(&scalarize(
+                    Expr::Apply(
+                        t.clone(),
+                        a.clone(),
+                        Box::new(lowered),
+                        Span::new(""),
+                    ),
+                    t,
+                ))?
+            }
             Expr::Apply(t, a, b, s) => Expr::Apply(
                 t.clone(),
                 Box::new(self.all(a)?),
