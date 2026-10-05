@@ -1676,6 +1676,14 @@ fn maybe_function(
         let Some((param_pat, body)) = fn_env.get(fn_name) else {
             continue;
         };
+        // A call that does not read the name says nothing about it, as
+        // morel-java's `maybeFunction`, which grounds the name from the
+        // body alone, finds: inlining `isDept d` to ground `e` would
+        // find `e`'s generator among the other constraints and hand it
+        // `d elem depts` as a filter that reads another leaf.
+        if !free_names_in(arg).contains(pat_name) {
+            continue;
+        }
         // Build the substitution map. `fn x => body` substitutes
         // `x → arg`. `fn (a, b) => body` substitutes `a → arg.0`,
         // `b → arg.1` if `arg` is a literal tuple expression of
