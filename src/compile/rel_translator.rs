@@ -1332,8 +1332,32 @@ impl Translator {
             over.push((elements.clone(), id_over(t, row)));
             over.sort_by(|(a, _), (b, _)| a.cmp(b));
         }
-        let over = rewrite(self, over)?;
-        let over = self.converted(over)?;
+        // An aggregate's argument reads each row; its function is applied
+        // once the group is made, and reads a key by its label, as
+        // morel-java's does -- not the binder of the same name, which by
+        // then holds whichever row came last.
+        let key_labels: Vec<String> =
+            keys.iter().map(|(label, _)| label.to_string()).collect();
+        let mut rewritten = Vec::with_capacity(over.len());
+        for (label, e) in over {
+            let e = match e {
+                Expr::Aggregate(t, f, arg, span) => {
+                    let saved = self.bindings.clone();
+                    self.bindings.retain(|(b, _)| !key_labels.contains(b));
+                    let f = self.rewrite(&f);
+                    self.bindings = saved;
+                    Expr::Aggregate(
+                        t,
+                        Box::new(f?),
+                        Box::new(self.rewrite(&arg)?),
+                        span,
+                    )
+                }
+                e => self.rewrite(&e)?,
+            };
+            rewritten.push((label, e));
+        }
+        let over = self.converted(rewritten)?;
         let group_names: Vec<Label> = keys
             .iter()
             .chain(over.iter())
