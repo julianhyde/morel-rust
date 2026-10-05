@@ -1612,6 +1612,12 @@ pub fn rel_out_name(e: &Expr) -> String {
     format!("{}$out", key(e).unwrap_or_default())
 }
 
+/// Returns the name of the slot that holds component `i` of one side of
+/// an outer join, which the join's sink wraps in `option` on its own.
+pub fn join_part_name(row: &str, i: usize) -> String {
+    format!("{}${}", row, i)
+}
+
 /// Returns the name of the slot that holds a group's output field.
 pub fn group_out_name(row: &Row, label: &Label) -> String {
     format!("{}${}", row.name, label)

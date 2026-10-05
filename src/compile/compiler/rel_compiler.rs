@@ -40,7 +40,7 @@
 use super::{Compiler, Context};
 use crate::compile::core::{
     Expr, JoinKind, JoinRows, ORDINAL, Pat, Rel, Row, element_type,
-    group_out_name, rel_out_name,
+    group_out_name, join_part_name, rel_out_name,
 };
 use crate::compile::free_finder::free_names_in;
 use crate::compile::rel_lowerer::{component_count, field_at, substitute_name};
@@ -49,9 +49,10 @@ use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::code::Code;
 use crate::eval::comparator::comparator_for;
 use crate::eval::row_sink::{
-    CollectRowSink, ExceptRowSink, GroupRowSink, IntersectRowSink,
-    OrderRowSink, OrdinalRowSink, RowSinkFactory, ScanRowSink, SkipRowSink,
-    TakeRowSink, UnionRowSink, WhereRowSink, YieldRowSink,
+    BuildJoinRowSink, CollectRowSink, ExceptRowSink, GroupRowSink,
+    IntersectRowSink, OrderRowSink, OrdinalRowSink, RowSinkFactory,
+    ScanRowSink, SkipRowSink, TakeRowSink, UnionRowSink, WhereRowSink,
+    YieldRowSink,
 };
 use crate::eval::val::Val;
 use std::collections::{BTreeMap, HashMap};
@@ -60,12 +61,11 @@ use std::rc::Rc;
 /// Returns whether a tree is one this compiler compiles; the kernel
 /// lowers one that is not to the step list that runs it.
 ///
-/// Not yet: a `right` or `full` join, whose sink reads its left input's
-/// slots and wraps each in `option`; a `left` join whose right input has
-/// several components, each of which its element wraps on its own; a
-/// join whose condition and right input both read its position, which
-/// morel-java counts in two places and the scan here in one; and a
-/// position left for an enclosing query that a step list carries.
+/// Not: a join whose condition and right input both read its position,
+/// which morel-java counts in two places and the scan here in one; a
+/// `right` or `full` join whose right input reads the left row, which
+/// morel-java does not allow either; and a position left for an enclosing
+/// query that a step list carries.
 pub(crate) fn compilable(e: &Expr) -> bool {
     if free_names_in(e).contains(ORDINAL) {
         return false;
@@ -75,14 +75,21 @@ pub(crate) fn compilable(e: &Expr) -> bool {
             return true;
         };
         if let Rel::Join(kind, rows, condition, _, right) = rel.as_ref() {
-            match kind {
-                JoinKind::Right | JoinKind::Full => return false,
-                JoinKind::Left if component_count(right) > 1 => return false,
-                _ => {}
+            let reads = |e: &Expr, name: &str| free_names_in(e).contains(name);
+            let ordinal = rows.ordinal.as_deref();
+            let condition_ordinal =
+                ordinal.is_some_and(|o| reads(condition, o));
+            let right_ordinal = ordinal.is_some_and(|o| reads(right, o));
+            if condition_ordinal && right_ordinal {
+                return false;
             }
-            if let Some(o) = &rows.ordinal
-                && free_names_in(condition).contains(o)
-                && free_names_in(right).contains(o)
+            // A `right` or `full` join reads its right input once, before
+            // any left element, so the input cannot read one, and its sink
+            // counts no pairs.
+            if matches!(kind, JoinKind::Right | JoinKind::Full)
+                && (reads(right, &rows.left)
+                    || right_ordinal
+                    || condition_ordinal)
             {
                 return false;
             }
@@ -737,69 +744,217 @@ impl Compiler<'_> {
                     slots,
                     &counted,
                     then(move |c, cx, slots| {
-                        let right_elem = elem(right);
-                        let right_code = c.code(cx, &slots, right);
-                        let pat_code = c.compile_pat(
-                            cx,
-                            &Pat::Identifier(
-                                right_elem.clone(),
-                                rows.right.clone(),
-                            ),
-                        );
-                        let right_slot = Self::slot(cx, &rows.right)?;
-                        let scanned = slots.push(&rows.right);
-                        // The condition runs once per candidate pair, and
-                        // sees the pair's position, which the scan counts.
-                        let condition_slot = if condition_reads_ordinal {
-                            Some(Self::slot(cx, rows.ordinal.as_ref()?)?)
-                        } else {
-                            None
+                        let join = Join {
+                            kind,
+                            rows,
+                            condition,
+                            right,
+                            condition_reads_ordinal,
                         };
-                        let condition_code = c.code(cx, &scanned, condition);
-                        // The element is the inputs' components in order.
-                        let right_id =
-                            Expr::Identifier(right_elem, rows.right.clone());
-                        let mut parts = components(left, &left_id);
-                        parts.extend(components(right, &right_id));
-                        let element = if parts.len() == 1 {
-                            parts.remove(0)
-                        } else {
-                            Expr::Tuple(
-                                Rc::new(Type::Tuple(
-                                    parts.iter().map(Expr::type_).collect(),
-                                )),
-                                parts,
-                            )
-                        };
-                        let nf = next.sink(
-                            c,
-                            cx,
-                            scanned.defer(&target.name, &element),
-                        )?;
-                        let optional = if kind == JoinKind::Left {
-                            vec![right_slot]
-                        } else {
-                            vec![]
-                        };
-                        Some(RowSinkFactory::new(move || {
-                            Box::new(ScanRowSink::new_with_join(
-                                pat_code.clone(),
-                                right_code.clone(),
-                                condition_code.clone(),
-                                nf.create(),
-                                optional.clone(),
-                                condition_slot,
-                            ))
-                        }))
+                        c.join2(
+                            cx, &slots, &join, left, &left_id, &target, next,
+                        )
                     }),
                 )
             }),
         )
     }
+
+    /// Compiles a join whose left element has arrived. A `right` or
+    /// `full` join's sink wraps each slot of its left input in `option`,
+    /// and the element has one `option` per component; so the components
+    /// are laid out one to a slot, and the left row read as the tuple of
+    /// them.
+    #[allow(clippy::too_many_arguments)]
+    fn join2(
+        &mut self,
+        cx: &Context,
+        slots: &Slots,
+        join: &Join<'_>,
+        left: &Expr,
+        left_id: &Expr,
+        target: &Target,
+        next: Next<'_>,
+    ) -> Option<RowSinkFactory> {
+        let parts = components(left, left_id);
+        let build = matches!(join.kind, JoinKind::Right | JoinKind::Full);
+        if !build
+            || (parts.len() == 1
+                && slots.names.len() == 1
+                && slots.is_slot(&join.rows.left))
+        {
+            return self.join3(cx, slots, join, parts, target, next);
+        }
+        let names: Vec<String> = (0..parts.len())
+            .map(|i| join_part_name(&join.rows.left, i))
+            .collect();
+        let codes: Vec<Code> =
+            parts.iter().map(|e| self.code(cx, slots, e)).collect();
+        let ids: Vec<Expr> = names
+            .iter()
+            .zip(&parts)
+            .map(|(n, e)| Expr::Identifier(e.type_(), n.clone()))
+            .collect();
+        let mut laid_out = Slots::default();
+        for name in &names {
+            laid_out = laid_out.push(name);
+        }
+        let laid_out = laid_out.defer(&join.rows.left, &tuple_of(ids.clone()));
+        let slot_list: Vec<usize> = names
+            .iter()
+            .map(|n| Self::slot(cx, n))
+            .collect::<Option<_>>()?;
+        let nf = self.join3(cx, &laid_out, join, ids, target, next)?;
+        Some(
+            if let ([code], [slot]) = (codes.as_slice(), slot_list.as_slice()) {
+                let (code, slot) = (code.clone(), *slot);
+                RowSinkFactory::new(move || {
+                    Box::new(YieldRowSink::new_scalar(
+                        code.clone(),
+                        slot,
+                        None,
+                        nf.create(),
+                    ))
+                })
+            } else {
+                let code = Code::new_tuple(&codes);
+                RowSinkFactory::new(move || {
+                    Box::new(YieldRowSink::new_record(
+                        code.clone(),
+                        slot_list.clone(),
+                        nf.create(),
+                    ))
+                })
+            },
+        )
+    }
+
+    /// Compiles the scan of a join's right input, once for each left
+    /// element: re-evaluated where it reads the left row, and read once
+    /// before any left element by a `right` or `full` join, which
+    /// cannot.
+    fn join3(
+        &mut self,
+        cx: &Context,
+        slots: &Slots,
+        join: &Join<'_>,
+        left_parts: Vec<Expr>,
+        target: &Target,
+        next: Next<'_>,
+    ) -> Option<RowSinkFactory> {
+        let rows = join.rows;
+        let right = join.right;
+        let right_elem = elem(right);
+        let right_code = self.code(cx, slots, right);
+        let count = component_count(right);
+        let right_optional =
+            matches!(join.kind, JoinKind::Left | JoinKind::Full);
+        // As for the left side: a sink that wraps each slot it writes
+        // in `option` writes one per component.
+        let (pat, right_parts, names) = if right_optional && count > 1 {
+            let Type::Tuple(types) = right_elem.as_ref() else {
+                return None;
+            };
+            let names: Vec<String> =
+                (0..count).map(|i| join_part_name(&rows.right, i)).collect();
+            let pats = names
+                .iter()
+                .zip(types)
+                .map(|(n, t)| Pat::Identifier(t.clone(), n.clone()))
+                .collect();
+            let ids = names
+                .iter()
+                .zip(types)
+                .map(|(n, t)| Expr::Identifier(t.clone(), n.clone()))
+                .collect();
+            (Pat::Tuple(right_elem.clone(), pats), ids, names)
+        } else {
+            let id = Expr::Identifier(right_elem.clone(), rows.right.clone());
+            (
+                Pat::Identifier(right_elem.clone(), rows.right.clone()),
+                components(right, &id),
+                vec![rows.right.clone()],
+            )
+        };
+        let pat_code = self.compile_pat(cx, &pat);
+        let mut scanned = slots.clone();
+        for name in &names {
+            scanned = scanned.push(name);
+        }
+        if names.len() > 1 {
+            scanned =
+                scanned.defer(&rows.right, &tuple_of(right_parts.clone()));
+        }
+        let source_slots: Vec<usize> = names
+            .iter()
+            .map(|n| Self::slot(cx, n))
+            .collect::<Option<_>>()?;
+        // The condition runs once per candidate pair, and sees the
+        // pair's position, which the scan counts.
+        let condition_slot = if join.condition_reads_ordinal {
+            Some(Self::slot(cx, rows.ordinal.as_ref()?)?)
+        } else {
+            None
+        };
+        let condition_code = self.code(cx, &scanned, join.condition);
+        // The element is the inputs' components in order.
+        let mut parts = left_parts;
+        parts.extend(right_parts);
+        let element = tuple_of(parts);
+        let nf = next.sink(self, cx, scanned.defer(&target.name, &element))?;
+        if matches!(join.kind, JoinKind::Right | JoinKind::Full) {
+            let left_slots = Self::slot_indexes(cx, slots)?;
+            let full = join.kind == JoinKind::Full;
+            return Some(RowSinkFactory::new(move || {
+                Box::new(BuildJoinRowSink::new(
+                    pat_code.clone(),
+                    right_code.clone(),
+                    condition_code.clone(),
+                    nf.create(),
+                    left_slots.clone(),
+                    source_slots.clone(),
+                    full,
+                    full,
+                ))
+            }));
+        }
+        let optional = if right_optional { source_slots } else { vec![] };
+        Some(RowSinkFactory::new(move || {
+            Box::new(ScanRowSink::new_with_join(
+                pat_code.clone(),
+                right_code.clone(),
+                condition_code.clone(),
+                nf.create(),
+                optional.clone(),
+                condition_slot,
+            ))
+        }))
+    }
+}
+
+/// The parts of a join that its compilation reads once its left element
+/// has arrived.
+struct Join<'a> {
+    kind: JoinKind,
+    rows: &'a JoinRows,
+    condition: &'a Expr,
+    right: &'a Expr,
+    condition_reads_ordinal: bool,
+}
+
+/// A tuple of expressions, or the one expression where there is one.
+fn tuple_of(mut parts: Vec<Expr>) -> Expr {
+    if parts.len() == 1 {
+        return parts.remove(0);
+    }
+    Expr::Tuple(
+        Rc::new(Type::Tuple(parts.iter().map(Expr::type_).collect())),
+        parts,
+    )
 }
 
 /// A set operator.
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 enum SetOp {
     Except,
     Intersect,
