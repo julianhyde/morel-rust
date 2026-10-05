@@ -16,7 +16,8 @@
 // License.
 
 use crate::compile::core::{
-    Decl, Expr, Match, ORDINAL_SLOT, Pat, PatField, Step, StepKind,
+    Decl, Expr, Match, ORDINAL_SLOT, Pat, PatField, Rel, Step, StepKind,
+    group_out_name, rel_out_name,
 };
 use crate::compile::type_env::Binding;
 use crate::eval::code::Code;
@@ -292,13 +293,38 @@ impl Expr {
             Expr::RecordSelector(_, _) => {
                 // no variables
             }
-            // A node defines its rows in the children that read them.
+            // A node defines its rows in the children that read them,
+            // and the slots its compilation puts values in.
             Expr::Rel(_, rel) => {
                 for (child, names) in rel.scoped_children() {
                     for (name, _) in &names {
                         collector.add_def(Binding::of_name(name));
                     }
                     child.collect_vars(collector);
+                }
+                collector.add_def(Binding::of_name(&rel_out_name(self)));
+                if let Rel::Group(row, _, keys, aggregates) = rel.as_ref() {
+                    // A group with nothing to read its row by still has
+                    // one, which its input's scan writes.
+                    collector.add_def(Binding::of_name(&row.name));
+                    for (label, _) in keys.iter().chain(aggregates.iter()) {
+                        collector.add_def(Binding::of_name(&group_out_name(
+                            row, label,
+                        )));
+                    }
+                    // An aggregate reads a key by its label, which is
+                    // the group's to define, not a variable to capture.
+                    for (label, _) in keys {
+                        collector.add_def(Binding::of_name(&label.to_string()));
+                    }
+                    if !aggregates.is_empty()
+                        && !collector
+                            .defs
+                            .iter()
+                            .any(|b| b.id.name == "elements")
+                    {
+                        collector.add_def(Binding::of_name("elements"));
+                    }
                 }
             }
         }

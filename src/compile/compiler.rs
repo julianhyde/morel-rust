@@ -68,6 +68,10 @@ pub fn compile_statement(
     compiler.compile_statement(env, decl, None, &HashSet::new())
 }
 
+mod rel_compiler;
+
+pub(crate) use rel_compiler::compilable;
+
 struct Compiler<'a> {
     type_map: &'a TypeMap,
     /// The shell-wide link table. Recursive function bodies
@@ -1639,6 +1643,7 @@ impl<'a> Compiler<'a> {
                 let (record_type, _) = t.expect_fn();
                 Code::new_nth(record_type, *slot)
             }
+            Expr::Rel(_, _) => self.compile_rel(cx, expr),
             Expr::Tuple(type_, args) => {
                 // The empty tuple is unit, and `{}` parses as one. A
                 // pattern that matches `()` looks for `Val::Unit`, so an
@@ -1659,7 +1664,6 @@ impl<'a> Compiler<'a> {
                     Code::new_tuple(&codes)
                 }
             }
-            _ => todo!("{:?}", expr),
         }
     }
 
