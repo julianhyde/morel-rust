@@ -354,6 +354,25 @@ whether `row_sink.rs`'s 1757 lines are reused or replaced; its 18
 sink types map almost one to one onto `StepKind`, and
 `OrdinalRowSink`/`OrdinalFilterRowSink` have no tree counterpart.
 
+  Decided: morel-java's `RelCompiler`, reusing `row_sink.rs`, as morel-java
+  reuses its `RowSinks`. morel-go has no tree compiler -- it lowers each
+  tree to a step list and compiles that, as this port did through C --
+  so morel-java's is the one to port. `compiler/rel_compiler.rs` compiles
+  a tree node by node: a scan, a counting node and a group write slots,
+  and every other node defers its element as an expression over them.
+  morel-java pushes slots onto a stack; here a slot is a frame variable,
+  and the frame is sized before compiling, so `VarCollector` reserves
+  every name the tree compiler writes: each node's row and position, and
+  names derived from them for the root's element (`rel_out_name`) and a
+  group's outputs (`group_out_name`). The kernel lowers only the trees
+  `compilable` rejects -- a `right` or `full` join, a `left` join over a
+  right input of several components, a join whose condition and right
+  input both read its position, and a position left for an enclosing
+  step list -- 7 in the scripts, against 3407 nodes compiled. Two bugs
+  the step list had hidden came out first: an aggregate's function read
+  the row where morel-java reads the key, and grounding through a
+  function call handed one leaf's test to another.
+
 **E. Delete.** `from_builder.rs` (1597), `expander.rs` (about 4350 of
 4509), `rel_lowerer.rs` (about 870 of 1154), `rel_translator.rs`
 (1877), and the step-walking arms in `inliner.rs`, `replacer.rs`,

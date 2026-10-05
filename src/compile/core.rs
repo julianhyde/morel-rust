@@ -1585,6 +1585,38 @@ impl Kind {
 /// Returns the element type of a collection, or `None` if `t` is not a
 /// collection.
 #[allow(dead_code)]
+/// Returns the name of the slot into which the compiled tree rooted at
+/// `e` delivers its element, where something needs it as a value: a set
+/// operator, a group's output, a scan at the root. Derived from a row in
+/// the tree, which is unique, so that the frame can be sized before the
+/// tree is compiled.
+pub fn rel_out_name(e: &Expr) -> String {
+    fn key(e: &Expr) -> Option<String> {
+        let Expr::Rel(_, rel) = e else {
+            return None;
+        };
+        match rel.as_ref() {
+            Rel::Filter(row, _, _)
+            | Rel::Project(row, _, _)
+            | Rel::Sort(row, _, _)
+            | Rel::Group(row, _, _, _) => Some(row.name.clone()),
+            Rel::Join(_, rows, _, _, _) => Some(rows.left.clone()),
+            Rel::Skip(input, _) | Rel::Take(input, _) | Rel::Unorder(input) => {
+                key(input)
+            }
+            Rel::Except(_, inputs)
+            | Rel::Intersect(_, inputs)
+            | Rel::Union(_, inputs) => inputs.iter().find_map(key),
+        }
+    }
+    format!("{}$out", key(e).unwrap_or_default())
+}
+
+/// Returns the name of the slot that holds a group's output field.
+pub fn group_out_name(row: &Row, label: &Label) -> String {
+    format!("{}${}", row.name, label)
+}
+
 /// Returns the names an extent's pattern binds, which is how a tree,
 /// whose leaves carry no names, says what a leaf was called: one
 /// name for a pattern that is one, a name per component for a tuple

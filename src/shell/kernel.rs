@@ -1226,10 +1226,11 @@ impl Kernel {
             session.post_inline_decl = Some(decl2.clone());
         }
 
-        // The compiler compiles step lists, so a tree that reached it
-        // is lowered to one first.
+        // The compiler compiles a tree; one it cannot yet compile is
+        // lowered to the step list that runs it first.
         let decl3 =
-            rel_lowerer::lower_decl(&decl2).unwrap_or_else(|| decl2.clone());
+            rel_lowerer::lower_decl_except(&decl2, compiler::compilable)
+                .unwrap_or_else(|| decl2.clone());
         let compiled_statement = {
             let mut link_table = self.link_table.borrow_mut();
             compiler::compile_statement(

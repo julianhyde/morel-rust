@@ -58,20 +58,16 @@ use std::rc::Rc;
 /// Lowers a tree into an expression that executes, or returns `None`
 /// where it cannot.
 pub fn lower(exp: &Expr) -> Option<Expr> {
-    let mut l = Lowerer {};
+    let mut l = Lowerer { keep: None };
     let out = l.rel(exp)?;
     l.all(&out)
 }
 
-/// Returns a declaration with every tree in it lowered to the step
-/// list that runs it, or `None` where a tree does not lower.
-///
-/// The compiler compiles step lists, and sizes each frame from the
-/// variables it finds before it compiles anything, so a tree is
-/// lowered before compilation rather than as the compiler meets it;
-/// and after inlining, so that the core a plan prints is the tree.
-pub fn lower_decl(decl: &Decl) -> Option<Decl> {
-    Lowerer {}.all_decl(decl)
+/// Returns a declaration with every tree that `keep` rejects lowered to
+/// the step list that runs it, and the trees it accepts left as trees,
+/// with the trees inside them lowered or kept in turn.
+pub fn lower_decl_except(decl: &Decl, keep: fn(&Expr) -> bool) -> Option<Decl> {
+    Lowerer { keep: Some(keep) }.all_decl(decl)
 }
 
 /// A query translated to its tree and lowered back to steps, or `None`
@@ -431,7 +427,11 @@ fn computed(steps: &[Step]) -> Option<Vec<Step>> {
 }
 
 /// One lowering, of one tree.
-struct Lowerer {}
+struct Lowerer {
+    /// Says which trees to leave as trees, which the compiler compiles
+    /// itself; `None` lowers them all.
+    keep: Option<fn(&Expr) -> bool>,
+}
 
 thread_local! {
     /// Numbers the binders every lowering invents. A tree has no
@@ -452,6 +452,11 @@ struct Builder {
 }
 
 impl Lowerer {
+    /// Returns whether a tree is one to leave as a tree.
+    fn kept(&self, e: &Expr) -> bool {
+        self.keep.is_some_and(|keep| keep(e))
+    }
+
     /// Lowers every tree left inside an expression.
     ///
     /// A query may appear wherever an expression may -- the right
@@ -474,7 +479,8 @@ impl Lowerer {
                 if matches!(
                     a.as_ref(),
                     Expr::Literal(_, Val::Fn(BuiltInFunction::RelationalOnly))
-                ) && matches!(b.as_ref(), Expr::Rel(_, _)) =>
+                ) && matches!(b.as_ref(), Expr::Rel(_, _))
+                    && !self.kept(b) =>
             {
                 let lowered = self.rel(b)?;
                 self.all(&scalarize(
@@ -527,6 +533,21 @@ impl Lowerer {
             ),
             Expr::Raise(t, a, s) => {
                 Expr::Raise(t.clone(), Box::new(self.all(a)?), s.clone())
+            }
+            Expr::Rel(..) if self.kept(e) => {
+                let Expr::Rel(t, rel) = e else { unreachable!() };
+                let failed = Cell::new(false);
+                let rel = rel.map_children(&|x| {
+                    let mut l = Lowerer { keep: self.keep };
+                    l.all(x).unwrap_or_else(|| {
+                        failed.set(true);
+                        x.clone()
+                    })
+                });
+                if failed.get() {
+                    return None;
+                }
+                Expr::Rel(t.clone(), Box::new(rel))
             }
             Expr::Rel(_, _) => {
                 let lowered = self.rel(e)?;
