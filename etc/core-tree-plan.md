@@ -368,7 +368,11 @@ sink types map almost one to one onto `StepKind`, and
   `compilable` rejects -- a `right` or `full` join, a `left` join over a
   right input of several components, a join whose condition and right
   input both read its position, and a position left for an enclosing
-  step list -- 7 in the scripts, against 3407 nodes compiled. Two bugs
+  step list -- 7 in the scripts, against 3407 nodes compiled. Outer
+  joins then followed morel-java's `join2`: a side whose components the
+  sink wraps in `option` is laid out one slot per component
+  (`join_part_name`), which leaves one tree lowered in the scripts, the
+  position a nested query leaves for an enclosing step list. Two bugs
   the step list had hidden came out first: an aggregate's function read
   the row where morel-java reads the key, and grounding through a
   function call handed one leaf's test to another.

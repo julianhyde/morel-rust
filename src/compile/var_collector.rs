@@ -16,9 +16,10 @@
 // License.
 
 use crate::compile::core::{
-    Decl, Expr, Match, ORDINAL_SLOT, Pat, PatField, Rel, Step, StepKind,
-    group_out_name, rel_out_name,
+    Decl, Expr, JoinKind, Match, ORDINAL_SLOT, Pat, PatField, Rel, Step,
+    StepKind, group_out_name, join_part_name, rel_out_name,
 };
+use crate::compile::rel_lowerer::component_count;
 use crate::compile::type_env::Binding;
 use crate::eval::code::Code;
 use crate::eval::frame::FrameDef;
@@ -303,6 +304,26 @@ impl Expr {
                     child.collect_vars(collector);
                 }
                 collector.add_def(Binding::of_name(&rel_out_name(self)));
+                // An outer join lays out a side whose components its
+                // sink wraps in `option`, one slot per component.
+                if let Rel::Join(kind, rows, _, left, right) = rel.as_ref() {
+                    if matches!(kind, JoinKind::Right | JoinKind::Full) {
+                        for i in 0..component_count(left) {
+                            collector.add_def(Binding::of_name(
+                                &join_part_name(&rows.left, i),
+                            ));
+                        }
+                    }
+                    if matches!(kind, JoinKind::Left | JoinKind::Full)
+                        && component_count(right) > 1
+                    {
+                        for i in 0..component_count(right) {
+                            collector.add_def(Binding::of_name(
+                                &join_part_name(&rows.right, i),
+                            ));
+                        }
+                    }
+                }
                 if let Rel::Group(row, _, keys, aggregates) = rel.as_ref() {
                     // A group with nothing to read its row by still has
                     // one, which its input's scan writes.
