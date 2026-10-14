@@ -64,6 +64,7 @@ use crate::unify::unifier::{ANON_CHECK_PREFIX, Var};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::env;
+use std::ptr;
 use std::rc::Rc;
 
 /// Converts an AST to a Core tree.
@@ -325,8 +326,25 @@ fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
                 }
             }
             CoreExpr::Rel(_, rel) => {
+                // A tree's leaf that is still an extent is a scan that
+                // nothing grounded, and is named as the scan was.
+                let inputs = rel.inputs();
                 for c in rel.children() {
-                    check_expr(c, errors);
+                    match c {
+                        CoreExpr::Extent(_, span, names)
+                            if inputs.iter().any(|i| ptr::eq(*i, c)) =>
+                        {
+                            let name = match names.as_slice() {
+                                [n] => n.as_str(),
+                                _ => "_",
+                            };
+                            errors.push((
+                                format!("pattern '{}' is not grounded", name),
+                                span.clone(),
+                            ));
+                        }
+                        _ => check_expr(c, errors),
+                    }
                 }
             }
             _ => {}

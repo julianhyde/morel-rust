@@ -1037,6 +1037,13 @@ pub fn rename(e: &Expr, from: &str, to: &str) -> Expr {
             t.clone(),
             Box::new(rel.map_children(&|x| rename(x, from, to))),
         ),
+        // A step list nested in a node's expression reads the node's row
+        // too -- a function's body put in place of a call over the row --
+        // and binds no placeholder of its own.
+        Expr::From(t, steps) => Expr::From(
+            t.clone(),
+            rel_lowerer::map_steps(steps, &|x| rename(x, from, to)),
+        ),
         _ => rel_lowerer::map_children(e, &|x| rename(x, from, to)),
     }
 }

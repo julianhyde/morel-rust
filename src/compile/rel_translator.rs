@@ -743,6 +743,21 @@ impl Translator {
         let Some(paths) = binder_paths(pat) else {
             return decline("a scan pattern that is not a name or a tuple");
         };
+        // An unbounded scan yields the values of its pattern, and an
+        // extent the step list's passes made is typed as one of them;
+        // as a leaf it is the list of them.
+        let listed;
+        let source = match source {
+            Expr::Extent(t, span, names) if element_type(t).is_none() => {
+                listed = Expr::Extent(
+                    Rc::new(Type::List(t.clone())),
+                    span.clone(),
+                    names.clone(),
+                );
+                &listed
+            }
+            _ => source,
+        };
         // A pattern that can fail filters as well as binds, and the two
         // halves are separate nodes: the filter goes over the scan's
         // own source, where the element it tests is `$0`.

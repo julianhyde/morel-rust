@@ -25,12 +25,14 @@
 
 use crate::compile::core::{
     Binding, Expr, Match, Pat, PatField, Step, StepEnv, StepKind, extent_names,
+    fresh_name,
 };
 use crate::compile::expander::{DatatypeMap, FnEnv, and_all, expr_eq};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::generator::{Cache, Cardinality, Generator};
 use crate::compile::library::{BuiltInFunction, lookup_struct_field};
 use crate::compile::postfix::peel_type;
+use crate::compile::rel_lowerer;
 use crate::compile::replacer::substitute;
 use crate::compile::span::Span;
 use crate::compile::type_env::Id;
@@ -39,6 +41,7 @@ use crate::compile::types::{
 };
 use crate::eval::char::Char;
 use crate::eval::val::Val;
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 use strum::IntoEnumIterator;
@@ -114,7 +117,12 @@ pub fn maybe_generator_with_scope(
             && let Some((lhs, rhs)) =
                 call2_args(c, &[BuiltInFunction::ListElem])
             && (references(lhs, pat_name)
-                || binds_ungrounded_names(lhs, pat_name, ungrounded))
+                || binds_ungrounded_names(lhs, pat_name, ungrounded)
+                || (tests_rebound()
+                    && tuple_mentions(lhs, pat_name)
+                    && !free_names_in(lhs)
+                        .iter()
+                        .any(|n| n != pat_name && ungrounded.contains(n))))
         {
             elem_match = Some(c);
             elem_collection = Some(rhs);
@@ -190,6 +198,25 @@ pub fn maybe_generator_with_scope(
             return create_tuple_elem_generator(
                 cache, &tuple, pat_name, coll, c,
             );
+        }
+        // A component that is neither a name nor a literal -- `(#1 r, y)
+        // elem edges` -- is scanned under a fresh name that a condition
+        // equates to it, as morel-go's `patForExp` does; only a caller
+        // that tests what a pattern rebinds can read it so.
+        if tests_rebound() && tuple_mentions(subject, pat_name) {
+            let mut conds = Vec::new();
+            if let Some(tuple) = pat_for_exp_conds(subject, &mut conds)
+                && only_ungrounded(&pat_names(&tuple), pat_name, ungrounded)
+                && create_tuple_elem_generator(cache, &tuple, pat_name, coll, c)
+            {
+                if !conds.is_empty()
+                    && let Some(mut g) = cache.best(pat_name).cloned()
+                {
+                    g.extra_filter = Some(and_all(conds));
+                    cache.add(pat_name.to_string(), g);
+                }
+                return true;
+            }
         }
         return create_collection_generator(cache, pat, pat_name, coll, c);
     }
@@ -350,7 +377,41 @@ fn binds_ungrounded_names(
     };
     let names = pat_names(&pat);
     names.iter().any(|n| n == name)
-        && names.iter().all(|n| ungrounded.contains(n))
+        && (tests_rebound() || names.iter().all(|n| ungrounded.contains(n)))
+}
+
+/// Whether `name` is the one name among `names` that is still to be
+/// grounded; the others are bound already, and a caller that tests what
+/// a pattern rebinds keeps the rows that agree with them.
+fn only_ungrounded(
+    names: &[String],
+    name: &str,
+    ungrounded: &BTreeSet<String>,
+) -> bool {
+    names.iter().all(|n| n == name || !ungrounded.contains(n))
+}
+
+thread_local! {
+    /// Whether the caller tests a name that a generator's pattern binds
+    /// and something outside it has bound already, as the tree grounder
+    /// does: then `(a, y) elem pairs` grounds `y` under the pattern
+    /// `(a, y)`, as morel-go's `collectionGenerator` does, and the caller
+    /// keeps the rows whose `a` is the `a` in scope. The step list scans
+    /// a generator's pattern as it stands, which would rebind `a`.
+    static TESTS_REBOUND: Cell<bool> = const { Cell::new(false) };
+}
+
+fn tests_rebound() -> bool {
+    TESTS_REBOUND.with(Cell::get)
+}
+
+/// Runs `f` as a caller that tests what a generator's pattern rebinds;
+/// see [`TESTS_REBOUND`].
+pub(crate) fn testing_rebound<T>(f: impl FnOnce() -> T) -> T {
+    let previous = TESTS_REBOUND.with(|c| c.replace(true));
+    let out = f();
+    TESTS_REBOUND.with(|c| c.set(previous));
+    out
 }
 
 /// The pattern that a tuple scans under, or `None` where the
@@ -405,6 +466,31 @@ fn pat_for_exp(exp: &Expr) -> Option<Pat> {
             Some(Pat::Tuple(t.clone(), pats))
         }
         _ => None,
+    }
+}
+
+/// Converts the element side of a membership conjunct to a pattern as
+/// [pat_for_exp] does, and any other component to a fresh name, adding
+/// the condition that equates the name to the component.
+fn pat_for_exp_conds(exp: &Expr, conds: &mut Vec<Expr>) -> Option<Pat> {
+    match exp {
+        Expr::Tuple(t, args) if !matches!(t.as_ref(), Type::Record(..)) => {
+            let pats: Vec<Pat> = args
+                .iter()
+                .map(|a| pat_for_exp_conds(a, conds))
+                .collect::<Option<_>>()?;
+            Some(Pat::Tuple(t.clone(), pats))
+        }
+        _ => pat_for_exp(exp).or_else(|| {
+            let t = exp.type_();
+            let name = fresh_name();
+            conds.push(make_eq_for_type(
+                &t,
+                Expr::Identifier(t.clone(), name.clone()),
+                exp.clone(),
+            ));
+            Some(Pat::Identifier(t, name))
+        }),
     }
 }
 
@@ -1455,15 +1541,15 @@ fn create_string_prefix_generator(
 /// The steps of a query a constraint tests for existence, whether
 /// it is written as a call over the query or as a query whose last
 /// step tests for it.
-fn exists_steps(c: &Expr) -> Option<&[Step]> {
+fn exists_steps(c: &Expr) -> Option<Vec<Step>> {
     match c {
         Expr::Apply(_, f, a, _)
             if as_builtin_fn(f)
                 == Some(BuiltInFunction::RelationalNonEmpty) =>
         {
             match a.as_ref() {
-                Expr::From(_, steps) => Some(steps),
-                _ => None,
+                Expr::From(_, steps) => Some(steps.clone()),
+                _ => rel_lowerer::exists_tree_steps(c),
             }
         }
         Expr::From(_, steps)
@@ -1472,9 +1558,10 @@ fn exists_steps(c: &Expr) -> Option<&[Step]> {
                 Some(StepKind::Exists)
             ) =>
         {
-            Some(&steps[..steps.len() - 1])
+            Some(steps[..steps.len() - 1].to_vec())
         }
-        _ => None,
+        // A tree's test, with the binder that hands it the row.
+        _ => rel_lowerer::exists_tree_steps(c),
     }
 }
 
@@ -1499,7 +1586,7 @@ fn maybe_exists(
         };
         let mut inner_scans: Vec<Step> = Vec::new();
         let mut inner_conjuncts: Vec<Expr> = Vec::new();
-        for s in inner_steps {
+        for s in &inner_steps {
             match &s.kind {
                 StepKind::Scan(_, _, _) => inner_scans.push(s.clone()),
                 StepKind::Where(cond) => {
@@ -1524,6 +1611,29 @@ fn maybe_exists(
         // Try to derive a generator from the augmented set, into
         // a temporary cache so we can inspect the result before
         // adding to the real cache.
+        // A variable the body quantifies over an extent is as ungrounded
+        // inside it as the one being grounded: `exists y where (x, y)
+        // elem pairs` grounds `x` and `y` together.
+        let quantified: BTreeSet<String> = inner_steps
+            .iter()
+            .filter_map(|s| match &s.kind {
+                StepKind::Scan(p, source, _)
+                    if matches!(source.as_ref(), Expr::Extent(..)) =>
+                {
+                    Some(p)
+                }
+                _ => None,
+            })
+            .flat_map(|p| {
+                let mut names = Vec::new();
+                p.for_each_id_pat(&mut |(_, n)| names.push(n.to_string()));
+                names
+            })
+            .collect();
+        let siblings: BTreeSet<String> =
+            unbounded_siblings.union(&quantified).cloned().collect();
+        let ungrounded2: BTreeSet<String> =
+            ungrounded.union(&quantified).cloned().collect();
         let mut probe = Cache::new();
         if !maybe_generator_with_scope(
             &mut probe,
@@ -1535,15 +1645,33 @@ fn maybe_exists(
             fn_env,
             datatypes,
             outer_scope,
-            unbounded_siblings,
-            ungrounded,
+            &siblings,
+            &ungrounded2,
         ) {
             continue;
         }
-        let inner_gen = match probe.best(pat_name) {
+        let mut inner_gen = match probe.best(pat_name) {
             Some(g) => g.clone(),
             None => continue,
         };
+        // A filter the generator brought with it that reads a variable
+        // the body quantifies and the generator does not bind is not one
+        // it can test; the `exists`, which stays as a filter over what
+        // this grounds, tests it instead, as morel-go's
+        // `existsGenerator` does.
+        if let Some(filter) = &inner_gen.extra_filter {
+            let mut binds: Vec<String> = Vec::new();
+            inner_gen
+                .pat
+                .for_each_id_pat(&mut |(_, n)| binds.push(n.to_string()));
+            let reads_quantified = free_names_in(filter)
+                .iter()
+                .any(|n| quantified.contains(n) && !binds.contains(n));
+            if reads_quantified {
+                inner_gen.extra_filter = None;
+                inner_gen.sealed = false;
+            }
+        }
 
         // Find inner scans that bind any of the generator's free
         // patterns. If none, the generator stands on its own and
@@ -1571,7 +1699,16 @@ fn maybe_exists(
             })
             .collect();
 
-        if needed.is_empty() {
+        // A generator whose pattern binds a quantified variable --
+        // `(x, y) elem pairs` -- yields it too, and the variable is the
+        // body's, not a name to test; so it is projected away, as
+        // morel-go's `existsGenerator` does.
+        let mut gen_names: Vec<String> = Vec::new();
+        inner_gen
+            .pat
+            .for_each_id_pat(&mut |(_, n)| gen_names.push(n.to_string()));
+        let binds_quantified = gen_names.iter().any(|n| quantified.contains(n));
+        if needed.is_empty() && !binds_quantified {
             // The generator doesn't depend on the inner scans;
             // just promote it.
             cache.add(pat_name.to_string(), inner_gen);
@@ -1598,7 +1735,7 @@ fn maybe_exists(
         );
         new_steps.push(Step::new(
             StepKind::Scan(
-                Box::new(pat.clone()),
+                Box::new(inner_gen.pat.clone()),
                 Box::new(inner_gen.exp.clone()),
                 None,
             ),
@@ -1769,6 +1906,24 @@ fn maybe_function(
             .into_iter()
             .filter(|ic| !inner_gen.provenance.iter().any(|p| expr_eq(p, ic)))
             .collect();
+        // One that reads another name still to be grounded is not one
+        // this scan can test, as morel-go's `existsGenerator` finds, and
+        // the call cannot stay as a filter to test it instead: a
+        // function's body is grounded only where it is put in place of
+        // the call. So the call does not ground the name.
+        let mut gen_names: Vec<String> = Vec::new();
+        inner_gen
+            .pat
+            .for_each_id_pat(&mut |(_, n)| gen_names.push(n.to_string()));
+        let (unconsumed, unreadable): (Vec<Expr>, Vec<Expr>) =
+            unconsumed.into_iter().partition(|ic| {
+                !free_names_in(ic).iter().any(|n| {
+                    !gen_names.contains(n) && unbounded_siblings.contains(n)
+                })
+            });
+        if !unreadable.is_empty() {
+            continue;
+        }
         if !unconsumed.is_empty() {
             let combined = and_all(unconsumed);
             inner_gen.extra_filter =
@@ -3445,6 +3600,16 @@ fn call2_args_op<'a>(
 /// handled — Phase 1 doesn't need offset detection.
 fn references(expr: &Expr, name: &str) -> bool {
     matches!(expr, Expr::Identifier(_, n) if n == name)
+}
+
+/// Whether a tuple has the name as a component, at any depth.
+fn tuple_mentions(expr: &Expr, name: &str) -> bool {
+    match expr {
+        Expr::Tuple(_, args) => args
+            .iter()
+            .any(|a| references(a, name) || tuple_mentions(a, name)),
+        _ => false,
+    }
 }
 
 /// If `expr` is `String.isPrefix p s` (curried, i.e.
