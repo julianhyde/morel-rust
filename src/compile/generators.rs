@@ -27,7 +27,9 @@ use crate::compile::core::{
     Binding, Expr, Match, Pat, PatField, Step, StepEnv, StepKind, extent_names,
     fresh_name,
 };
-use crate::compile::expander::{DatatypeMap, FnEnv, and_all, expr_eq};
+use crate::compile::expander::{
+    DatatypeMap, FnEnv, and_all, build_iterate_ast, contains_self_call, expr_eq,
+};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::generator::{Cache, Cardinality, Generator};
 use crate::compile::library::{BuiltInFunction, lookup_struct_field};
@@ -285,6 +287,9 @@ pub fn maybe_generator_with_scope(
         unbounded_siblings,
         ungrounded,
     ) {
+        return true;
+    }
+    if tests_rebound() && maybe_rec_fn(cache, pat_name, constraints, fn_env) {
         return true;
     }
     if maybe_function(
@@ -1774,6 +1779,239 @@ fn maybe_exists(
     false
 }
 
+/// Inverts a call of a recursive function, as morel-go's `maybeRecFn`
+/// does. A body of the shape `base orelse (exists ... where f (...)
+/// andalso step ...)` is a transitive closure: the base's membership
+/// seeds a fixed-point iteration that extends rows through the base
+/// relation, and the closure is exact, so the call is subsumed.
+///
+/// morel-go also grounds any other recursive call by its body's
+/// non-recursive branches, with the call kept as a filter over them;
+/// here a function's body is grounded only where it is put in place of
+/// a call, so the filter could not run, and such a call is left to the
+/// step list.
+fn maybe_rec_fn(
+    cache: &mut Cache,
+    pat_name: &str,
+    constraints: &[Expr],
+    fn_env: &FnEnv,
+) -> bool {
+    for c in constraints {
+        let Expr::Apply(_, f, arg, _) = c else {
+            continue;
+        };
+        let Expr::Identifier(_, name) = f.as_ref() else {
+            continue;
+        };
+        let Some((param, body)) = fn_env.get(name) else {
+            continue;
+        };
+        if !contains_self_call(body, name) {
+            continue;
+        }
+        if let Some(g) =
+            try_closure(pat_name, c, arg, param, body, name, fn_env)
+        {
+            cache.add(pat_name.to_string(), g);
+            return true;
+        }
+    }
+    false
+}
+
+/// Puts a non-recursive function's body in place of a call of it.
+fn inline_predicate(c: &Expr, fn_env: &FnEnv) -> Expr {
+    let Expr::Apply(_, f, arg, _) = c else {
+        return c.clone();
+    };
+    let Expr::Identifier(_, name) = f.as_ref() else {
+        return c.clone();
+    };
+    let Some((param, body)) = fn_env.get(name) else {
+        return c.clone();
+    };
+    if contains_self_call(body, name) {
+        return c.clone();
+    }
+    match formal_bindings(param, arg) {
+        Some(binds) => substitute(body, &binds),
+        None => c.clone(),
+    }
+}
+
+/// The formal parameters of a function: one name, or a tuple of them.
+fn formals_of(param: &Pat) -> Option<Vec<(String, Rc<Type>)>> {
+    match param {
+        Pat::Identifier(t, n) => Some(vec![(n.clone(), t.clone())]),
+        Pat::Tuple(_, args) => args
+            .iter()
+            .map(|a| match a {
+                Pat::Identifier(t, n) => Some((n.clone(), t.clone())),
+                _ => None,
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
+/// Maps a function's formals to a call's argument: component by
+/// component for a tuple, by selection for anything else.
+fn formal_bindings(param: &Pat, arg: &Expr) -> Option<HashMap<String, Expr>> {
+    let formals = formals_of(param)?;
+    let mut binds = HashMap::new();
+    if let [(f, _)] = formals.as_slice() {
+        binds.insert(f.clone(), arg.clone());
+        return Some(binds);
+    }
+    match arg {
+        Expr::Tuple(_, args) if args.len() == formals.len() => {
+            for ((f, _), a) in formals.iter().zip(args) {
+                binds.insert(f.clone(), a.clone());
+            }
+        }
+        Expr::Identifier(..) => {
+            for (i, (f, _)) in formals.iter().enumerate() {
+                binds.insert(f.clone(), rel_lowerer::field_at(arg, i));
+            }
+        }
+        _ => return None,
+    }
+    Some(binds)
+}
+
+/// Inverts a call of a transitive closure, `f (x, y) = base (x, y)
+/// orelse (exists z where f (x, z) andalso step (z, y))`, whose base is a
+/// membership over the formals: the base's collection seeds
+/// `Relational.iterate`, which extends each row through it, as morel-go's
+/// `tryClosure` does. The call must apply the function to the variable
+/// itself, or to a tuple of variables and literals.
+fn try_closure(
+    pat_name: &str,
+    call: &Expr,
+    arg: &Expr,
+    param: &Pat,
+    body: &Expr,
+    name: &str,
+    fn_env: &FnEnv,
+) -> Option<Generator> {
+    // The formals are a pair of names, or one name of a pair type.
+    let formals = formals_of(param)?;
+    let (names, x_t, y_t): (Vec<String>, Rc<Type>, Rc<Type>) =
+        match formals.as_slice() {
+            [(x, x_t), (y, y_t)] => {
+                (vec![x.clone(), y.clone()], x_t.clone(), y_t.clone())
+            }
+            [(p, t)] => match peel_type(t) {
+                Type::Tuple(ts) if ts.len() == 2 => {
+                    (vec![p.clone()], ts[0].clone(), ts[1].clone())
+                }
+                _ => return None,
+            },
+            _ => return None,
+        };
+    let disjuncts = split_orelse(body);
+    let [base, recursive] = disjuncts.as_slice() else {
+        return None;
+    };
+    if contains_self_call(base, name) {
+        return None;
+    }
+    // The recursive disjunct is an `exists` whose filters hold the one
+    // call and the steps beside it, and the call carries a formal through.
+    let Expr::From(_, steps) = recursive else {
+        return None;
+    };
+    if !matches!(steps.last().map(|s| &s.kind), Some(StepKind::Exists)) {
+        return None;
+    }
+    let mut calls = 0;
+    let mut others = 0;
+    let mut carries = false;
+    for step in steps {
+        let StepKind::Where(cond) = &step.kind else {
+            continue;
+        };
+        for cj in split_conjuncts(cond) {
+            match &cj {
+                Expr::Apply(_, f, a, _) if matches!(f.as_ref(), Expr::Identifier(_, n) if n == name) =>
+                {
+                    calls += 1;
+                    let free = free_names_in(a);
+                    carries = names.iter().any(|n| free.contains(n));
+                }
+                _ => others += 1,
+            }
+        }
+    }
+    if calls != 1 || others == 0 || !carries {
+        return None;
+    }
+    // The base is a membership of the formals in a collection: a tuple of
+    // them in order, a record whose fields are them in its own order, or
+    // the one formal. A base that calls a function that does not recurse
+    // says what the function's body says, as morel-go's `inlinePredicate`
+    // reads it.
+    let base_conjuncts = split_conjuncts(&inline_predicate(base, fn_env));
+    let [membership] = base_conjuncts.as_slice() else {
+        return None;
+    };
+    let (lhs, coll) = call2_args(membership, &[BuiltInFunction::ListElem])?;
+    let is_formal =
+        |e: &Expr, f: &str| matches!(e, Expr::Identifier(_, n) if n == f);
+    let labels = match (lhs, names.as_slice()) {
+        (Expr::Tuple(t, items), [x, y])
+            if items.len() == 2
+                && is_formal(&items[0], x)
+                && is_formal(&items[1], y) =>
+        {
+            match t.as_ref() {
+                Type::Record(_, fields) => {
+                    Some(fields.keys().map(ToString::to_string).collect())
+                }
+                _ => None,
+            }
+        }
+        (e, [p]) if is_formal(e, p) => None,
+        _ => return None,
+    };
+    let iterate = build_iterate_ast(&x_t, &y_t, &y_t, coll.clone(), labels);
+    let element = Rc::new(Type::Tuple(vec![x_t.clone(), y_t.clone()]));
+    // The call's argument says how the closure's pairs bind the query's
+    // variables: the variable itself, or a tuple of variables and
+    // literals.
+    let gen_pat = match arg {
+        Expr::Identifier(_, n) if n == pat_name => {
+            Pat::Identifier(element.clone(), n.clone())
+        }
+        Expr::Tuple(_, items) => {
+            let pats: Vec<Pat> =
+                items.iter().map(pat_for_exp).collect::<Option<_>>()?;
+            let names = pat_names(&Pat::Tuple(element.clone(), pats.clone()));
+            let distinct: BTreeSet<&String> = names.iter().collect();
+            if distinct.len() < names.len()
+                || !names.iter().any(|n| n == pat_name)
+            {
+                return None;
+            }
+            Pat::Tuple(element.clone(), pats)
+        }
+        _ => return None,
+    };
+    let mut free = free_names_in(&iterate);
+    for n in pat_names(&gen_pat) {
+        free.remove(&n);
+    }
+    Some(Generator::new(
+        gen_pat,
+        iterate,
+        Cardinality::Finite,
+        free,
+        true,
+        true,
+        vec![call.clone()],
+    ))
+}
+
 /// Recognises a constraint of the form `f arg` where `f` is a let-
 /// bound single-argument function (i.e. `val rec f = fn p => body`).
 /// Inlines the body with `p` substituted by `arg`, expands any
@@ -1813,6 +2051,11 @@ fn maybe_function(
         let Some((param_pat, body)) = fn_env.get(fn_name) else {
             continue;
         };
+        // A recursive function's body holds the call again; the tree
+        // grounder inverts it by `maybe_rec_fn`, or not at all.
+        if tests_rebound() && contains_self_call(body, fn_name) {
+            continue;
+        }
         // A call that does not read the name says nothing about it, as
         // morel-java's `maybeFunction`, which grounds the name from the
         // body alone, finds: inlining `isDept d` to ground `e` would
