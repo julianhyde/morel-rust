@@ -411,6 +411,64 @@ fn as_exists_steps_step(step: Step) -> Step {
     Step { kind, ..step }
 }
 
+/// Returns the query whose rows a query ending in a step that tests for
+/// existence counts: its steps but the last, typed as the environment
+/// the last leaves them says.
+fn exists_query(e: &Expr) -> Option<Expr> {
+    let Expr::From(_, steps) = e else {
+        return None;
+    };
+    let (last, rest) = steps.split_last()?;
+    if !matches!(last.kind, StepKind::Exists) || rest.is_empty() {
+        return None;
+    }
+    let env = &rest.last()?.env;
+    let elem = match env.bindings.as_slice() {
+        [] => Rc::new(Type::Primitive(PrimitiveType::Unit)),
+        [b] if env.atom => b.type_.clone(),
+        bindings => Rc::new(Type::Record(
+            false,
+            bindings
+                .iter()
+                .map(|b| (Label::String(b.id.name.clone()), b.type_.clone()))
+                .collect(),
+        )),
+    };
+    let t = if env.ordered {
+        Type::List(elem)
+    } else {
+        Type::Bag(elem)
+    };
+    Some(Expr::From(Rc::new(t), rest.to_vec()))
+}
+
+/// Rewrites each query that ends in a step testing for existence as
+/// `Relational.nonEmpty` over the rest of it.
+fn as_non_empty(e: Expr) -> Expr {
+    if let Some(query) = exists_query(&e) {
+        return non_empty(query);
+    }
+    match e {
+        Expr::From(..) => e,
+        e => rel_lowerer::map_children(&e, &|x| as_non_empty(x.clone())),
+    }
+}
+
+/// Returns `Relational.nonEmpty` over a query.
+fn non_empty(query: Expr) -> Expr {
+    let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
+    let fn_t = Rc::new(Type::Fn(query.type_(), bool_t.clone()));
+    Expr::Apply(
+        bool_t,
+        Box::new(Expr::Literal(
+            fn_t,
+            Val::Fn(BuiltInFunction::RelationalNonEmpty),
+        )),
+        Box::new(query),
+        Span::new(""),
+    )
+}
+
 /// Returns a query with a step that tests for existence, which is
 /// how the step list says what a call over the query says.
 fn exists_step(query: Expr) -> Expr {
@@ -608,7 +666,15 @@ fn walk_expr_with_scope(
                 use crate::compile::replacer::substitute;
                 let mut subst: HashMap<String, Expr> = HashMap::new();
                 subst.insert(param_name.clone(), (*a).clone());
+                // The body says whether a query has a row the way the
+                // step list does; put in place of a call, it is whether
+                // the query has one, which its tree may ground.
                 let inlined = substitute(body, &subst);
+                let inlined = if in_step_walk() {
+                    inlined
+                } else {
+                    as_non_empty(inlined)
+                };
                 return walk_expr_with_scope(
                     inlined,
                     env,
@@ -746,8 +812,28 @@ fn on_steps(
     outer_scope: &BTreeSet<String>,
 ) -> Expr {
     let expr = as_exists_steps(expr);
-    let inner = walk_query_steps(expr, env, rec_env, datatypes);
+    let inner =
+        step_walk(true, || walk_query_steps(expr, env, rec_env, datatypes));
     expand_from_with_scope_rec(inner, env, rec_env, datatypes, outer_scope)
+}
+
+thread_local! {
+    /// Whether the walk is inside a query the step list grounds, whose
+    /// `exists` constraints its own inversion reads in the shape the
+    /// step list writes them; see [`as_non_empty`].
+    static STEP_WALK: Cell<bool> = const { Cell::new(false) };
+}
+
+fn in_step_walk() -> bool {
+    STEP_WALK.with(Cell::get)
+}
+
+/// Runs `f` inside, or outside, a query the step list grounds.
+fn step_walk<T>(inside: bool, f: impl FnOnce() -> T) -> T {
+    let previous = STEP_WALK.with(|c| c.replace(inside));
+    let out = f();
+    STEP_WALK.with(|c| c.set(previous));
+    out
 }
 
 /// Walks the expressions of a grounded tree, grounding the queries they
@@ -764,21 +850,27 @@ fn walk_tree_children(
         // walked, which grounds the queries it holds.
         Expr::Rel(t, rel) => Expr::Rel(
             t,
-            Box::new(rel.map_children(&|e| match e {
-                Expr::Rel(..) => walk_tree_children(
-                    e.clone(),
-                    env,
-                    rec_env,
-                    datatypes,
-                    outer_scope,
-                ),
-                _ => walk_expr_with_scope(
-                    e.clone(),
-                    env,
-                    rec_env,
-                    datatypes,
-                    outer_scope,
-                ),
+            Box::new(step_walk(false, || {
+                rel.map_children(&|e| match e {
+                    Expr::Rel(..) => walk_tree_children(
+                        e.clone(),
+                        env,
+                        rec_env,
+                        datatypes,
+                        outer_scope,
+                    ),
+                    // A query that tests for existence -- a function's body,
+                    // put in place of a call that a grounded tree filters by
+                    // -- is whether the rest of it has a row, which its tree
+                    // may ground.
+                    _ => walk_expr_with_scope(
+                        as_non_empty(e.clone()),
+                        env,
+                        rec_env,
+                        datatypes,
+                        outer_scope,
+                    ),
+                })
             })),
         ),
         Expr::Apply(t, f, a, span) => Expr::Apply(

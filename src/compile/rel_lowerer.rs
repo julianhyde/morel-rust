@@ -109,6 +109,30 @@ pub fn as_steps(tree: &Expr) -> Option<Expr> {
     Some(unlet(&scalarize(lower(tree)?, &tree.type_())))
 }
 
+/// Returns the steps of the query an existential constraint tests, where
+/// it tests a tree: `Relational.nonEmpty` over the tree, read back as the
+/// step list it lowers to, as morel-go's `existsQueryOf` does. The
+/// translator hands a nested tree its enclosing row through a binder,
+/// `let val v$0 = x in ... end`, which is read out first, so that the
+/// test reads the variable as a constraint the derivation can invert.
+pub fn exists_tree_steps(c: &Expr) -> Option<Vec<Step>> {
+    let c = unlet(c);
+    let Expr::Apply(_, f, a, _) = &c else {
+        return None;
+    };
+    if !matches!(
+        f.as_ref(),
+        Expr::Literal(_, Val::Fn(BuiltInFunction::RelationalNonEmpty))
+    ) || !matches!(a.as_ref(), Expr::Rel(_, _))
+    {
+        return None;
+    }
+    match as_steps(a)? {
+        Expr::From(_, steps) => Some(steps),
+        _ => None,
+    }
+}
+
 /// Replaces every query tree in an expression by its step list, which
 /// is how the step-list grounder reads a function's body.
 pub fn steps_within(e: &Expr) -> Expr {
@@ -279,7 +303,10 @@ impl Flip {
 
 /// Rebuilds a step list with a function applied to each expression its
 /// steps hold.
-fn map_steps(steps: &[Step], f: &dyn Fn(&Expr) -> Expr) -> Vec<Step> {
+pub(crate) fn map_steps(
+    steps: &[Step],
+    f: &dyn Fn(&Expr) -> Expr,
+) -> Vec<Step> {
     let each = |es: &[Expr]| es.iter().map(f).collect::<Vec<_>>();
     let boxed = |e: &Expr| Box::new(f(e));
     steps
@@ -1364,6 +1391,9 @@ pub(crate) fn replace_names(e: &Expr, map: &BTreeMap<String, Expr>) -> Expr {
             if let Expr::RecordSelector(_, slot) = fx.as_ref() =>
         {
             selected(t, fx, replace_names(a, map), *slot, s)
+        }
+        Expr::From(t, steps) => {
+            Expr::From(t.clone(), map_steps(steps, &|x| replace_names(x, map)))
         }
         Expr::Rel(t, rel) => Expr::Rel(
             t.clone(),

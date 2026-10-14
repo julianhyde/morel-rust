@@ -42,7 +42,7 @@ use crate::compile::free_finder::free_names_in;
 use crate::compile::generator::{Cache, Cardinality, Generator};
 use crate::compile::generators::{
     finite_extent, is_infinite_range, maybe_generator_with_scope,
-    split_conjuncts,
+    split_conjuncts, testing_rebound,
 };
 use crate::compile::library::BuiltInFunction;
 use crate::compile::postfix::peel_type;
@@ -165,7 +165,11 @@ fn ground_query(
         debugf(|| format!("ground: declined -- {}", x.reason));
         return None;
     };
-    if holds_extent(&grounded) {
+    // A leaf that is still an extent is one grounding did not bound. An
+    // extent in a query nested in an expression -- the `exists` that
+    // stays as a filter over what it grounded -- is that query's, which
+    // is grounded when the walk reaches it.
+    if leaf_holds_extent(&grounded) {
         debugf(|| "ground: an extent survived".to_string());
         return None;
     }
@@ -1014,19 +1018,21 @@ impl<'a> Expander<'a> {
                         if !settled.infinite.contains(name) {
                             continue;
                         }
-                        let found = maybe_generator_with_scope(
-                            &mut settled.cache,
-                            pat,
-                            name,
-                            t,
-                            *ordered,
-                            &constraints,
-                            self.fn_env,
-                            self.datatypes,
-                            &outer,
-                            &settled.infinite,
-                            ungrounded,
-                        );
+                        let found = testing_rebound(|| {
+                            maybe_generator_with_scope(
+                                &mut settled.cache,
+                                pat,
+                                name,
+                                t,
+                                *ordered,
+                                &constraints,
+                                self.fn_env,
+                                self.datatypes,
+                                &outer,
+                                &settled.infinite,
+                                ungrounded,
+                            )
+                        });
                         if !found {
                             continue;
                         }
@@ -1250,6 +1256,16 @@ impl<'a> Expander<'a> {
             }
         }
         if bound.is_empty()
+            && joins_and_extents(left, lo, frame)
+            && joins_and_extents(right, mid, frame)
+            && kind == JoinKind::Inner
+            && !dependent
+            && is_true(condition)
+            && let Some(chained) = self.scheduled(lo, hi, frame, settled)
+        {
+            return Some(chained);
+        }
+        if bound.is_empty()
             && let Some(common) =
                 self.common_generator(lo, hi, frame, settled, bound)
         {
@@ -1456,6 +1472,169 @@ impl<'a> Expander<'a> {
         Some(common.clone())
     }
 
+    /// Grounds a join of extent leaves whose names share generators --
+    /// `{bar = bar1, beer = b, price = price1} elem barBeers` binds two
+    /// of them -- as a chain that scans each generator once, in an order
+    /// that has every name a generator reads bound before it, as
+    /// morel-go's `scheduled` does. `None` where a name has no
+    /// generator, nothing is shared, or no order will do; then the
+    /// leaves are grounded one by one.
+    fn scheduled(
+        &mut self,
+        lo: usize,
+        hi: usize,
+        frame: &Frame,
+        settled: &Settled,
+    ) -> Option<Expr> {
+        let names: Vec<(String, Rc<Type>)> = frame.leaves[lo..hi]
+            .iter()
+            .flat_map(|leaf| pat_names(&leaf.pat))
+            .collect();
+        let mut gens: Vec<Generator> = Vec::new();
+        for (name, _) in &names {
+            let g = settled.best(name)?;
+            if !gens.iter().any(|x| same_generator(x, g)) {
+                gens.push(g.clone());
+            }
+        }
+        if gens.len() == names.len() || gens.len() == 1 {
+            return None;
+        }
+        let order = schedule_order(&gens, &names)?;
+        let mut chain = Chain::default();
+        let mut projects_away = false;
+        let mut any_duplicates = false;
+        for i in order {
+            let g = &gens[i];
+            any_duplicates = any_duplicates || !g.unique;
+            for (p, _) in pat_names(&g.pat) {
+                if !chain.bindings.contains_key(&p)
+                    && !names.iter().any(|(n, _)| *n == p)
+                {
+                    projects_away = true;
+                }
+            }
+            self.chain_add(&mut chain, g, &names)?;
+        }
+        let exp = chain.exp.clone()?;
+        let collection = project_of(exp, chain.yield_(&names)?);
+        let collection =
+            if self.dedup_observable && (any_duplicates || projects_away) {
+                dedup_row(collection, &record_or_atom_pat(&names), &names)?
+            } else {
+                collection
+            };
+        // The tree above wants the join's element, which is written in
+        // terms of the leaves' names; read each out of the row the chain
+        // yields.
+        let out = input_of(&collection)?;
+        let element = rename(
+            &frame.element(lo, hi - lo),
+            &out,
+            &record_or_atom_pat(&names),
+        )?;
+        Some(project_of(collection, element))
+    }
+
+    /// Scans one more generator at the end of a chain: the names its
+    /// collection reads that the chain has bound are read through the
+    /// join's binder, and a name both sides bind is tested for
+    /// agreement.
+    fn chain_add(
+        &mut self,
+        c: &mut Chain,
+        g: &Generator,
+        names: &[(String, Rc<Type>)],
+    ) -> Option<()> {
+        // A name the pattern binds that is no leaf's and that the
+        // constraint read from outside is bound there, and a row that
+        // disagrees with it is not a match, as in `project`.
+        let outside = |row: &Expr, chain: &Chain| -> Option<Vec<Expr>> {
+            let mut tests = Vec::new();
+            for (p, t) in pat_names(&g.pat) {
+                if names.iter().any(|(n, _)| *n == p)
+                    || chain.bindings.contains_key(&p)
+                    || !reads_free(g, &p)
+                {
+                    continue;
+                }
+                tests.push(eq_exp(
+                    path(&g.pat, row, &p)?,
+                    Expr::Identifier(t.clone(), p.clone()),
+                    &t,
+                ));
+            }
+            Some(tests)
+        };
+        let Some(left) = c.exp.take() else {
+            let scanned = self.scanned(g.exp.clone(), g)?;
+            let tests = outside(&input_of(&scanned)?, c)?;
+            c.exp = Some(if tests.is_empty() {
+                scanned
+            } else {
+                filter_of(scanned, and_all(tests))
+            });
+            c.leaves = 1;
+            for (p, _) in pat_names(&g.pat) {
+                c.bindings.insert(p, (0, g.pat.clone()));
+            }
+            return Some(());
+        };
+        let left_elem = element_type(&left.type_())?;
+        let mut binder: Option<String> = None;
+        let mut reads: BTreeMap<String, Expr> = BTreeMap::new();
+        for free in &g.free_pats {
+            if c.bindings.contains_key(free) {
+                let name = binder.get_or_insert_with(fresh_name).clone();
+                let base = Expr::Identifier(left_elem.clone(), name);
+                reads.insert(free.clone(), c.path_of(free, &base)?);
+            }
+        }
+        let right = self.scanned(substitute(&g.exp, &reads), g)?;
+        let tests = outside(&input_of(&right)?, c)?;
+        let right = if tests.is_empty() {
+            right
+        } else {
+            filter_of(right, and_all(tests))
+        };
+        let right_elem = element_type(&right.type_())?;
+        let mut conditions: Vec<Expr> = Vec::new();
+        for (p, t) in pat_names(&g.pat) {
+            if c.bindings.contains_key(&p) {
+                let right_row =
+                    Expr::Identifier(right_elem.clone(), RIGHT_ROW.to_string());
+                let left_row =
+                    Expr::Identifier(left_elem.clone(), ROW.to_string());
+                conditions.push(eq_exp(
+                    path(&g.pat, &right_row, &p)?,
+                    c.path_of(&p, &left_row)?,
+                    &t,
+                ));
+            }
+        }
+        let condition = if conditions.is_empty() {
+            true_literal()
+        } else {
+            and_all(conditions)
+        };
+        let rows = match binder {
+            Some(name) => JoinRows::dependent(name),
+            None => JoinRows::placeholder(),
+        };
+        c.exp = Some(node(Rel::Join(
+            JoinKind::Inner,
+            rows,
+            Box::new(condition),
+            Box::new(left),
+            Box::new(right),
+        ))?);
+        for (p, _) in pat_names(&g.pat) {
+            c.bindings.entry(p).or_insert((c.leaves, g.pat.clone()));
+        }
+        c.leaves += 1;
+        Some(())
+    }
+
     /// Grounds a join tree that one generator binds every leaf of:
     /// the leaves and the join between them become one scan of that
     /// generator, read through the paths its pattern gives each
@@ -1470,6 +1649,48 @@ impl<'a> Expander<'a> {
     ) -> Option<Expr> {
         let collection = substitute(&common.exp, bound);
         let element = frame.element(lo, hi - lo);
+        // A name the pattern binds that none of these leaves does is
+        // bound outside them, and a row that disagrees with it is not a
+        // match, as in `project`; it is not one of the variables.
+        let leaf_vars: BTreeSet<String> = frame.leaves[lo..hi]
+            .iter()
+            .flat_map(|leaf| pat_names(&leaf.pat).into_iter().map(|(n, _)| n))
+            .collect();
+        let mut tested: Vec<Expr> = Vec::new();
+        let row0 = input_of(&collection)?;
+        for (other, t) in pat_names(&common.pat) {
+            if leaf_vars.contains(&other) {
+                continue;
+            }
+            let at = path(&common.pat, &row0, &other)?;
+            if let Some(value) = bound.get(&other) {
+                tested.push(eq_exp(at, value.clone(), &t));
+            } else if reads_free(common, &other) {
+                tested.push(eq_exp(
+                    at,
+                    Expr::Identifier(t.clone(), other.clone()),
+                    &t,
+                ));
+            }
+        }
+        if !tested.is_empty() {
+            let scanned =
+                filter_of(self.scanned(collection, common)?, and_all(tested));
+            let vars: Vec<(String, Rc<Type>)> = pat_names(&common.pat)
+                .into_iter()
+                .filter(|(n, _)| leaf_vars.contains(n))
+                .collect();
+            if self.dedup_observable {
+                let deduped = dedup_row(scanned, &common.pat, &vars)?;
+                let row = input_of(&deduped)?;
+                let renamed =
+                    rename(&element, &row, &record_or_atom_pat(&vars))?;
+                return Some(project_of(deduped, renamed));
+            }
+            let row = input_of(&scanned)?;
+            let renamed = rename(&element, &row, &common.pat)?;
+            return Some(project_of(scanned, renamed));
+        }
         if self.dedup_observable && !common.unique {
             // A generator may repeat a value where an unbounded scan
             // yields each assignment once, so it is scanned under
@@ -1899,6 +2120,93 @@ fn permute(join: Expr, m: usize, k: usize) -> Expr {
         exps.push(field_at(&element, i));
     }
     project_of(join, tuple_of(exps))
+}
+
+/// A chain of generator scans being built; see
+/// [`Expander::scheduled`]. A join's element is its inputs'
+/// components concatenated, so the k-th generator's element is
+/// component k of the chain's, and the only component while the chain
+/// is one scan.
+#[derive(Default)]
+struct Chain {
+    /// Where the chain binds each name: which generator's element, and
+    /// the pattern that binds it there.
+    bindings: BTreeMap<String, (usize, Pat)>,
+    exp: Option<Expr>,
+    leaves: usize,
+}
+
+impl Chain {
+    /// Reads a name the chain has bound out of the chain's element.
+    fn path_of(&self, p: &str, base: &Expr) -> Option<Expr> {
+        let (k, pat) = self.bindings.get(p)?;
+        let base = if self.leaves > 1 {
+            field_at(base, *k)
+        } else {
+            base.clone()
+        };
+        path(pat, &base, p)
+    }
+
+    /// What the chain yields: the record of the names, or the one name.
+    fn yield_(&self, names: &[(String, Rc<Type>)]) -> Option<Expr> {
+        let row = input_of(self.exp.as_ref()?)?;
+        if let [(name, _)] = names {
+            return self.path_of(name, &row);
+        }
+        let mut sorted = names.to_vec();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+        let fields = sorted
+            .iter()
+            .map(|(n, t)| (Label::String(n.clone()), t.clone()))
+            .collect();
+        let args = sorted
+            .iter()
+            .map(|(n, _)| self.path_of(n, &row))
+            .collect::<Option<Vec<_>>>()?;
+        Some(Expr::Tuple(Rc::new(Type::Record(false, fields)), args))
+    }
+}
+
+/// Orders generators so that each is scanned once every name it reads
+/// that one of the leaves binds has been; `None` where no order does.
+fn schedule_order(
+    gens: &[Generator],
+    names: &[(String, Rc<Type>)],
+) -> Option<Vec<usize>> {
+    let mut order: Vec<usize> = Vec::new();
+    let mut scheduled: BTreeSet<String> = BTreeSet::new();
+    while order.len() < gens.len() {
+        let next = (0..gens.len()).find(|i| {
+            !order.contains(i)
+                && !gens[*i].free_pats.iter().any(|free| {
+                    names.iter().any(|(n, _)| n == free)
+                        && !scheduled.contains(free)
+                })
+        })?;
+        order.push(next);
+        for (p, _) in pat_names(&gens[next].pat) {
+            scheduled.insert(p);
+        }
+    }
+    Some(order)
+}
+
+/// Whether every node under a join is an unconditional, independent
+/// inner join or an extent leaf -- the shape a chain can stand in for.
+fn joins_and_extents(node: &Expr, lo: usize, frame: &Frame) -> bool {
+    match node {
+        Expr::Rel(_, rel) => match rel.as_ref() {
+            Rel::Join(JoinKind::Inner, _, condition, left, right) => {
+                !rel.is_dependent()
+                    && is_true(condition)
+                    && joins_and_extents(left, lo, frame)
+                    && joins_and_extents(right, lo + leaf_count(left), frame)
+            }
+            _ => false,
+        },
+        _ => frame.leaves.get(lo).is_some_and(|leaf| leaf.extent),
+    }
 }
 
 /// Takes a collection's rows distinct by the variables a pattern
