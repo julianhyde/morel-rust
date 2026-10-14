@@ -442,6 +442,19 @@ fn exists_query(e: &Expr) -> Option<Expr> {
     Some(Expr::From(Rc::new(t), rest.to_vec()))
 }
 
+/// The functions in scope, the recursive ones among them, for the tree
+/// grounder, which inverts a call of either. A body is as it was written
+/// where that is to hand: the step list's grounding may have rewritten
+/// the other, folding the step predicate a closure is recognized by into
+/// a scan.
+fn with_recursive(env: &FnEnv, rec_env: &FnEnv) -> FnEnv {
+    let mut all = rec_env.clone();
+    for (name, f) in env {
+        all.entry(name.clone()).or_insert_with(|| f.clone());
+    }
+    all
+}
+
 /// Rewrites each query that ends in a step testing for existence as
 /// `Relational.nonEmpty` over the rest of it.
 fn as_non_empty(e: Expr) -> Expr {
@@ -537,7 +550,11 @@ fn walk_expr_with_scope(
                     outer_scope,
                 );
             }
-            if let Some(grounded) = rel_expander::ground(&e, datatypes, env) {
+            if let Some(grounded) = rel_expander::ground(
+                &e,
+                datatypes,
+                &with_recursive(env, rec_env),
+            ) {
                 return walk_query_steps(grounded, env, rec_env, datatypes);
             }
             let Some(steps) = rel_lowerer::as_steps(&e) else {
@@ -558,8 +575,11 @@ fn walk_expr_with_scope(
             // in is the tree's to decide. The query is grounded
             // before what its steps hold, so that a constraint that
             // reads a nested query reads it as written.
-            if let Some(grounded) = rel_expander::ground(&expr, datatypes, env)
-            {
+            if let Some(grounded) = rel_expander::ground(
+                &expr,
+                datatypes,
+                &with_recursive(env, rec_env),
+            ) {
                 return walk_query_steps(grounded, env, rec_env, datatypes);
             }
             // The tree declined, so the step list carries this query:
@@ -592,8 +612,11 @@ fn walk_expr_with_scope(
                 return Expr::Apply(t, f, Box::new(a), span);
             }
             if !in_fn_body()
-                && let Some(grounded) =
-                    rel_expander::ground_counted(&a, datatypes, env)
+                && let Some(grounded) = rel_expander::ground_counted(
+                    &a,
+                    datatypes,
+                    &with_recursive(env, rec_env),
+                )
             {
                 let a = walk_query_steps(grounded, env, rec_env, datatypes);
                 return Expr::Apply(t, f, Box::new(a), span);
@@ -628,8 +651,11 @@ fn walk_expr_with_scope(
             // be enumerated and a variable that nothing bounds need
             // not be bounded.
             if !in_fn_body()
-                && let Some(grounded) =
-                    rel_expander::ground_counted(&a, datatypes, env)
+                && let Some(grounded) = rel_expander::ground_counted(
+                    &a,
+                    datatypes,
+                    &with_recursive(env, rec_env),
+                )
             {
                 let a = walk_query_steps(grounded, env, rec_env, datatypes);
                 return Expr::Apply(t, f, Box::new(a), span);
@@ -2303,7 +2329,7 @@ fn match_call_to<'a>(e: &'a Expr, name: &str) -> Option<&'a Expr> {
 
 /// Returns true if `body` contains an `Apply(Var(name), _)`
 /// anywhere — i.e. a call to the named function.
-fn contains_self_call(body: &Expr, name: &str) -> bool {
+pub(crate) fn contains_self_call(body: &Expr, name: &str) -> bool {
     fn walk(e: &Expr, name: &str) -> bool {
         if let Expr::Apply(_, f, _, _) = e
             && let Expr::Identifier(_, n) = f.as_ref()
@@ -2499,7 +2525,7 @@ fn extract_seed_from_elem_body(
 /// elements are records and we wrap with a projection
 /// `from r in seed yield (r.<labels[0]>, r.<labels[1]>)` to
 /// convert them to tuples.
-fn build_iterate_ast(
+pub(crate) fn build_iterate_ast(
     x_t: &Type,
     y_t: &Type,
     _z_t: &Type,
