@@ -404,6 +404,9 @@ enum GroundStep {
 /// names, and the order a walk reaches them in.
 struct Frame {
     leaves: Vec<Leaf>,
+    /// The leaves under the right input of a dependent join, whose
+    /// collections read the left row.
+    dependent: BTreeSet<usize>,
     constraints: Vec<Expr>,
     /// The conjunct a constraint came from, so that the filter can
     /// drop what a sealed generator has taken over.
@@ -415,18 +418,11 @@ impl Frame {
     fn new() -> Self {
         Frame {
             leaves: Vec::new(),
+            dependent: BTreeSet::new(),
             constraints: Vec::new(),
             originals: BTreeMap::new(),
             order: Vec::new(),
         }
-    }
-
-    /// The expression that denotes the element of the leaves
-    /// `lo..lo + n`, in terms of the names they bind.
-    fn element(&self, lo: usize, n: usize) -> Expr {
-        let args: Vec<Expr> =
-            (lo..lo + n).map(|i| pat_exp(&self.leaves[i].pat)).collect();
-        tuple_of(args)
     }
 }
 
@@ -727,7 +723,7 @@ impl<'a> Expander<'a> {
                 self.leaf_names.insert(name);
             }
         }
-        let element = frame.element(0, frame.leaves.len());
+        let element = node_element(join, 0, &frame);
         let mut constraints = frame.constraints.clone();
         for condition in conditions {
             let constraint = subst(condition, &element, None);
@@ -889,8 +885,7 @@ impl<'a> Expander<'a> {
                 // constrains the patterns before it.
                 Rel::Filter(_, input, condition) => {
                     self.collect(input, lo, frame);
-                    let n = frame.leaves.len() - lo;
-                    let element = frame.element(lo, n);
+                    let element = node_element(input, lo, frame);
                     for conjunct in split_conjuncts(condition) {
                         if reads_ordinal(&conjunct) {
                             continue;
@@ -906,13 +901,16 @@ impl<'a> Expander<'a> {
                     let mid = frame.leaves.len();
                     self.collect(right, mid, frame);
                     let hi = frame.leaves.len();
+                    if rel.is_dependent() {
+                        frame.dependent.extend(mid..hi);
+                    }
                     // A condition that reads the pair's position says
                     // nothing about what the leaves may hold.
                     if !is_true(condition) && !reads_ordinal(condition) {
                         let constraint = subst(
                             condition,
-                            &frame.element(lo, mid - lo),
-                            Some(&frame.element(mid, hi - mid)),
+                            &node_element(left, lo, frame),
+                            Some(&node_element(right, mid, frame)),
                         );
                         frame.constraints.push(constraint.clone());
                         frame.order.push(GroundStep::Constraint(constraint));
@@ -987,6 +985,16 @@ impl<'a> Expander<'a> {
         let mut registered: Vec<(String, Rc<Type>, Pat, bool)> = Vec::new();
         let mut constraints: Vec<Expr> = Vec::new();
         let outer: BTreeSet<String> = BTreeSet::new();
+        // A leaf whose collection reads the row of the leaves to its left
+        // -- `y in [x * 2]` -- is no more bound than they are: a bound on
+        // `x` that reads `y` goes round in a circle.
+        let dependent: BTreeSet<String> = frame
+            .dependent
+            .iter()
+            .flat_map(|i| {
+                pat_names(&frame.leaves[*i].pat).into_iter().map(|(n, _)| n)
+            })
+            .collect();
         for step in order {
             match step {
                 GroundStep::Extent(i) => {
@@ -1029,8 +1037,15 @@ impl<'a> Expander<'a> {
                                 self.fn_env,
                                 self.datatypes,
                                 &outer,
-                                &settled.infinite,
-                                ungrounded,
+                                &settled
+                                    .infinite
+                                    .union(&dependent)
+                                    .cloned()
+                                    .collect(),
+                                &ungrounded
+                                    .union(&dependent)
+                                    .cloned()
+                                    .collect(),
                             )
                         });
                         if !found {
@@ -1072,6 +1087,17 @@ impl<'a> Expander<'a> {
         match pat {
             Pat::Tuple(_, args) => {
                 for arg in args {
+                    self.register_extent(settled, arg, ordered, registered);
+                }
+            }
+            // A record is a tuple whose components have labels; each is
+            // registered on its own, as morel-go's `registerComponents`
+            // does.
+            Pat::Record(_, fields, false) => {
+                for field in fields {
+                    let arg = match field {
+                        PatField::Labeled(_, p) | PatField::Anonymous(p) => p,
+                    };
                     self.register_extent(settled, arg, ordered, registered);
                 }
             }
@@ -1214,6 +1240,16 @@ impl<'a> Expander<'a> {
                 let remaining =
                     self.remaining(&split_conjuncts(condition), false);
                 if remaining.is_empty() {
+                    // A filter is one component, whatever its input
+                    // has; with the filter gone, a projection keeps a
+                    // join's components together, as the tree above
+                    // reads them.
+                    let n = component_count(&input);
+                    if n > 1 {
+                        let row = input_of(&input)?;
+                        let parts = (0..n).map(|i| field_at(&row, i)).collect();
+                        return Some(project_of(input, tuple_of(parts)));
+                    }
                     return Some(input);
                 }
                 Some(filter_of(input, and_all(remaining)))
@@ -1261,7 +1297,13 @@ impl<'a> Expander<'a> {
             && kind == JoinKind::Inner
             && !dependent
             && is_true(condition)
-            && let Some(chained) = self.scheduled(lo, hi, frame, settled)
+            && let Some(chained) = self.scheduled(
+                lo,
+                hi,
+                &join_element(left, right, lo, frame),
+                frame,
+                settled,
+            )
         {
             return Some(chained);
         }
@@ -1269,7 +1311,8 @@ impl<'a> Expander<'a> {
             && let Some(common) =
                 self.common_generator(lo, hi, frame, settled, bound)
         {
-            return self.scan_common(lo, hi, frame, &common, bound);
+            let element = join_element(left, right, lo, frame);
+            return self.scan_common(lo, hi, &element, frame, &common, bound);
         }
         let right_generator =
             if leaf_count(right) == 1 && frame.leaves[mid].extent {
@@ -1281,7 +1324,7 @@ impl<'a> Expander<'a> {
             && !self.free(g, bound).is_empty()
         {
             return self.rebuild_dependent(
-                kind, condition, left, lo, mid, frame, settled, bound, g,
+                kind, condition, left, lo, frame, settled, bound, g,
             );
         }
         let bounded_leaf = leaf_count(right) == 1 && !frame.leaves[mid].extent;
@@ -1355,7 +1398,6 @@ impl<'a> Expander<'a> {
         condition: &Expr,
         left: &Expr,
         lo: usize,
-        mid: usize,
         frame: &Frame,
         settled: &Settled,
         bound: &BTreeMap<String, Expr>,
@@ -1364,7 +1406,7 @@ impl<'a> Expander<'a> {
         if !is_true(condition) {
             return self.fail("a dependent join would need a condition");
         }
-        let left_element = frame.element(lo, mid - lo);
+        let left_element = node_element(left, lo, frame);
         let param_type = element_type(&left.type_())?;
         let param = fresh_name();
         let param_exp = Expr::Identifier(param_type, param.clone());
@@ -1483,6 +1525,7 @@ impl<'a> Expander<'a> {
         &mut self,
         lo: usize,
         hi: usize,
+        element: &Expr,
         frame: &Frame,
         settled: &Settled,
     ) -> Option<Expr> {
@@ -1528,11 +1571,7 @@ impl<'a> Expander<'a> {
         // terms of the leaves' names; read each out of the row the chain
         // yields.
         let out = input_of(&collection)?;
-        let element = rename(
-            &frame.element(lo, hi - lo),
-            &out,
-            &record_or_atom_pat(&names),
-        )?;
+        let element = rename(element, &out, &record_or_atom_pat(&names))?;
         Some(project_of(collection, element))
     }
 
@@ -1643,12 +1682,13 @@ impl<'a> Expander<'a> {
         &mut self,
         lo: usize,
         hi: usize,
+        element: &Expr,
         frame: &Frame,
         common: &Generator,
         bound: &BTreeMap<String, Expr>,
     ) -> Option<Expr> {
         let collection = substitute(&common.exp, bound);
-        let element = frame.element(lo, hi - lo);
+        let element = element.clone();
         // A name the pattern binds that none of these leaves does is
         // bound outside them, and a row that disagrees with it is not a
         // match, as in `project`; it is not one of the variables.
@@ -2120,6 +2160,44 @@ fn permute(join: Expr, m: usize, k: usize) -> Expr {
         exps.push(field_at(&element, i));
     }
     project_of(join, tuple_of(exps))
+}
+
+/// The element of a node of a join tree whose first leaf is `lo`, in
+/// terms of the names its leaves bind: a join's is its inputs'
+/// components, a filter's its input's, and a leaf's its pattern -- as
+/// morel-go's frame keeps an element per node. A filter between two
+/// joins is one component of the join above it, however many its own
+/// element has.
+fn node_element(node: &Expr, lo: usize, frame: &Frame) -> Expr {
+    if let Expr::Rel(_, rel) = node {
+        match rel.as_ref() {
+            Rel::Join(_, _, _, left, right) => {
+                return join_element(left, right, lo, frame);
+            }
+            Rel::Filter(_, input, _) => return node_element(input, lo, frame),
+            _ => {}
+        }
+    }
+    pat_exp(&frame.leaves[lo].pat)
+}
+
+/// The element of a join of `left` and `right`: their components in
+/// order.
+fn join_element(left: &Expr, right: &Expr, lo: usize, frame: &Frame) -> Expr {
+    let mut parts = node_components(left, lo, frame);
+    parts.extend(node_components(right, lo + leaf_count(left), frame));
+    tuple_of(parts)
+}
+
+fn node_components(node: &Expr, lo: usize, frame: &Frame) -> Vec<Expr> {
+    if let Expr::Rel(_, rel) = node
+        && let Rel::Join(_, _, _, left, right) = rel.as_ref()
+    {
+        let mut parts = node_components(left, lo, frame);
+        parts.extend(node_components(right, lo + leaf_count(left), frame));
+        return parts;
+    }
+    vec![node_element(node, lo, frame)]
 }
 
 /// A chain of generator scans being built; see
