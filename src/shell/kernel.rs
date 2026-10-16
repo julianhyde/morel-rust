@@ -22,7 +22,6 @@
 #![allow(clippy::redundant_closure)]
 
 use crate::compile::core::{Decl, Expr};
-use crate::compile::expander::collect_session_fn_bindings;
 use crate::compile::library::{
     BuiltInExn, BuiltInFunction, name_to_fn, name_to_rec,
 };
@@ -1370,15 +1369,15 @@ impl Kernel {
         }
 
         // Record any single-arm `fn p => body` value-bindings for
-        // future statements' predicate inversion. Save the
-        // post-expander bodies into `fn_bindings` (used by
-        // `inline_tuple_fn_calls_in_where`). The pre-expander
-        // bodies used by recursive predicate inversion were already
-        // captured into `pre_fn_env`; commit them here.
-        collect_session_fn_bindings(
-            &decl,
-            &mut self.session.borrow_mut().fn_bindings,
-        );
+        // future statements' predicate inversion, with their bodies as
+        // written, captured into `pre_fn_env` before the expander, as a
+        // `let` does: the expander grounds a function's body for the
+        // calls that are not inlined, and what that leaves is not the
+        // predicate a later statement inverts.
+        self.session
+            .borrow_mut()
+            .fn_bindings
+            .extend(pre_fn_env.clone());
         self.session.borrow_mut().rec_fn_bindings.extend(pre_fn_env);
 
         Ok(result)

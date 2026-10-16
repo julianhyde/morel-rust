@@ -286,11 +286,6 @@ fn in_fn<T>(f: impl FnOnce() -> T) -> T {
     out
 }
 
-/// Returns whether the walk is inside a function body.
-fn in_fn_body() -> bool {
-    FN_DEPTH.with(Cell::get) > 0
-}
-
 /// Rewrites every `Relational.nonEmpty` over a query, anywhere in
 /// an expression, as a query whose last step tests for existence.
 ///
@@ -611,13 +606,11 @@ fn walk_expr_with_scope(
                 );
                 return Expr::Apply(t, f, Box::new(a), span);
             }
-            if !in_fn_body()
-                && let Some(grounded) = rel_expander::ground_counted(
-                    &a,
-                    datatypes,
-                    &with_recursive(env, rec_env),
-                )
-            {
+            if let Some(grounded) = rel_expander::ground_counted(
+                &a,
+                datatypes,
+                &with_recursive(env, rec_env),
+            ) {
                 let a = walk_query_steps(grounded, env, rec_env, datatypes);
                 return Expr::Apply(t, f, Box::new(a), span);
             }
@@ -650,13 +643,11 @@ fn walk_expr_with_scope(
             // not read, so a side that nothing constrains need not
             // be enumerated and a variable that nothing bounds need
             // not be bounded.
-            if !in_fn_body()
-                && let Some(grounded) = rel_expander::ground_counted(
-                    &a,
-                    datatypes,
-                    &with_recursive(env, rec_env),
-                )
-            {
+            if let Some(grounded) = rel_expander::ground_counted(
+                &a,
+                datatypes,
+                &with_recursive(env, rec_env),
+            ) {
                 let a = walk_query_steps(grounded, env, rec_env, datatypes);
                 return Expr::Apply(t, f, Box::new(a), span);
             }
@@ -760,9 +751,10 @@ fn walk_expr_with_scope(
                     Match {
                         pat: m.pat,
                         // A query in a function body is grounded
-                        // where the function is called, not where
-                        // it is written: what bounds its variables
-                        // may be an argument.
+                        // here, with the parameters bound, for a call
+                        // that is not inlined; and again where a call
+                        // is, from the body as written, where what
+                        // bounds its variables may be the argument.
                         expr: in_fn(|| {
                             walk_expr_with_scope(
                                 m.expr, env, rec_env, datatypes, &scope2,
