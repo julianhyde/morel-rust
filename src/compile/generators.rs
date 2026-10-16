@@ -2150,10 +2150,10 @@ fn maybe_function(
             .filter(|ic| !inner_gen.provenance.iter().any(|p| expr_eq(p, ic)))
             .collect();
         // One that reads another name still to be grounded is not one
-        // this scan can test, as morel-go's `existsGenerator` finds, and
-        // the call cannot stay as a filter to test it instead: a
-        // function's body is grounded only where it is put in place of
-        // the call. So the call does not ground the name.
+        // this scan can test, as morel-go's `existsGenerator` finds; the
+        // call, which then stays as a filter over what this grounds,
+        // tests it instead -- its body grounded where the function was
+        // declared.
         let mut gen_names: Vec<String> = Vec::new();
         inner_gen
             .pat
@@ -2165,7 +2165,7 @@ fn maybe_function(
                 })
             });
         if !unreadable.is_empty() {
-            continue;
+            inner_gen.sealed = false;
         }
         if !unconsumed.is_empty() {
             let combined = and_all(unconsumed);
