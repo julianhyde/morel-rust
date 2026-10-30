@@ -357,7 +357,7 @@ fn is_names(e: &Expr) -> bool {
 /// query the enclosing row. The step-list grounder reads a nested query
 /// as the query's author wrote it, which reads the enclosing scan's
 /// name.
-fn unlet(e: &Expr) -> Expr {
+pub(crate) fn unlet(e: &Expr) -> Expr {
     match e {
         Expr::Let(_, decls, body)
             if decls.len() == 1

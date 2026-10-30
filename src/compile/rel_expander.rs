@@ -47,7 +47,7 @@ use crate::compile::generators::{
 use crate::compile::library::BuiltInFunction;
 use crate::compile::postfix::peel_type;
 use crate::compile::rel_lowerer::{
-    component_count, field_at, replace_names, substitute_name,
+    component_count, field_at, replace_names, substitute_name, unlet,
 };
 use crate::compile::span::Span;
 use crate::compile::types::{Label, PrimitiveType, Type};
@@ -628,7 +628,10 @@ impl<'a> Expander<'a> {
         condition: &Expr,
         conditions: &[Expr],
     ) -> Option<Expr> {
-        let conjuncts = split_conjuncts(condition);
+        // The translator hands a nested query the row through a `let`
+        // around the whole condition, which is read out first, so that
+        // the conjuncts inside it are constraints of their own.
+        let conjuncts = split_conjuncts(&unlet(condition));
         // This filter's conjuncts go before the ones already
         // carried, which are from filters above it and so were
         // written later. Order counts: where two constraints could
@@ -912,7 +915,7 @@ impl<'a> Expander<'a> {
                 Rel::Filter(_, input, condition) => {
                     self.collect(input, lo, frame);
                     let element = node_element(input, lo, frame);
-                    for conjunct in split_conjuncts(condition) {
+                    for conjunct in split_conjuncts(&unlet(condition)) {
                         if reads_ordinal(&conjunct) {
                             continue;
                         }
