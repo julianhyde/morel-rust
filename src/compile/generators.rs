@@ -1611,6 +1611,7 @@ fn maybe_exists(
                 augmented.push(oc.clone());
             }
         }
+        let body_conjuncts = inner_conjuncts.clone();
         augmented.extend(inner_conjuncts);
 
         // Try to derive a generator from the augmented set, into
@@ -1746,6 +1747,49 @@ fn maybe_exists(
             ),
             scan_env.clone(),
         ));
+        // The body's other filters apply too, as morel-go's
+        // `existsGenerator` has them: those the generator did not take
+        // and that read nothing but what these scans bind and what is
+        // bound outside. A scan here that is still unbounded is bounded
+        // by them when this query is grounded in turn.
+        let mut scope: Vec<(String, Rc<Type>)> = Vec::new();
+        for s in &needed {
+            if let StepKind::Scan(p, _, _) = &s.kind {
+                p.for_each_id_pat(&mut |(t, n)| {
+                    scope.push((n.to_string(), Rc::new(t.clone())))
+                });
+            }
+        }
+        inner_gen.pat.for_each_id_pat(&mut |(t, n)| {
+            scope.push((n.to_string(), Rc::new(t.clone())))
+        });
+        let filters: Vec<Expr> = body_conjuncts
+            .iter()
+            .filter(|c| !inner_gen.provenance.iter().any(|p| expr_eq(p, c)))
+            .filter(|c| {
+                free_names_in(c).iter().all(|n| {
+                    scope.iter().any(|(s, _)| s == n)
+                        || (!ungrounded.contains(n)
+                            && !unbounded_siblings.contains(n)
+                            && !quantified.contains(n))
+                })
+            })
+            .cloned()
+            .collect();
+        if !filters.is_empty() {
+            let env = StepEnv::new(
+                scope
+                    .iter()
+                    .map(|(n, t)| Binding::new(Id::new(n, 0), t.clone()))
+                    .collect(),
+                false,
+                ordered,
+            );
+            new_steps.push(Step::new(
+                StepKind::Where(Box::new(and_all(filters))),
+                env,
+            ));
+        }
         // yield pat
         new_steps.push(Step::new(
             StepKind::Yield(Box::new(Expr::Identifier(
