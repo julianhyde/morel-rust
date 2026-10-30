@@ -123,6 +123,19 @@ fn ground_with(
     ground_query(&exp.type_(), tree, datatypes, fn_env, rows_used)
 }
 
+/// Returns whether a step list scans something unbounded: an extent,
+/// or an infinite range such as `[1..]`, which the step list's range
+/// pushdown bounds.
+pub(crate) fn steps_unbounded(e: &Expr) -> bool {
+    let Expr::From(_, steps) = e else {
+        return false;
+    };
+    steps.iter().any(|step| {
+        matches!(&step.kind, StepKind::Scan(_, source, _)
+            if holds_extent(source) || is_infinite_range(source))
+    })
+}
+
 /// Returns whether a step scans an extent, which is a variable that
 /// nothing has bounded.
 fn step_holds_extent(step: &Step) -> bool {
@@ -169,7 +182,7 @@ fn ground_query(
     // extent in a query nested in an expression -- the `exists` that
     // stays as a filter over what it grounded -- is that query's, which
     // is grounded when the walk reaches it.
-    if leaf_holds_extent(&grounded) {
+    if leaf_holds_unbounded(&grounded) {
         debugf(|| "ground: an extent survived".to_string());
         return None;
     }
@@ -212,6 +225,19 @@ fn leaf_holds_extent(tree: &Expr) -> bool {
     let mut leaves = Vec::new();
     all_leaves(tree, &mut leaves);
     leaves.iter().any(holds_extent)
+}
+
+/// Returns whether a tree has a leaf that is still an extent. A leaf
+/// that is a query of its own, with an extent among its scans, is not:
+/// it is grounded when the walk reaches it, as morel-go grounds the query
+/// an `exists` generator builds.
+fn leaf_holds_unbounded(tree: &Expr) -> bool {
+    let tree = rel_translator::only_of(tree).unwrap_or(tree);
+    let mut leaves = Vec::new();
+    all_leaves(tree, &mut leaves);
+    leaves
+        .iter()
+        .any(|leaf| !matches!(leaf, Expr::From(..)) && holds_extent(leaf))
 }
 
 /// Returns whether a tree has a leaf that needs grounding: an extent,

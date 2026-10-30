@@ -577,6 +577,13 @@ fn walk_expr_with_scope(
             ) {
                 return walk_query_steps(grounded, env, rec_env, datatypes);
             }
+            // A query with nothing unbounded among its scans needs no
+            // grounding of its own, only the queries its steps hold.
+            if !rel_expander::steps_unbounded(&expr) {
+                return step_walk(false, || {
+                    walk_query_steps(expr, env, rec_env, datatypes)
+                });
+            }
             // The tree declined, so the step list carries this query:
             // the one its tree lowers to, which is the only step list
             // there will be once the resolver builds trees.
