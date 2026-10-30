@@ -235,9 +235,23 @@ fn leaf_holds_unbounded(tree: &Expr) -> bool {
     let tree = rel_translator::only_of(tree).unwrap_or(tree);
     let mut leaves = Vec::new();
     all_leaves(tree, &mut leaves);
-    leaves
-        .iter()
-        .any(|leaf| !matches!(leaf, Expr::From(..)) && holds_extent(leaf))
+    leaves.iter().any(unbounded_outside_queries)
+}
+
+/// Returns whether an expression holds an extent that is not inside a
+/// query of its own.
+fn unbounded_outside_queries(e: &Expr) -> bool {
+    match e {
+        Expr::Extent(..) => true,
+        Expr::From(..) | Expr::Rel(..) => false,
+        _ => {
+            let mut found = false;
+            for_each_child(e, &mut |c| {
+                found = found || unbounded_outside_queries(c)
+            });
+            found
+        }
+    }
 }
 
 /// Returns whether a tree has a leaf that needs grounding: an extent,
