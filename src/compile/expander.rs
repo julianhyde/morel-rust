@@ -898,19 +898,32 @@ fn walk_tree_children(
                 })
             })),
         ),
-        Expr::Apply(t, f, a, span) => Expr::Apply(
-            t,
-            f,
-            Box::new(walk_tree_children(
-                *a,
+        // `only` over a tree.
+        Expr::Apply(t, f, a, span) if matches!(a.as_ref(), Expr::Rel(..)) => {
+            Expr::Apply(
+                t,
+                f,
+                Box::new(walk_tree_children(
+                    *a,
+                    env,
+                    rec_env,
+                    datatypes,
+                    outer_scope,
+                )),
+                span,
+            )
+        }
+        // What grounding left in the tree's place -- a closure's
+        // iteration, say -- holds queries of its own.
+        other => step_walk(false, || {
+            walk_expr_with_scope(
+                as_non_empty(other),
                 env,
                 rec_env,
                 datatypes,
                 outer_scope,
-            )),
-            span,
-        ),
-        other => other,
+            )
+        }),
     }
 }
 

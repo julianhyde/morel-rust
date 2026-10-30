@@ -1971,6 +1971,8 @@ fn try_closure(
     let mut calls = 0;
     let mut others = 0;
     let mut carries = false;
+    let mut rec_arg: Option<Expr> = None;
+    let mut step_conjuncts: Vec<Expr> = Vec::new();
     for step in steps {
         let StepKind::Where(cond) = &step.kind else {
             continue;
@@ -1982,14 +1984,45 @@ fn try_closure(
                     calls += 1;
                     let free = free_names_in(a);
                     carries = names.iter().any(|n| free.contains(n));
+                    rec_arg = Some(a.as_ref().clone());
                 }
-                _ => others += 1,
+                _ => {
+                    others += 1;
+                    step_conjuncts.push(cj.clone());
+                }
             }
         }
     }
-    if calls != 1 || others == 0 || !carries {
+    if calls != 1 || others == 0 {
         return None;
     }
+    let element = Rc::new(Type::Tuple(vec![x_t.clone(), y_t.clone()]));
+    let iterate = if carries {
+        closure_iterate(base, &names, &x_t, &y_t, fn_env)?
+    } else {
+        bidirectional_iterate(
+            base,
+            &names,
+            &element,
+            rec_arg.as_ref()?,
+            &step_conjuncts,
+            fn_env,
+        )?
+    };
+    closure_generator(pat_name, call, arg, &element, iterate)
+}
+
+/// The fixed point of a closure whose recursive call carries a formal
+/// through, `f (x, z) andalso step (z, y)`, seeded by its base, which is a
+/// membership of the formals: as morel-go's `buildIterate`, each new row
+/// is extended through the base relation.
+fn closure_iterate(
+    base: &Expr,
+    names: &[String],
+    x_t: &Rc<Type>,
+    y_t: &Rc<Type>,
+    fn_env: &FnEnv,
+) -> Option<Expr> {
     // The base is a membership of the formals in a collection: a tuple of
     // them in order, a record whose fields are them in its own order, or
     // the one formal. A base that calls a function that does not recurse
@@ -2002,7 +2035,7 @@ fn try_closure(
     let (lhs, coll) = call2_args(membership, &[BuiltInFunction::ListElem])?;
     let is_formal =
         |e: &Expr, f: &str| matches!(e, Expr::Identifier(_, n) if n == f);
-    let labels = match (lhs, names.as_slice()) {
+    let labels = match (lhs, names) {
         (Expr::Tuple(t, items), [x, y])
             if items.len() == 2
                 && is_formal(&items[0], x)
@@ -2018,11 +2051,249 @@ fn try_closure(
         (e, [p]) if is_formal(e, p) => None,
         _ => return None,
     };
-    let iterate = build_iterate_ast(&x_t, &y_t, &y_t, coll.clone(), labels);
-    let element = Rc::new(Type::Tuple(vec![x_t.clone(), y_t.clone()]));
-    // The call's argument says how the closure's pairs bind the query's
-    // variables: the variable itself, or a tuple of variables and
-    // literals.
+    Some(build_iterate_ast(x_t, y_t, y_t, coll.clone(), labels))
+}
+
+/// The fixed point of a closure whose recursive call rebinds every formal
+/// through the step predicates beside it, as morel-go's
+/// `buildBidirectional` builds it: `cousin (x, y) = sib (x, y) orelse
+/// (exists xp, yp where par (x, xp) andalso par (y, yp) andalso cousin
+/// (xp, yp))`. Each new row binds the recursive call's arguments, and
+/// each formal joins back through its step predicate's collection. The
+/// seed is the query of the base, which is grounded in its turn.
+fn bidirectional_iterate(
+    base: &Expr,
+    names: &[String],
+    element: &Rc<Type>,
+    rec_arg: &Expr,
+    step_conjuncts: &[Expr],
+    fn_env: &FnEnv,
+) -> Option<Expr> {
+    let Type::Tuple(types) = element.as_ref() else {
+        return None;
+    };
+    if names.len() != types.len() {
+        return None;
+    }
+    let rec_args: Vec<String> = match rec_arg {
+        Expr::Tuple(_, items) => items
+            .iter()
+            .map(|e| match e {
+                Expr::Identifier(_, n) => Some(n.clone()),
+                _ => None,
+            })
+            .collect::<Option<_>>()?,
+        _ => return None,
+    };
+    if rec_args.len() != types.len() {
+        return None;
+    }
+    let coll_t = Rc::new(Type::Bag(element.clone()));
+    let prev = fresh_name();
+    let prev_id = Expr::Identifier(element.clone(), prev.clone());
+    let prev_field: HashMap<String, Expr> = rec_args
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.clone(), rel_lowerer::field_at(&prev_id, i)))
+        .collect();
+    let all_name = fresh_name();
+    let new_name = fresh_name();
+    let mut bound: Vec<(String, Rc<Type>)> =
+        vec![(prev.clone(), element.clone())];
+    let env = |bound: &[(String, Rc<Type>)]| {
+        StepEnv::new(
+            bound
+                .iter()
+                .map(|(n, t)| Binding::new(Id::new(n, 0), t.clone()))
+                .collect(),
+            bound.len() == 1,
+            false,
+        )
+    };
+    let mut steps = vec![Step::new(
+        StepKind::Scan(
+            Box::new(Pat::Identifier(element.clone(), prev.clone())),
+            Box::new(Expr::Identifier(coll_t.clone(), new_name.clone())),
+            None,
+        ),
+        env(&bound),
+    )];
+    let mut yield_args: Vec<Expr> = Vec::new();
+    for (f, t) in names.iter().zip(types) {
+        if let Some(e) = prev_field.get(f) {
+            yield_args.push(e.clone());
+            continue;
+        }
+        let mut joined = false;
+        for c in step_conjuncts {
+            let c = inline_predicate(c, fn_env);
+            let Some((lhs, coll)) =
+                call2_args(&c, &[BuiltInFunction::ListElem])
+            else {
+                continue;
+            };
+            let Expr::Tuple(tt, comps) = lhs else {
+                continue;
+            };
+            if !comps.iter().any(|x| references(x, f)) {
+                continue;
+            }
+            let mut pats: Vec<Pat> = Vec::new();
+            let mut eqs: Vec<Expr> = Vec::new();
+            for comp in comps {
+                if references(comp, f) {
+                    pats.push(Pat::Identifier(t.clone(), f.clone()));
+                    continue;
+                }
+                let cf = fresh_name();
+                let ct = comp.type_();
+                pats.push(Pat::Identifier(ct.clone(), cf.clone()));
+                eqs.push(make_eq_for_type(
+                    &ct,
+                    Expr::Identifier(ct.clone(), cf.clone()),
+                    substitute(comp, &prev_field),
+                ));
+                bound.push((cf, ct));
+            }
+            bound.push((f.clone(), t.clone()));
+            let pat = match tt.as_ref() {
+                Type::Record(_, labels) => Pat::Record(
+                    tt.clone(),
+                    labels
+                        .keys()
+                        .zip(pats)
+                        .map(|(l, p)| {
+                            PatField::Labeled(l.to_string(), Box::new(p))
+                        })
+                        .collect(),
+                    false,
+                ),
+                _ => Pat::Tuple(tt.clone(), pats),
+            };
+            steps.push(Step::new(
+                StepKind::Scan(Box::new(pat), Box::new(coll.clone()), None),
+                env(&bound),
+            ));
+            if !eqs.is_empty() {
+                steps.push(Step::new(
+                    StepKind::Where(Box::new(and_all(eqs))),
+                    env(&bound),
+                ));
+            }
+            yield_args.push(Expr::Identifier(t.clone(), f.clone()));
+            joined = true;
+            break;
+        }
+        if !joined {
+            return None;
+        }
+    }
+    let current = |t: &Rc<Type>| {
+        StepEnv::new(
+            vec![Binding::new(Id::new("current", 0), t.clone())],
+            true,
+            false,
+        )
+    };
+    steps.push(Step::new(
+        StepKind::Yield(Box::new(Expr::Tuple(element.clone(), yield_args))),
+        current(element),
+    ));
+    let step_from = Expr::From(coll_t.clone(), steps);
+    // The seed: the pairs the base holds of, `from x, y where base (x, y)`,
+    // which is a query of its own, grounded when the walk reaches it.
+    let mut seed_bound: Vec<(String, Rc<Type>)> = Vec::new();
+    let mut seed_steps: Vec<Step> = Vec::new();
+    for (f, t) in names.iter().zip(types) {
+        seed_bound.push((f.clone(), t.clone()));
+        seed_steps.push(Step::new(
+            StepKind::Scan(
+                Box::new(Pat::Identifier(t.clone(), f.clone())),
+                Box::new(Expr::Extent(
+                    Rc::new(Type::List(t.clone())),
+                    Span::new(""),
+                    vec![f.clone()],
+                )),
+                None,
+            ),
+            env(&seed_bound),
+        ));
+    }
+    seed_steps.push(Step::new(
+        StepKind::Where(Box::new(base.clone())),
+        env(&seed_bound),
+    ));
+    seed_steps.push(Step::new(
+        StepKind::Yield(Box::new(Expr::Tuple(
+            element.clone(),
+            names
+                .iter()
+                .zip(types)
+                .map(|(f, t)| Expr::Identifier(t.clone(), f.clone()))
+                .collect(),
+        ))),
+        current(element),
+    ));
+    let seed = Expr::From(coll_t.clone(), seed_steps);
+    Some(iterate_apply(
+        &coll_t, seed, step_from, &all_name, &new_name,
+    ))
+}
+
+/// `Relational.iterate seed (fn (all, new) => step)`.
+fn iterate_apply(
+    coll_t: &Rc<Type>,
+    seed: Expr,
+    step: Expr,
+    all_name: &str,
+    new_name: &str,
+) -> Expr {
+    let pair_t = Rc::new(Type::Tuple(vec![coll_t.clone(), coll_t.clone()]));
+    let pair_pat = Pat::Tuple(
+        pair_t.clone(),
+        vec![
+            Pat::Identifier(coll_t.clone(), all_name.to_string()),
+            Pat::Identifier(coll_t.clone(), new_name.to_string()),
+        ],
+    );
+    let fn_t = Rc::new(Type::Fn(pair_t, coll_t.clone()));
+    let update = Expr::Fn(
+        fn_t.clone(),
+        vec![Match {
+            pat: pair_pat,
+            expr: step,
+        }],
+        Span::new(""),
+    );
+    let iter_t = Rc::new(Type::Fn(
+        coll_t.clone(),
+        Rc::new(Type::Fn(fn_t.clone(), coll_t.clone())),
+    ));
+    let iter =
+        Expr::Literal(iter_t, Val::Fn(BuiltInFunction::RelationalIterate));
+    let with_seed = Expr::Apply(
+        Rc::new(Type::Fn(fn_t, coll_t.clone())),
+        Box::new(iter),
+        Box::new(seed),
+        Span::new(""),
+    );
+    Expr::Apply(
+        coll_t.clone(),
+        Box::new(with_seed),
+        Box::new(update),
+        Span::new(""),
+    )
+}
+
+/// The generator of a closure's iteration, bound as the call's argument
+/// says: the variable itself, or a tuple of variables and literals.
+fn closure_generator(
+    pat_name: &str,
+    call: &Expr,
+    arg: &Expr,
+    element: &Rc<Type>,
+    iterate: Expr,
+) -> Option<Generator> {
     let gen_pat = match arg {
         Expr::Identifier(_, n) if n == pat_name => {
             Pat::Identifier(element.clone(), n.clone())
