@@ -30,6 +30,7 @@ use crate::compile::core::{
 use crate::compile::expander;
 use crate::compile::expander::and_all;
 use crate::compile::free_finder::free_names_in;
+use crate::compile::generators;
 use crate::compile::inliner::Env;
 use crate::compile::library;
 use crate::compile::library::{BuiltIn, BuiltInFunction};
@@ -147,7 +148,11 @@ pub fn resolve_with_session_fns_rec(
     // user-visible shape of other compile errors.
     {
         let mut errors = resolver.errors.borrow_mut();
-        check_unbounded_extents(&decl, &mut errors);
+        check_unbounded_extents(
+            &decl,
+            &resolved.type_map.datatype_map(),
+            &mut errors,
+        );
     }
     // Build the tree for every query, beside the step list that will
     // run it, and check what the translation promises. Nothing depends
@@ -164,6 +169,30 @@ pub fn resolve_with_session_fns_rec(
         rel_translator::shadow(&decl);
     }
     (decl, pre_fn_env, resolver.errors.into_inner())
+}
+
+/// The name an unbounded leaf's error gives: the first of the names its
+/// pattern bound whose values cannot be enumerated, or `None` where all
+/// can be.
+fn unenumerable_name(
+    t: &Rc<Type>,
+    names: &[String],
+    dt: &expander::DatatypeMap,
+) -> Option<String> {
+    let elem = match t.as_ref() {
+        Type::List(e) | Type::Bag(e) => e.clone(),
+        _ => t.clone(),
+    };
+    let types: Vec<Rc<Type>> = match (names, elem.as_ref()) {
+        ([_], _) => vec![elem.clone()],
+        (_, Type::Tuple(ts)) if ts.len() == names.len() => ts.clone(),
+        _ => return Some("_".to_string()),
+    };
+    names
+        .iter()
+        .zip(&types)
+        .find(|(_, t)| generators::finite_extent(t, dt).is_none())
+        .map(|(n, _)| n.clone())
 }
 
 /// Builds `Relational.nonEmpty query`: whether a query has a row.
@@ -277,17 +306,25 @@ fn unenumerable_message(t: &Rc<Type>) -> String {
 /// function is applied with real arguments). A user-visible
 /// error fires only at the call site, where the post-inline
 /// pass flagged the Extent on a real `from`.
-fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
-    fn check_expr(e: &CoreExpr, errors: &mut Vec<(String, Span)>) {
+fn check_unbounded_extents(
+    decl: &CoreDecl,
+    dt: &expander::DatatypeMap,
+    errors: &mut Vec<(String, Span)>,
+) {
+    fn check_expr(
+        e: &CoreExpr,
+        dt: &expander::DatatypeMap,
+        errors: &mut Vec<(String, Span)>,
+    ) {
         match e {
             CoreExpr::Apply(_, f, a, _) => {
-                check_expr(f, errors);
-                check_expr(a, errors);
+                check_expr(f, dt, errors);
+                check_expr(a, dt, errors);
             }
             CoreExpr::Case(_, subj, arms, _) => {
-                check_expr(subj, errors);
+                check_expr(subj, dt, errors);
                 for m in arms {
-                    check_expr(&m.expr, errors);
+                    check_expr(&m.expr, dt, errors);
                 }
             }
             CoreExpr::Extent(t, span, _) => {
@@ -301,18 +338,18 @@ fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
             }
             CoreExpr::Let(_, decls, body) => {
                 for d in decls {
-                    check_decl(d, errors);
+                    check_decl(d, dt, errors);
                 }
-                check_expr(body, errors);
+                check_expr(body, dt, errors);
             }
             CoreExpr::Tuple(_, items) | CoreExpr::List(_, items) => {
                 for i in items {
-                    check_expr(i, errors);
+                    check_expr(i, dt, errors);
                 }
             }
             CoreExpr::Aggregate(_, l, r, _) => {
-                check_expr(l, errors);
-                check_expr(r, errors);
+                check_expr(l, dt, errors);
+                check_expr(r, dt, errors);
             }
             CoreExpr::From(_, steps) => {
                 // A query whose only step is an ungrounded scan has
@@ -322,7 +359,7 @@ fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
                 // distinction.
                 let lone = steps.len() == 1;
                 for s in steps {
-                    check_step(s, lone, errors);
+                    check_step(s, lone, dt, errors);
                 }
             }
             CoreExpr::Rel(_, rel) => {
@@ -331,26 +368,34 @@ fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
                 let inputs = rel.inputs();
                 for c in rel.children() {
                     match c {
-                        CoreExpr::Extent(_, span, names)
+                        CoreExpr::Extent(t, span, names)
                             if inputs.iter().any(|i| ptr::eq(*i, c)) =>
                         {
-                            let name = match names.as_slice() {
-                                [n] => n.as_str(),
-                                _ => "_",
+                            // The one named is the first that cannot be
+                            // enumerated; one that can, a bool, is not
+                            // what is missing a generator.
+                            let Some(name) = unenumerable_name(t, names, dt)
+                            else {
+                                continue;
                             };
                             errors.push((
                                 format!("pattern '{}' is not grounded", name),
                                 span.clone(),
                             ));
                         }
-                        _ => check_expr(c, errors),
+                        _ => check_expr(c, dt, errors),
                     }
                 }
             }
             _ => {}
         }
     }
-    fn check_step(s: &CoreStep, lone: bool, errors: &mut Vec<(String, Span)>) {
+    fn check_step(
+        s: &CoreStep,
+        lone: bool,
+        dt: &expander::DatatypeMap,
+        errors: &mut Vec<(String, Span)>,
+    ) {
         match &s.kind {
             CoreStepKind::Scan(pat, src, cond) => {
                 if let CoreExpr::Extent(t, span, _) = src.as_ref() {
@@ -367,10 +412,10 @@ fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
                         ));
                     }
                 } else {
-                    check_expr(src, errors);
+                    check_expr(src, dt, errors);
                 }
                 if let Some(c) = cond {
-                    check_expr(c, errors);
+                    check_expr(c, dt, errors);
                 }
             }
             CoreStepKind::Where(c)
@@ -378,35 +423,39 @@ fn check_unbounded_extents(decl: &CoreDecl, errors: &mut Vec<(String, Span)>) {
             | CoreStepKind::Order(c)
             | CoreStepKind::Compute(c)
             | CoreStepKind::Skip(c)
-            | CoreStepKind::Take(c) => check_expr(c, errors),
+            | CoreStepKind::Take(c) => check_expr(c, dt, errors),
             CoreStepKind::Group(k, agg) => {
-                check_expr(k, errors);
+                check_expr(k, dt, errors);
                 if let Some(a) = agg {
-                    check_expr(a, errors);
+                    check_expr(a, dt, errors);
                 }
             }
             CoreStepKind::Except(_, exprs)
             | CoreStepKind::Intersect(_, exprs)
             | CoreStepKind::Union(_, exprs) => {
                 for e in exprs {
-                    check_expr(e, errors);
+                    check_expr(e, dt, errors);
                 }
             }
             _ => {}
         }
     }
-    fn check_decl(d: &CoreDecl, errors: &mut Vec<(String, Span)>) {
+    fn check_decl(
+        d: &CoreDecl,
+        dt: &expander::DatatypeMap,
+        errors: &mut Vec<(String, Span)>,
+    ) {
         match d {
-            CoreDecl::NonRecVal(b) => check_expr(&b.expr, errors),
+            CoreDecl::NonRecVal(b) => check_expr(&b.expr, dt, errors),
             CoreDecl::RecVal(binds) => {
                 for b in binds {
-                    check_expr(&b.expr, errors);
+                    check_expr(&b.expr, dt, errors);
                 }
             }
             _ => {}
         }
     }
-    check_decl(decl, errors);
+    check_decl(decl, dt, errors);
 }
 
 /// Converts an AST to a Core tree.
