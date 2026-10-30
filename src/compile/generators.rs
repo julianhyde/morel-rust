@@ -44,6 +44,7 @@ use crate::compile::types::{
 use crate::eval::char::Char;
 use crate::eval::val::Val;
 use std::cell::Cell;
+use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 use strum::IntoEnumIterator;
@@ -4590,6 +4591,87 @@ pub fn fold_literal_bounds_into_range_scans(steps: Vec<Step>) -> Vec<Step> {
         }
     }
     out
+}
+
+/// The comparison a one-sided range-list scan implies for its variable,
+/// as morel-go's `impliedRangeBound` writes it: `x >= 1` for `x` in
+/// `[1..]`.
+pub(crate) fn implied_range_bound(
+    src: &Expr,
+    elem_t: &Rc<Type>,
+    name: &str,
+) -> Option<Expr> {
+    let (lower, strict, end) = match_infinite_range_scan(src)?;
+    compare_for_type(elem_t, lower, strict, name, end)
+}
+
+/// Folds the tightest literal bound on `name` among `conjuncts` into a
+/// one-sided range, as morel-go's `pushBound` does: `[1..]` under
+/// `x < 5` is `[1..^5]`. Returns the finite range and the index of the
+/// conjunct it consumed; `None` if no conjunct bounds the open side, or
+/// if the tightest one would make the range obviously empty.
+pub(crate) fn tighten_range(
+    src: &Expr,
+    elem_t: &Rc<Type>,
+    name: &str,
+    conjuncts: &[Expr],
+) -> Option<(Expr, usize)> {
+    let (scan_lower, scan_strict, scan_end) = match_infinite_range_scan(src)?;
+    // The scan bounds one side; the bound to find is on the other.
+    let want_upper = scan_lower;
+    let mut best: Option<(bool, Expr, usize)> = None;
+    for (i, c) in conjuncts.iter().enumerate() {
+        let Some((lower, strict, end)) = extract_literal_bound(c, name) else {
+            continue;
+        };
+        if lower == want_upper {
+            continue;
+        }
+        if let Some((best_strict, best_end, _)) = &best {
+            let cmp = compare_literals(&end, best_end);
+            let tighter = if want_upper {
+                cmp.is_lt() || (cmp.is_eq() && strict && !best_strict)
+            } else {
+                cmp.is_gt() || (cmp.is_eq() && strict && !best_strict)
+            };
+            if !tighter {
+                continue;
+            }
+        }
+        best = Some((strict, end, i));
+    }
+    let (strict, end, i) = best?;
+    if is_scalar_literal(&scan_end) {
+        let cmp = compare_literals(&end, &scan_end);
+        if (want_upper && cmp.is_lt()) || (!want_upper && cmp.is_gt()) {
+            return None;
+        }
+    }
+    let ((lo, lo_incl), (hi, hi_incl)) = if scan_lower {
+        ((scan_end, !scan_strict), (end, !strict))
+    } else {
+        ((end, !strict), (scan_end, !scan_strict))
+    };
+    let ctor = match (lo_incl, hi_incl) {
+        (true, true) => BuiltInFunction::RangeClosed,
+        (true, false) => BuiltInFunction::RangeClosedOpen,
+        (false, true) => BuiltInFunction::RangeOpenClosed,
+        (false, false) => BuiltInFunction::RangeOpen,
+    };
+    Some((build_finite_range_scan(src, elem_t, ctor, lo, hi), i))
+}
+
+/// Orders two int or char literals; others compare equal.
+fn compare_literals(a: &Expr, b: &Expr) -> Ordering {
+    match (a, b) {
+        (Expr::Literal(_, Val::Int(x)), Expr::Literal(_, Val::Int(y))) => {
+            x.cmp(y)
+        }
+        (Expr::Literal(_, Val::Char(x)), Expr::Literal(_, Val::Char(y))) => {
+            x.cmp(y)
+        }
+        _ => Ordering::Equal,
+    }
 }
 
 /// If `conjunct` is a comparison `name <op> lit` (or `lit <op> name`)
