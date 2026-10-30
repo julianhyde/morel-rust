@@ -2305,10 +2305,13 @@ fn closure_generator(
                 items.iter().map(pat_for_exp).collect::<Option<_>>()?;
             let names = pat_names(&Pat::Tuple(element.clone(), pats.clone()));
             let distinct: BTreeSet<&String> = names.iter().collect();
-            if distinct.len() < names.len()
-                || !names.iter().any(|n| n == pat_name)
-            {
+            if !names.iter().any(|n| n == pat_name) {
                 return None;
+            }
+            if distinct.len() < names.len() {
+                return duplicates_wrapper(
+                    pat_name, call, items, element, iterate,
+                );
             }
             Pat::Tuple(element.clone(), pats)
         }
@@ -2321,6 +2324,85 @@ fn closure_generator(
     Some(Generator::new(
         gen_pat,
         iterate,
+        Cardinality::Finite,
+        free,
+        true,
+        true,
+        vec![call.clone()],
+    ))
+}
+
+/// Handles a call like `f (v, v)`, as morel-go's `duplicatesWrapper`
+/// does: the closure scans fresh copies, the repeated positions equate,
+/// and the variable's copy is yielded.
+fn duplicates_wrapper(
+    pat_name: &str,
+    call: &Expr,
+    items: &[Expr],
+    element: &Rc<Type>,
+    iterate: Expr,
+) -> Option<Generator> {
+    let Type::Tuple(types) = element.as_ref() else {
+        return None;
+    };
+    if types.len() != items.len() {
+        return None;
+    }
+    let mut copies: Vec<Pat> = Vec::new();
+    let mut bound: Vec<Binding> = Vec::new();
+    let mut by_var: Vec<(String, Vec<Expr>)> = Vec::new();
+    for (item, t) in items.iter().zip(types) {
+        let Expr::Identifier(_, n) = item else {
+            return None;
+        };
+        let c = fresh_name();
+        copies.push(Pat::Identifier(t.clone(), c.clone()));
+        bound.push(Binding::new(Id::new(&c, 0), t.clone()));
+        let id = Expr::Identifier(t.clone(), c);
+        match by_var.iter_mut().find(|(v, _)| v == n) {
+            Some((_, group)) => group.push(id),
+            None => by_var.push((n.clone(), vec![id])),
+        }
+    }
+    let mut eqs: Vec<Expr> = Vec::new();
+    for (_, group) in &by_var {
+        for other in &group[1..] {
+            eqs.push(make_eq_for_type(
+                &other.type_(),
+                group[0].clone(),
+                other.clone(),
+            ));
+        }
+    }
+    let first = by_var
+        .iter()
+        .find(|(v, _)| v == pat_name)
+        .map(|(_, group)| group[0].clone())?;
+    let pat_t = first.type_();
+    let free = free_names_in(&iterate);
+    let env = || StepEnv::new(bound.clone(), false, false);
+    let mut steps = vec![Step::new(
+        StepKind::Scan(
+            Box::new(Pat::Tuple(element.clone(), copies)),
+            Box::new(iterate),
+            None,
+        ),
+        env(),
+    )];
+    if !eqs.is_empty() {
+        steps.push(Step::new(StepKind::Where(Box::new(and_all(eqs))), env()));
+    }
+    steps.push(Step::new(
+        StepKind::Yield(Box::new(first)),
+        StepEnv::new(
+            vec![Binding::new(Id::new("current", 0), pat_t.clone())],
+            true,
+            false,
+        ),
+    ));
+    Some(Generator::new(
+        Pat::Identifier(pat_t.clone(), pat_name.to_string()),
+        Expr::From(Rc::new(Type::Bag(pat_t)), steps),
         Cardinality::Finite,
         free,
         true,
