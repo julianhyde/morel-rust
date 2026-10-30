@@ -41,8 +41,9 @@ use crate::compile::expander::{DatatypeMap, FnEnv, and_all, list_bounds};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::generator::{Cache, Cardinality, Generator};
 use crate::compile::generators::{
-    finite_extent, is_infinite_range, maybe_generator_with_scope,
-    split_conjuncts, testing_rebound,
+    finite_extent, implied_range_bound, is_infinite_range,
+    maybe_generator_with_scope, split_conjuncts, testing_rebound,
+    tighten_range,
 };
 use crate::compile::library::BuiltInFunction;
 use crate::compile::postfix::peel_type;
@@ -103,7 +104,7 @@ fn ground_with(
 ) -> Option<Expr> {
     let tree = match exp {
         Expr::From(t, steps) => {
-            if !steps.iter().any(step_holds_extent) {
+            if !steps_unbounded(exp) {
                 return None;
             }
             let Some(tree) = rel_translator::translate(steps, t) else {
@@ -152,7 +153,7 @@ fn ground_query(
     fn_env: &FnEnv,
     rows_used: bool,
 ) -> Option<Expr> {
-    if !leaf_holds_extent(&tree) {
+    if !has_unbounded_leaf(&tree) {
         return None;
     }
     debugf(|| format!("ground: tree {}", tree));
@@ -217,16 +218,6 @@ fn holds_extent(e: &Expr) -> bool {
     }
 }
 
-/// Returns whether one of a tree's leaves holds an extent. A query
-/// nested in one of the tree's expressions is not a leaf: it is a root
-/// of its own, grounded when the walk reaches it.
-fn leaf_holds_extent(tree: &Expr) -> bool {
-    let tree = rel_translator::only_of(tree).unwrap_or(tree);
-    let mut leaves = Vec::new();
-    all_leaves(tree, &mut leaves);
-    leaves.iter().any(holds_extent)
-}
-
 /// Returns whether a tree has a leaf that is still an extent. A leaf
 /// that is a query of its own, with an extent among its scans, is not:
 /// it is grounded when the walk reaches it, as morel-go grounds the query
@@ -255,9 +246,10 @@ fn unbounded_outside_queries(e: &Expr) -> bool {
 }
 
 /// Returns whether a tree has a leaf that needs grounding: an extent,
-/// or an infinite range such as `[1..]`, which the step list's range
-/// pushdown bounds. As [leaf_holds_extent], a nested query is not a
-/// leaf.
+/// or an infinite range such as `[1..]`, which a literal bound in a
+/// filter above makes finite. A query nested in one of the tree's
+/// expressions is not a leaf: it is a root of its own, grounded when the
+/// walk reaches it.
 pub(crate) fn has_unbounded_leaf(tree: &Expr) -> bool {
     let tree = rel_translator::only_of(tree).unwrap_or(tree);
     let mut leaves = Vec::new();
@@ -452,6 +444,9 @@ struct Frame {
     /// drop what a sealed generator has taken over.
     originals: BTreeMap<String, Expr>,
     order: Vec<GroundStep>,
+    /// What a leaf that is an infinite range was tightened to, by the
+    /// leaf's index.
+    tightened: BTreeMap<usize, Expr>,
 }
 
 impl Frame {
@@ -462,6 +457,7 @@ impl Frame {
             constraints: Vec::new(),
             originals: BTreeMap::new(),
             order: Vec::new(),
+            tightened: BTreeMap::new(),
         }
     }
 }
@@ -567,6 +563,13 @@ impl<'a> Expander<'a> {
         let Expr::Rel(_, rel) = exp else {
             if matches!(exp, Expr::Extent(..)) {
                 return self.bound(exp, conditions);
+            }
+            // An infinite range is unbounded too, and what bounds it
+            // is a literal bound in a filter above rather than a
+            // generator: `[1..]` under `where x < 5` is `[1..^5]`.
+            if let Some((finite, consumed)) = tighten_leaf(exp, conditions) {
+                self.subsumed.insert(key_of(&consumed));
+                return Some(finite);
             }
             return Some(exp.clone());
         };
@@ -793,10 +796,11 @@ impl<'a> Expander<'a> {
                 list_bounds(&leaf.pat, &leaf.exp, &mut constraints);
             }
         }
+        tighten_ranges(&mut frame, &constraints);
         let extents: Vec<usize> = (0..frame.leaves.len())
             .filter(|i| frame.leaves[*i].extent)
             .collect();
-        if extents.is_empty() {
+        if extents.is_empty() && frame.tightened.is_empty() {
             let out = self.expand_join_inputs(join)?;
             self.leaf_names = outer_leaf_names;
             self.dropped = outer_dropped;
@@ -1409,8 +1413,8 @@ impl<'a> Expander<'a> {
     }
 
     /// Rebuilds a node under a join that is not a join: an extent
-    /// leaf becomes what bounds it, and anything else is expanded on
-    /// its own.
+    /// leaf becomes what bounds it, a range leaf what tightened it, and
+    /// anything else is expanded on its own.
     fn rebuild_leaf(
         &mut self,
         lo: usize,
@@ -1421,6 +1425,9 @@ impl<'a> Expander<'a> {
         let leaf = &frame.leaves[lo];
         if leaf.extent {
             return self.bounded(&leaf.pat.clone(), settled, bound);
+        }
+        if let Some(finite) = frame.tightened.get(&lo) {
+            return Some(finite.clone());
         }
         if matches!(&leaf.exp, Expr::Rel(_, _)) {
             let exp = leaf.exp.clone();
@@ -2436,6 +2443,66 @@ fn leaf_count(node: &Expr) -> usize {
             _ => 1,
         },
         _ => 1,
+    }
+}
+
+/// Replaces a leaf that is an infinite range with the finite range the
+/// conditions over `$0` make of it, returning the new leaf and the
+/// condition consumed.
+fn tighten_leaf(leaf: &Expr, conditions: &[Expr]) -> Option<(Expr, Expr)> {
+    if conditions.is_empty() || !is_infinite_range(leaf) {
+        return None;
+    }
+    let elem = element_type(&leaf.type_())?;
+    let name = fresh_name();
+    let id = Expr::Identifier(elem.clone(), name.clone());
+    let named: Vec<Expr> =
+        conditions.iter().map(|c| subst(c, &id, None)).collect();
+    let (finite, i) = tighten_range(leaf, &elem, &name, &named)?;
+    Some((finite, conditions[i].clone()))
+}
+
+/// Replaces each leaf of a join tree that is an infinite range with the
+/// finite range that the constraints make of it. The range's own bound
+/// is written as a constraint, or FBBT has nothing to propagate from;
+/// and the bound that comes back names the leaf, because a join's
+/// condition speaks of its components and not of `$0`.
+fn tighten_ranges(frame: &mut Frame, constraints: &[Expr]) {
+    let ranges: Vec<(usize, String, Rc<Type>)> = frame
+        .leaves
+        .iter()
+        .enumerate()
+        .filter_map(|(i, leaf)| match &leaf.pat {
+            Pat::Identifier(t, n) if is_infinite_range(&leaf.exp) => {
+                Some((i, n.clone(), t.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    if ranges.is_empty() {
+        return;
+    }
+    let mut augmented = constraints.to_vec();
+    for (i, name, t) in &ranges {
+        if let Some(implied) =
+            implied_range_bound(&frame.leaves[*i].exp, t, name)
+        {
+            augmented.push(implied);
+        }
+    }
+    let pats: Vec<(String, Rc<Type>)> = ranges
+        .iter()
+        .map(|(_, n, t)| (n.clone(), t.clone()))
+        .collect();
+    // What FBBT deduces goes before what it was deduced from.
+    let mut strengthened = fbbt::strengthen(&pats, &augmented);
+    strengthened.extend(augmented);
+    for (i, name, t) in &ranges {
+        if let Some((finite, _)) =
+            tighten_range(&frame.leaves[*i].exp, t, name, &strengthened)
+        {
+            frame.tightened.insert(*i, finite);
+        }
     }
 }
 
