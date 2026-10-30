@@ -286,6 +286,11 @@ fn in_fn<T>(f: impl FnOnce() -> T) -> T {
     out
 }
 
+/// Returns whether the walk is inside a function body.
+fn in_fn_body() -> bool {
+    FN_DEPTH.with(Cell::get) > 0
+}
+
 /// Rewrites every `Relational.nonEmpty` over a query, anywhere in
 /// an expression, as a query whose last step tests for existence.
 ///
@@ -578,8 +583,10 @@ fn walk_expr_with_scope(
                 return walk_query_steps(grounded, env, rec_env, datatypes);
             }
             // A query with nothing unbounded among its scans needs no
-            // grounding of its own, only the queries its steps hold.
-            if !rel_expander::steps_unbounded(&expr) {
+            // grounding of its own, only the queries its steps hold; nor
+            // does one in a function's body that its tree could not
+            // ground, which is grounded where the function is called.
+            if !rel_expander::steps_unbounded(&expr) || in_fn_body() {
                 return step_walk(false, || {
                     walk_query_steps(expr, env, rec_env, datatypes)
                 });
