@@ -123,18 +123,4 @@ impl Cache {
     pub fn best(&self, name: &str) -> Option<&Generator> {
         self.by_pat.get(name).and_then(|v| v.last())
     }
-
-    /// Returns every generator's provenance combined. Used by the
-    /// Expander to filter conjuncts out of the rewritten `where`.
-    pub fn sealed_provenance(&self) -> Vec<&Expr> {
-        let mut out = Vec::new();
-        for gens in self.by_pat.values() {
-            if let Some(g) = gens.last()
-                && g.sealed
-            {
-                out.extend(g.provenance.iter());
-            }
-        }
-        out
-    }
 }

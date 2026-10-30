@@ -70,15 +70,6 @@ pub fn lower_decl_except(decl: &Decl, keep: fn(&Expr) -> bool) -> Option<Decl> {
     Lowerer { keep: Some(keep) }.all_decl(decl)
 }
 
-/// A query translated to its tree and lowered back to steps, or `None`
-/// where either declines.
-pub fn relowered(e: &Expr) -> Option<Expr> {
-    let Expr::From(t, steps) = e else {
-        return None;
-    };
-    as_steps(&rel_translator::translate(steps, t)?)
-}
-
 /// Returns a query's tree with the queries nested in it made trees too,
 /// or `None` where the tree does not lower.
 pub fn finished(tree: &Expr) -> Option<Expr> {

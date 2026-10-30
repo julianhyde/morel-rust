@@ -20,12 +20,9 @@
 //! the join tree around it is rebuilt so that what a generator reads
 //! is scanned before it. It is morel-java's `RelExpander`.
 //!
-//! It is a second chance. The step-list grounder runs first, and
-//! what it grounds never reaches here; a query that still holds an
-//! extent is translated to a tree, grounded on the tree, and lowered
-//! back to the steps that run it. Where any of the three declines,
-//! the query is left as it was and the extent that survives is
-//! reported as an unbounded variable.
+//! A query built as steps is translated to a tree first. Where
+//! translation or grounding declines, the query is left as it was and
+//! the extent that survives is reported as an unbounded variable.
 //!
 //! Grounding on the tree, rather than on the step list, is what lets
 //! a scan whose pattern is not a single variable be grounded: a leaf
@@ -70,9 +67,6 @@ fn debugf(line: impl FnOnce() -> String) {
 /// Grounds a query on its tree, or returns `None` where it has
 /// nothing unbounded to ground, or where the translation, the
 /// grounding or the lowering declines.
-///
-/// A query this pass hands back is grounded on its step list
-/// instead, which is the older path and still the wider one.
 pub(crate) fn ground(
     exp: &Expr,
     datatypes: &DatatypeMap,
@@ -125,8 +119,7 @@ fn ground_with(
 }
 
 /// Returns whether a step list scans something unbounded: an extent,
-/// or an infinite range such as `[1..]`, which the step list's range
-/// pushdown bounds.
+/// or an infinite range such as `[1..]`.
 pub(crate) fn steps_unbounded(e: &Expr) -> bool {
     let Expr::From(_, steps) = e else {
         return false;
@@ -1016,7 +1009,7 @@ impl<'a> Expander<'a> {
     }
 
     /// Registers the extents and applies the constraints in order,
-    /// as the step-list grounder does: after every constraint, each
+    /// as morel-go's engine does: after every constraint, each
     /// extent name is asked again, and the last generator found for
     /// a name is the one it keeps.
     fn run_engine(
@@ -1902,7 +1895,7 @@ impl<'a> Expander<'a> {
             // A generator whose collection does not have the name's
             // own element type says something this pass cannot use:
             // a record pattern whose generator yields a tuple, for
-            // one. The step-list grounder knows what to do with it.
+            // one.
             if !same_element(&component, &t) {
                 return self.fail(&format!(
                     "the generator for {} does not have its type",

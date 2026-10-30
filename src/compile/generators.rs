@@ -24,8 +24,7 @@
 //! constructor patterns.
 
 use crate::compile::core::{
-    Binding, Expr, Match, Pat, PatField, Step, StepEnv, StepKind, extent_names,
-    fresh_name,
+    Binding, Expr, Match, Pat, PatField, Step, StepEnv, StepKind, fresh_name,
 };
 use crate::compile::expander::{
     DatatypeMap, FnEnv, and_all, build_iterate_ast, contains_self_call, expr_eq,
@@ -3297,9 +3296,8 @@ fn derive_payload_generator(
         }
         Pat::Tuple(tuple_t, sub_pats) => {
             // Build `from <each leaf> where body yield (leaves)`
-            // and let `expand_from_with` derive the generators.
+            // whose generators the walk derives when it reaches it.
             use crate::compile::core::{Step, StepEnv, StepKind};
-            use crate::compile::expander::expand_from_with;
             use crate::compile::type_env::Id;
 
             let mut steps: Vec<Step> = Vec::new();
@@ -3362,24 +3360,10 @@ fn derive_payload_generator(
             } else {
                 Rc::new(Type::Bag(tuple_t.clone()))
             };
+            // The leaves' extents are grounded when the walk reaches
+            // this query, as morel-go's `conArmGenerator` leaves them.
             let from = Expr::From(coll_t, steps);
-            let expanded = expand_from_with(from, fn_env, datatypes);
-            // If predicate-inversion left an Extent in the
-            // expanded steps, we couldn't ground a sub-pattern;
-            // bail.
-            if let Expr::From(_, ref est) = expanded
-                && est.iter().any(|s| {
-                    matches!(
-                        &s.kind,
-                        StepKind::Scan(_, src, _) if matches!(
-                            src.as_ref(), Expr::Extent(..)
-                        )
-                    )
-                })
-            {
-                return None;
-            }
-            Some(("__pl".to_string(), expanded))
+            Some(("__pl".to_string(), from))
         }
         _ => None,
     }
@@ -4314,91 +4298,6 @@ fn as_builtin_fn(expr: &Expr) -> Option<BuiltInFunction> {
 // Infinite-range scan rewriting (RangePushdown)
 // ---------------------------------------------------------------------------
 
-/// Rewrites scans whose source is an infinite single-constructor range
-/// list (e.g. `from x in [1..]`, i.e. `Range.flatten [AT_LEAST 1]`) into
-/// a list-typed `Extent` scan plus an implied bound conjunct merged into
-/// the `where` step. This routes the scan through the FBBT / range
-/// extractor pipeline (so a downstream bound like `where x < 5` makes it
-/// finite), while preserving the scan's `list` result type.
-///
-/// Mirrors morel-java's `RangePushdown`, but folds the range endpoint
-/// into a `where` bound and re-grounds via the existing extractor rather
-/// than rewriting the range constructor in place.
-pub fn rewrite_infinite_range_scans(steps: Vec<Step>) -> Vec<Step> {
-    let mut implied: Vec<Expr> = Vec::new();
-    let mut converted = false;
-    let mut new_steps: Vec<Step> = Vec::with_capacity(steps.len());
-    for step in steps {
-        if let StepKind::Scan(pat, src, cond) = &step.kind
-            && let Pat::Identifier(elem_t, name) = pat.as_ref()
-            // Only int scans are routed through the extractor; morel-rust
-            // does not yet ground char/real range scans (they would
-            // materialize and raise `Size`, as before).
-            && matches!(elem_t.as_ref(), Type::Primitive(PrimitiveType::Int))
-            && let Some((lower, strict, arg)) = match_infinite_range_scan(src)
-        {
-            // Build `name <op> arg` with the element type's comparator.
-            if let Some(bound) =
-                compare_for_type(elem_t, lower, strict, name, arg)
-            {
-                implied.push(bound);
-            }
-            let ext = Expr::Extent(
-                Rc::new(Type::List(elem_t.clone())),
-                Span::new(""),
-                extent_names(pat),
-            );
-            new_steps.push(Step::new(
-                StepKind::Scan(pat.clone(), Box::new(ext), cond.clone()),
-                step.env.clone(),
-            ));
-            converted = true;
-        } else {
-            new_steps.push(step);
-        }
-    }
-    if !converted || implied.is_empty() {
-        return new_steps;
-    }
-    // Merge the implied bounds into the first Where step (every grounding
-    // case has one). If none exists the extent simply stays ungrounded
-    // and the usual "not grounded" check fires.
-    let mut merged = false;
-    for step in &mut new_steps {
-        if let StepKind::Where(cond) = &step.kind {
-            let mut combined = (**cond).clone();
-            for b in &implied {
-                combined = and_all(vec![combined, b.clone()]);
-            }
-            step.kind = StepKind::Where(Box::new(combined));
-            merged = true;
-            break;
-        }
-    }
-    if !merged {
-        // No where step: append one carrying the implied bounds, reusing
-        // the last step's env so the scan variables are in scope.
-        let env = new_steps
-            .last()
-            .map_or_else(StepEnv::empty, |s| s.env.clone());
-        let cond = implied
-            .into_iter()
-            .reduce(|a, b| and_all(vec![a, b]))
-            .unwrap();
-        new_steps.push(Step::new(StepKind::Where(Box::new(cond)), env));
-    }
-    new_steps
-}
-
-/// Returns whether `steps` contains a scan over an infinite
-/// single-constructor range list.
-pub fn has_infinite_range_scan(steps: &[Step]) -> bool {
-    steps.iter().any(|s| {
-        matches!(&s.kind, StepKind::Scan(_, src, _)
-            if match_infinite_range_scan(src).is_some())
-    })
-}
-
 /// Returns whether a collection is an infinite single-constructor range
 /// list, such as `[1..]`.
 pub fn is_infinite_range(src: &Expr) -> bool {
@@ -4481,116 +4380,6 @@ fn compare_for_type(
         Box::new(arg),
         Span::new(""),
     ))
-}
-
-/// Folds a literal `where` bound into an infinite single-constructor
-/// range scan, producing a finite range that materializes directly via
-/// `Range.flatten`. This is the in-place analogue of morel-java's
-/// `RangePushdown`; because it keeps the scan a `Range.flatten` (rather
-/// than converting to an `Extent`), it works for any discrete element
-/// type — in particular `char`, which the extent route cannot ground:
-///
-/// ```text
-/// from c in [#"a"..] where c < #"e"
-///   -->  from c in [#"a" ..^ #"e"]   (i.e. CLOSED_OPEN (#"a", #"e"))
-/// ```
-///
-/// The consumed `where` conjunct is dropped. Scans with no complementary
-/// literal bound (e.g. the int multiplication case, where the bound is
-/// deduced by FBBT) are left for [`rewrite_infinite_range_scans`].
-pub fn fold_literal_bounds_into_range_scans(steps: Vec<Step>) -> Vec<Step> {
-    let Some(where_idx) = steps
-        .iter()
-        .position(|s| matches!(s.kind, StepKind::Where(_)))
-    else {
-        return steps;
-    };
-    let StepKind::Where(where_exp) = &steps[where_idx].kind else {
-        return steps;
-    };
-    let conjuncts = split_conjuncts(where_exp);
-
-    // Map of scan-step index -> rebuilt finite scan source, plus the set
-    // of consumed conjunct indices.
-    let mut replacements: HashMap<usize, Expr> = HashMap::new();
-    let mut consumed: Vec<usize> = Vec::new();
-    for (si, step) in steps.iter().enumerate() {
-        let StepKind::Scan(pat, src, _) = &step.kind else {
-            continue;
-        };
-        let Pat::Identifier(elem_t, name) = pat.as_ref() else {
-            continue;
-        };
-        let Some((scan_lower, scan_strict, scan_end)) =
-            match_infinite_range_scan(src)
-        else {
-            continue;
-        };
-        for (ci, c) in conjuncts.iter().enumerate() {
-            if consumed.contains(&ci) {
-                continue;
-            }
-            let Some((w_lower, w_strict, w_end)) =
-                extract_literal_bound(c, name)
-            else {
-                continue;
-            };
-            // The scan supplies one side; the conjunct must supply the
-            // other for the two to bracket a finite range.
-            if w_lower == scan_lower {
-                continue;
-            }
-            let ((lo, lo_incl), (hi, hi_incl)) = if scan_lower {
-                ((scan_end.clone(), !scan_strict), (w_end, !w_strict))
-            } else {
-                ((w_end, !w_strict), (scan_end.clone(), !scan_strict))
-            };
-            let ctor = match (lo_incl, hi_incl) {
-                (true, true) => BuiltInFunction::RangeClosed,
-                (true, false) => BuiltInFunction::RangeClosedOpen,
-                (false, true) => BuiltInFunction::RangeOpenClosed,
-                (false, false) => BuiltInFunction::RangeOpen,
-            };
-            replacements
-                .insert(si, build_finite_range_scan(src, elem_t, ctor, lo, hi));
-            consumed.push(ci);
-            break;
-        }
-    }
-
-    if replacements.is_empty() {
-        return steps;
-    }
-    let remaining: Vec<Expr> = conjuncts
-        .into_iter()
-        .enumerate()
-        .filter(|(i, _)| !consumed.contains(i))
-        .map(|(_, c)| c)
-        .collect();
-
-    let mut out = Vec::with_capacity(steps.len());
-    for (si, step) in steps.into_iter().enumerate() {
-        if si == where_idx {
-            if remaining.is_empty() {
-                continue; // every conjunct folded; drop the where step
-            }
-            out.push(Step::new(
-                StepKind::Where(Box::new(and_all(remaining.clone()))),
-                step.env,
-            ));
-        } else if let Some(new_src) = replacements.remove(&si) {
-            let StepKind::Scan(pat, _, cond) = step.kind else {
-                unreachable!()
-            };
-            out.push(Step::new(
-                StepKind::Scan(pat, Box::new(new_src), cond),
-                step.env,
-            ));
-        } else {
-            out.push(step);
-        }
-    }
-    out
 }
 
 /// The comparison a one-sided range-list scan implies for its variable,
