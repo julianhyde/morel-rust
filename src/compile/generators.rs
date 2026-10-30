@@ -2202,6 +2202,7 @@ fn bidirectional_iterate(
     let step_from = Expr::From(coll_t.clone(), steps);
     // The seed: the pairs the base holds of, `from x, y where base (x, y)`,
     // which is a query of its own, grounded when the walk reaches it.
+    let listed = |e: StepEnv| e.with_ordered(true);
     let mut seed_bound: Vec<(String, Rc<Type>)> = Vec::new();
     let mut seed_steps: Vec<Step> = Vec::new();
     for (f, t) in names.iter().zip(types) {
@@ -2216,12 +2217,12 @@ fn bidirectional_iterate(
                 )),
                 None,
             ),
-            env(&seed_bound),
+            listed(env(&seed_bound)),
         ));
     }
     seed_steps.push(Step::new(
         StepKind::Where(Box::new(base.clone())),
-        env(&seed_bound),
+        listed(env(&seed_bound)),
     ));
     seed_steps.push(Step::new(
         StepKind::Yield(Box::new(Expr::Tuple(
@@ -2232,9 +2233,10 @@ fn bidirectional_iterate(
                 .map(|(f, t)| Expr::Identifier(t.clone(), f.clone()))
                 .collect(),
         ))),
-        current(element),
+        listed(current(element)),
     ));
-    let seed = Expr::From(coll_t.clone(), seed_steps);
+    // Its scans are over extents, which are lists.
+    let seed = Expr::From(Rc::new(Type::List(element.clone())), seed_steps);
     Some(iterate_apply(
         &coll_t, seed, step_from, &all_name, &new_name,
     ))
