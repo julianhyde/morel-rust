@@ -57,7 +57,9 @@ Sys.planEx "core";
 > val it =
 >   union : int list
 >     [2, 3, 1] : int list
->     [1, 4] : int #|_} : string
+>     [1, 4] : int list
+>     [3] : int list
+> |_} : string
 from i in [2, 3, 1] union [1, 4], [3];
 > val it = [2,3,1,1,4,3] : int list
 Sys.planEx "core";
@@ -66,7 +68,9 @@ Sys.planEx "core";
 > val it =
 >   union [all] : int list
 >     [2, 3, 1] : int list
->     [1, 4] #|_} : string
+>     [1, 4] : int list
+>     [3] : int list
+> |_} : string
 
 from i in [3,1,2] order i;
 > val it = [1,2,3] : int list

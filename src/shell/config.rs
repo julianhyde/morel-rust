@@ -36,6 +36,7 @@ pub struct Config {
     pub print_depth: Option<i32>,
     pub print_length: Option<i32>,
     pub prompt: Option<bool>,
+    pub raw_strings: Option<i32>,
     pub stdin_is_tty: Option<bool>,
     pub string_depth: Option<i32>,
     pub string_fold: Option<i32>,
@@ -56,6 +57,7 @@ impl Default for Config {
             print_depth: Some(Prop::PrintDepth.default_value().as_int()),
             print_length: Some(Prop::PrintLength.default_value().as_int()),
             prompt: Some(false),
+            raw_strings: Some(Prop::RawStrings.default_value().as_int()),
             stdin_is_tty: Some(false),
             string_depth: Some(Prop::StringDepth.default_value().as_int()),
             string_fold: None,
@@ -81,6 +83,9 @@ impl Configurable for Config {
             }
             (Prop::PrintLength, PropVal::Int(i)) => {
                 self.print_length = Some(*i);
+            }
+            (Prop::RawStrings, PropVal::Int(i)) => {
+                self.raw_strings = Some(*i);
             }
             (Prop::ShowBanner, PropVal::Bool(b)) => {
                 self.banner = Some(*b);
@@ -132,6 +137,13 @@ impl Configurable for Config {
             }
             Prop::PrintLength => {
                 if let Some(i) = self.print_length {
+                    PropVal::Int(i)
+                } else {
+                    prop.default_value()
+                }
+            }
+            Prop::RawStrings => {
+                if let Some(i) = self.raw_strings {
                     PropVal::Int(i)
                 } else {
                     prop.default_value()

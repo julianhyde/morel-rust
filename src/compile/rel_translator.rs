@@ -2781,6 +2781,11 @@ mod tests {
         kernel
             .process_statement("Sys.set (\"stringDepth\", NONE)", None)
             .expect("sets stringDepth");
+        // The plan is read back from an escaped literal, which a plan,
+        // having newlines, would not otherwise print as.
+        kernel
+            .process_statement("Sys.set (\"rawStrings\", NONE)", None)
+            .expect("sets rawStrings");
         let statement = format!("Sys.planOf ({})", code);
         let output = kernel
             .process_statement(&statement, None)

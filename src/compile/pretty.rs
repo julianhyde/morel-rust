@@ -31,7 +31,8 @@ use crate::eval::real::Real;
 use crate::eval::val::Val;
 use crate::shell::prop::Output as PropOutput;
 use crate::syntax::parser::{
-    append_id, char_to_string, string_to_string_append,
+    append_id, char_to_string, raw_literal, should_write_raw, string_to_string,
+    string_to_string_append,
 };
 use crate::unify::unifier::COLLECTION_OP_NAME;
 use std::collections::{BTreeMap, HashMap};
@@ -52,6 +53,10 @@ pub struct Pretty {
     /// Column width at which tabular mode folds long strings across
     /// lines. `< 1` (the default) disables folding.
     string_fold: i32,
+    /// The number of newlines at which a top-level string prints as a
+    /// raw literal, `{|...|}`; negative means never. See the
+    /// `rawStrings` property.
+    raw_strings: i32,
     newline: char,
     /// Maps constructor name → argument type. Used to format record
     /// arguments with field names (e.g. `Foo {a=1,b="x"}` instead
@@ -99,6 +104,7 @@ impl Pretty {
         print_depth: i32,
         string_depth: i32,
         string_fold: i32,
+        raw_strings: i32,
         constructor_arg_types: HashMap<String, Type>,
         datatype_constructors: HashMap<String, Vec<String>>,
     ) -> Self {
@@ -109,6 +115,7 @@ impl Pretty {
             print_depth,
             string_depth,
             string_fold,
+            raw_strings,
             newline: '\n',
             constructor_arg_types,
             datatype_constructors,
@@ -126,6 +133,17 @@ impl Pretty {
     ) -> Result<(), fmt::Error> {
         if let Val::Typed(b) = value {
             let (name, v, t) = &**b;
+            // A string with enough newlines prints as a raw literal, in
+            // full (whatever "stringDepth" says) -- unless "printDepth" is
+            // 0, when the whole value prints as "#".
+            if let Val::String(s) = v
+                && matches!(t, Type::Primitive(PrimitiveType::String))
+                && self.print_depth != 0
+                && should_write_raw(s, self.raw_strings)
+            {
+                self.pretty_raw(buf, name, s);
+                return Ok(());
+            }
             // In tabular mode, a value whose type is a list of records
             // prints as a table. The tabular printer may decline at
             // runtime (e.g. when "printDepth" is too low to show the
@@ -156,6 +174,26 @@ impl Pretty {
         } else {
             self.line_width - 1
         }
+    }
+
+    /// Renders a string binding as a raw string literal.
+    ///
+    /// The literal goes where [`Self::pretty_classic`] would put the
+    /// escaped literal: after `val name =` if the escaped literal fits
+    /// there (the type may wrap onto the next line, so it does not affect
+    /// the decision), otherwise on the next line, indented by 2. The
+    /// literal spans lines, so the type follows the closing fence.
+    fn pretty_raw(&self, buf: &mut String, name: &str, s: &str) {
+        let mut prefix = String::from("val ");
+        append_id(&mut prefix, name);
+        prefix.push_str(" =");
+        let width = self.width() as usize;
+        let escaped_length = string_to_string(s).len() + 2;
+        let wrapped = prefix.len() + 1 + escaped_length > width;
+        buf.push_str(&prefix);
+        buf.push_str(if wrapped { "\n  " } else { " " });
+        buf.push_str(&raw_literal(s));
+        buf.push_str(" : string");
     }
 
     /// Renders a binding in classic (the default, non-tabular) style.

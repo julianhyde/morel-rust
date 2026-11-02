@@ -606,6 +606,7 @@ impl Kernel {
             Prop::MaxUseDepth => self.config.max_use_depth = Some(NO_LIMIT),
             Prop::PrintDepth => self.config.print_depth = Some(NO_LIMIT),
             Prop::PrintLength => self.config.print_length = Some(NO_LIMIT),
+            Prop::RawStrings => self.config.raw_strings = Some(NO_LIMIT),
             Prop::StringDepth => self.config.string_depth = Some(NO_LIMIT),
             _ => self.unset_prop_fields(prop),
         }
@@ -711,6 +712,11 @@ impl Kernel {
                 self.session.borrow_mut().config.range_max_length =
                     Some(i.clone());
                 Ok(PropVal::BigInt(i))
+            }
+            Prop::RawStrings => {
+                let i = expect_int(prop, val)?;
+                self.config.raw_strings = Some(i);
+                Ok(PropVal::Int(i))
             }
             Prop::ScriptDirectory => {
                 let b = Rc::new(PathBuf::from(expect_file(prop, val)?));
@@ -820,6 +826,9 @@ impl Kernel {
             }
             Prop::RangeMaxLength => {
                 self.session.borrow_mut().config.range_max_length = None;
+            }
+            Prop::RawStrings => {
+                self.config.raw_strings = None;
             }
             Prop::ScriptDirectory => {
                 self.session.borrow_mut().config.script_directory = None;

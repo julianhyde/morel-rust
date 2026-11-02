@@ -84,7 +84,7 @@ SCRIPT_SUFFIXES = (".smli", ".sml", ".sml.out")
 # belongs in the divergence report, where it reads as work to do.
 ACCEPTED = {
     "relational.smli": (
-        837,
+        839,
         "tests added here and not yet in morel-java: an `on` condition "
         "that reads the row the scan just produced where an outer value "
         "has the same name, and a set operator whose plan says "

@@ -626,6 +626,21 @@ define_props! {
         type: T_POS_INT_INF,
     },
 
+    RawStrings => {
+        doc: "Integer option property 'rawStrings' controls printing. A \
+              string value that contains at least this many newlines is \
+              printed as a raw string literal, {|...|}, rather than \
+              escaped. Only a top-level string value is printed this way, \
+              and only if it contains no tab, carriage return, control \
+              character or non-ASCII character, and no space before a \
+              newline. A raw string is printed in full, regardless of \
+              'stringDepth'. Default is SOME 2; SOME 0 prints every such \
+              string raw; NONE means that strings are never printed raw.",
+        camel_name: "rawStrings",
+        default: Some(PropVal::Int(2)),
+        type: T_NON_NEG_INT_OPT,
+    },
+
     Relationalize => {
         doc: "Boolean property 'relationalize' controls conversion to \
                 relational algebra. Default is false.",
@@ -807,7 +822,7 @@ mod tests {
     #[test]
     fn test_all_properties() {
         let all_props = Prop::all();
-        assert_eq!(all_props.len(), 27);
+        assert_eq!(all_props.len(), 28);
         assert!(all_props.contains(&Prop::Directory));
         assert!(all_props.contains(&Prop::LineWidth));
         assert!(all_props.contains(&Prop::MaxUseDepth));
