@@ -28,6 +28,15 @@
 //! the order the datatype lists them, and an argument that is absent --
 //! an inner join's kind, a `true` condition -- omitted.
 //!
+//! After the operator come the ids the node binds, which are in scope
+//! in its arguments: one for a filter, a projection, a group or a sort,
+//! two for a join, none for a set operator, and `$ordinal` where the
+//! node counts its elements. An id is named after the binder whose
+//! collection it ranges over -- `filter e [#deptno e > 20]` for `from e
+//! in emps where e.deptno > 20` -- and an id no binder names is `r`. A
+//! name is numbered, `r_1`, only where it would otherwise be the name of
+//! an id or a variable already in scope.
+//!
 //! Two numbering sequences run through the text, and both are
 //! properties of the text rather than of any node: `t$0`, `t$1`, ...
 //! for a type too long to print in full, listed once in a legend at the
@@ -44,7 +53,7 @@
 #![allow(dead_code)]
 
 use crate::compile::core::{
-    Decl, Expr, ORDINAL, RIGHT_ROW, ROW, Rel, Row, needs_brackets_as_function,
+    Decl, Expr, ORDINAL, Rel, id_name, needs_brackets_as_function,
     written_infix,
 };
 use crate::compile::free_finder::free_names_in;
@@ -57,6 +66,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::iter::once;
+use std::ptr;
 use std::rc::Rc;
 
 /// A type longer than this is replaced by a reference and printed once
@@ -92,6 +102,7 @@ pub fn plan_decl(decl: &Decl, line_width: usize) -> String {
             outer: free_names_in(&value),
             index: HashMap::new(),
             defs: Vec::new(),
+            ids: HashMap::new(),
         }))
     });
     let mut w = Writer::new(true, line_width);
@@ -140,6 +151,7 @@ pub fn plan(exp: &Expr, with_types: bool, line_width: usize) -> String {
             outer: free_names_in(exp),
             index: HashMap::new(),
             defs: Vec::new(),
+            ids: HashMap::new(),
         }))
     });
     let mut w = Writer::new(with_types, line_width);
@@ -171,6 +183,30 @@ struct Fragments {
     /// The relations broken out, in the order they were first referred
     /// to, each with the text that stands for it.
     defs: Vec<(Rc<Expr>, String)>,
+    /// The name each node's id prints under, by the row's own name,
+    /// which is unique: `e` for `$e$12`, `$ordinal` for a position. A
+    /// row is read outside its node -- in a dependent join's right
+    /// input, and in a fragment's header -- under the same name.
+    ids: HashMap<String, String>,
+}
+
+/// Returns the name a row prints under, or `None` for a name that is
+/// not a row's.
+fn printed_id(name: &str) -> Option<String> {
+    FRAGMENTS.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|f| f.ids.get(name).cloned())
+    })
+}
+
+/// Records the name a row prints under.
+fn record_id(name: &str, printed: &str) {
+    FRAGMENTS.with(|cell| {
+        if let Some(f) = cell.borrow_mut().as_mut() {
+            f.ids.insert(name.to_string(), printed.to_string());
+        }
+    });
 }
 
 /// Returns the reference a relation prints as, breaking it out of the
@@ -189,7 +225,7 @@ pub(crate) fn rel_ref(exp: &Expr) -> Option<String> {
             return Some(fragments.defs[*i].1.clone());
         }
         let i = fragments.defs.len();
-        let text = header(i, exp, &fragments.outer);
+        let text = header(i, exp, &fragments.outer, &fragments.ids);
         fragments.index.insert(key, i);
         fragments.defs.push((Rc::new(exp.clone()), text.clone()));
         Some(text)
@@ -219,12 +255,17 @@ fn fragment(i: usize) -> Option<(Rc<Expr>, String)> {
 /// The order here is provisional: [`renumber`] settles it, once the
 /// binders have the numbers the text gives them rather than the ones
 /// their maker handed out.
-fn header(i: usize, exp: &Expr, outer: &BTreeSet<String>) -> String {
+fn header(
+    i: usize,
+    exp: &Expr,
+    outer: &BTreeSet<String>,
+    ids: &HashMap<String, String>,
+) -> String {
     let free = free_names_in(exp);
-    let mut names: Vec<&str> = free
+    let mut names: Vec<String> = free
         .iter()
         .filter(|name| !outer.contains(*name))
-        .map(String::as_str)
+        .map(|name| ids.get(name).cloned().unwrap_or_else(|| name.clone()))
         .collect();
     names.sort_by(|a, b| compare_generated(a, b));
     if names.is_empty() {
@@ -270,6 +311,11 @@ struct Writer {
     /// freed and used again by another would give that one the first
     /// one's reference.
     opened: Vec<Rc<Rel>>,
+    /// The names of the ids in scope where the writer is: the enclosing
+    /// nodes' while a node's line is written, and a join's left id while
+    /// its right input is. A node's id is named so as not to be one of
+    /// them.
+    visible: Vec<String>,
 }
 
 impl Writer {
@@ -280,25 +326,36 @@ impl Writer {
             line_width,
             type_refs: Vec::new(),
             opened: Vec::new(),
+            visible: Vec::new(),
         }
     }
 
     /// Writes one node, and its inputs below it.
     fn node(&mut self, exp: &Expr, indent: usize) {
+        let scope = self.visible.len();
         let (mut docs, t) = match exp {
             Expr::Rel(t, rel) => {
                 let mut docs = vec![lindig::text(rel.op_name())];
+                // The ids the node binds, which are in scope in its
+                // arguments.
+                for name in self.bind_ids(rel) {
+                    docs.push(lindig::text(&format!(" {}", name)));
+                    self.visible.push(name);
+                }
                 let open = Rc::new(opened(rel));
                 self.opened.push(Rc::clone(&open));
-                for arg in args(&open, rel.is_dependent()) {
+                for arg in args(&open, rel) {
                     docs.push(lindig::text(" ["));
                     docs.push(arg);
                     docs.push(lindig::text("]"));
                 }
+                self.visible.truncate(scope);
                 (docs, t.clone())
             }
-            // A leaf is an ordinary expression, and prints as one.
-            leaf => (vec![doc(leaf)], leaf.type_()),
+            // A leaf is an ordinary expression, and prints as one; a
+            // row it reads, as a dependent join's right input reads the
+            // left, prints under its id's name.
+            leaf => (vec![doc(&renamed(leaf))], leaf.type_()),
         };
         if let Some(suffix) = self.type_suffix(&t) {
             docs.push(lindig::text(&suffix));
@@ -306,10 +363,65 @@ impl Writer {
         self.out.push_str(&wrap(docs, indent, self.line_width));
         self.out.push('\n');
         if let Expr::Rel(_, rel) = exp {
-            for input in rel.inputs() {
+            for (i, input) in rel.inputs().into_iter().enumerate() {
+                // The right input is evaluated once per left element,
+                // and may read it.
+                if let (Rel::Join(_, rows, ..), 1) = (rel.as_ref(), i)
+                    && let Some(left) = printed_id(&rows.left)
+                {
+                    self.visible.push(left);
+                }
                 self.node(input, indent + 2);
+                self.visible.truncate(scope);
             }
         }
+    }
+
+    /// Gives each id a node binds the name it prints under, and returns
+    /// the names.
+    ///
+    /// An id named after a binder prints as the binder, `e` for `from e
+    /// in emps`; any other prints as `r`; a position prints as
+    /// `$ordinal`. A name is numbered -- `e_1` -- only if an id of that
+    /// name is in scope, the node binds two, or a variable of that name
+    /// occurs where the id is in scope, as `r` does in `yield x + y +
+    /// r`. So the names are a function of the tree, not of the names its
+    /// maker gave the rows.
+    fn bind_ids(&mut self, rel: &Rel) -> Vec<String> {
+        let (rows, ordinal): (Vec<&String>, Option<&String>) = match rel {
+            Rel::Filter(row, ..)
+            | Rel::Group(row, ..)
+            | Rel::Project(row, ..)
+            | Rel::Sort(row, ..) => (vec![&row.name], row.ordinal.as_ref()),
+            Rel::Join(_, rows, ..) => {
+                (vec![&rows.left, &rows.right], rows.ordinal.as_ref())
+            }
+            _ => (vec![], None),
+        };
+        if rows.is_empty() {
+            return vec![];
+        }
+        let vars = vars_in_scope(rel);
+        let mut names: Vec<String> = Vec::new();
+        for row in rows {
+            let base = id_name(row).unwrap_or("r");
+            let mut candidate = base.to_string();
+            let mut i = 1;
+            while self.visible.contains(&candidate)
+                || names.contains(&candidate)
+                || vars.contains(&candidate)
+            {
+                candidate = format!("{}_{}", base, i);
+                i += 1;
+            }
+            record_id(row, &candidate);
+            names.push(candidate);
+        }
+        if let Some(o) = ordinal {
+            record_id(o, ORDINAL);
+            names.push(ORDINAL.to_string());
+        }
+        names
     }
 
     /// Returns the ` : type` a node's line ends with, as a moniker or a
@@ -566,23 +678,24 @@ fn doc_bounded(e: &Expr, left: u8, right: u8) -> Doc {
 /// join's `true` condition, an empty aggregate list, and the `all` of a
 /// set operator that does keep duplicates.
 ///
-/// `rel` is the node [`opened`], so that its rows print as `$0` and
-/// `$1` in its own arguments; anywhere else -- which is only where a
-/// dependent join's right input reads its left row, and where the join
-/// names that row as its binder -- a row prints as its own name.
-fn args(rel: &Rel, dependent: bool) -> Vec<Doc> {
+/// `rel` is the node [`opened`], so that its rows print under the
+/// names of its ids; `original` is the node as it was, which says
+/// whether a projection builds the element it was given.
+fn args(rel: &Rel, original: &Rel) -> Vec<Doc> {
     match rel {
         Rel::Filter(_, _, condition) => vec![doc(condition)],
         // A projection that builds the element it was given says
         // nothing, so it has no argument, as `spec.md` §6.3 lists
         // alongside an inner join's kind and a `true` condition.
-        Rel::Project(_, _, e) => {
-            if matches!(e.as_ref(), Expr::Identifier(_, name) if name == ROW) {
+        Rel::Project(_, _, e) => match original {
+            Rel::Project(row, _, e0)
+                if matches!(e0.as_ref(),
+                    Expr::Identifier(_, name) if *name == row.name) =>
+            {
                 vec![]
-            } else {
-                vec![doc(e)]
             }
-        }
+            _ => vec![doc(e)],
+        },
         Rel::Sort(_, _, e) => vec![doc(e)],
         Rel::Skip(_, n) | Rel::Take(_, n) => vec![doc(n)],
         Rel::Unorder(_) => vec![],
@@ -593,13 +706,10 @@ fn args(rel: &Rel, dependent: bool) -> Vec<Doc> {
             }
             v
         }
-        Rel::Join(kind, rows, condition, _, _) => {
+        Rel::Join(kind, _, condition, _, _) => {
             let mut v = Vec::new();
             if let Some(name) = kind.name() {
                 v.push(lindig::text(name));
-            }
-            if dependent {
-                v.push(lindig::text(&rows.left));
             }
             if !is_true(condition) {
                 v.push(doc(condition));
@@ -618,57 +728,68 @@ fn args(rel: &Rel, dependent: bool) -> Vec<Doc> {
     }
 }
 
-/// Returns a node with its rows renamed to the placeholders, which
-/// print as `$0` and `$1`, in its own expressions only: a node nested
-/// in one prints as a fragment of its own, where the rows it reads from
-/// outside print under their own names.
+/// Returns a node with the rows its expressions read renamed to the
+/// names they print under, in its own expressions only: a node nested in
+/// one prints as a fragment of its own, and is renamed when it is
+/// printed.
 fn opened(rel: &Rel) -> Rel {
-    let open = |e: &Expr, names: &[(&str, &str)]| {
-        names
-            .iter()
-            .fold(e.clone(), |e, (from, to)| rename_here(&e, from, to))
+    rel.map_children(&|e| match e {
+        Expr::Rel(..) => e.clone(),
+        _ => renamed(e),
+    })
+}
+
+/// Returns an expression with the rows it reads renamed to the names
+/// they print under, stopping at a nested node.
+fn renamed(e: &Expr) -> Expr {
+    let mut e = e.clone();
+    for name in free_names_in(&e) {
+        if let Some(printed) = printed_id(&name) {
+            e = rename_here(&e, &name, &printed);
+        }
+    }
+    e
+}
+
+/// Returns the names of the ordinary variables that occur where a node's
+/// ids are in scope: in its own expressions, and in a join's right
+/// input. A row's name, which starts with `$`, is not a variable's.
+fn vars_in_scope(rel: &Rel) -> BTreeSet<String> {
+    let out = RefCell::new(BTreeSet::new());
+    let inputs = rel.inputs();
+    let right = match rel {
+        Rel::Join(..) => inputs.get(1).copied(),
+        _ => None,
     };
-    let open_row = |e: &Expr, row: &Row| match &row.ordinal {
-        Some(o) => open(e, &[(&row.name, ROW), (o, ORDINAL)]),
-        None => open(e, &[(&row.name, ROW)]),
-    };
-    match rel {
-        Rel::Filter(row, input, c) => {
-            Rel::Filter(row.clone(), input.clone(), Box::new(open_row(c, row)))
+    for child in rel.children() {
+        let is_input = inputs.iter().any(|x| ptr::eq(*x, child));
+        if !is_input || right.is_some_and(|r| ptr::eq(r, child)) {
+            identifiers(child, &out);
         }
-        Rel::Group(row, input, keys, aggs) => {
-            let parts = |parts: &[(Label, Expr)]| {
-                parts
-                    .iter()
-                    .map(|(l, e)| (l.clone(), open_row(e, row)))
-                    .collect()
-            };
-            Rel::Group(row.clone(), input.clone(), parts(keys), parts(aggs))
+    }
+    out.into_inner()
+}
+
+/// Adds to `out` the name of every variable that occurs in `e`, nested
+/// trees included.
+fn identifiers(e: &Expr, out: &RefCell<BTreeSet<String>>) {
+    match e {
+        Expr::Identifier(_, name) => {
+            if !name.starts_with('$') {
+                out.borrow_mut().insert(name.clone());
+            }
         }
-        Rel::Join(kind, rows, c, left, right) => Rel::Join(
-            *kind,
-            rows.clone(),
-            Box::new(match &rows.ordinal {
-                Some(o) => open(
-                    c,
-                    &[
-                        (&rows.left, ROW),
-                        (&rows.right, RIGHT_ROW),
-                        (o, ORDINAL),
-                    ],
-                ),
-                None => open(c, &[(&rows.left, ROW), (&rows.right, RIGHT_ROW)]),
-            }),
-            left.clone(),
-            right.clone(),
-        ),
-        Rel::Project(row, input, e) => {
-            Rel::Project(row.clone(), input.clone(), Box::new(open_row(e, row)))
+        Expr::Rel(_, rel) => {
+            for child in rel.children() {
+                identifiers(child, out);
+            }
         }
-        Rel::Sort(row, input, e) => {
-            Rel::Sort(row.clone(), input.clone(), Box::new(open_row(e, row)))
+        _ => {
+            let _ = rel_lowerer::map_children(e, &|c| {
+                identifiers(c, out);
+                c.clone()
+            });
         }
-        other => other.clone(),
     }
 }
 
@@ -870,7 +991,7 @@ fn generated_name(chars: &[char], i: usize) -> Option<(String, String, usize)> {
 mod tests {
     use super::*;
     use crate::compile::core::{
-        Decl, JoinKind, JoinRows, Kind, Match, Pat, Row, ValBind,
+        Decl, JoinKind, JoinRows, Kind, Match, Pat, ROW, Row, ValBind,
     };
     use crate::compile::library::BuiltInFunction;
     use crate::compile::span::Span;
@@ -950,7 +1071,7 @@ mod tests {
         Expr::Rel(t, Box::new(rel))
     }
 
-    /// The element a node is being built over, `$0`.
+    /// The element a node is being built over, `r`.
     fn row(t: Rc<Type>) -> Expr {
         Expr::Identifier(t, ROW.to_string())
     }
@@ -975,7 +1096,7 @@ mod tests {
             Box::new(id("r", Kind::List.apply(int()))),
             Box::new(t()),
         ));
-        assert_eq!(plan(&tree, false, 78), "filter [true]\n  r\n");
+        assert_eq!(plan(&tree, false, 78), "filter r [true]\n  r\n");
     }
 
     /// Every node line ends in its collection type.
@@ -988,7 +1109,7 @@ mod tests {
         ));
         assert_eq!(
             plan(&tree, true, 78),
-            "filter [true] : int list\n  r : int list\n"
+            "filter r [true] : int list\n  r : int list\n"
         );
     }
 
@@ -1005,7 +1126,7 @@ mod tests {
             Box::new(left.clone()),
             Box::new(right.clone()),
         ));
-        assert_eq!(plan(&inner, false, 78), "join\n  a\n  b\n");
+        assert_eq!(plan(&inner, false, 78), "join r r_1\n  a\n  b\n");
 
         // A left join says so, and where its right input reads the
         // left row the row prints, under its own name, before the
@@ -1021,7 +1142,7 @@ mod tests {
         ));
         assert_eq!(
             plan(&outer, false, 78),
-            "join [left] [v$0] [p]\n  a\n  [v$0]\n"
+            "join r r_1 [left] [p]\n  a\n  [r]\n"
         );
     }
 
@@ -1052,7 +1173,7 @@ mod tests {
         ));
         assert_eq!(
             plan(&with_aggregates, false, 78),
-            "group [k = $0] [c = n]\n  r\n"
+            "group r [k = r] [c = n]\n  r\n"
         );
         // No aggregates, so no second argument. This is `distinct`.
         let without = node(Rel::Group(
@@ -1061,7 +1182,7 @@ mod tests {
             keys,
             vec![],
         ));
-        assert_eq!(plan(&without, false, 78), "group [k = $0]\n  r\n");
+        assert_eq!(plan(&without, false, 78), "group r [k = r]\n  r\n");
     }
 
     /// A type longer than the limit prints as a reference, and once in
@@ -1077,7 +1198,7 @@ mod tests {
         ));
         assert_eq!(
             plan(&tree, true, 78),
-            "filter [true] : t$0\n  \
+            "filter r [true] : t$0\n  \
              depts : t$0\n\
              \n\
              t$0 {deptno:int, dname:string} bag\n"
@@ -1100,12 +1221,12 @@ mod tests {
         // At a width that holds it, nothing moves.
         assert_eq!(
             plan(&tree, false, 200),
-            "filter [$0 > 100000 andalso $0 > 200000]\n  xs\n"
+            "filter r [r > 100000 andalso r > 200000]\n  xs\n"
         );
         // At 30 it folds before the `andalso`, four from the node.
         assert_eq!(
             plan(&tree, false, 30),
-            "filter [$0 > 100000\n    andalso $0 > 200000]\n  xs\n"
+            "filter r [r > 100000\n    andalso r > 200000]\n  xs\n"
         );
     }
 
@@ -1129,7 +1250,7 @@ mod tests {
         // breaks, or none does.
         assert_eq!(
             plan(&tree, false, 40),
-            "project [{aaaaaaaa = 1,\n    \
+            "project r [{aaaaaaaa = 1,\n    \
              bbbbbbbb = 2,\n    \
              cccccccc = 3}]\n  xs\n"
         );
@@ -1148,14 +1269,14 @@ mod tests {
         ));
         assert_eq!(
             plan(&tree, false, 45),
-            "filter [let val v$0 = $0 in $0 > v$0 end]\n  xs\n"
+            "filter r [let val v$0 = r in r > v$0 end]\n  xs\n"
         );
         assert_eq!(
             plan(&tree, false, 30),
-            "filter [let\n      \
-             val v$0 = $0\n    \
+            "filter r [let\n      \
+             val v$0 = r\n    \
              in\n      \
-             $0 > v$0\n    \
+             r > v$0\n    \
              end]\n  xs\n"
         );
     }
@@ -1183,7 +1304,7 @@ mod tests {
         ));
         assert_eq!(
             plan(&tree, false, 30),
-            "project [case $0 of 1 => 100\n      \
+            "project r [case r of 1 => 100\n      \
              | 2 => 200\n      \
              | 3 => 300]\n  xs\n"
         );
@@ -1261,12 +1382,12 @@ mod tests {
         ));
         assert_eq!(
             plan(&tree, true, 78),
-            "project [let val v$0 = $0 in \
-             {i = $0, ys = r$0[v$0]} end] : t$0\n  \
+            "project r [let val v$0 = r in \
+             {i = r, ys = r$0[v$0]} end] : t$0\n  \
              [1, 2] : int list\n\
              \n\
              r$0[v$0] =\n  \
-             filter [$0 > v$0] : int list\n    \
+             filter r [r > v$0] : int list\n    \
              [3, 4] : int list\n\
              \n\
              t$0 {i:int, ys:int list} list\n"
@@ -1312,15 +1433,15 @@ mod tests {
         ));
         assert_eq!(
             plan(&tree, false, 200),
-            "filter [let val v$0 = $0 in nonEmpty (r$0[v$0]) end]\n  \
+            "filter r [let val v$0 = r in nonEmpty (r$0[v$0]) end]\n  \
              xs\n\
              \n\
              r$0[v$0] =\n  \
-             filter [nonEmpty (r$1[v$0])]\n    \
+             filter r [nonEmpty (r$1[v$0])]\n    \
              pairs\n\
              \n\
              r$1[v$0] =\n  \
-             filter [$0 > v$0]\n    \
+             filter r [r > v$0]\n    \
              pairs\n"
         );
     }
@@ -1348,8 +1469,8 @@ mod tests {
             )),
         ));
         let text = plan(&tree, false, 200);
-        assert!(text.starts_with("filter [(r$0, r$1)]\n"), "{}", text);
-        assert_eq!(text.matches("filter [true]").count(), 2, "{}", text);
+        assert!(text.starts_with("filter r [(r$0, r$1)]\n"), "{}", text);
+        assert_eq!(text.matches("filter r [true]").count(), 2, "{}", text);
     }
 
     /// A fragment's names are in the order the *text* numbers them, not

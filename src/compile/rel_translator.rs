@@ -42,7 +42,7 @@
 use crate::compile::core::{
     Binding, Decl, Expr, JoinKind, JoinRows, Match, ORDINAL, Pat, PatField,
     RIGHT_ROW, ROW, Rel, Row, Step, StepEnv, StepKind, ValBind, element_type,
-    fresh_name, rename,
+    fresh_name, fresh_row_name, rename,
 };
 use crate::compile::free_finder::free_names_in;
 use crate::compile::from_builder::ORDINAL_FIELD_PREFIX;
@@ -199,6 +199,7 @@ impl StepTranslator {
                 in_scope: Vec::new(),
                 nested,
                 atom: true,
+                name: None,
             },
             declined: false,
             computes: false,
@@ -639,6 +640,12 @@ struct Translator {
     /// binders: `yield {j = i + 1}` binds one name and the row is a
     /// record.
     atom: bool,
+    /// The binder the tree's element is the value of, `e` after `from e
+    /// in emps`, which names the row of the node built over it; or
+    /// `None` where no binder names the element -- a join's pair, what
+    /// a projection or a group builds -- and the row is unnamed. See
+    /// [`fresh_row_name`].
+    name: Option<String>,
 }
 
 impl Translator {
@@ -780,6 +787,7 @@ impl Translator {
                 self.tree =
                     Some(filtered(self.source_tree(source, true)?, test)?);
                 self.bindings = paths;
+                self.name = binder_name(pat);
             }
             Some(left) => {
                 // A scan that reads an earlier binder is a dependent
@@ -801,7 +809,7 @@ impl Translator {
                     // kind as any join may: the condition reads the
                     // left row as `$0` and the right as `$1`, and the
                     // right input reads the left row by its name.
-                    let name = self.new_binder();
+                    let name = fresh_row_name(self.name.as_deref());
                     if let Some(tree) = self.correlated(source, &left, &name) {
                         rows = JoinRows::dependent(name);
                         right = tree;
@@ -845,7 +853,12 @@ impl Translator {
                     Box::new(left),
                     Box::new(right),
                 );
-                let tree = node(join)?;
+                let tree = node(join.bind_named(
+                    self.name.as_deref(),
+                    binder_name(pat).as_deref(),
+                ))?;
+                // No binder names a pair.
+                self.name = None;
                 // The components concatenate, so a tree that had one
                 // component becomes the first of them and its binders
                 // read through it; one that was a join already has its
@@ -1547,6 +1560,7 @@ impl Translator {
         if element_type(&left.type_()) != element_type(&operand.type_()) {
             let named = self.name_the_components(left, &operand.type_())?;
             left = named;
+            self.name = None;
             // The element is now the row the binders name: the one
             // binder's value, where there is one and the row is it, and
             // otherwise the record of them, each binder its own field.
@@ -1653,7 +1667,7 @@ impl Translator {
                     && fields.values().next() == Some(value_type) =>
             {
                 let field = selector(row_ref(&elem, 0), 0, value_type.clone());
-                node(Rel::Project(
+                self.named(Rel::Project(
                     Row::placeholder(),
                     Box::new(tree),
                     Box::new(field),
@@ -1680,7 +1694,7 @@ impl Translator {
         if let [(_, path)] = self.bindings.as_slice() {
             let value = path.read(&elem)?;
             if same_type(&value.type_(), &row) {
-                return node(Rel::Project(
+                return self.named(Rel::Project(
                     Row::placeholder(),
                     Box::new(tree),
                     Box::new(value),
@@ -1694,7 +1708,7 @@ impl Translator {
             && matches!(peel(&row), Type::Primitive(PrimitiveType::Unit))
         {
             let unit = Expr::Literal(row.clone(), Val::Unit);
-            return node(Rel::Project(
+            return self.named(Rel::Project(
                 Row::placeholder(),
                 Box::new(tree),
                 Box::new(unit),
@@ -1716,11 +1730,17 @@ impl Translator {
             values.push(path.read(&elem)?);
         }
         let value = Expr::Tuple(row, values);
-        node(Rel::Project(
+        self.named(Rel::Project(
             Row::placeholder(),
             Box::new(tree),
             Box::new(value),
         ))
+    }
+
+    /// Returns a node over the tree's element, its row named after the
+    /// binder the element is the value of.
+    fn named(&self, rel: Rel) -> Option<Expr> {
+        node(rel.bind_named(self.name.as_deref(), None))
     }
 
     /// Replaces the tree with a node built over it.
@@ -1728,7 +1748,13 @@ impl Translator {
         let Some(input) = self.tree.take() else {
             return decline("a step with nothing under it");
         };
-        self.tree = Some(node(f(Box::new(input)))?);
+        let rel = f(Box::new(input)).bind_named(self.name.as_deref(), None);
+        // A node over the same element keeps its name; one that builds
+        // an element of its own builds one that no binder names.
+        if matches!(rel, Rel::Project(..) | Rel::Group(..)) {
+            self.name = None;
+        }
+        self.tree = Some(node(rel)?);
         Some(())
     }
 
@@ -1999,6 +2025,16 @@ fn unit_leaf() -> Expr {
 
 /// Returns `tree` with a filter over it, or `tree` itself where there
 /// is nothing to filter on.
+/// Returns the binder a scan's pattern names its element, where the
+/// pattern is a bare name; a pattern that destructures the element
+/// leaves it unnamed.
+fn binder_name(pat: &Pat) -> Option<String> {
+    match pat {
+        Pat::Identifier(_, name) => Some(name.clone()),
+        _ => None,
+    }
+}
+
 fn filtered(tree: Expr, test: Option<Expr>) -> Option<Expr> {
     match test {
         None => Some(tree),
@@ -2759,12 +2795,14 @@ mod tests {
     }
 
     /// A filter over a leaf, which is the smallest tree there is. The
-    /// binder `i` is gone, and the condition reads the element.
+    /// leaf holds no name; the filter binds the element, and its id is
+    /// named after the binder `i`.
     #[test]
     fn a_filter_over_a_leaf() {
         assert_eq!(
             tree_of("from i in [1, 2, 3] where i > 1").unwrap(),
-            "filter [$0 > 1] : int list\n  [1, 2, 3] : int list\n"
+            "filter i [i > 1] : int list\n  \
+             [1, 2, 3] : int list\n"
         );
     }
 
@@ -2774,7 +2812,8 @@ mod tests {
     fn a_query_with_no_scan_has_a_unit_leaf() {
         assert_eq!(
             tree_of("from yield 1").unwrap(),
-            "project [1] : int list\n  [()] : unit list\n"
+            "project r [1] : int list\n  \
+             [()] : unit list\n"
         );
     }
 
@@ -2788,7 +2827,7 @@ mod tests {
             text,
             "take [1] : int list\n  \
              skip [1] : int list\n    \
-             sort [$0] : int list\n      \
+             sort i [i] : int list\n      \
              [3, 1, 2] : int list\n"
         );
     }
@@ -2802,8 +2841,8 @@ mod tests {
                 .unwrap();
         assert!(
             text.starts_with(
-                "project [{i = #1 $0, j = #2 $0}] : {i:int, j:int} list\n  \
-                 filter [#1 $0 < #2 $0] : (int * int) list\n    join : \
+                "project r [{i = #1 r, j = #2 r}] : {i:int, j:int} list\n  \
+                 filter r [#1 r < #2 r] : (int * int) list\n    join i j : \
                  (int * int) list\n"
             ),
             "{}",
@@ -2852,8 +2891,8 @@ mod tests {
     fn a_lone_group_key_takes_its_name_off_the_expression() {
         assert_eq!(
             tree_of("from i in [1, 2] group j = i").unwrap(),
-            "project [#i $0] : int list\n  \
-             group [i = $0] : {i:int} list\n    \
+            "project r [#i r] : int list\n  \
+             group i [i = i] : {i:int} list\n    \
              [1, 2] : int list\n"
         );
     }
@@ -2865,8 +2904,8 @@ mod tests {
     fn a_pattern_that_can_fail_filters_and_binds() {
         assert_eq!(
             tree_of("from (x, 20) in [(1, 10), (2, 20)]").unwrap(),
-            "project [#1 $0] : int list\n  \
-             filter [#2 $0 = 20] : (int * int) list\n    \
+            "project r [#1 r] : int list\n  \
+             filter r [#2 r = 20] : (int * int) list\n    \
              [(1, 10), (2, 20)] : (int * int) list\n"
         );
     }
@@ -2878,7 +2917,7 @@ mod tests {
     fn a_scan_may_destructure() {
         assert_eq!(
             tree_of("from (i, j) in [(1, 2)]").unwrap(),
-            "project [{i = #1 $0, j = #2 $0}] : {i:int, j:int} list\n  \
+            "project r [{i = #1 r, j = #2 r}] : {i:int, j:int} list\n  \
              [(1, 2)] : (int * int) list\n"
         );
     }
@@ -2890,8 +2929,8 @@ mod tests {
     fn a_node_that_reads_ordinal_binds_it() {
         assert_eq!(
             tree_of("from i in [3, 1, 2] order i where ordinal > 0").unwrap(),
-            "filter [$ordinal > 0] : int list\n  \
-             sort [$0] : int list\n    \
+            "filter i $ordinal [$ordinal > 0] : int list\n  \
+             sort i [i] : int list\n    \
              [3, 1, 2] : int list\n"
         );
     }
@@ -2904,8 +2943,7 @@ mod tests {
         assert_eq!(
             tree_of("from x in [10, 20] yield (from i in [1, 2] take ordinal)")
                 .unwrap(),
-            "project [let val v$0 = $ordinal in r$0[v$0] end] : \
-             int list list\n  \
+            "project x $ordinal [let val v$0 = $ordinal in r$0[v$0] end] : int list list\n  \
              [10, 20] : int list\n\
              \n\
              r$0[v$0] =\n  \
@@ -2921,13 +2959,14 @@ mod tests {
     fn current_is_the_row() {
         assert_eq!(
             tree_of("from i in [3, 1, 2] where current mod 2 = 1").unwrap(),
-            "filter [$0 mod 2 = 1] : int list\n  [3, 1, 2] : int list\n"
+            "filter i [i mod 2 = 1] : int list\n  \
+             [3, 1, 2] : int list\n"
         );
         assert!(
             tree_of("from i in [1, 2] join j in [\"a\"] yield current")
                 .unwrap()
                 .starts_with(
-                    "project [{i = #1 $0, j = #2 $0}] : {i:int, j:string} list\n"
+                    "project r [{i = #1 r, j = #2 r}] : {i:int, j:string} list\n"
                 ),
         );
     }
@@ -2942,9 +2981,8 @@ mod tests {
             "#only Relational (r$0) : int\n\
              \n\
              r$0 =\n  \
-             project [#sum $0] : int list\n    \
-             group [] [sum = fn col$0 => sum (#fromList Bag col$0) over $0] \
-             : {sum:int} list\n      \
+             project r [#sum r] : int list\n    \
+             group i [] [sum = fn col$0 => sum (#fromList Bag col$0) over i] : {sum:int} list\n      \
              [2, 1, 2] : int list\n"
         );
     }
@@ -2958,9 +2996,8 @@ mod tests {
                 "from i in [1, 2] group i compute {r = 10 + 2 * sum over i}"
             )
             .unwrap(),
-            "project [{i = #i $0, r = 10 + 2 * #sum $0}] : {i:int, r:int} list\n  \
-             group [i = $0] [sum = fn col$0 => sum (#fromList Bag col$0) over $0] \
-             : {i:int, sum:int} list\n    \
+            "project r [{i = #i r, r = 10 + 2 * #sum r}] : {i:int, r:int} list\n  \
+             group i [i = i] [sum = fn col$0 => sum (#fromList Bag col$0) over i] : {i:int, sum:int} list\n    \
              [1, 2] : int list\n"
         );
     }
@@ -2972,14 +3009,14 @@ mod tests {
     fn an_unnamed_key_takes_a_generated_label() {
         assert_eq!(
             tree_of("from (x, y) in [(1, 2), (3, 4)] group x + y").unwrap(),
-            "project [#`v$0` $0] : int list\n  \
-             group [v$0 = #1 $0 + #2 $0] : {v$0:int} list\n    \
+            "project r [#`v$0` r] : int list\n  \
+             group r [v$0 = #1 r + #2 r] : {v$0:int} list\n    \
              [(1, 2), (3, 4)] : (int * int) list\n"
         );
         assert_eq!(
             tree_of("from i in [1, 2] group {} compute 1 + 2").unwrap(),
-            "project [1 + 2] : int list\n  \
-             group [] : unit list\n    \
+            "project r [1 + 2] : int list\n  \
+             group i [] : unit list\n    \
              [1, 2] : int list\n"
         );
     }
@@ -2991,17 +3028,17 @@ mod tests {
     fn distinct_groups_the_row() {
         assert_eq!(
             tree_of("from i in [1, 2], j in [3] distinct").unwrap(),
-            "group [i = #i $0, j = #j $0] : {i:int, j:int} list\n  \
-             project [{i = #1 $0, j = #2 $0}] : {i:int, j:int} list\n    \
-             join : (int * int) list\n      \
+            "group r [i = #i r, j = #j r] : {i:int, j:int} list\n  \
+             project r [{i = #1 r, j = #2 r}] : {i:int, j:int} list\n    \
+             join i j : (int * int) list\n      \
              [1, 2] : int list\n      \
              [3] : int list\n"
         );
         assert_eq!(
             tree_of("from i in [2, 1, 2, 3] distinct union [9]").unwrap(),
             "union [all] : int list\n  \
-             project [#i $0] : int list\n    \
-             group [i = $0] : {i:int} list\n      \
+             project r [#i r] : int list\n    \
+             group i [i = i] : {i:int} list\n      \
              [2, 1, 2, 3] : int list\n  \
              [9] : int list\n"
         );
@@ -3013,8 +3050,8 @@ mod tests {
     fn scans_that_bind_nothing_project_unit() {
         assert_eq!(
             tree_of("from _ in [1], _ in [true]").unwrap(),
-            "project [()] : unit list\n  \
-             join : (int * bool) list\n    \
+            "project r [()] : unit list\n  \
+             join r r_1 : (int * bool) list\n    \
              [1] : int list\n    \
              [true] : bool list\n"
         );
@@ -3030,40 +3067,40 @@ mod tests {
                 "from i in [10, 20, 30] join j in [1, 2] on ordinal mod 2 = 0"
             )
             .unwrap(),
-            "project [{i = #1 $0, j = #2 $0}] : {i:int, j:int} list\n  \
-             join [$ordinal mod 2 = 0] : (int * int) list\n    \
+            "project r [{i = #1 r, j = #2 r}] : {i:int, j:int} list\n  \
+             join i j $ordinal [$ordinal mod 2 = 0] : (int * int) list\n    \
              [10, 20, 30] : int list\n    \
              [1, 2] : int list\n"
         );
         assert_eq!(
             tree_of("from i in [10, 20, 30], j in [i + ordinal] yield j")
                 .unwrap(),
-            "project [#2 $0] : int list\n  \
-             join [v$0] : (int * int) list\n    \
+            "project r [#2 r] : int list\n  \
+             join i j $ordinal : (int * int) list\n    \
              [10, 20, 30] : int list\n    \
-             [v$0 + v$1] : int list\n"
+             [i + $ordinal] : int list\n"
         );
     }
 
     /// Where one binder is the whole row, `distinct` makes the row that
-    /// binder's value again at once, so what follows reads `$0`; and a
+    /// binder's value again at once, so what follows reads the element; and a
     /// row the query did not name is keyed under a generated label.
     #[test]
     fn distinct_over_an_atom_projects_at_once() {
         assert_eq!(
             tree_of("from i in [3, 1, 2, 3] distinct order DESC i").unwrap(),
-            "sort [DESC $0] : int list\n  \
-             project [#i $0] : int list\n    \
-             group [i = $0] : {i:int} list\n      \
+            "sort r [DESC r] : int list\n  \
+             project r [#i r] : int list\n    \
+             group i [i = i] : {i:int} list\n      \
              [3, 1, 2, 3] : int list\n"
         );
         assert_eq!(
             tree_of("from i in [0, 1, 2, 3] yield i mod 3 distinct order DESC current")
                 .unwrap(),
-            "sort [DESC $0] : int list\n  \
-             project [#`v$0` $0] : int list\n    \
-             group [v$0 = $0] : {v$0:int} list\n      \
-             project [$0 mod 3] : int list\n        \
+            "sort r [DESC r] : int list\n  \
+             project r [#`v$0` r] : int list\n    \
+             group r [v$0 = r] : {v$0:int} list\n      \
+             project i [i mod 3] : int list\n        \
              [0, 1, 2, 3] : int list\n"
         );
     }
