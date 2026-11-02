@@ -32,7 +32,7 @@
 
 use crate::compile::core::{
     Expr, JoinKind, JoinRows, ORDINAL, Pat, PatField, RIGHT_ROW, ROW, Rel, Row,
-    Step, StepKind, element_type, fresh_name,
+    Step, StepKind, element_binder, element_type, fresh_name, fresh_row_name,
 };
 use crate::compile::expander::{DatatypeMap, FnEnv, and_all, list_bounds};
 use crate::compile::free_finder::free_names_in;
@@ -1663,11 +1663,21 @@ impl<'a> Expander<'a> {
             return Some(());
         };
         let left_elem = element_type(&left.type_())?;
+        // The left side is named after its one leaf's pattern, until a
+        // second leaf makes it a pair.
+        let left_binder = match c.bindings.values().next() {
+            Some((_, pat)) if c.leaves == 1 => pat_binder(pat),
+            _ => None,
+        };
         let mut binder: Option<String> = None;
         let mut reads: BTreeMap<String, Expr> = BTreeMap::new();
         for free in &g.free_pats {
             if c.bindings.contains_key(free) {
-                let name = binder.get_or_insert_with(fresh_name).clone();
+                let name = binder
+                    .get_or_insert_with(|| {
+                        fresh_row_name(left_binder.as_deref())
+                    })
+                    .clone();
                 let base = Expr::Identifier(left_elem.clone(), name);
                 reads.insert(free.clone(), c.path_of(free, &base)?);
             }
@@ -1703,13 +1713,16 @@ impl<'a> Expander<'a> {
             Some(name) => JoinRows::dependent(name),
             None => JoinRows::placeholder(),
         };
-        c.exp = Some(node(Rel::Join(
-            JoinKind::Inner,
-            rows,
-            Box::new(condition),
-            Box::new(left),
-            Box::new(right),
-        ))?);
+        c.exp = Some(node(
+            Rel::Join(
+                JoinKind::Inner,
+                rows,
+                Box::new(condition),
+                Box::new(left),
+                Box::new(right),
+            )
+            .bind_named(left_binder.as_deref(), pat_binder(&g.pat).as_deref()),
+        )?);
         for (p, _) in pat_names(&g.pat) {
             c.bindings.entry(p).or_insert((c.leaves, g.pat.clone()));
         }
@@ -1879,6 +1892,8 @@ impl<'a> Expander<'a> {
         bound: &BTreeMap<String, Expr>,
     ) -> Option<Expr> {
         let mut product: Option<Expr> = None;
+        let mut previous: Option<String> = None;
+        let mut first = true;
         for (name, t) in pat_names(pat) {
             let Some(g) = settled.best(&name).cloned() else {
                 return self.fail(&format!("no generator for {}", name));
@@ -1902,16 +1917,23 @@ impl<'a> Expander<'a> {
                     name
                 ));
             }
+            // Each component is named after its name, and the pair of
+            // the first two after nothing.
             product = Some(match product {
                 None => component,
-                Some(p) => node(Rel::Join(
-                    JoinKind::Inner,
-                    JoinRows::placeholder(),
-                    Box::new(true_literal()),
-                    Box::new(p),
-                    Box::new(component),
-                ))?,
+                Some(p) => node(
+                    Rel::Join(
+                        JoinKind::Inner,
+                        JoinRows::placeholder(),
+                        Box::new(true_literal()),
+                        Box::new(p),
+                        Box::new(component),
+                    )
+                    .bind_named(previous.as_deref(), Some(&name)),
+                )?,
             });
+            previous = first.then(|| name.clone());
+            first = false;
         }
         let product = product?;
         // A join's element is one component per name, in the order
@@ -2143,22 +2165,24 @@ fn same_element(collection: &Expr, t: &Rc<Type>) -> bool {
 /// one counts before it drops rows and the upper one after.
 fn filter_of(input: Expr, condition: Expr) -> Expr {
     if let Expr::Rel(_, rel) = &input
-        && let Rel::Filter(_, inner, lower) = rel.open()
+        && let Rel::Filter(row, inner, lower) = rel.open()
         && !reads_ordinal(&lower)
         && !reads_ordinal(&condition)
     {
         let merged = and_all(vec![*lower, condition.clone()]);
-        if let Some(out) =
-            node(Rel::Filter(Row::placeholder(), inner, Box::new(merged)))
-        {
+        if let Some(out) = node(Rel::Filter(row, inner, Box::new(merged))) {
             return out;
         }
     }
-    node(Rel::Filter(
-        Row::placeholder(),
-        Box::new(input.clone()),
-        Box::new(condition),
-    ))
+    let binder = element_binder(&input);
+    node(
+        Rel::Filter(
+            Row::placeholder(),
+            Box::new(input.clone()),
+            Box::new(condition),
+        )
+        .bind_named(binder.as_deref(), None),
+    )
     .unwrap_or(input)
 }
 
@@ -2171,20 +2195,22 @@ fn project_of(input: Expr, exp: Expr) -> Expr {
         return input;
     }
     if let Expr::Rel(_, rel) = &input
-        && let Rel::Project(_, inner, lower) = rel.open()
+        && let Rel::Project(row, inner, lower) = rel.open()
     {
         let merged = subst(&exp, &lower, None);
-        if let Some(out) =
-            node(Rel::Project(Row::placeholder(), inner, Box::new(merged)))
-        {
+        if let Some(out) = node(Rel::Project(row, inner, Box::new(merged))) {
             return out;
         }
     }
-    node(Rel::Project(
-        Row::placeholder(),
-        Box::new(input.clone()),
-        Box::new(exp),
-    ))
+    let binder = element_binder(&input);
+    node(
+        Rel::Project(
+            Row::placeholder(),
+            Box::new(input.clone()),
+            Box::new(exp),
+        )
+        .bind_named(binder.as_deref(), None),
+    )
     .unwrap_or(input)
 }
 
@@ -2365,12 +2391,15 @@ fn dedup_row(
 /// yields each assignment once.
 fn dedup_named(collection: Expr, name: &str) -> Option<Expr> {
     let element = input_of(&collection)?;
-    let group = node(Rel::Group(
-        Row::placeholder(),
-        Box::new(collection),
-        vec![(Label::String(name.to_string()), element.clone())],
-        Vec::new(),
-    ))?;
+    let group = node(
+        Rel::Group(
+            Row::placeholder(),
+            Box::new(collection),
+            vec![(Label::String(name.to_string()), element.clone())],
+            Vec::new(),
+        )
+        .bind_named(Some(name), None),
+    )?;
     let row = input_of(&group)?;
     let project = project_of(group, field_at(&row, 0));
     node(Rel::Sort(
@@ -2496,6 +2525,15 @@ fn tighten_ranges(frame: &mut Frame, constraints: &[Expr]) {
         {
             frame.tightened.insert(*i, finite);
         }
+    }
+}
+
+/// Returns the name a pattern gives the element it matches, where it is
+/// a bare name, which names the row of a node over that element.
+fn pat_binder(pat: &Pat) -> Option<String> {
+    match pat {
+        Pat::Identifier(_, name) => Some(name.clone()),
+        _ => None,
     }
 }
 

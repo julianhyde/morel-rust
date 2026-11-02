@@ -841,13 +841,14 @@ pub enum StepKind {
 /// binds its input's element as a [`Row`], and a join binds both of
 /// its inputs' elements, as [`JoinRows`]. The expressions read them as
 /// ordinary identifiers. This is morel-java's model, whose `RowRel`
-/// binds a `row` pattern. The names are unique, made by
-/// [`fresh_name`], so that no two nodes bind the same one and a pass
+/// binds an id pattern. The names are unique, made by
+/// [`fresh_row_name`], so that no two nodes bind the same one and a pass
 /// reasoning about free variables -- use counts, substitution -- sees
-/// each row as a variable of its own; and they print as `$0` and `$1`
-/// inside the node that binds them. A query's binders survive only in
-/// the projection that names them, which is why a query with several
-/// binders ends in one.
+/// each row as a variable of its own; a row ranging over a binder's
+/// collection is named after the binder, and the plan prints it under
+/// that name, `e` for `from e in emps`, and an unnamed one as `r`. A
+/// query's binders survive otherwise only in the projection that names
+/// them, which is why a query with several binders ends in one.
 ///
 /// A pass that builds a node writes its expressions over the
 /// placeholders [`ROW`] and [`RIGHT_ROW`], and [`Rel::bind`] gives the
@@ -894,13 +895,12 @@ pub enum Rel {
     /// A join has no yield. The projection above it is where the
     /// components are named.
     ///
-    /// The condition sees both rows, `$0` and `$1`, which are the left
-    /// and right elements and are both present whatever the kind --
-    /// whereas the *element* of an outer join wraps each component of a
-    /// side that may be absent in `option`, on its own. The left row is
-    /// in scope in the right input too, and a right input that reads it
-    /// is what makes the join dependent: the plan prints the left row
-    /// as the join's binder.
+    /// The condition sees both rows, the left and right elements, which
+    /// are both present whatever the kind -- whereas the *element* of an
+    /// outer join wraps each component of a side that may be absent in
+    /// `option`, on its own. The left row is in scope in the right input
+    /// too, and a right input that reads it is what makes the join
+    /// dependent.
     Join(JoinKind, JoinRows, Box<Expr>, Box<Expr>, Box<Expr>),
 
     /// `project [e] r`: one element per input element, the value of `e`.
@@ -946,8 +946,8 @@ pub const RIGHT_ROW: &str = "$1";
 pub const ORDINAL: &str = "$ordinal";
 
 /// The names a one-input node binds for its expressions to read: its
-/// input's element, `$0` as the plan prints it, and, where the node
-/// counts its rows, the element's position, `$ordinal`.
+/// input's element, and, where the node counts its rows, the element's
+/// position, which the plan prints as `$ordinal`.
 ///
 /// The position is the element's in the node's input, from zero. It
 /// is bound beside the element rather than read out of it, which is
@@ -969,11 +969,67 @@ impl Row {
             ordinal: None,
         }
     }
+
+    /// A placeholder that [`Rel::bind`] will name after the binder the
+    /// row `name` was named after, if any, so that a node opened and
+    /// rebuilt keeps the name its row prints under.
+    pub fn placeholder_like(name: &str) -> Row {
+        Row {
+            name: placeholder_named(ROW, id_name(name)),
+            ordinal: None,
+        }
+    }
 }
 
-/// The names a join binds its inputs' elements to: `$0` and `$1` as
-/// the plan prints them in its condition. The left row is in scope in
-/// the right input as well, where it prints under its own name.
+/// Returns a placeholder, `$0` or `$1`, that remembers the binder its
+/// row is to be named after: `$0:e`. Its expressions read the bare
+/// placeholder, as any placeholder's do.
+fn placeholder_named(placeholder: &str, binder: Option<&str>) -> String {
+    match binder {
+        Some(b) => format!("{}:{}", placeholder, b),
+        None => placeholder.to_string(),
+    }
+}
+
+/// Returns, where `name` is the placeholder `placeholder`, the binder
+/// it remembers, if any; `None` where `name` is not that placeholder.
+fn placeholder_binder<'a>(
+    name: &'a str,
+    placeholder: &str,
+) -> Option<Option<&'a str>> {
+    if name == placeholder {
+        return Some(None);
+    }
+    name.strip_prefix(placeholder)
+        .and_then(|rest| rest.strip_prefix(':'))
+        .map(Some)
+}
+
+/// Returns the binder that names a tree's element, where a node's row
+/// over it would be named after one: the row of a filter or a sort,
+/// whose element is its input's; through a node that keeps its input's
+/// element; and `None` for a leaf, a join's pair, or what a projection
+/// or a group builds.
+pub fn element_binder(tree: &Expr) -> Option<String> {
+    let Expr::Rel(_, rel) = tree else {
+        return None;
+    };
+    match rel.as_ref() {
+        Rel::Filter(row, ..) | Rel::Sort(row, ..) => {
+            id_name(&row.name).map(String::from)
+        }
+        Rel::Skip(input, _) | Rel::Take(input, _) | Rel::Unorder(input) => {
+            element_binder(input)
+        }
+        Rel::Except(_, inputs)
+        | Rel::Intersect(_, inputs)
+        | Rel::Union(_, inputs) => inputs.first().and_then(element_binder),
+        _ => None,
+    }
+}
+
+/// The names a join binds its inputs' elements to, which its condition
+/// reads. The left row is in scope in the right input as well.
 #[derive(Clone, Debug)]
 pub struct JoinRows {
     pub left: String,
@@ -1026,6 +1082,34 @@ pub fn fresh_name() -> String {
     })
 }
 
+/// Returns a fresh name for a node's row, after the binder whose
+/// collection the row ranges over where there is one: `$e$N` for `from e
+/// in emps`, and otherwise [`fresh_name`]'s `v$N`.
+///
+/// The leading `$` marks the name as a node's own, as `$0` is, so it can
+/// capture nothing the query wrote; the binder's name between the two
+/// `$`s is what the plan prints, [`id_name`]. A binder called `ordinal`
+/// would make the row look like a position, so its row is unnamed.
+pub fn fresh_row_name(binder: Option<&str>) -> String {
+    match binder {
+        Some(b) if b != "ordinal" => NEXT_NAME.with(|c| {
+            let i = c.get();
+            c.set(i + 1);
+            format!("${}${}", b, i)
+        }),
+        _ => fresh_name(),
+    }
+}
+
+/// Returns the binder a row is named after, `e` for `$e$N`, or `None`
+/// for a row that no binder names; see [`fresh_row_name`].
+pub fn id_name(name: &str) -> Option<&str> {
+    let rest = name.strip_prefix('$')?;
+    let (binder, digits) = rest.rsplit_once('$')?;
+    (!binder.is_empty() && digits.chars().all(|c| c.is_ascii_digit()))
+        .then_some(binder)
+}
+
 /// Returns `e` with every identifier `from` renamed `to`, through the
 /// nodes of a tree. A row's name is unique, so nothing shadows it.
 pub fn rename(e: &Expr, from: &str, to: &str) -> Expr {
@@ -1056,10 +1140,22 @@ impl Rel {
     /// A join's condition reads its left row as [`ROW`] whether or not
     /// the left row already has a name, which a dependent join's does.
     pub fn bind(self) -> Rel {
-        fn bind_row(row: Row, mut exps: Vec<&mut Expr>) -> Row {
+        self.bind_named(None, None)
+    }
+
+    /// As [`Rel::bind`], naming a row that is still a placeholder after
+    /// the binder whose collection it ranges over: `left_binder` for a node's
+    /// row or a join's left row, `right_binder` for a join's right row. See
+    /// [`fresh_row_name`].
+    pub fn bind_named(
+        self,
+        left_binder: Option<&str>,
+        right_binder: Option<&str>,
+    ) -> Rel {
+        let bind_row = |row: Row, mut exps: Vec<&mut Expr>| -> Row {
             let mut name = row.name;
-            if name == ROW {
-                name = fresh_name();
+            if let Some(hint) = placeholder_binder(&name, ROW) {
+                name = fresh_row_name(left_binder.or(hint));
                 for e in &mut exps {
                     **e = rename(e, ROW, &name);
                 }
@@ -1077,7 +1173,7 @@ impl Rel {
                 ordinal = Some(o);
             }
             Row { name, ordinal }
-        }
+        };
         match self {
             Rel::Filter(row, input, mut c) => {
                 let row = bind_row(row, vec![&mut c]);
@@ -1093,16 +1189,15 @@ impl Rel {
                 Rel::Group(row, input, keys, aggs)
             }
             Rel::Join(kind, rows, c, left, right) => {
-                let left_name = if rows.left == ROW {
-                    fresh_name()
-                } else {
-                    rows.left
+                let left_name = match placeholder_binder(&rows.left, ROW) {
+                    Some(hint) => fresh_row_name(left_binder.or(hint)),
+                    None => rows.left,
                 };
-                let right_name = if rows.right == RIGHT_ROW {
-                    fresh_name()
-                } else {
-                    rows.right
-                };
+                let right_name =
+                    match placeholder_binder(&rows.right, RIGHT_ROW) {
+                        Some(hint) => fresh_row_name(right_binder.or(hint)),
+                        None => rows.right,
+                    };
                 let mut c = rename(
                     &rename(&c, ROW, &left_name),
                     RIGHT_ROW,
@@ -1159,7 +1254,7 @@ impl Rel {
         };
         match self {
             Rel::Filter(row, input, c) => Rel::Filter(
-                Row::placeholder(),
+                Row::placeholder_like(&row.name),
                 input.clone(),
                 Box::new(open(row, c)),
             ),
@@ -1171,7 +1266,7 @@ impl Rel {
                         .collect()
                 };
                 Rel::Group(
-                    Row::placeholder(),
+                    Row::placeholder_like(&row.name),
                     input.clone(),
                     parts(keys),
                     parts(aggs),
@@ -1189,6 +1284,10 @@ impl Rel {
                 Rel::Join(
                     *kind,
                     JoinRows {
+                        right: placeholder_named(
+                            RIGHT_ROW,
+                            id_name(&rows.right),
+                        ),
                         ordinal: rows.ordinal.clone(),
                         ..JoinRows::dependent(rows.left.clone())
                     },
@@ -1198,12 +1297,12 @@ impl Rel {
                 )
             }
             Rel::Project(row, input, e) => Rel::Project(
-                Row::placeholder(),
+                Row::placeholder_like(&row.name),
                 input.clone(),
                 Box::new(open(row, e)),
             ),
             Rel::Sort(row, input, e) => Rel::Sort(
-                Row::placeholder(),
+                Row::placeholder_like(&row.name),
                 input.clone(),
                 Box::new(open(row, e)),
             ),

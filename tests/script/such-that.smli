@@ -348,9 +348,9 @@ Sys.planEx "3";
 > val it =
 >   {_|
 > val it =
->   project [{f = #2 $0, t = #1 $0}] : {f:int, t:int} list
->     filter [#`*` Int (3, #1 $0) + #`*` Int (5, #2 $0) = 30] : (int * int) list
->       join : (int * int) list
+>   project r [{f = #2 r, t = #1 r}] : {f:int, t:int} list
+>     filter r [#`*` Int (3, #1 r) + #`*` Int (5, #2 r) = 30] : (int * int) list
+>       join t f : (int * int) list
 >         #flatten Range ([CLOSED (0, 10)]) : int list
 >         #flatten Range ([CLOSED (0, 6)]) : int list
 > |_} : string
@@ -706,9 +706,9 @@ Sys.planEx "999";
 > val it =
 >   {_|
 > val it =
->   sort [$0] : int list
->     project [#x $0] : int list
->       group [x = $0] : {x:int} list
+>   sort r [r] : int list
+>     project r [#x r] : int list
+>       group x [x = x] : {x:int} list
 >         [1, 2, 4] : int list
 > |_} : string
 
@@ -740,10 +740,10 @@ Sys.planEx "3";
 > val it =
 >   {_|
 > val it =
->   project [#2 $0] : int list
->     join [v$0] : (int * int) list
+>   project r [#2 r] : int list
+>     join r r_1 : (int * int) list
 >       [3, 5, 7] : int list
->       #flatten Range ([OPEN (#`-` Int (v$0, 5), v$0)]) : int list
+>       #flatten Range ([OPEN (#`-` Int (r, 5), r)]) : int list
 > |_} : string
 
 from x in [3, 5, 7], y
@@ -1498,11 +1498,11 @@ Sys.planEx "999";
 > val it =
 >   {_|
 > val it =
->   project [{p = #2 $0, s = #1 $0}] : t$0
->     join [v$0] : (string * string) list
+>   project r [{p = #2 r, s = #1 r}] : t$0
+>     join r r_1 : (string * string) list
 >       ["abcd", "ant"] : string list
->       #tabulate List (#size String v$0 + 1,
->           fn i => #substring String (v$0, 0, i)) : string list
+>       #tabulate List (#size String r + 1,
+>           fn i => #substring String (r, 0, i)) : string list
 >
 > t$0 {p:string, s:string} list
 > |_} : string
