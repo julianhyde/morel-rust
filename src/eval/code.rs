@@ -492,6 +492,8 @@ impl CheckCode {
             Prop::PrintDepth.default_value().as_int(),
             Prop::StringDepth.default_value().as_int(),
             0,
+            // A message is one line, so a string in it is never raw.
+            -1,
             (*self.constructor_arg_types).clone(),
             (*self.datatype_constructors).clone(),
         );

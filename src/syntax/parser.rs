@@ -2738,6 +2738,86 @@ pub fn string_to_string(s: &str) -> String {
     result
 }
 
+/// Returns whether a string should be written as a raw literal,
+/// `{|...|}`.
+///
+/// It should if it contains at least `min_newlines` newlines, and is
+/// safe to write raw: every character is a newline or printable ASCII
+/// (no tab, carriage return, control character or non-ASCII character,
+/// which would be invisible or fragile), and no newline follows a space
+/// (which would be invisible, and easily lost by editors). A space at
+/// the very end is fine, because the closing fence follows it.
+///
+/// If `min_newlines` is 0, a string with no newlines may be written
+/// raw; if it is negative, no string is.
+pub fn should_write_raw(s: &str, min_newlines: i32) -> bool {
+    if min_newlines < 0 {
+        return false;
+    }
+    let mut newlines = 0;
+    let bytes = s.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'\n' {
+            if i > 0 && bytes[i - 1] == b' ' {
+                return false;
+            }
+            newlines += 1;
+        } else if !(b' '..=b'~').contains(&b) {
+            return false;
+        }
+    }
+    newlines >= min_newlines
+}
+
+/// Writes a string as a raw literal whose fences do not occur in it.
+///
+/// If the content's second line starts with a space, the content starts
+/// on the line after the opening fence, so that its lines line up; the
+/// tag then starts with `_`, which tells the reader to discard the
+/// newline after the fence: the literal reads `{_|`, a newline, the
+/// content, `|_}`. Otherwise the content starts right after the opening
+/// fence, `{|`, and every newline in the literal is content.
+pub fn raw_literal(content: &str) -> String {
+    let next_line = starts_on_next_line(content);
+    let prefix = if next_line { "_" } else { "" };
+    let mut tag = prefix.to_string();
+    let mut i = 1;
+    while content.contains(&format!("|{}}}", tag)) {
+        tag = format!("{}{}", prefix, raw_tag(i));
+        i += 1;
+    }
+    format!(
+        "{{{}|{}{}|{}}}",
+        tag,
+        if next_line { "\n" } else { "" },
+        content,
+        tag
+    )
+}
+
+/// Returns whether a raw literal's content starts on the line after the
+/// opening fence: when its second line starts with a space, so that the
+/// lines line up.
+fn starts_on_next_line(content: &str) -> bool {
+    match content.find('\n') {
+        Some(i) if i > 0 => content.as_bytes().get(i + 1) == Some(&b' '),
+        _ => false,
+    }
+}
+
+/// Returns the i-th raw literal tag in the sequence a, b, ..., z, aa,
+/// ab, ...
+fn raw_tag(i: usize) -> String {
+    let mut b = Vec::new();
+    let mut i = i;
+    while i > 0 {
+        b.push(b'a' + ((i - 1) % 26) as u8);
+        i = (i - 1) / 26;
+    }
+    b.reverse();
+    String::from_utf8(b).unwrap()
+}
+
 fn requires_escape(s: &str) -> bool {
     s.chars().any(|c| {
         let code = c as u32;
@@ -2973,6 +3053,34 @@ mod test {
         Rule, append_id, char_to_string, parse_unadorned_statement,
         unquote_identifier, unquote_string,
     };
+
+    /// A string with enough newlines, and nothing invisible, is
+    /// written raw; the fences take a tag where the content holds them.
+    #[test]
+    fn raw_literals() {
+        use crate::syntax::parser::{raw_literal, raw_tag, should_write_raw};
+        assert!(should_write_raw("a\nb", 1));
+        assert!(!should_write_raw("a\nb", 2));
+        assert!(should_write_raw("abc", 0));
+        assert!(!should_write_raw("a\nb", -1));
+        // A space or tab before a newline; a character that is not
+        // printable ASCII.
+        assert!(!should_write_raw("a \nb", 1));
+        assert!(!should_write_raw("a\t\nb", 1));
+        assert!(!should_write_raw("a\u{e9}\nb", 1));
+        assert_eq!(raw_literal("a\nb"), "{|a\nb|}");
+        // The second line starts with a space, so the content starts on
+        // the line after the fence and the tag starts with "_".
+        assert_eq!(raw_literal("a\n  b"), "{_|\na\n  b|_}");
+        // A trailing newline leaves the closing fence on its own line.
+        assert_eq!(raw_literal("a\nb\n"), "{|a\nb\n|}");
+        // The content contains "|}", so the fences carry a tag.
+        assert_eq!(raw_literal("a|}\nb"), "{a|a|}\nb|a}");
+        // The tag sequence is a, b, ..., z, aa, ...
+        assert_eq!(raw_tag(1), "a");
+        assert_eq!(raw_tag(26), "z");
+        assert_eq!(raw_tag(27), "aa");
+    }
 
     /// Test fixture for parser tests.
     struct Fixture {

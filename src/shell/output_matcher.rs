@@ -35,27 +35,15 @@
 //! starts with an underscore, a newline right after the opening fence
 //! is not content. A raw literal is equivalent to the regular literal
 //! with the same content. Raw literals are a feature of the script
-//! format, not of the Morel language; [`to_raw_strings`] writes them.
+//! format, not of the Morel language; the printer writes them, with
+//! [`parser::raw_literal`], where the `rawStrings` property asks it to.
 
 use crate::compile::type_parser;
 use crate::compile::types::{Label, Type};
 use crate::syntax::parser;
-use regex::Regex;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::str::from_utf8;
-use std::sync::LazyLock;
-
-/// A top-level string value in a statement's output: `val name = "..." :
-/// string`, the literal and the type possibly wrapped onto following
-/// lines.
-static TOP_LEVEL_STRING: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?m)^(val \S+ =)(\s+)("(?:[^"\\]|\\.)*")\s+: string$"#)
-        .unwrap()
-});
-
-/// Separator used when the printer wrapped a value onto the next line.
-const WRAPPED_INDENT: &str = "\n  ";
 
 /// Compares two output strings modulo whitespace and bag reordering.
 ///
@@ -939,128 +927,6 @@ fn find_bytes(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
         .map(|i| i + from)
 }
 
-/// Rewrites the output of a statement so that each top-level string
-/// value that contains a newline, and has no space or tab before a
-/// newline, is a raw string literal.
-///
-/// A top-level string value is a line `val name = "..." : string`, the
-/// literal and the type possibly wrapped onto following lines. It is
-/// replaced by `val name = {|...|} : string`, the content verbatim, its
-/// lines after the first starting at column 0, and the type following
-/// the closing fence. If the printer had wrapped the literal onto the
-/// line after `val name =`, the raw literal starts there too, indented
-/// by two spaces. A trailing newline in the content leaves the closing
-/// fence alone on the last line. If the content contains `|}`, the
-/// fences carry the shortest tag that does not occur in it. See
-/// [`raw_literal`] for the `{_|` form, whose content starts on the line
-/// after the opening fence.
-///
-/// Strings without a newline, strings with trailing whitespace on a
-/// line, and strings inside collections and records, are unchanged.
-pub fn to_raw_strings(output: &str) -> String {
-    let mut buf: Option<String> = None;
-    let mut last = 0;
-    for m in TOP_LEVEL_STRING.captures_iter(output) {
-        let whole = m.get(0).unwrap();
-        let Ok(content) = parser::unquote_string(&m[3]) else {
-            continue;
-        };
-        if !wants_raw(&content) {
-            continue;
-        }
-        let b = buf.get_or_insert_with(String::new);
-        b.push_str(&output[last..whole.start()]);
-        b.push_str(&m[1]);
-        // Keep the printer's layout: if it wrapped the value onto the
-        // next line, the raw literal starts on the next line too.
-        b.push_str(if m[2].contains('\n') {
-            WRAPPED_INDENT
-        } else {
-            " "
-        });
-        b.push_str(&raw_literal(&content));
-        b.push_str(" : string");
-        last = whole.end();
-    }
-    match buf {
-        None => output.to_string(),
-        Some(mut b) => {
-            b.push_str(&output[last..]);
-            b
-        }
-    }
-}
-
-/// Returns whether a string is written as a raw literal: it contains a
-/// newline; every other character is printable ASCII (so no tab,
-/// carriage return, control character or non-ASCII character, which
-/// would be invisible or fragile in the script, and a tab would fail the
-/// linter); and no line ends with a space (which is invisible, and
-/// easily lost by editors).
-fn wants_raw(content: &str) -> bool {
-    let mut newline = false;
-    let bytes = content.as_bytes();
-    for (i, &b) in bytes.iter().enumerate() {
-        if b == b'\n' {
-            newline = true;
-            if i > 0 && bytes[i - 1] == b' ' {
-                return false;
-            }
-        } else if !(b' '..=b'~').contains(&b) {
-            return false;
-        }
-    }
-    newline
-}
-
-/// Writes a string as a raw literal whose fences do not occur in it.
-///
-/// If the content's second line starts with a space, the content starts
-/// on the line after the opening fence, so that its lines line up in the
-/// script; the tag then starts with `_`, which tells the reader to
-/// discard the newline after the fence: the literal reads `{_|`, a
-/// newline, the content, `|_}`. Otherwise the content starts right after
-/// the opening fence, `{|`, and every newline in the literal is content.
-pub fn raw_literal(content: &str) -> String {
-    let next_line = starts_on_next_line(content);
-    let prefix = if next_line { "_" } else { "" };
-    let mut tag = prefix.to_string();
-    let mut i = 1;
-    while content.contains(&format!("|{}}}", tag)) {
-        tag = format!("{}{}", prefix, identifier(i));
-        i += 1;
-    }
-    format!(
-        "{{{}|{}{}|{}}}",
-        tag,
-        if next_line { "\n" } else { "" },
-        content,
-        tag
-    )
-}
-
-/// Returns whether a raw literal's content starts on the line after the
-/// opening fence: when its second line starts with a space, so that the
-/// lines line up in the script.
-fn starts_on_next_line(content: &str) -> bool {
-    match content.find('\n') {
-        Some(i) if i > 0 => content.as_bytes().get(i + 1) == Some(&b' '),
-        _ => false,
-    }
-}
-
-/// Returns the i-th tag in the sequence a, b, ..., z, aa, ab, ...
-fn identifier(i: usize) -> String {
-    let mut b = Vec::new();
-    let mut i = i;
-    while i > 0 {
-        b.push(b'a' + ((i - 1) % 26) as u8);
-        i = (i - 1) / 26;
-    }
-    b.reverse();
-    String::from_utf8(b).unwrap()
-}
-
 // ---- Scanner ----
 
 /// Simple scanner over whitespace-normalized text.
@@ -1255,50 +1121,6 @@ mod tests {
         ));
     }
 
-    /// A top-level multi-line string becomes a raw literal; other
-    /// strings are left alone.
-    #[test]
-    fn to_raw_strings_converts_top_level_strings() {
-        let f = |s: &str| to_raw_strings(s);
-        assert_eq!(
-            f(r#"val it = "a\nb" : string"#),
-            "val it = {|a\nb|} : string"
-        );
-        // The second line starts with a space, so the content starts on
-        // the line after the fence and the tag starts with "_".
-        assert_eq!(
-            f(r#"val it = "a\n  b" : string"#),
-            "val it = {_|\na\n  b|_} : string"
-        );
-        // A trailing newline leaves the closing fence on its own line.
-        assert_eq!(
-            f(r#"val it = "a\nb\n" : string"#),
-            "val it = {|a\nb\n|} : string"
-        );
-        // The content contains "|}", so the fences carry a tag.
-        assert_eq!(
-            f(r#"val it = "a|}\nb" : string"#),
-            "val it = {a|a|}\nb|a} : string"
-        );
-        // The printer wrapped the value, so the raw literal starts on
-        // the next line, indented by two spaces.
-        assert_eq!(
-            f("val it =\n  \"a\\nb\"\n  : string"),
-            "val it =\n  {|a\nb|} : string"
-        );
-        // Unchanged: no newline; a space or tab before a newline; a
-        // character that is not printable ASCII; not top-level.
-        for s in [
-            r#"val it = "ab" : string"#,
-            r#"val it = "a \nb" : string"#,
-            r#"val it = "a\t\nb" : string"#,
-            r#"val it = "a\233\nb" : string"#,
-            r#"val it = ["a\nb"] : string list"#,
-        ] {
-            assert_eq!(f(s), s);
-        }
-    }
-
     #[test]
     fn raw_fences() {
         assert_eq!(raw_fence_length(b"{|a|}", 0), 2);
@@ -1310,10 +1132,6 @@ mod tests {
         // An unclosed literal ends past the end of the string.
         assert_eq!(raw_end(b"{|a|}", 0), 5);
         assert!(raw_end(b"{|a", 0) > 3);
-        // The tag sequence is a, b, ..., z, aa, ...
-        assert_eq!(identifier(1), "a");
-        assert_eq!(identifier(26), "z");
-        assert_eq!(identifier(27), "aa");
     }
 
     #[test]
