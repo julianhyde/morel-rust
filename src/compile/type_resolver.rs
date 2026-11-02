@@ -5494,12 +5494,11 @@ impl TypeResolver {
         field_vars.iter().for_each(|(label, v)| {
             post_group_env_builder.push(label.clone(), Term::Variable(*v));
         });
-        // A binder ("group g = ...") makes `current` equal the binder row, so
-        // `current.f` and `g.f` are interchangeable in a following step.
-        if binder.is_some() {
-            post_group_env_builder
-                .push("current".to_string(), Term::Variable(v_result));
-        }
+        // `current` is the group's element, so a following step can read it:
+        // `order current`. With a binder ("group g = ...") it is the binder
+        // row, so `current.f` and `g.f` are interchangeable.
+        post_group_env_builder
+            .push("current".to_string(), Term::Variable(v_result));
         let post_group_env = post_group_env_builder.build();
 
         Ok(Triple::new(
