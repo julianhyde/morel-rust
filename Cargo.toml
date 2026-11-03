@@ -55,7 +55,10 @@ strum_macros = "0.27.2"
 wasm-bindgen = "0.2"
 
 [build-dependencies]
+# lint: sort until '^$'
 lalrpop = "0.22"
+prost-build = "0.14"
+protox = "0.10"
 
 # Keep line-number info in release builds so flamegraphs (and other
 # profilers) can resolve symbols. Adds a couple MB to the binary;
@@ -110,10 +113,18 @@ used_underscore_binding = "deny"
 useless_conversion = "deny"
 wildcard_imports = "deny"
 
-# Interactive line editing for the terminal front end. Gated to native
-# targets: rustyline needs a terminal and filesystem, neither of which
-# exists on wasm32 (where the shell is driven statement-by-statement
-# from JavaScript instead).
+# Interactive line editing for the terminal front end, and the Spark
+# adapter's protobuf and Arrow. Gated to native targets: rustyline needs
+# a terminal and filesystem, neither of which exists on wasm32 (where the
+# shell is driven statement-by-statement from JavaScript instead), and
+# the Spark adapter is built only for native targets.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# lint: sort until '^$'
+arrow-array = { version = "57", default-features = false }
+arrow-buffer = { version = "57", default-features = false }
+arrow-ipc = { version = "57", default-features = false }
+arrow-schema = { version = "57", default-features = false }
+prost = "0.14"
+prost-types = "0.14"
 rustyline = { version = "18.0.1", features = ["with-file-history"] }
 termbg = "0.6.2"

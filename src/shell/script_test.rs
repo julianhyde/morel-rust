@@ -19,6 +19,7 @@ use crate::eval::session::Config as SessionConfig;
 use crate::shell::config::Config;
 use crate::shell::error::Error;
 use crate::shell::{Kernel, ScriptRunner, ShellResult, utils};
+use crate::spark as spark_adapter;
 use std::env::temp_dir;
 use std::fs::{self};
 use std::path::{Path, PathBuf};
@@ -32,9 +33,9 @@ use std::rc::Rc;
 /// conditions are those of morel-java's harness: `spark-adapter` (the
 /// Spark adapter is present), `no-spark-adapter` (it is not),
 /// `spark` (a live Spark Connect server is bound as `spark`), and
-/// `spark-prepare` (the `Spark` structure has `prepare`). This port has
-/// no Spark adapter, so `no-spark-adapter` and `spark-prepare` hold,
-/// and `spark-adapter` and `spark` do not.
+/// `spark-prepare` (the `Spark` structure has `prepare`). The adapter
+/// is present in a native build, so there `spark-adapter` holds and
+/// `no-spark-adapter` does not.
 fn unmet_requirement(in_file: &Path) -> ShellResult<Option<String>> {
     let Ok(contents) = fs::read_to_string(in_file) else {
         return Ok(None);
@@ -45,8 +46,10 @@ fn unmet_requirement(in_file: &Path) -> ShellResult<Option<String>> {
         };
         for condition in conditions.split_whitespace() {
             let holds = match condition {
-                "no-spark-adapter" | "spark-prepare" => true,
-                "spark" | "spark-adapter" => false,
+                "spark-prepare" => true,
+                "spark-adapter" => spark_adapter::is_available(),
+                "no-spark-adapter" => !spark_adapter::is_available(),
+                "spark" => false,
                 _ => {
                     return Err(Error::Runtime(format!(
                         "unknown condition '{}' in requires directive",

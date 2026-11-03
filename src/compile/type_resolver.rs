@@ -3582,8 +3582,29 @@ impl TypeResolver {
                 {
                     self.note_operator("abs", v, &expr.span);
                 }
+                // A postfix call on a receiver that is not a name --
+                // `(e).f a`, which the deduction has just rewritten to a
+                // call of the built-in -- is positioned where morel-java
+                // positions it, at the last token of its argument, so
+                // that an error it raises says the same.
+                let span = match (&left.kind, &left2.kind) {
+                    (
+                        ExprKind::Apply(selector, receiver),
+                        ExprKind::Literal(_),
+                    ) if matches!(
+                        selector.kind,
+                        ExprKind::RecordSelector(_)
+                    ) && !matches!(
+                        receiver.kind,
+                        ExprKind::Identifier(_)
+                    ) =>
+                    {
+                        right.span.last_token()
+                    }
+                    _ => expr.span.clone(),
+                };
                 let apply2 = ExprKind::Apply(Box::new(left2), Box::new(right2));
-                self.reg_expr(&apply2, &expr.span, expr.id, v)
+                self.reg_expr(&apply2, &span, expr.id, v)
             }
             ExprKind::Caret(left, right) => {
                 let (left2, right2) =

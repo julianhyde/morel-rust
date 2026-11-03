@@ -104,6 +104,27 @@ impl Span {
         }
     }
 
+    /// Returns the span of the last token of this span, if this span is
+    /// an atom: the closing bracket of a parenthesized, tuple, record or
+    /// list expression, or else the whole span, which is one token.
+    ///
+    /// morel-java positions a postfix call, `(e).f (a)`, at the last
+    /// token of its argument, which is where its parser is when it
+    /// makes the call.
+    pub fn last_token(&self) -> Self {
+        let bytes = self.input.as_bytes();
+        if self.end > self.start
+            && matches!(bytes[self.end - 1], b')' | b']' | b'}')
+        {
+            return Span {
+                input: self.input.clone(),
+                start: self.end - 1,
+                end: self.end,
+            };
+        }
+        self.clone()
+    }
+
     /// Creates the union of two spans.
     pub fn union(&self, other: &Span) -> Self {
         use std::cmp::{max, min};

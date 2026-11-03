@@ -213,6 +213,10 @@ pub enum Val {
     /// `Spark.connection` type. Compared by identity.
     Connection(Rc<spark::Connection>),
 
+    /// A plan prepared on a Spark connection, the value of the abstract
+    /// `Spark.plan` type. Compared by identity.
+    Plan(Rc<spark::PreparedPlan>),
+
     /// A pretty-printer document, the value of the abstract `PP.doc`
     /// type. Built by the `PP` structure's combinators and laid out by
     /// `PP.render`. Wrapped in `Rc` for cheap cloning; compared by
@@ -316,6 +320,13 @@ impl Val {
         }
     }
 
+    pub(crate) fn expect_plan(&self) -> &Rc<spark::PreparedPlan> {
+        match self {
+            Val::Plan(p) => p,
+            _ => panic!("Expected plan"),
+        }
+    }
+
     pub(crate) fn expect_string(&self) -> &str {
         match self {
             Val::String(s) => s,
@@ -401,7 +412,7 @@ impl Val {
         arg: &Val,
     ) -> Result<Val, MorelError> {
         match self {
-            Val::NativeFn(native) => Ok(native.apply(arg)),
+            Val::NativeFn(native) => native.apply(arg),
             Val::Code(code) => code.eval_f1(r, f, arg),
             Val::Closure(data) => CodeFrame::create_bind_and_eval(
                 &data.frame_def,
@@ -543,6 +554,7 @@ impl Display for Val {
                 write!(f, "]")
             }
             Val::Order(o) => write!(f, "{}", o.name()),
+            Val::Plan(_) => write!(f, "<plan>"),
             Val::Progressive(v) => write!(f, "{}", v.describe()),
             Val::Real(r) => {
                 // Use Real.toString to format real values
@@ -576,8 +588,14 @@ impl Display for Val {
 pub struct NativeFn {
     /// What to call it in a plan or an error message.
     name: &'static str,
-    f: Box<dyn Fn(&Val) -> Val>,
+    /// What a plan description shows it as, if not by its name: the
+    /// function that `Spark.remote` makes shows the plan it runs.
+    description: Option<String>,
+    f: Box<NativeBody>,
 }
+
+/// The body of a [`NativeFn`].
+type NativeBody = dyn Fn(&Val) -> Result<Val, MorelError>;
 
 impl NativeFn {
     pub(crate) fn new(
@@ -586,11 +604,32 @@ impl NativeFn {
     ) -> Self {
         NativeFn {
             name,
+            description: None,
+            f: Box::new(move |v| Ok(f(v))),
+        }
+    }
+
+    /// Creates a function that may raise, and that a plan description
+    /// shows as `description`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn described(
+        name: &'static str,
+        description: String,
+        f: impl Fn(&Val) -> Result<Val, MorelError> + 'static,
+    ) -> Self {
+        NativeFn {
+            name,
+            description: Some(description),
             f: Box::new(f),
         }
     }
 
-    pub(crate) fn apply(&self, arg: &Val) -> Val {
+    /// Returns what a plan description shows this function as.
+    pub(crate) fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    pub(crate) fn apply(&self, arg: &Val) -> Result<Val, MorelError> {
         (self.f)(arg)
     }
 }
@@ -629,6 +668,7 @@ impl PartialEq for Val {
             (Val::RecCell(a), Val::RecCell(b)) => Arc::ptr_eq(a, b),
             (Val::Progressive(a), Val::Progressive(b)) => Rc::ptr_eq(a, b),
             (Val::Connection(a), Val::Connection(b)) => Rc::ptr_eq(a, b),
+            (Val::Plan(a), Val::Plan(b)) => Rc::ptr_eq(a, b),
             (Val::Doc(a), Val::Doc(b)) => Rc::ptr_eq(a, b),
             _ => false,
         }
@@ -757,6 +797,10 @@ impl Hash for Val {
             Val::Connection(c) => {
                 25.hash(state);
                 Rc::as_ptr(c).hash(state);
+            }
+            Val::Plan(p) => {
+                26.hash(state);
+                Rc::as_ptr(p).hash(state);
             }
             Val::Doc(doc) => {
                 24.hash(state);

@@ -19,6 +19,7 @@ pub mod compile;
 pub mod datalog;
 pub mod eval;
 pub mod shell;
+pub mod spark;
 pub mod syntax;
 pub mod unify;
 

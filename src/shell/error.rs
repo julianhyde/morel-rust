@@ -15,6 +15,7 @@
 // language governing permissions and limitations under the
 // License.
 
+use crate::eval::spark::SparkError;
 use crate::syntax::ast::Span;
 use std::error::Error as StdError;
 use std::fmt::{Display, Formatter, Result as FmtResult};
@@ -31,6 +32,11 @@ pub enum Error {
     /// an uncaught exception is: a progressive record's source failing
     /// while the statement was typed, say.
     Raised(String),
+    /// A failure of Spark while a statement was compiled: a query that
+    /// `Spark.prepare` could not translate, say. The shell decides
+    /// whether to evaluate the query here instead, and otherwise
+    /// reports it as the uncaught exception `Spark`.
+    Spark(SparkError),
 }
 
 impl From<IoError> for Error {
@@ -47,6 +53,7 @@ impl Display for Error {
             Error::Io(e) => write!(f, "IO Error: {}", e),
             Error::Raised(e) => write!(f, "{}", e),
             Error::Runtime(e) => write!(f, "Runtime Error: {}", e),
+            Error::Spark(e) => write!(f, "{}", e),
         }
     }
 }

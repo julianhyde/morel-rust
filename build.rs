@@ -15,9 +15,35 @@
 // language governing permissions and limitations under the
 // License.
 
+use std::env;
+
 fn main() {
     // Only walk `src/`; the default `process_root()` walks the
     // current working dir, which has tripped on unrelated artifacts
     // under `target/` during `cargo doc` in CI.
     lalrpop::process_src().unwrap();
+    spark_protos();
+}
+
+/// Generates the messages of Spark Connect's protocol from the protos
+/// vendored in `src/spark/proto`, for the Spark adapter. The protos are
+/// compiled by `protox`, in Rust, so that building needs no `protoc`.
+/// The adapter is native only, so a wasm build generates nothing.
+fn spark_protos() {
+    if env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32") {
+        return;
+    }
+    const ROOT: &str = "src/spark/proto";
+    println!("cargo:rerun-if-changed={}", ROOT);
+    let files = [
+        "spark/connect/base.proto",
+        "spark/connect/catalog.proto",
+        "spark/connect/commands.proto",
+        "spark/connect/common.proto",
+        "spark/connect/expressions.proto",
+        "spark/connect/relations.proto",
+        "spark/connect/types.proto",
+    ];
+    let fds = protox::compile(files, [ROOT]).unwrap();
+    prost_build::Config::new().compile_fds(fds).unwrap();
 }

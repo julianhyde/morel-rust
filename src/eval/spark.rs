@@ -17,12 +17,15 @@
 
 //! Connections to Apache Spark, and their catalogs.
 //!
-//! Port of morel-java's `MockSparkConnection`, `SparkCatalog` and
-//! `SparkConnections`. This port has no Spark adapter, so the only
-//! connection it can open is the offline one, whose URI is `mock:` and
-//! whose catalog is the session's data sets. Opening any other URI,
-//! and preparing a plan, raise `Spark` with error class `CONNECTION`,
-//! as morel-java does where its adapter is absent.
+//! Port of morel-java's `MockSparkConnection`, `SparkCatalog`,
+//! `SparkConnections` and `PreparedPlan`: the side of the `Spark`
+//! structure that does not need the Spark adapter, [`crate::spark`],
+//! which translates a query to a plan. The offline connection, whose
+//! URI is `mock:`, has the session's data sets as its catalog; a plan
+//! can be prepared on it, but not executed. This port cannot yet open
+//! a connection to a server, so opening any other URI raises `Spark`
+//! with error class `CONNECTION`, as does preparing a plan where the
+//! adapter is absent.
 //!
 //! A catalog is a progressive record whose fields are databases, whose
 //! fields in turn are tables, each a bag of records. Nothing is fetched
@@ -31,17 +34,20 @@
 //! discovered, a table's type when the table is first discovered, and
 //! its rows when its value is first read. Each fetch happens once.
 
+use crate::compile::core::Expr;
 use crate::compile::library::{BuiltInExn, BuiltInFunction};
+use crate::compile::rel_lowerer::{map_children, map_steps};
 use crate::compile::span::Span;
 use crate::compile::types::{Label, Type};
 use crate::eval::typed_value::{Child, TypedValue};
 use crate::eval::val::Val;
 use crate::shell::kernel::MorelError;
+use crate::spark as spark_adapter;
 use std::cell::{Cell, Ref, RefCell};
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 /// The URI that opens the offline connection.
 pub const MOCK_URI: &str = "mock:";
@@ -50,7 +56,9 @@ pub const MOCK_URI: &str = "mock:";
 pub const SPARK_REMOTE: &str = "SPARK_REMOTE";
 
 /// Message of the `CONNECTION` error that every operation needing the
-/// Spark adapter raises, since this port has none.
+/// Spark adapter raises where the adapter is absent, as in a wasm
+/// build, and that connecting to a server raises, since this port
+/// cannot yet.
 pub const ADAPTER_UNAVAILABLE: &str = "The Spark adapter is not available; \
      it needs JDK 17 or later and the 'spark' Maven profile";
 
@@ -59,26 +67,67 @@ pub const ADAPTER_UNAVAILABLE: &str = "The Spark adapter is not available; \
 /// own, such as `CONNECTION` or `CLOSED`, and a message.
 #[derive(Clone, Debug)]
 pub struct SparkError {
-    pub error_class: &'static str,
+    pub error_class: String,
     pub message: String,
 }
 
+impl fmt::Display for SparkError {
+    /// Writes the error as morel-java's `SparkException` writes itself,
+    /// which is how it reads where it escapes uncaught as an error of
+    /// the implementation rather than as the Morel exception.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Spark {{errorClass = \"{}\", message = \"{}\"}}",
+            self.error_class, self.message
+        )
+    }
+}
+
 impl SparkError {
-    fn new(error_class: &'static str, message: String) -> Self {
+    pub fn new(
+        error_class: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         SparkError {
-            error_class,
-            message,
+            error_class: error_class.into(),
+            message: message.into(),
         }
     }
 
-    /// Converts this error into the Morel exception
-    /// `Spark {errorClass, message}`, raised at `span`.
-    pub fn raise(&self, span: &Span) -> MorelError {
-        MorelError::Runtime2(
-            BuiltInExn::Spark,
-            Some(format!("{}: {}", self.error_class, self.message)),
-            span.clone(),
+    /// Returns whether this error is a refusal to translate, as against
+    /// a failure of something else. Only a refusal has a local answer
+    /// that is the same answer.
+    pub fn is_refusal(&self) -> bool {
+        matches!(
+            self.error_class.as_str(),
+            "UNSUPPORTED" | "UNSUPPORTED_TYPE"
         )
+    }
+
+    /// Converts this error into a Morel exception, raised at `span`.
+    ///
+    /// A failure that local evaluation has a name for raises the
+    /// exception it raises locally, so that a query fails the same way
+    /// wherever it ran: dividing by zero is `Div` whether Spark noticed
+    /// it or Morel did. Everything else raises `Spark {errorClass,
+    /// message}`.
+    pub fn raise(&self, span: &Span) -> MorelError {
+        match self.error_class.as_str() {
+            "DIVIDE_BY_ZERO" | "INTERVAL_DIVIDED_BY_ZERO" => {
+                MorelError::Runtime(BuiltInExn::Div, span.clone())
+            }
+            "ARITHMETIC_OVERFLOW"
+            | "CAST_OVERFLOW"
+            | "BINARY_ARITHMETIC_OVERFLOW" => {
+                MorelError::Runtime(BuiltInExn::Overflow, span.clone())
+            }
+            _ => MorelError::Runtime2(
+                BuiltInExn::Spark,
+                Some(format!("{}: {}", self.error_class, self.message)),
+                span.clone(),
+            ),
+        }
     }
 
     /// Converts this error into the Morel exception, raised at no
@@ -247,6 +296,22 @@ impl Connection {
             .ok_or_else(|| Self::table_not_found(database, table))
     }
 
+    /// Executes a plan and returns its rows, as Morel values of
+    /// `element_type`. The offline connection translates a query but
+    /// cannot run one, and says so rather than pretending to have no
+    /// rows.
+    pub fn execute(
+        &self,
+        _plan: &spark_adapter::Plan,
+        _element_type: &Type,
+    ) -> Result<Vec<Val>, SparkError> {
+        self.check_open()?;
+        Err(SparkError::new(
+            "MOCK",
+            "The offline connection cannot execute a plan; connect to a server",
+        ))
+    }
+
     fn rows(&self, database: &str, table: &str) -> Result<Val, SparkError> {
         let index = self
             .table_types(database)?
@@ -254,6 +319,145 @@ impl Connection {
             .position(|label| *label == Label::from(table))
             .ok_or_else(|| Self::table_not_found(database, table))?;
         Ok(self.database(database)?.value.expect_list()[index].clone())
+    }
+}
+
+/// A plan prepared on a connection: the value of Morel's `('a, 'b)
+/// plan`.
+///
+/// `prepare` translates a function for a connection, and afterwards
+/// both are needed: the plan to print or to run, and the connection to
+/// run it on. So is the Morel type of the result, because that is the
+/// type the program was typed against, and the rows have to come back
+/// as values of it.
+///
+/// A function with parameters is held as the query rather than as a
+/// plan, and translated at each execution with the argument in place
+/// of them, because Spark has nowhere in a plan to keep a parameter.
+///
+/// It prints as `<plan>`; asking for its text is what `Spark.toString`
+/// is for.
+pub struct PreparedPlan {
+    connection: Rc<Connection>,
+    query: Expr,
+    parameters: Vec<String>,
+    plan: Option<spark_adapter::Plan>,
+    element_type: Rc<Type>,
+    collection: bool,
+}
+
+impl fmt::Debug for PreparedPlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<plan>")
+    }
+}
+
+impl PreparedPlan {
+    /// Creates a prepared plan. A query with no parameters is
+    /// translated once, here, so that its plan is the same plan however
+    /// often it is used.
+    pub fn new(
+        connection: Rc<Connection>,
+        query: Expr,
+        parameters: Vec<String>,
+        element_type: Rc<Type>,
+        collection: bool,
+    ) -> Result<PreparedPlan, SparkError> {
+        let plan = if parameters.is_empty() {
+            Some(spark_adapter::translate(&query)?)
+        } else {
+            None
+        };
+        Ok(PreparedPlan {
+            connection,
+            query,
+            parameters,
+            plan,
+            element_type,
+            collection,
+        })
+    }
+
+    /// Describes the plan where a plan description shows it, as
+    /// `Sys.plan` does: `spark(plan ...)`, or, for a plan with a
+    /// parameter, which has no text until it is executed, the
+    /// parameters it is waiting for.
+    pub fn describe(&self) -> String {
+        match &self.plan {
+            Some(plan) => format!("spark(plan {})", plan.text()),
+            None => {
+                format!("spark(parameters [{}])", self.parameters.join(", "))
+            }
+        }
+    }
+
+    /// Returns the plan as text.
+    pub fn text(&self) -> Result<String, SparkError> {
+        match &self.plan {
+            Some(plan) => Ok(plan.text()),
+            None => Err(SparkError::new(
+                "UNSUPPORTED",
+                "A plan with a parameter has no text until it is given one; \
+                 execute it instead",
+            )),
+        }
+    }
+
+    /// Executes the plan on an argument and returns its result: the
+    /// rows, or, where the query computes a single value, that value.
+    pub fn execute(&self, arg: &Val) -> Result<Val, SparkError> {
+        let rows = if let Some(plan) = &self.plan {
+            self.connection.execute(plan, &self.element_type)?
+        } else {
+            let plan = spark_adapter::translate(&self.substitute(arg))?;
+            self.connection.execute(&plan, &self.element_type)?
+        };
+        if self.collection {
+            return Ok(Val::List(Rc::new(rows)));
+        }
+        if rows.len() != 1 {
+            return Err(SparkError::new(
+                "CONNECTION",
+                format!(
+                    "Query computes one value, but Spark returned {} rows",
+                    rows.len()
+                ),
+            ));
+        }
+        Ok(rows.into_iter().next().expect("one row"))
+    }
+
+    /// Returns the query with an argument in place of its parameters.
+    /// One parameter takes the whole argument; several take its
+    /// components, one each.
+    fn substitute(&self, arg: &Val) -> Expr {
+        let mut values = BTreeMap::new();
+        if self.parameters.len() == 1 {
+            values.insert(self.parameters[0].clone(), arg.clone());
+        } else {
+            for (p, v) in self.parameters.iter().zip(arg.expect_list()) {
+                values.insert(p.clone(), v.clone());
+            }
+        }
+        substitute(&self.query, &values)
+    }
+}
+
+/// Returns `e` with each identifier that `values` names replaced by a
+/// literal of its value.
+fn substitute(e: &Expr, values: &BTreeMap<String, Val>) -> Expr {
+    match e {
+        Expr::Identifier(t, name) if values.contains_key(name) => {
+            Expr::Literal(t.clone(), values[name].clone())
+        }
+        Expr::Rel(t, rel) => Expr::Rel(
+            t.clone(),
+            Box::new(rel.map_children(&|c| substitute(c, values))),
+        ),
+        Expr::From(t, steps) => {
+            Expr::From(t.clone(), map_steps(steps, &|c| substitute(c, values)))
+        }
+        _ => map_children(e, &|c| substitute(c, values)),
     }
 }
 
@@ -607,9 +811,24 @@ impl Table {
     fn rows(&self) -> Result<Val, MorelError> {
         if self.rows.borrow().is_none() {
             let rows = call(self.connection.rows(&self.database, &self.name))?;
-            *self.rows.borrow_mut() = Some(rows);
+            // The rows are a list of the table's own, so that a list
+            // that is these rows is known to be this table, however the
+            // program reached it; a data set of the session's that holds
+            // the same rows is not.
+            let rows = Rc::new(rows.expect_list().to_vec());
+            TABLE_ROWS.with(|t| {
+                let mut t = t.borrow_mut();
+                t.retain(|(rows, _)| rows.strong_count() > 0);
+                t.push((Rc::downgrade(&rows), self.qualified()));
+            });
+            *self.rows.borrow_mut() = Some(Val::List(rows));
         }
         Ok(self.rows.borrow().clone().expect("rows were just fetched"))
+    }
+
+    /// Returns the name Spark knows this table by.
+    fn qualified(&self) -> String {
+        format!("{}.{}", self.database, self.name)
     }
 }
 
@@ -640,6 +859,33 @@ impl TypedValue for Table {
     fn describe(&self) -> String {
         "<relation>".to_string()
     }
+
+    fn qualified_name(&self) -> Option<String> {
+        Some(self.qualified())
+    }
+}
+
+thread_local! {
+    /// The rows of each table that has been read, and the name Spark
+    /// knows the table by.
+    static TABLE_ROWS: RefCell<Vec<(Weak<Vec<Val>>, String)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+/// Returns the name of the table whose rows `rows` are, if they are
+/// the rows of a table of a catalog.
+///
+/// A query that reads a name bound to a table -- `val emps =
+/// spark.catalog.scott.emps` -- reads its rows, and the rows remember
+/// the table, so that the query is a scan of it rather than rows to
+/// send.
+pub fn table_of_rows(rows: &Rc<Vec<Val>>) -> Option<String> {
+    TABLE_ROWS.with(|t| {
+        t.borrow()
+            .iter()
+            .find(|(r, _)| r.upgrade().is_some_and(|r| Rc::ptr_eq(&r, rows)))
+            .map(|(_, name)| name.clone())
+    })
 }
 
 // End spark.rs

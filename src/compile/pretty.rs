@@ -650,6 +650,7 @@ impl Pretty {
             // type, prints as itself; a relation of a catalog, as
             // `<relation>`.
             Val::Connection(c) => text(&c.to_string()),
+            Val::Plan(_) => text("<plan>"),
             Val::Progressive(_) => text(RELATION),
             _ => panic!("Expected list"),
         }

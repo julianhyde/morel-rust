@@ -73,6 +73,13 @@ pub trait TypedValue: Debug {
     /// Returns the text that the value prints as when no type guides
     /// the printer.
     fn describe(&self) -> String;
+
+    /// Returns the name Spark knows this value by, if it is a table of
+    /// a Spark connection's catalog: the database and the table, joined
+    /// by a dot. A query that reads such a table is a scan of it.
+    fn qualified_name(&self) -> Option<String> {
+        None
+    }
 }
 
 // End typed_value.rs

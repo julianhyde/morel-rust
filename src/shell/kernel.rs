@@ -44,7 +44,8 @@ use crate::shell::error::Error;
 use crate::shell::prop::{Check, Mode, Output, Prop, PropVal};
 use crate::shell::statement::is_complete;
 use crate::shell::utils::strip_prefix;
-use crate::syntax::ast::Statement;
+use crate::spark as spark_adapter;
+use crate::syntax::ast::{Span as AstSpan, Statement};
 use crate::syntax::parser;
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
@@ -483,6 +484,25 @@ pub struct Kernel {
     /// How deeply `use` is currently nested, so that the
     /// "maxUseDepth" property can bound it.
     use_depth: i32,
+    /// Whether the statement being processed is being evaluated here
+    /// because Spark refused it, and so is not to be pushed down again.
+    falling_back: bool,
+}
+
+/// Returns where morel-java positions a statement, which is where a
+/// failure to compile it is raised: its span, except that a postfix
+/// call on a receiver that is not a name, `(e).f a`, is positioned at
+/// the last token of its argument.
+fn java_position(statement: &Statement) -> AstSpan {
+    use crate::syntax::ast::{ExprKind, StatementKind};
+    if let StatementKind::Expr(ExprKind::Apply(f, arg)) = &statement.kind
+        && let ExprKind::Apply(selector, receiver) = &f.kind
+        && matches!(selector.kind, ExprKind::RecordSelector(_))
+        && !matches!(receiver.kind, ExprKind::Identifier(_))
+    {
+        return arg.span.last_token();
+    }
+    statement.span.clone()
 }
 
 /// Simple environment for storing bindings.
@@ -893,6 +913,7 @@ impl Kernel {
             session: Rc::new(RefCell::new(Session::new())),
             link_table: RefCell::new(LinkTable::new()),
             use_depth: 0,
+            falling_back: false,
         }
     }
 
@@ -991,9 +1012,14 @@ impl Kernel {
         };
 
         // With "sparkPushDown" set, a query is sent to Spark.
-        let statement = match self.push_down(statement, base_line) {
-            Ok(statement) => statement,
-            Err(output) => return Ok(output),
+        let statement_span = java_position(&statement);
+        let (statement, pushed) = if self.falling_back {
+            (statement, false)
+        } else {
+            match self.push_down(statement, base_line) {
+                Ok(pushed) => pushed,
+                Err(output) => return Ok(output),
+            }
         };
 
         // Mode for just this statement.
@@ -1090,9 +1116,40 @@ impl Kernel {
 
         // Successfully parsed, now evaluate
         let output = self.evaluate_node(&resolved);
-        match &output {
+        match output {
             Ok(s) => Ok(format!("{}{}", warning_prefix, s)),
-            Err(_) => output,
+            Err(Error::Spark(e)) => {
+                let span2 = Span::from_pest_span(
+                    &statement_span.to_pest_span(),
+                    base_line,
+                );
+                // A query Spark cannot do is refused where its plan is
+                // made, and "sparkFallback" says what happens then: by
+                // default it is evaluated here, and says so. A failure
+                // that is not a refusal is not an invitation to compute
+                // something else. The warnings of an attempt that came
+                // to nothing go with it.
+                let fallback = matches!(
+                    self.session.borrow().config.shown(Prop::SparkFallback),
+                    Some(PropVal::Bool(true))
+                );
+                if pushed && fallback && e.is_refusal() {
+                    let warning = format!(
+                        "{} Warning: not pushed down to Spark, so evaluated \
+                         here: {}\n  raised at: {}\n",
+                        span2, e.message, span2
+                    );
+                    self.falling_back = true;
+                    let output = self.process_statement(code, expected_output);
+                    self.falling_back = false;
+                    return output.map(|s| format!("{}{}", warning, s));
+                }
+                // Every failure raises Spark, and a refusal to translate
+                // is a failure like any other: it reaches the program as
+                // the exception that every Spark failure raises.
+                Ok(format!("{}{}\n", warning_prefix, e.raise(&span2)))
+            }
+            Err(e) => Err(e),
         }
     }
 
@@ -1113,7 +1170,7 @@ impl Kernel {
         &self,
         statement: Statement,
         base_line: usize,
-    ) -> Result<Statement, String> {
+    ) -> Result<(Statement, bool), String> {
         use crate::syntax::ast::{
             ExprKind, LiteralKind, Match, PatKind, StatementKind,
         };
@@ -1126,7 +1183,7 @@ impl Kernel {
             StatementKind::Expr(ExprKind::From(steps)) if !steps.is_empty()
         );
         if !push_down || !is_query {
-            return Ok(statement);
+            return Ok((statement, false));
         }
         let span = statement.span.clone();
         if !self.environment.bindings.contains_key("spark") {
@@ -1164,10 +1221,13 @@ impl Kernel {
             ))),
             Box::new(unit),
         ));
-        Ok(Statement {
-            kind: StatementKind::Expr(call.kind),
-            ..statement
-        })
+        Ok((
+            Statement {
+                kind: StatementKind::Expr(call.kind),
+                ..statement
+            },
+            true,
+        ))
     }
 
     /// Stores the current command's pre- and post-inlining declarations
@@ -1303,6 +1363,11 @@ impl Kernel {
             env2 = env2.child_expr(name, &t, e);
         }
         let decl2 = inliner::inline_decl(&env2, &decl, self.inline_passes());
+        // `Spark.prepare (c, f)` and `Spark.remote (c, f)` translate `f`
+        // here, once, now that its built-ins are function literals.
+        let decl2 =
+            spark_adapter::prepare_decl(decl2, &self.environment.bindings)
+                .map_err(Error::Spark)?;
 
         // Save the pre- and post-inlining declarations so that
         // `Sys.planEx` can re-print the previous command's plan at the
@@ -1626,6 +1691,12 @@ pub enum MorelError {
     /// non-discrete element type).
     CompileError(String, Span),
 
+    /// A failure that escapes as an error of the implementation rather
+    /// than as a Morel exception, and reads as that error writes itself:
+    /// `Spark {errorClass = "UNSUPPORTED", message = "..."}`, as
+    /// morel-java's `SparkException` does where nothing converts it.
+    Escaped(String),
+
     /// Advisory signal that a row sink has completed early and does not
     /// need more rows. Producers may honor this for performance or safely
     /// ignore it. Sinks returning EarlyReturn must be idempotent.
@@ -1669,6 +1740,7 @@ impl Display for MorelError {
             MorelError::CompileError(msg, loc) => {
                 write!(f, "{} Error: {}\n  raised at: {}", loc, msg, loc)
             }
+            MorelError::Escaped(msg) => write!(f, "{}", msg),
             MorelError::EarlyReturn => {
                 write!(f, "EarlyReturn (internal signal)")
             }

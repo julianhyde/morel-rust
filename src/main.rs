@@ -26,6 +26,7 @@ mod compile;
 mod datalog;
 mod eval;
 mod shell;
+mod spark;
 mod syntax;
 mod unify;
 

@@ -71,6 +71,7 @@ use crate::eval::word;
 use crate::shell::highlight::highlight_concise;
 use crate::shell::kernel::{Kernel, MorelError, UNCAUGHT_PREFIX};
 use crate::shell::prop::{Output as PropOutput, Prop};
+use crate::spark as spark_adapter;
 use crate::syntax::ast_dumper::dump as ast_dumper_dump;
 use crate::syntax::parser::parse_statement;
 use std::cell::RefCell;
@@ -1973,6 +1974,25 @@ impl Display for Code {
         match self {
             // lint: sort until '#}' where '##Self::'
             Self::Apply(fn_code, arg_code) => {
+                // The function that `Spark.remote` makes shows the plan
+                // it runs, as morel-java's describer shows it.
+                if let Self::Constant(_, Val::NativeFn(native)) =
+                    fn_code.as_ref()
+                    && let Some(description) = native.description()
+                {
+                    write!(f, "apply(fnValue {}, argCode ", description)?;
+                    return match arg_code.as_ref() {
+                        Self::Constant(t, Val::Unit)
+                            if matches!(
+                                t.as_ref(),
+                                Type::Primitive(PrimitiveType::Unit)
+                            ) =>
+                        {
+                            write!(f, "constant([]))")
+                        }
+                        _ => write!(f, "{})", arg_code),
+                    };
+                }
                 write!(f, "apply(fn {} arg {})", fn_code, arg_code)
             }
             Self::ApplyClosure(fn_code, arg_code, _) => {
@@ -2011,6 +2031,7 @@ impl Display for Code {
             ),
             Self::Compare(_, a, b) => write!(f, "compare({}, {})", a, b),
             Self::Constant(_, v) => match v {
+                Val::Plan(plan) => write!(f, "{}", plan.describe()),
                 Val::Char(c) => write!(f, "constant({})", c),
                 Val::Fn(fun) => {
                     write!(f, "constant({})", plan_label(&format!("{:?}", fun)))
@@ -3109,8 +3130,13 @@ impl EagerF1 {
                 Ok(uri) => spark_connect(&uri, span),
                 Err(e) => Err(e.raise(span)),
             },
-            // There is no plan to print: this port cannot prepare one.
-            SparkToString => Err(spark::adapter_unavailable().raise(span)),
+            // A plan with a parameter has no text. The failure escapes as
+            // morel-java's does, as an error rather than as the Morel
+            // exception.
+            SparkToString => match a0.expect_plan().text() {
+                Ok(text) => Ok(Val::String(text.into())),
+                Err(e) => Err(MorelError::Escaped(e.to_string())),
+            },
             StringFromString => string_cvt::scan_str(
                 r,
                 f,
@@ -4725,10 +4751,36 @@ impl EagerF2 {
                 false,
                 span.unwrap(),
             ),
-            // This port has no adapter, so it cannot prepare a plan, and
-            // a plan that does not exist cannot be executed.
-            SparkExecute | SparkPrepare | SparkRemote => {
-                Err(spark::adapter_unavailable().raise(span.unwrap()))
+            SparkExecute => a0
+                .expect_plan()
+                .execute(&a1)
+                .map_err(|e| e.raise(span.unwrap())),
+            // Preparing is done where `prepare (c, f)` is applied to a
+            // function expression, so this runs only where `prepare` is
+            // used as a value -- passed to `map`, say -- which it cannot
+            // serve, because by then the function is a closure and its
+            // tree is gone.
+            SparkPrepare | SparkRemote => {
+                if !spark_adapter::is_available() {
+                    return Err(
+                        spark::adapter_unavailable().raise(span.unwrap())
+                    );
+                }
+                let name = if matches!(self, SparkPrepare) {
+                    "prepare"
+                } else {
+                    "remote"
+                };
+                Err(MorelError::Escaped(
+                    spark::SparkError::new(
+                        "UNSUPPORTED",
+                        format!(
+                            "Spark.{} must be applied to a function expression",
+                            name
+                        ),
+                    )
+                    .to_string(),
+                ))
             }
             SparkUsing => {
                 let span = span.unwrap();

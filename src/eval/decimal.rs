@@ -140,6 +140,14 @@ impl Decimal {
     }
 
     /// Whether the value is zero.
+    /// Returns the sign, the digits and the exponent: the value is
+    /// `digits * 10^exp`, negated if the sign is set. The digits have no
+    /// leading or trailing zero, and are empty for zero.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn parts(&self) -> (bool, &str, i32) {
+        (self.neg, &self.digits, self.exp)
+    }
+
     pub fn is_zero(&self) -> bool {
         self.digits.is_empty()
     }
