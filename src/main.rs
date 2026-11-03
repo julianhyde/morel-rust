@@ -40,12 +40,17 @@ enum CliAction {
     Interactive {
         directory: Option<String>,
         color_scheme: Option<String>,
+        /// The Spark Connect server to bind as `spark`, from `--spark`;
+        /// empty for the default server.
+        spark: Option<String>,
     },
     Scripts {
         /// Non-empty; "-" means stdin.
         files: Vec<String>,
         force_idempotent: Option<bool>,
         directory: Option<String>,
+        /// As for [`CliAction::Interactive`].
+        spark: Option<String>,
     },
     /// An argument parse error; the string is shown on stderr before exit 1.
     Error(String),
@@ -84,6 +89,7 @@ fn parse_args(args: &[String]) -> CliAction {
     let mut force_idempotent: Option<bool> = None;
     let mut directory: Option<String> = None;
     let mut color_scheme: Option<String> = None;
+    let mut spark: Option<String> = None;
     let mut files: Vec<String> = Vec::new();
     let mut end_of_flags = false;
     for arg in args {
@@ -95,6 +101,13 @@ fn parse_args(args: &[String]) -> CliAction {
             "--" => end_of_flags = true,
             "--idempotent" => force_idempotent = Some(true),
             "--no-idempotent" => force_idempotent = Some(false),
+            // The default server, whose URI SPARK_REMOTE holds.
+            "--spark" => spark = Some(String::new()),
+            // What omitting "--spark" does; said out loud.
+            "--no-spark" => spark = None,
+            _ if arg.starts_with("--spark=") => {
+                spark = Some(arg.strip_prefix("--spark=").unwrap().to_string());
+            }
             _ if arg.starts_with("--directory=") => {
                 directory =
                     Some(arg.strip_prefix("--directory=").unwrap().to_string());
@@ -115,6 +128,7 @@ fn parse_args(args: &[String]) -> CliAction {
         CliAction::Interactive {
             directory,
             color_scheme,
+            spark,
         }
     } else {
         if files.is_empty() {
@@ -124,6 +138,7 @@ fn parse_args(args: &[String]) -> CliAction {
             files,
             force_idempotent,
             directory,
+            spark,
         }
     }
 }
@@ -198,6 +213,13 @@ fn print_help() {
         "  --no-idempotent    Force non-idempotent mode for all files / stdin"
     );
     println!("  --directory=DIR    Set the working directory");
+    println!(
+        "  --spark[=URI]      Bind the Spark Connect server at URI (default"
+    );
+    println!(
+        "                     $SPARK_REMOTE) as 'spark', and run queries there"
+    );
+    println!("  --no-spark         Do not connect to Spark (the default)");
     println!(
         "  --                 End of options; remaining args are file names"
     );
@@ -280,19 +302,26 @@ fn main() {
         CliAction::Interactive {
             directory,
             color_scheme,
+            spark,
         } => {
-            run_interactive(directory.as_deref(), color_scheme.as_deref());
+            run_interactive(
+                directory.as_deref(),
+                color_scheme.as_deref(),
+                spark.as_deref(),
+            );
         }
         CliAction::Scripts {
             files,
             force_idempotent,
             directory,
+            spark,
         } => {
             let mut shell_args: Vec<String> = Vec::new();
             if let Some(dir) = &directory {
                 shell_args.push(format!("--directory={}", dir));
             }
             let mut shell = Kernel::new(&shell_args);
+            connect_spark(&mut shell, spark.as_deref());
             match run_scripts_with(
                 &mut shell,
                 &files,
@@ -310,7 +339,23 @@ fn main() {
     }
 }
 
-fn run_interactive(directory: Option<&str>, color_scheme: Option<&str>) {
+/// Binds the Spark Connect server that `--spark` named as `spark`, and
+/// sets `sparkPushDown`, so that queries run there; or does nothing if
+/// there was no `--spark`. Exits if the connection cannot be made.
+fn connect_spark(kernel: &mut Kernel, spark: Option<&str>) {
+    if let Some(uri) = spark
+        && let Err(e) = kernel.connect_spark(uri)
+    {
+        eprintln!("{}", e);
+        exit(1);
+    }
+}
+
+fn run_interactive(
+    directory: Option<&str>,
+    color_scheme: Option<&str>,
+    spark: Option<&str>,
+) {
     let is_tty = IsTerminal::is_terminal(&stdin());
     let mut shell_args = vec!["--prompt".to_string(), "--banner".to_string()];
     if is_tty {
@@ -320,6 +365,7 @@ fn run_interactive(directory: Option<&str>, color_scheme: Option<&str>) {
         shell_args.push(format!("--directory={}", dir));
     }
     let mut kernel = Kernel::new(&shell_args);
+    connect_spark(&mut kernel, spark);
 
     // The --color-scheme flag fixes the syntax-highlighting scheme, so the
     // shell does not deduce one from the terminal background.
@@ -371,6 +417,36 @@ mod tests {
             CliAction::Interactive {
                 directory: None,
                 color_scheme: None,
+                spark: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_args_spark() {
+        // "--spark" binds the default server, "--spark=URI" the one URI
+        // names, and "--no-spark" says what omitting it does.
+        let interactive = |spark: Option<&str>| CliAction::Interactive {
+            directory: None,
+            color_scheme: None,
+            spark: spark.map(str::to_string),
+        };
+        assert_eq!(parse_args(&[s("--spark")]), interactive(Some("")));
+        assert_eq!(
+            parse_args(&[s("--spark=sc://h:1")]),
+            interactive(Some("sc://h:1"))
+        );
+        assert_eq!(
+            parse_args(&[s("--spark"), s("--no-spark")]),
+            interactive(None)
+        );
+        assert_eq!(
+            parse_args(&[s("--spark"), s("a.smli")]),
+            CliAction::Scripts {
+                files: vec![s("a.smli")],
+                force_idempotent: None,
+                directory: None,
+                spark: Some(s("")),
             }
         );
     }
@@ -394,6 +470,7 @@ mod tests {
                 files: vec![s("-c"), s("1 + 2")],
                 force_idempotent: None,
                 directory: None,
+                spark: None,
             }
         );
     }
@@ -462,6 +539,7 @@ mod tests {
                 files: vec![s("foo.smli")],
                 force_idempotent: None,
                 directory: None,
+                spark: None,
             }
         );
     }
@@ -474,6 +552,7 @@ mod tests {
                 files: vec![s("a.sml"), s("b.smli")],
                 force_idempotent: None,
                 directory: None,
+                spark: None,
             }
         );
     }
@@ -486,6 +565,7 @@ mod tests {
                 files: vec![s("-")],
                 force_idempotent: Some(true),
                 directory: None,
+                spark: None,
             }
         );
     }
@@ -498,6 +578,7 @@ mod tests {
                 files: vec![s("x.smli")],
                 force_idempotent: Some(false),
                 directory: None,
+                spark: None,
             }
         );
     }
@@ -510,6 +591,7 @@ mod tests {
                 files: vec![s("f.sml")],
                 force_idempotent: None,
                 directory: Some("/tmp".into()),
+                spark: None,
             }
         );
     }
@@ -524,6 +606,7 @@ mod tests {
                 files: vec![s("--looks-like-flag")],
                 force_idempotent: None,
                 directory: None,
+                spark: None,
             }
         );
     }
@@ -549,6 +632,7 @@ mod tests {
                 files: vec![s("a.sml"), s("b.sml")],
                 force_idempotent: Some(true),
                 directory: None,
+                spark: None,
             }
         );
     }
@@ -561,6 +645,7 @@ mod tests {
                 files: vec![s("-")],
                 force_idempotent: None,
                 directory: None,
+                spark: None,
             }
         );
     }

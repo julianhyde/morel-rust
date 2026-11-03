@@ -125,6 +125,48 @@ impl Span {
         self.clone()
     }
 
+    /// Returns whether this span is a parenthesized expression, `( e )`:
+    /// whether it starts with a parenthesis that the one it ends with
+    /// closes.
+    ///
+    /// The span of a parenthesized expression includes its parentheses,
+    /// as morel-java's position of one does; morel-java's parser gives
+    /// the parenthesized expression that position whatever it would
+    /// otherwise have had.
+    pub fn is_parenthesized(&self) -> bool {
+        let bytes = &self.input.as_bytes()[self.start..self.end];
+        if bytes.len() < 2 || bytes[0] != b'(' || bytes[bytes.len() - 1] != b')'
+        {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'"' => {
+                    // Skip a string literal, which may hold parentheses.
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != b'"' {
+                        if bytes[i] == b'\\' {
+                            i += 1;
+                        }
+                        i += 1;
+                    }
+                }
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return i == bytes.len() - 1;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
     /// Creates the union of two spans.
     pub fn union(&self, other: &Span) -> Self {
         use std::cmp::{max, min};

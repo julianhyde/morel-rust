@@ -86,13 +86,18 @@ fn walk_expr(e: &mut Expr, env: &HashMap<String, Val>, file_root: &Rc<File>) {
             let Expr::RecordSelector(sel_ty, slot) = fx.as_mut() else {
                 return;
             };
-            let slot = *slot;
-
-            // Look up the field name in the current (stale) arg type
-            // and use the value-walk to find the underlying value.
-            let Some(field_name) =
-                arg.type_().field_name(slot).map(ToString::to_string)
-            else {
+            // Look up the field name in the selector's own type, which
+            // names a field the record has not discovered as well as one
+            // it has, and use the value-walk to find the underlying
+            // value.
+            let named_in =
+                |t: &Type| t.field_name(*slot).map(ToString::to_string);
+            let field_name = match sel_ty.as_ref() {
+                Type::Fn(param, _) => named_in(param),
+                _ => None,
+            }
+            .or_else(|| named_in(&arg.type_()));
+            let Some(field_name) = field_name else {
                 return;
             };
             let Some(Val::Progressive(v)) = value_of(arg, env, file_root)
@@ -106,23 +111,30 @@ fn walk_expr(e: &mut Expr, env: &HashMap<String, Val>, file_root: &Rc<File>) {
                 return;
             }
 
-            // Pull the new (post-widen) types out of the value.
+            // Pull the new (post-widen) types out of the value. A field
+            // the value still does not have is left for the program to
+            // ask for, and the value to refuse, when it runs.
             let Ok(widened_arg_ty) = v.current_type() else {
                 return;
             };
-            let widened_field_ty = match widened_arg_ty.as_ref() {
-                Type::Record(_, fields) => fields.values().nth(slot).cloned(),
+            let widened = match widened_arg_ty.as_ref() {
+                Type::Record(_, fields) => fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (label, _))| label.to_string() == field_name)
+                    .map(|(i, (_, t))| (i, t.clone())),
                 _ => None,
             };
-            let Some(widened_field_ty) = widened_field_ty else {
+            let Some((widened_slot, widened_field_ty)) = widened else {
                 return;
             };
 
-            // Refine in place: arg, the selector's function type,
-            // and the Apply's result type.
+            // Refine in place: arg, the selector's function type and
+            // slot, and the Apply's result type.
             set_expr_type(arg.as_mut(), widened_arg_ty.clone());
             *sel_ty =
                 Rc::new(Type::Fn(widened_arg_ty, widened_field_ty.clone()));
+            *slot = widened_slot;
             *apply_ty = widened_field_ty;
         }
         Expr::Aggregate(_, l, r, _) => {

@@ -121,10 +121,12 @@ wildcard_imports = "deny"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # lint: sort until '^$'
 arrow-array = { version = "57", default-features = false }
-arrow-buffer = { version = "57", default-features = false }
 arrow-ipc = { version = "57", default-features = false }
 arrow-schema = { version = "57", default-features = false }
 prost = "0.14"
 prost-types = "0.14"
 rustyline = { version = "18.0.1", features = ["with-file-history"] }
 termbg = "0.6.2"
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time"] }
+tonic = { version = "0.14", default-features = false, features = ["channel", "codegen"] }
+tonic-prost = "0.14"

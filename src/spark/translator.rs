@@ -75,6 +75,7 @@ pub fn translate(query: &Expr) -> Result<Plan> {
         witnesses: HashMap::new(),
         references: Vec::new(),
         right_rows: HashSet::new(),
+        scalar_rows: HashSet::new(),
         next_plan_id: 0,
     };
     let query = unlet(query);
@@ -105,6 +106,10 @@ struct Translator {
     /// The names of the rows that are a join's right row, which a
     /// message calls `$1` where morel-java's tree does.
     right_rows: HashSet<String>,
+    /// The names of the rows that range over a group of one field whose
+    /// field a projection above reads; see
+    /// [`Translator::mark_scalar_rows`].
+    scalar_rows: HashSet<String>,
     next_plan_id: i64,
 }
 
@@ -331,6 +336,14 @@ fn is_whole_of_input(rel: &Rel) -> Option<&Expr> {
         .then_some(input)
 }
 
+/// Returns whether an expression is a group whose element has one
+/// field, a key or an aggregate.
+fn is_single_field_group(e: &Expr) -> bool {
+    matches!(e, Expr::Rel(_, rel)
+        if matches!(rel.as_ref(), Rel::Group(_, _, keys, aggregates)
+            if keys.len() + aggregates.len() == 1))
+}
+
 /// Returns the column that an expression reads of a row, or `None`.
 fn column_of(e: &Expr, row: &str) -> Option<String> {
     match selector(e) {
@@ -528,6 +541,7 @@ impl Translator {
             // of values, and a projection turns the one into the other.
             // Spark does not: a relation always has named columns, so
             // the projection is nothing to do, and takes no plan id.
+            self.mark_scalar_rows(input, Vec::new());
             return self.rel(input);
         }
         if !self.refers_to_relation(rel) {
@@ -546,6 +560,33 @@ impl Translator {
                 references: own,
             })),
         ))
+    }
+
+    /// Notes the rows of the nodes between a projection that reads the
+    /// one field of its input and the group of one field that makes the
+    /// field, if that is what is below it: `group e.job order job`.
+    ///
+    /// Where this port's tree makes a group's one key into a record and
+    /// projects the key out of it above the nodes that read it,
+    /// morel-java's tree makes the group's element the key itself, so
+    /// that those nodes read their row whole -- and its translator
+    /// cannot name a row read whole. So such a row reads as morel-java's
+    /// does, as a variable that is no column.
+    fn mark_scalar_rows(&mut self, e: &Expr, mut rows: Vec<String>) {
+        let Expr::Rel(_, rel) = e else {
+            return;
+        };
+        match rel.as_ref() {
+            Rel::Filter(row, input, _) | Rel::Sort(row, input, _) => {
+                rows.push(row.name.clone());
+                self.mark_scalar_rows(input, rows);
+            }
+            Rel::Skip(input, _) | Rel::Take(input, _) | Rel::Unorder(input) => {
+                self.mark_scalar_rows(input, rows);
+            }
+            _ if is_single_field_group(e) => self.scalar_rows.extend(rows),
+            _ => {}
+        }
     }
 
     /// Returns whether a node's own expressions ask a question of a
@@ -876,6 +917,17 @@ impl Translator {
         match e {
             Expr::Apply(t, f, arg, _) => {
                 if let Expr::RecordSelector(_, slot) = f.as_ref() {
+                    if let Expr::Identifier(_, name) = arg.as_ref()
+                        && self.scalar_rows.contains(name)
+                    {
+                        // The row of a node over a group of one field,
+                        // which morel-java's tree reads whole, and which
+                        // is no column of the query.
+                        return Err(unsupported(format!(
+                            "the variable {}",
+                            self.variable_name(name)
+                        )));
+                    }
                     if matches!(arg.as_ref(), Expr::Identifier(..))
                         && !parts.is_empty()
                         && *slot < parts.len()

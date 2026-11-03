@@ -1786,6 +1786,34 @@ impl Code {
         Ok(Val::Bool(true))
     }
 
+    /// Writes the application of a function that describes itself, as
+    /// the function that `Spark.remote` makes shows the plan it runs, in
+    /// morel-java's form: `apply(fnValue spark(plan ...), argCode
+    /// constant([]))`. Returns `None` if the function does not describe
+    /// itself.
+    fn write_described_apply(
+        f: &mut Formatter,
+        fn_code: &Code,
+        arg_code: &Code,
+    ) -> Option<FmtResult> {
+        let Self::Constant(_, Val::NativeFn(native)) = fn_code else {
+            return None;
+        };
+        let description = native.description()?;
+        let arg = match arg_code {
+            Self::Constant(t, Val::Unit)
+                if matches!(
+                    t.as_ref(),
+                    Type::Primitive(PrimitiveType::Unit)
+                ) =>
+            {
+                "constant([])".to_string()
+            }
+            _ => arg_code.to_string(),
+        };
+        Some(write!(f, "apply(fnValue {}, argCode {})", description, arg))
+    }
+
     fn write_codes(
         f: &mut Formatter,
         prefix: &str,
@@ -1974,24 +2002,10 @@ impl Display for Code {
         match self {
             // lint: sort until '#}' where '##Self::'
             Self::Apply(fn_code, arg_code) => {
-                // The function that `Spark.remote` makes shows the plan
-                // it runs, as morel-java's describer shows it.
-                if let Self::Constant(_, Val::NativeFn(native)) =
-                    fn_code.as_ref()
-                    && let Some(description) = native.description()
+                if let Some(result) =
+                    Self::write_described_apply(f, fn_code, arg_code)
                 {
-                    write!(f, "apply(fnValue {}, argCode ", description)?;
-                    return match arg_code.as_ref() {
-                        Self::Constant(t, Val::Unit)
-                            if matches!(
-                                t.as_ref(),
-                                Type::Primitive(PrimitiveType::Unit)
-                            ) =>
-                        {
-                            write!(f, "constant([]))")
-                        }
-                        _ => write!(f, "{})", arg_code),
-                    };
+                    return result;
                 }
                 write!(f, "apply(fn {} arg {})", fn_code, arg_code)
             }
@@ -2196,6 +2210,11 @@ impl Display for Code {
             }
             Self::SelfRef => write!(f, "self"),
             Self::TailApply(fn_code, arg_code) => {
+                if let Some(result) =
+                    Self::write_described_apply(f, fn_code, arg_code)
+                {
+                    return result;
+                }
                 write!(f, "tailApply({}, {})", fn_code, arg_code)
             }
             Self::Tuple(codes) => {
@@ -4148,9 +4167,9 @@ impl Eager2 {
             IntLt => Val::Bool(a0.expect_int() < a1.expect_int()),
             IntMax => Val::Int(a0.expect_int().max(a1.expect_int())),
             IntMin => Val::Int(a0.expect_int().min(a1.expect_int())),
-            IntMinus => Val::Int(a0.expect_int() - a1.expect_int()),
+            IntMinus => Val::Int(a0.expect_int().wrapping_sub(a1.expect_int())),
             IntNe => Val::Bool(a0.expect_int() != a1.expect_int()),
-            IntPlus => Val::Int(a0.expect_int() + a1.expect_int()),
+            IntPlus => Val::Int(a0.expect_int().wrapping_add(a1.expect_int())),
             IntQuot => {
                 let n1 = a0.expect_int();
                 let n2 = a1.expect_int();
@@ -4166,7 +4185,8 @@ impl Eager2 {
                 let n2 = a1.expect_int();
                 Val::Bool((n1 >= 0 && n2 >= 0) || (n1 < 0 && n2 < 0))
             }
-            IntTimes => Val::Int(a0.expect_int() * a1.expect_int()),
+            // Morel's int wraps on overflow, as morel-java's does.
+            IntTimes => Val::Int(a0.expect_int().wrapping_mul(a1.expect_int())),
             LPZip => ListPair::zip(a0.expect_list(), a1.expect_list()),
             ListAt => Val::List(Rc::new(List::append(
                 a0.expect_list(),

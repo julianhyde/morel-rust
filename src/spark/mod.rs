@@ -34,6 +34,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod arrow;
 #[cfg(not(target_arch = "wasm32"))]
+mod client;
+#[cfg(not(target_arch = "wasm32"))]
 mod function_table;
 #[cfg(not(target_arch = "wasm32"))]
 mod plan;
@@ -47,7 +49,11 @@ mod schema;
 mod text_format;
 #[cfg(not(target_arch = "wasm32"))]
 mod translator;
+#[cfg(not(target_arch = "wasm32"))]
+mod types;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use client::RemoteConnection;
 #[cfg(not(target_arch = "wasm32"))]
 pub use plan::Plan;
 #[cfg(not(target_arch = "wasm32"))]
@@ -63,9 +69,11 @@ pub fn is_available() -> bool {
 #[cfg(target_arch = "wasm32")]
 mod stub {
     use crate::compile::core::{Decl, Expr};
+    use crate::compile::types::Type;
     use crate::eval::spark::{SparkError, adapter_unavailable};
     use crate::eval::val::Val;
     use std::collections::HashMap;
+    use std::rc::Rc;
 
     /// A plan. Without the adapter there is none.
     #[derive(Clone, Debug)]
@@ -89,9 +97,50 @@ mod stub {
     pub fn translate(_query: &Expr) -> Result<Plan, SparkError> {
         Err(adapter_unavailable())
     }
+
+    /// A connection to a server. Without the adapter there is none.
+    pub enum RemoteConnection {}
+
+    impl RemoteConnection {
+        pub fn open(_uri: &str) -> Result<RemoteConnection, SparkError> {
+            Err(adapter_unavailable())
+        }
+
+        pub fn close(&self) {
+            match *self {}
+        }
+
+        pub fn databases(&self) -> Result<Vec<String>, SparkError> {
+            match *self {}
+        }
+
+        pub fn tables(&self, _: &str) -> Result<Vec<String>, SparkError> {
+            match *self {}
+        }
+
+        pub fn table_type(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Rc<Type>, SparkError> {
+            match *self {}
+        }
+
+        pub fn rows(&self, _: &str, _: &str) -> Result<Vec<Val>, SparkError> {
+            match *self {}
+        }
+
+        pub fn execute(
+            &self,
+            _: &Plan,
+            _: &Type,
+        ) -> Result<Vec<Val>, SparkError> {
+            match *self {}
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use stub::{Plan, prepare_decl, translate};
+pub use stub::{Plan, RemoteConnection, prepare_decl, translate};
 
 // End mod.rs

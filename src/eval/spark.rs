@@ -20,12 +20,13 @@
 //! Port of morel-java's `MockSparkConnection`, `SparkCatalog`,
 //! `SparkConnections` and `PreparedPlan`: the side of the `Spark`
 //! structure that does not need the Spark adapter, [`crate::spark`],
-//! which translates a query to a plan. The offline connection, whose
-//! URI is `mock:`, has the session's data sets as its catalog; a plan
-//! can be prepared on it, but not executed. This port cannot yet open
-//! a connection to a server, so opening any other URI raises `Spark`
-//! with error class `CONNECTION`, as does preparing a plan where the
-//! adapter is absent.
+//! which translates a query to a plan and talks to a server. The
+//! offline connection, whose URI is `mock:`, has the session's data
+//! sets as its catalog; a plan can be prepared on it, but not
+//! executed. Any other URI names a Spark Connect server, whose catalog
+//! is the server's. Where the adapter is absent, as in a wasm build,
+//! connecting to a server or preparing a plan raises `Spark` with
+//! error class `CONNECTION`, as morel-java does.
 //!
 //! A catalog is a progressive record whose fields are databases, whose
 //! fields in turn are tables, each a bag of records. Nothing is fetched
@@ -57,8 +58,7 @@ pub const SPARK_REMOTE: &str = "SPARK_REMOTE";
 
 /// Message of the `CONNECTION` error that every operation needing the
 /// Spark adapter raises where the adapter is absent, as in a wasm
-/// build, and that connecting to a server raises, since this port
-/// cannot yet.
+/// build.
 pub const ADAPTER_UNAVAILABLE: &str = "The Spark adapter is not available; \
      it needs JDK 17 or later and the 'spark' Maven profile";
 
@@ -153,42 +153,57 @@ pub struct DataSet {
     pub value: Val,
 }
 
-/// A connection. This port can open only the offline one, whose
+/// A connection: to a Spark Connect server, or the offline one, whose
 /// catalog is the session's data sets and which can execute nothing.
 pub struct Connection {
-    data_sets: BTreeMap<String, DataSet>,
+    uri: String,
+    backend: Backend,
     closed: Cell<bool>,
     /// The connection's catalog, created on first use, so that what is
     /// discovered accumulates; forgotten when the connection closes.
     catalog: RefCell<Option<Rc<Catalog>>>,
 }
 
+/// What a connection talks to.
+enum Backend {
+    /// The offline connection, and the data sets that are its catalog.
+    Mock(BTreeMap<String, DataSet>),
+    /// A server.
+    Remote(spark_adapter::RemoteConnection),
+}
+
 impl fmt::Debug for Connection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Connection({})", MOCK_URI)
+        write!(f, "Connection({})", self.uri)
     }
 }
 
 impl fmt::Display for Connection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "<connection {}>", MOCK_URI)
+        write!(f, "<connection {}>", self.uri)
     }
 }
 
 impl Connection {
-    /// Opens a connection to `uri`, which must be the offline one.
+    /// Opens a connection to `uri`: the offline one if it is `mock:`,
+    /// whose catalog is `data_sets`; otherwise a server, which needs
+    /// the adapter.
     pub fn open(
         uri: &str,
         data_sets: Vec<DataSet>,
     ) -> Result<Rc<Connection>, SparkError> {
-        if uri != MOCK_URI {
+        let backend = if uri == MOCK_URI {
+            Backend::Mock(
+                data_sets.into_iter().map(|d| (d.name.clone(), d)).collect(),
+            )
+        } else if !spark_adapter::is_available() {
             return Err(adapter_unavailable());
-        }
+        } else {
+            Backend::Remote(spark_adapter::RemoteConnection::open(uri)?)
+        };
         Ok(Rc::new(Connection {
-            data_sets: data_sets
-                .into_iter()
-                .map(|d| (d.name.clone(), d))
-                .collect(),
+            uri: uri.to_string(),
+            backend,
             closed: Cell::new(false),
             catalog: RefCell::new(None),
         }))
@@ -233,14 +248,18 @@ impl Connection {
     /// it raises `Spark`.
     pub fn close(&self) {
         self.catalog.borrow_mut().take();
-        self.closed.set(true);
+        if !self.closed.replace(true)
+            && let Backend::Remote(remote) = &self.backend
+        {
+            remote.close();
+        }
     }
 
     fn check_open(&self) -> Result<(), SparkError> {
         if self.closed.get() {
             return Err(SparkError::new(
                 "CLOSED",
-                format!("Connection to {} is closed", MOCK_URI),
+                format!("Connection to {} is closed", self.uri),
             ));
         }
         Ok(())
@@ -248,12 +267,17 @@ impl Connection {
 
     fn databases(&self) -> Result<Vec<String>, SparkError> {
         self.check_open()?;
-        Ok(self.data_sets.keys().cloned().collect())
+        match &self.backend {
+            Backend::Mock(data_sets) => Ok(data_sets.keys().cloned().collect()),
+            Backend::Remote(remote) => remote.databases(),
+        }
     }
 
-    fn database(&self, database: &str) -> Result<&DataSet, SparkError> {
-        self.check_open()?;
-        self.data_sets.get(database).ok_or_else(|| {
+    fn data_set<'a>(
+        data_sets: &'a BTreeMap<String, DataSet>,
+        database: &str,
+    ) -> Result<&'a DataSet, SparkError> {
+        data_sets.get(database).ok_or_else(|| {
             SparkError::new(
                 "SCHEMA_NOT_FOUND",
                 format!("Database {} not found", database),
@@ -261,11 +285,11 @@ impl Connection {
         })
     }
 
-    fn table_types(
-        &self,
+    fn table_types<'a>(
+        data_sets: &'a BTreeMap<String, DataSet>,
         database: &str,
-    ) -> Result<&BTreeMap<Label, Rc<Type>>, SparkError> {
-        match self.database(database)?.type_.as_ref() {
+    ) -> Result<&'a BTreeMap<Label, Rc<Type>>, SparkError> {
+        match Self::data_set(data_sets, database)?.type_.as_ref() {
             Type::Record(_, fields) => Ok(fields),
             _ => Err(SparkError::new(
                 "SCHEMA_NOT_FOUND",
@@ -275,7 +299,20 @@ impl Connection {
     }
 
     fn tables(&self, database: &str) -> Result<Vec<Label>, SparkError> {
-        Ok(self.table_types(database)?.keys().cloned().collect())
+        self.check_open()?;
+        match &self.backend {
+            Backend::Mock(data_sets) => {
+                Ok(Self::table_types(data_sets, database)?
+                    .keys()
+                    .cloned()
+                    .collect())
+            }
+            Backend::Remote(remote) => Ok(remote
+                .tables(database)?
+                .iter()
+                .map(|t| Label::from(t.as_str()))
+                .collect()),
+        }
     }
 
     fn table_not_found(database: &str, table: &str) -> SparkError {
@@ -290,10 +327,14 @@ impl Connection {
         database: &str,
         table: &str,
     ) -> Result<Rc<Type>, SparkError> {
-        self.table_types(database)?
-            .get(&Label::from(table))
-            .cloned()
-            .ok_or_else(|| Self::table_not_found(database, table))
+        self.check_open()?;
+        match &self.backend {
+            Backend::Mock(data_sets) => Self::table_types(data_sets, database)?
+                .get(&Label::from(table))
+                .cloned()
+                .ok_or_else(|| Self::table_not_found(database, table)),
+            Backend::Remote(remote) => remote.table_type(database, table),
+        }
     }
 
     /// Executes a plan and returns its rows, as Morel values of
@@ -302,23 +343,36 @@ impl Connection {
     /// rows.
     pub fn execute(
         &self,
-        _plan: &spark_adapter::Plan,
-        _element_type: &Type,
+        plan: &spark_adapter::Plan,
+        element_type: &Type,
     ) -> Result<Vec<Val>, SparkError> {
         self.check_open()?;
-        Err(SparkError::new(
-            "MOCK",
-            "The offline connection cannot execute a plan; connect to a server",
-        ))
+        match &self.backend {
+            Backend::Mock(_) => Err(SparkError::new(
+                "MOCK",
+                "The offline connection cannot execute a plan; connect to a \
+                 server",
+            )),
+            Backend::Remote(remote) => remote.execute(plan, element_type),
+        }
     }
 
     fn rows(&self, database: &str, table: &str) -> Result<Val, SparkError> {
-        let index = self
-            .table_types(database)?
-            .keys()
-            .position(|label| *label == Label::from(table))
-            .ok_or_else(|| Self::table_not_found(database, table))?;
-        Ok(self.database(database)?.value.expect_list()[index].clone())
+        self.check_open()?;
+        match &self.backend {
+            Backend::Mock(data_sets) => {
+                let index = Self::table_types(data_sets, database)?
+                    .keys()
+                    .position(|label| *label == Label::from(table))
+                    .ok_or_else(|| Self::table_not_found(database, table))?;
+                Ok(Self::data_set(data_sets, database)?.value.expect_list()
+                    [index]
+                    .clone())
+            }
+            Backend::Remote(remote) => {
+                Ok(Val::List(Rc::new(remote.rows(database, table)?)))
+            }
+        }
     }
 }
 

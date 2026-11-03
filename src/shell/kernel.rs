@@ -37,6 +37,7 @@ use crate::eval::code::Effect;
 use crate::eval::link_table::LinkTable;
 use crate::eval::session::Config as SessionConfig;
 use crate::eval::session::Session;
+use crate::eval::spark;
 use crate::eval::val::Val;
 use crate::shell::ShellResult;
 use crate::shell::config::Config;
@@ -573,6 +574,34 @@ impl Environment {
 }
 
 impl Kernel {
+    /// Connects to the Spark Connect server at `uri`, or, if `uri` is
+    /// empty, the one that `SPARK_REMOTE` names; binds the connection
+    /// as `spark`, as `Spark.connect` would return it; and sets
+    /// `sparkPushDown`, so that queries run there. This is what the
+    /// `--spark` flag does.
+    ///
+    /// Opening costs nothing until the connection is used, so a session
+    /// starts whether or not the server is up, and a server that is not
+    /// there is reported where it is noticed.
+    pub fn connect_spark(&mut self, uri: &str) -> Result<(), String> {
+        let uri = if uri.is_empty() {
+            spark::Connection::default_uri().map_err(|e| e.message)?
+        } else {
+            uri.to_string()
+        };
+        let statement = format!(
+            "val spark = Spark.connect \"{}\"",
+            parser::string_to_string(&uri)
+        );
+        let output = self
+            .process_statement(&statement, None)
+            .map_err(|e| e.to_string())?;
+        if !self.environment.bindings.contains_key("spark") {
+            return Err(output.trim_end().to_string());
+        }
+        self.set_prop("sparkPushDown", &Val::Bool(true))
+    }
+
     /// Assigns a property, as `Sys.set` does.
     ///
     /// The value is recorded in the session's property map, so that

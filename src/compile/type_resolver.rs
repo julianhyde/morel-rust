@@ -3599,7 +3599,13 @@ impl TypeResolver {
                         ExprKind::Identifier(_)
                     ) =>
                     {
-                        right.span.last_token()
+                        // ... unless it is in parentheses, which
+                        // position an expression at themselves.
+                        if expr.span.is_parenthesized() {
+                            expr.span.clone()
+                        } else {
+                            right.span.last_token()
+                        }
                     }
                     _ => expr.span.clone(),
                 };

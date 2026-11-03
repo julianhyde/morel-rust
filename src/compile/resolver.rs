@@ -2932,9 +2932,30 @@ impl<'a> Resolver<'a> {
                 }
             }
             ExprKind::RecordSelector(name) => {
-                let (param_type, _) = t.expect_fn();
+                let (param_type, result_type) = t.expect_fn();
                 if let Some(slot) = param_type.lookup_field(name) {
                     CoreExpr::RecordSelector(t, slot)
+                } else if let Type::Record(true, fields) = param_type {
+                    // A field that a progressive record has not
+                    // discovered -- a database a catalog does not have,
+                    // say -- is asked for when the program runs, and the
+                    // record says then what is wrong, as morel-java's
+                    // does.
+                    let mut fields = fields.clone();
+                    fields.insert(
+                        Label::from(name.as_str()),
+                        Rc::new(result_type.clone()),
+                    );
+                    let record = Type::Record(true, fields);
+                    let slot =
+                        record.lookup_field(name).expect("field just added");
+                    CoreExpr::RecordSelector(
+                        Rc::new(Type::Fn(
+                            Rc::new(record),
+                            Rc::new(result_type.clone()),
+                        )),
+                        slot,
+                    )
                 } else {
                     let msg = if matches!(
                         param_type,

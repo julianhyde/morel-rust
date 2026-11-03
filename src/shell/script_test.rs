@@ -16,64 +16,102 @@
 // License.
 
 use crate::eval::session::Config as SessionConfig;
+use crate::eval::spark;
+use crate::eval::val::Val;
 use crate::shell::config::Config;
 use crate::shell::error::Error;
 use crate::shell::{Kernel, ScriptRunner, ShellResult, utils};
 use crate::spark as spark_adapter;
-use std::env::temp_dir;
+use std::env::{self, temp_dir};
 use std::fs::{self};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-/// Returns the first condition of a script's `(*) requires:` directives
-/// that does not hold, or `None` if all hold (or there are none).
+/// Environment variable that, when set, says that a live Spark Connect
+/// server is available, at the URI that `SPARK_REMOTE` names. The
+/// analog of morel-java's system property `morel.spark`.
+pub const MOREL_SPARK: &str = "MOREL_SPARK";
+
+/// Returns the URI of the live Spark Connect server, if there is one:
+/// `MOREL_SPARK` is set, and `SPARK_REMOTE` names the server.
+pub fn spark_uri() -> Option<String> {
+    env::var_os(MOREL_SPARK)?;
+    env::var(spark::SPARK_REMOTE)
+        .ok()
+        .filter(|uri| !uri.is_empty())
+}
+
+/// Returns whether a `requires:` condition holds, or an error if the
+/// condition is unknown.
+///
+/// The conditions are those of morel-java's harness: `spark-adapter`
+/// (the Spark adapter is present), `no-spark-adapter` (it is not),
+/// `spark` (a live Spark Connect server, which the harness binds as
+/// `spark`; see [`spark_uri`]), and `spark-prepare` (the `Spark`
+/// structure has `prepare`). The adapter is present in a native build,
+/// so there `spark-adapter` holds and `no-spark-adapter` does not.
+pub fn holds(condition: &str) -> ShellResult<bool> {
+    match condition {
+        "spark-prepare" => Ok(true),
+        "spark-adapter" => Ok(spark_adapter::is_available()),
+        "no-spark-adapter" => Ok(!spark_adapter::is_available()),
+        "spark" => Ok(spark_adapter::is_available() && spark_uri().is_some()),
+        _ => Err(Error::Runtime(format!(
+            "unknown condition '{}' in requires directive",
+            condition
+        ))),
+    }
+}
+
+/// Returns the conditions of a script's `(*) requires:` directives.
 ///
 /// A script whose header has a line `(*) requires: <conditions>` runs
-/// only when every condition, separated by spaces, holds. The
-/// conditions are those of morel-java's harness: `spark-adapter` (the
-/// Spark adapter is present), `no-spark-adapter` (it is not),
-/// `spark` (a live Spark Connect server is bound as `spark`), and
-/// `spark-prepare` (the `Spark` structure has `prepare`). The adapter
-/// is present in a native build, so there `spark-adapter` holds and
-/// `no-spark-adapter` does not.
-fn unmet_requirement(in_file: &Path) -> ShellResult<Option<String>> {
+/// only when every condition, separated by spaces, holds.
+fn requirements(in_file: &Path) -> Vec<String> {
     let Ok(contents) = fs::read_to_string(in_file) else {
-        return Ok(None);
+        return Vec::new();
     };
-    for line in contents.lines().take(40) {
-        let Some(conditions) = line.strip_prefix("(*) requires: ") else {
-            continue;
-        };
-        for condition in conditions.split_whitespace() {
-            let holds = match condition {
-                "spark-prepare" => true,
-                "spark-adapter" => spark_adapter::is_available(),
-                "no-spark-adapter" => !spark_adapter::is_available(),
-                "spark" => false,
-                _ => {
-                    return Err(Error::Runtime(format!(
-                        "unknown condition '{}' in requires directive",
-                        condition
-                    )));
-                }
-            };
-            if !holds {
-                return Ok(Some(condition.to_string()));
-            }
-        }
-    }
-    Ok(None)
+    contents
+        .lines()
+        .take(40)
+        .filter_map(|line| line.strip_prefix("(*) requires: "))
+        .flat_map(|conditions| conditions.split_whitespace())
+        .map(str::to_string)
+        .collect()
 }
 
 /// Test runner for script files, equivalent to Java ScriptTest.
 pub struct ScriptTest {
     config: SessionConfig,
+    /// Whether to run every query on Spark; see
+    /// [`Self::with_spark_push_down`].
+    spark_push_down: bool,
 }
 
 impl ScriptTest {
     /// Creates a ScriptTest.
     pub fn new(config: SessionConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            spark_push_down: false,
+        }
+    }
+
+    /// Returns a copy of this runner that runs every query on Spark.
+    ///
+    /// It sets the `sparkPushDown` property, which is what a session
+    /// sets to the same end, so that each query is wrapped in
+    /// `Spark.remote` and sent to the connection bound as `spark`, which
+    /// the runner binds to the live server; and it clears
+    /// `sparkFallback`, so that a query Spark cannot do fails rather than
+    /// being answered here. The output goes beside the local run's, with
+    /// the suffix `.spark`.
+    #[allow(dead_code)] // used by the tests, not by the binary
+    pub fn with_spark_push_down(self) -> Self {
+        Self {
+            spark_push_down: true,
+            ..self
+        }
     }
 
     /// Gets the test directory.
@@ -91,10 +129,32 @@ impl ScriptTest {
 
         // A script that requires what this build lacks is skipped, and
         // passes.
-        if let Some(condition) = unmet_requirement(&in_file)? {
-            eprintln!("{} skipped: requires {}", in_file.display(), condition);
+        let conditions = requirements(&in_file);
+        for condition in &conditions {
+            if !holds(condition)? {
+                eprintln!(
+                    "{} skipped: requires {}",
+                    in_file.display(),
+                    condition
+                );
+                return Ok(());
+            }
+        }
+        // A script that needs a live server is given a connection to it,
+        // bound as `spark`, as `Spark.connect` would return it; and so
+        // is a script whose queries all run there.
+        let bind_spark =
+            self.spark_push_down || conditions.iter().any(|c| c == "spark");
+        let spark_uri = if bind_spark { spark_uri() } else { None };
+        if bind_spark && spark_uri.is_none() {
+            eprintln!("{} skipped: requires spark", in_file.display());
             return Ok(());
         }
+        let out_file = if self.spark_push_down {
+            PathBuf::from(format!("{}.spark", out_file.display()))
+        } else {
+            out_file
+        };
 
         // Determine if this is an idempotent test (*.smli files)
         let idempotent = path.to_string_lossy().ends_with(".smli")
@@ -151,9 +211,38 @@ impl ScriptTest {
         // Apply session config (script directory, etc.)
         shell.apply_session_config(&session_config);
 
+        let mut connection = None;
+        if let Some(uri) = &spark_uri {
+            let bind = format!("val spark = Spark.connect \"{}\"", uri);
+            shell.process_statement(&bind, None)?;
+            if let Some(Val::Progressive(record)) = shell.get_val("spark")
+                && let Ok(Some(Val::Connection(c))) =
+                    record.field_value("connection")
+            {
+                connection = Some(c);
+            }
+            if self.spark_push_down {
+                shell.process_statement(
+                    "Sys.set (\"sparkPushDown\", true)",
+                    None,
+                )?;
+                shell.process_statement(
+                    "Sys.set (\"sparkFallback\", false)",
+                    None,
+                )?;
+            }
+        }
+
         // Run the input file and capture output
         let mut output = Vec::new();
-        ScriptRunner::new(&mut shell).run_file(&in_file, &mut output)?;
+        let result =
+            ScriptRunner::new(&mut shell).run_file(&in_file, &mut output);
+        // The script may have bound `spark` to something else; close the
+        // connection the harness made, whatever it is called now.
+        if let Some(c) = connection {
+            c.close();
+        }
+        result?;
 
         // Write output to file
         fs::write(&out_file, &output)?;
