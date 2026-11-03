@@ -3639,7 +3639,8 @@ impl Eager1 {
                 Some(n) => Val::Some(Box::new(Val::Int(n))),
                 None => Val::Unit,
             },
-            IntNegate => Val::Int(-a0.expect_int()),
+            // Wraps, as morel-java's int does: "~ minInt" is minInt.
+            IntNegate => Val::Int(a0.expect_int().wrapping_neg()),
             IntSign => Val::Int(Int::sign(a0.expect_int())),
             IntToInt => a0,
             IntToLarge => a0,
@@ -4006,8 +4007,6 @@ pub enum Eager2 {
     IntMinus,
     IntNe,
     IntPlus,
-    IntQuot,
-    IntRem,
     IntSameSign,
     IntTimes,
     LPZip,
@@ -4170,16 +4169,6 @@ impl Eager2 {
             IntMinus => Val::Int(a0.expect_int().wrapping_sub(a1.expect_int())),
             IntNe => Val::Bool(a0.expect_int() != a1.expect_int()),
             IntPlus => Val::Int(a0.expect_int().wrapping_add(a1.expect_int())),
-            IntQuot => {
-                let n1 = a0.expect_int();
-                let n2 = a1.expect_int();
-                Val::Int(n1 / n2) // Truncation towards zero
-            }
-            IntRem => {
-                let n1 = a0.expect_int();
-                let n2 = a1.expect_int();
-                Val::Int(n1 - (n1 / n2) * n2) // Remainder after quot
-            }
             IntSameSign => {
                 let n1 = a0.expect_int();
                 let n2 = a1.expect_int();
@@ -4396,6 +4385,8 @@ pub enum EagerF2 {
     FnUncurry,
     IntDiv,
     IntMod,
+    IntQuot,
+    IntRem,
     LPAll,
     LPAllEq,
     LPApp,
@@ -4596,6 +4587,16 @@ impl EagerF2 {
                 span.unwrap(),
             ),
             IntMod => Int::mod_checked(
+                a0.expect_int(),
+                a1.expect_int(),
+                span.unwrap(),
+            ),
+            IntQuot => Int::quot_checked(
+                a0.expect_int(),
+                a1.expect_int(),
+                span.unwrap(),
+            ),
+            IntRem => Int::rem_checked(
                 a0.expect_int(),
                 a1.expect_int(),
                 span.unwrap(),
@@ -5663,8 +5664,8 @@ fn build_library() -> Lib {
     Eager1::IntNegate.implements(&mut b, IntNegate);
     Eager2::IntPlus.implements(&mut b, IntPlus);
     Eager0::IntPrecision.implements(&mut b, IntPrecision);
-    Eager2::IntQuot.implements(&mut b, IntQuot);
-    Eager2::IntRem.implements(&mut b, IntRem);
+    EagerF2::IntQuot.implements(&mut b, IntQuot);
+    EagerF2::IntRem.implements(&mut b, IntRem);
     Eager2::IntSameSign.implements(&mut b, IntSameSign);
     EagerF3::IntScan.implements(&mut b, IntScan);
     Eager1::IntSign.implements(&mut b, IntSign);

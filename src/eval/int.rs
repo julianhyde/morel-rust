@@ -69,11 +69,42 @@ impl Int {
     ///
     /// SML division truncates towards
     /// negative infinity (floor division).
+    ///
+    /// It wraps, as morel-java's int does: `minInt div ~1` is `minInt`.
     pub(crate) fn div(a: i32, b: i32) -> i32 {
-        if (a >= 0) == (b >= 0) {
-            a / b
+        let q = a.wrapping_div(b);
+        if (a >= 0) == (b >= 0) || a.wrapping_rem(b) == 0 {
+            q
         } else {
-            (a / b) - if a % b != 0 { 1 } else { 0 }
+            q - 1
+        }
+    }
+
+    /// Performs Standard ML's `quot` operation, which truncates towards
+    /// zero, raising `Div` if `b` is zero. It wraps, as `div` does.
+    pub(crate) fn quot_checked(
+        a: i32,
+        b: i32,
+        span: &Span,
+    ) -> Result<Val, MorelError> {
+        if b == 0 {
+            Err(MorelError::Runtime(BuiltInExn::Div, span.clone()))
+        } else {
+            Ok(Val::Int(a.wrapping_div(b)))
+        }
+    }
+
+    /// Performs Standard ML's `rem` operation, the remainder after
+    /// `quot`, raising `Div` if `b` is zero.
+    pub(crate) fn rem_checked(
+        a: i32,
+        b: i32,
+        span: &Span,
+    ) -> Result<Val, MorelError> {
+        if b == 0 {
+            Err(MorelError::Runtime(BuiltInExn::Div, span.clone()))
+        } else {
+            Ok(Val::Int(a.wrapping_rem(b)))
         }
     }
 
@@ -131,7 +162,7 @@ impl Int {
     /// SML modulo: `(a div b) * b + (a mod b) = a`
     /// and (`a mod b`) has the same sign as `b` (or is zero).
     pub(crate) fn _mod(a: i32, b: i32) -> i32 {
-        let r = a % b;
+        let r = a.wrapping_rem(b);
         if r != 0 && (a >= 0) != (b >= 0) {
             r + b
         } else {
@@ -181,4 +212,22 @@ pub(crate) fn format_radix(mut n: u64, base: u32) -> String {
     }
     digits.reverse();
     String::from_utf8(digits).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Int;
+
+    /// Division wraps where its result does not fit, as morel-java's
+    /// int does, rather than overflowing: `minInt div ~1` is `minInt`.
+    #[test]
+    fn division_wraps() {
+        assert_eq!(Int::div(i32::MIN, -1), i32::MIN);
+        assert_eq!(Int::_mod(i32::MIN, -1), 0);
+        assert_eq!(Int::div(-7, 2), -4);
+        assert_eq!(Int::div(7, -2), -4);
+        assert_eq!(Int::div(-8, 2), -4);
+        assert_eq!(Int::_mod(-7, 2), 1);
+        assert_eq!(Int::_mod(7, -2), -1);
+    }
 }

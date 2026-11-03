@@ -754,8 +754,10 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Int", name = "precision", type = "int option"))]
     IntPrecision,
     #[strum(props(p = "Int", name = "quot", type = "int * int -> int"))]
+    #[strum(props(throws = "Div"))]
     IntQuot,
     #[strum(props(p = "Int", name = "rem", type = "int * int -> int"))]
+    #[strum(props(throws = "Div"))]
     IntRem,
     #[strum(props(p = "Int", name = "sameSign", type = "int * int -> bool"))]
     IntSameSign,
