@@ -34,14 +34,16 @@ pub fn string_to_type(code: &str) -> Rc<Type> {
 /// instead of panicking. The error string is human-readable and not
 /// stable.
 pub fn try_string_to_type(code: &str) -> Result<Rc<Type>, String> {
-    // The progressive empty record, the type of `Sys.file` before any
-    // field has been read; the type syntax has no other spelling for it.
-    if code == "{...}" {
-        return Ok(Rc::new(Type::Record(true, Default::default())));
-    }
-    let type_scheme = parser::parse_type_scheme(code)
+    // `{...}` is the progressive empty record, the type of `Sys.file`
+    // before any field has been read, and of a Spark catalog. The type
+    // syntax has no spelling for it, so it is read as `{}`, which in a
+    // built-in's type means nothing else.
+    let progressive = code.contains("{...}");
+    let code = code.replace("{...}", "{}");
+    let type_scheme = parser::parse_type_scheme(&code)
         .map_err(|e| format!("parse error: {}", e))?;
     let mut type_builder = TypeBuilder::new();
+    type_builder.empty_record_is_progressive = progressive;
     type_builder.ast_to_type_scheme(&type_scheme)
 }
 
@@ -66,6 +68,9 @@ struct TypeBuilder {
     /// of returning an error. The test-output matcher sets this so
     /// it can compare printed output-line types verbatim.
     allow_free_vars: bool,
+    /// If true, a record type with no fields is the progressive empty
+    /// record, `{...}`.
+    empty_record_is_progressive: bool,
 }
 
 impl TypeBuilder {
@@ -73,6 +78,7 @@ impl TypeBuilder {
         TypeBuilder {
             ty_vars: vec![],
             allow_free_vars: false,
+            empty_record_is_progressive: false,
         }
     }
 
@@ -180,7 +186,9 @@ impl TypeBuilder {
                     let field_type = self.ast_to_type(&field.type_)?;
                     field_map.insert(label, field_type);
                 }
-                Type::Record(false, field_map)
+                let progressive =
+                    self.empty_record_is_progressive && field_map.is_empty();
+                Type::Record(progressive, field_map)
             }
             TypeKind::Tuple(types) => {
                 let type_args: Vec<Rc<Type>> = types

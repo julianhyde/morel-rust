@@ -320,7 +320,7 @@ impl Pretty {
         match current_type {
             // lint: sort until '#}' where '##Type::'
             Type::Bag(element_type) => {
-                if matches!(value, Val::File(_)) {
+                if matches!(value, Val::Progressive(_)) {
                     text(RELATION)
                 } else {
                     self.seq_doc(
@@ -342,10 +342,10 @@ impl Pretty {
                 self.value_doc(inner, value, depth + 1)
             }
             Type::List(element_type) => {
-                // A data file appearing as a directory entry stays as
-                // `Val::File`; render it as `<relation>` rather than
+                // A data file appearing as a directory entry stays a
+                // typed value; render it as `<relation>` rather than
                 // eagerly materialising every row.
-                if matches!(value, Val::File(_)) {
+                if matches!(value, Val::Progressive(_)) {
                     text(RELATION)
                 } else {
                     self.seq_doc(
@@ -396,18 +396,16 @@ impl Pretty {
         depth: i32,
     ) -> Doc {
         let field_depth = depth + 1;
-        // A `Val::File` carries its own state; map each type field through
-        // to the matching child file. Unknown child entries render as
-        // `Val::Unit` so the field list stays aligned with the type.
-        if let Val::File(file) = value {
-            use crate::eval::file::FileState;
-            let entries: Vec<(String, Val)> = match &*file.state.borrow() {
-                FileState::Directory { entries } => entries
-                    .iter()
-                    .map(|(l, c)| (l.to_string(), Val::File(Rc::clone(c))))
-                    .collect(),
-                _ => Vec::new(),
-            };
+        // A typed value (a directory, a catalog) carries its own state;
+        // map each type field through to the matching child. Unknown
+        // children render as `Val::Unit` so the field list stays aligned
+        // with the type.
+        if let Val::Progressive(v) = value {
+            let entries: Vec<(String, Val)> = v
+                .known_fields()
+                .into_iter()
+                .map(|(l, c)| (l.to_string(), c))
+                .collect();
             let mut fields = Vec::with_capacity(arg_name_types.len());
             for (name, field_type) in arg_name_types {
                 let val2 = entries
@@ -648,6 +646,11 @@ impl Pretty {
                     }
                 }
             }
+            // A connection, the value of the abstract `Spark.connection`
+            // type, prints as itself; a relation of a catalog, as
+            // `<relation>`.
+            Val::Connection(c) => text(&c.to_string()),
+            Val::Progressive(_) => text(RELATION),
             _ => panic!("Expected list"),
         }
     }

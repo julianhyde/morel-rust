@@ -27,6 +27,10 @@ pub enum Error {
     Compile(String, Span),
     Runtime(String),
     FileNotFound(String),
+    /// An exception raised while a statement was compiled, rendered as
+    /// an uncaught exception is: a progressive record's source failing
+    /// while the statement was typed, say.
+    Raised(String),
 }
 
 impl From<IoError> for Error {
@@ -41,6 +45,7 @@ impl Display for Error {
             Error::Compile(e, _span) => write!(f, "Compile Error: {}", e),
             Error::FileNotFound(e) => write!(f, "File not found: {}", e),
             Error::Io(e) => write!(f, "IO Error: {}", e),
+            Error::Raised(e) => write!(f, "{}", e),
             Error::Runtime(e) => write!(f, "Runtime Error: {}", e),
         }
     }

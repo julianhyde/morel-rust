@@ -112,6 +112,23 @@ ACCEPTED = {
         "`Sys.planEx` still prints the step list where morel-java "
         "prints the tree.",
     ),
+    "built-in/spark.smli": (
+        16,
+        "morel-rust has no `foodmart` data set, only `scott`, so the "
+        "offline Spark connection's catalog has one database where "
+        "morel-java's has two: the catalog prints without `foodmart`, "
+        "and the last statement, which reads "
+        "`catalog.foodmart.sales_fact_1997` to show that discovery "
+        "after `close` raises `Spark` CLOSED, fails instead to type, "
+        "because the catalog has no such database to discover.",
+    ),
+    "misc.smli": (
+        37,
+        "morel-rust's `scott` is a built-in structure, and `Sys.env` "
+        "lists it; morel-java's is a foreign data set, which `Sys.env` "
+        "does not list. So the initial environment has one binding "
+        "more here, and both counts are one higher.",
+    ),
     "such-that.smli": (
         467,
         "a range over tuples is enumerated value by value, so a "

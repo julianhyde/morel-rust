@@ -24,10 +24,11 @@ use crate::eval::code::{
 };
 use crate::eval::date;
 use crate::eval::decimal::Decimal;
-use crate::eval::file;
 use crate::eval::frame::FrameDef;
 use crate::eval::order::Order;
 use crate::eval::real::Real;
+use crate::eval::spark;
+use crate::eval::typed_value::TypedValue;
 use crate::shell::kernel::MorelError;
 use crate::syntax::parser;
 use std::fmt::{self, Display, Formatter};
@@ -200,13 +201,17 @@ pub enum Val {
     /// activation), which is acceptable for the test/script use case.
     RecCell(Arc<Mutex<Val>>),
 
-    /// A live progressive file-system value (a directory or a parsed
-    /// data file). Carries an `Rc<File>` so that progressive
-    /// expansion in one place is visible everywhere it's referenced.
-    /// The associated type lives in the record-typed field of the
-    /// parent value's progressive record, expanded on demand by the
-    /// type-resolver. See [`crate::eval::file::File`].
-    File(Rc<file::File>),
+    /// A value that knows its own, progressively widening, type: a
+    /// directory of the file system that `file` reads, or the catalog
+    /// of a Spark connection, one of its databases, or one of their
+    /// tables. Shared through an `Rc`, so that what one reference
+    /// discovers every other sees. See
+    /// [`crate::eval::typed_value::TypedValue`].
+    Progressive(Rc<dyn TypedValue>),
+
+    /// A connection to Spark, the value of the abstract
+    /// `Spark.connection` type. Compared by identity.
+    Connection(Rc<spark::Connection>),
 
     /// A pretty-printer document, the value of the abstract `PP.doc`
     /// type. Built by the `PP` structure's combinators and laid out by
@@ -301,6 +306,13 @@ impl Val {
         match self {
             Val::List(list) => list,
             _ => panic!("Expected list"),
+        }
+    }
+
+    pub(crate) fn expect_connection(&self) -> &Rc<spark::Connection> {
+        match self {
+            Val::Connection(c) => c,
+            _ => panic!("Expected connection"),
         }
     }
 
@@ -473,6 +485,7 @@ impl Display for Val {
                 write!(f, "fn")
             }
             Val::ClosureWeak(_) => write!(f, "fn"),
+            Val::Connection(c) => write!(f, "{}", c),
             Val::Constructor(ordinal, v) => {
                 if **v == Val::Unit {
                     write!(f, "#{}", ordinal)
@@ -483,7 +496,6 @@ impl Display for Val {
             Val::Date(d, o) => write!(f, "{}", date::format_iso(*d, *o)),
             Val::Decimal(d) => write!(f, "{}", d),
             Val::Doc(_) => write!(f, "-"),
-            Val::File(file) => write!(f, "{}", file::display_file(file)),
             Val::Fn(func) => {
                 // Written as morel-java's unparser writes a built-in: a
                 // name of its own in the default namespace bare, `abs`
@@ -531,6 +543,7 @@ impl Display for Val {
                 write!(f, "]")
             }
             Val::Order(o) => write!(f, "{}", o.name()),
+            Val::Progressive(v) => write!(f, "{}", v.describe()),
             Val::Real(r) => {
                 // Use Real.toString to format real values
                 write!(f, "{}", Real::to_string(*r))
@@ -614,7 +627,8 @@ impl PartialEq for Val {
             (Val::Closure(a), Val::Closure(b)) => Arc::ptr_eq(a, b),
             (Val::ClosureWeak(a), Val::ClosureWeak(b)) => Weak::ptr_eq(a, b),
             (Val::RecCell(a), Val::RecCell(b)) => Arc::ptr_eq(a, b),
-            (Val::File(a), Val::File(b)) => Rc::ptr_eq(a, b),
+            (Val::Progressive(a), Val::Progressive(b)) => Rc::ptr_eq(a, b),
+            (Val::Connection(a), Val::Connection(b)) => Rc::ptr_eq(a, b),
             (Val::Doc(a), Val::Doc(b)) => Rc::ptr_eq(a, b),
             _ => false,
         }
@@ -736,9 +750,13 @@ impl Hash for Val {
                 fn_.hash(state);
                 arg.hash(state);
             }
-            Val::File(file) => {
+            Val::Progressive(v) => {
                 23.hash(state);
-                Rc::as_ptr(file).hash(state);
+                Rc::as_ptr(v).cast::<()>().hash(state);
+            }
+            Val::Connection(c) => {
+                25.hash(state);
+                Rc::as_ptr(c).hash(state);
             }
             Val::Doc(doc) => {
                 24.hash(state);

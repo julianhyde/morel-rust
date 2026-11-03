@@ -2139,6 +2139,26 @@ impl Pat {
                     }
                     _ => None,
                 };
+                if let Val::Progressive(v) = val {
+                    // A typed value (a directory, a catalog) gives each
+                    // field by name.
+                    for field in fields {
+                        let (name_opt, sub_pat) = match field {
+                            PatField::Labeled(name, p) => {
+                                (Some(name.clone()), p.as_ref())
+                            }
+                            PatField::Anonymous(p) => (p.name(), p.as_ref()),
+                        };
+                        if let Some(name) = name_opt {
+                            match v.field_value(&name) {
+                                Ok(Some(v2))
+                                    if sub_pat.bind_recurse(&v2, consumer) => {}
+                                _ => return false,
+                            }
+                        }
+                    }
+                    return true;
+                }
                 if let (Some(labels), Val::List(vs)) = (labels, val) {
                     let find = |needle: &str| {
                         labels.iter().position(|l| l.matches(needle))

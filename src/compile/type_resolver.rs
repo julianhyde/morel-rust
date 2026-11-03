@@ -43,8 +43,9 @@ use crate::compile::types::{
     Predicate, PrimitiveType, Subst, Type, TypeVariable,
 };
 use crate::eval::code::{LIBRARY, Lib};
-use crate::eval::file::TypedValue;
+use crate::eval::typed_value::TypedValue;
 use crate::shell::error::Error;
+use crate::shell::kernel::MorelError;
 
 /// The compiled conditions of checked types, keyed by type name.
 pub type CheckPredicates = HashMap<String, Vec<CoreExpr>>;
@@ -1263,8 +1264,9 @@ pub struct TypeResolver {
     /// Errors from record selector actions, populated during unification.
     field_errors: Rc<RefCell<Vec<(String, Span)>>>,
 
-    /// Type variables whose value is a [`TypedValue`] (currently the
-    /// `Sys.file` global). The field-selector action consults this
+    /// Type variables whose value is a [`TypedValue`] (the `Sys.file`
+    /// global, or a name bound to a typed value such as a Spark
+    /// catalog). The field-selector action consults this
     /// map when a field is missing from a progressive record: it
     /// calls `discover_field` on the underlying value to widen the
     /// type, and rebinds the field's type variable from the value's
@@ -1279,6 +1281,13 @@ pub struct TypeResolver {
     /// against the now-wider record type. Cleared at the start of
     /// each round.
     pub retry_requested: Rc<RefCell<bool>>,
+
+    /// The exception raised by a [`TypedValue`] while the statement was
+    /// typed -- a catalog whose connection has closed, say. A value is
+    /// asked for its fields during type resolution as well as during
+    /// evaluation, and what it raises is reported either way, as an
+    /// uncaught exception.
+    pub raised: Rc<RefCell<Option<MorelError>>>,
 
     /// Record selectors to validate after unification.
     /// Each entry is (record_var, field_name, span).
@@ -2007,6 +2016,7 @@ impl TypeResolver {
             modifier_validations: Vec::new(),
             typed_values: Rc::new(RefCell::new(HashMap::new())),
             retry_requested: Rc::new(RefCell::new(false)),
+            raised: Rc::new(RefCell::new(None)),
             overloads: HashMap::new(),
             new_overloads: HashMap::new(),
             seed_overloads: HashMap::new(),
@@ -2086,6 +2096,9 @@ impl TypeResolver {
                 statement,
                 seed_overloads_save.clone(),
             );
+            if let Some(e) = self.raised.borrow_mut().take() {
+                return Err(Error::Raised(e.to_string()));
+            }
             if !*self.retry_requested.borrow()
                 || retry_count >= MAX_PROGRESSIVE_RETRIES
             {
@@ -6109,11 +6122,19 @@ impl TypeResolver {
                 // If the user wrote `r.m (a, b)`, `arg` is already a
                 // tuple `(a, b)`; splice recv in. Otherwise treat as
                 // a two-element tuple.
+                //
+                // The number of parameters says which: a tuple is
+                // spliced only if the function takes one more parameter
+                // than the tuple has elements, the receiver. A function
+                // of two (`Tupled2`) takes the receiver and the tuple,
+                // which is the only way to pass it one; a function of
+                // three takes the receiver and a pair.
                 let mut parts = vec![recv.clone()];
-                if let ExprKind::Tuple(elts) = &arg.kind {
-                    parts.extend(elts.iter().cloned());
-                } else {
-                    parts.push(arg.clone());
+                match &arg.kind {
+                    ExprKind::Tuple(elts) if elts.len() + 1 == 3 => {
+                        parts.extend(elts.iter().cloned());
+                    }
+                    _ => parts.push(arg.clone()),
                 }
                 Expr {
                     kind: ExprKind::Tuple(parts),
@@ -6257,6 +6278,7 @@ impl TypeResolver {
             found: RefCell<bool>,
             typed_values: Rc<RefCell<HashMap<Var, Rc<dyn TypedValue>>>>,
             retry_requested: Rc<RefCell<bool>>,
+            raised: Rc<RefCell<Option<MorelError>>>,
         }
         impl Action for ActionImpl {
             fn accept(
@@ -6362,11 +6384,19 @@ impl TypeResolver {
                 for (var, tv) in typed_values.iter() {
                     let var_root =
                         substitution.resolve_term(&Term::Variable(*var));
-                    if var_root == receiver_root
-                        && tv.discover_field(&self.field_name)
-                    {
-                        *self.retry_requested.borrow_mut() = true;
-                        return;
+                    if var_root != receiver_root {
+                        continue;
+                    }
+                    match tv.discover_field(&self.field_name) {
+                        Ok(true) => {
+                            *self.retry_requested.borrow_mut() = true;
+                            return;
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            self.raised.borrow_mut().get_or_insert(e);
+                            return;
+                        }
                     }
                 }
             }
@@ -6376,17 +6406,16 @@ impl TypeResolver {
             /// register the corresponding child value under the
             /// field's variable. This lets the resolver discover
             /// fields one level deeper on subsequent accesses. If
-            /// the child is `Unexpanded`, expand it and request a
-            /// retry — the field's recorded type in the parent
-            /// record was built from the still-unexpanded child and
-            /// needs to be rebuilt against the expanded child.
+            /// learning the child's type widened it, request a retry
+            /// -- the field's recorded type in the parent record was
+            /// built from what was known before, and needs to be
+            /// rebuilt.
             fn propagate_typed_value(
                 &self,
                 receiver: Var,
                 v_field: Var,
                 substitution: &Substitution,
             ) {
-                use crate::eval::file::{File, FileState};
                 let typed_values = self.typed_values.borrow();
                 let receiver_root =
                     substitution.resolve_term(&Term::Variable(receiver));
@@ -6400,42 +6429,23 @@ impl TypeResolver {
                     .map(|(_, tv)| Rc::clone(tv));
                 drop(typed_values);
                 let Some(tv) = receiver_tv else { return };
-                // Currently only `File` carries discoverable
-                // children; if we add other `TypedValue`
-                // implementors we'll need a more general way to
-                // project a child value.
-                let file = tv.as_any().downcast_ref::<File>();
-                let Some(file) = file else { return };
-                let child = match &*file.state.borrow() {
-                    FileState::Directory { entries } => entries
-                        .get(&Label::from(self.field_name.clone()))
-                        .cloned(),
-                    _ => None,
-                };
-                if let Some(c) = child {
-                    // Expand the child one level so its type widens
-                    // from `{...}` to e.g. `{answers:_ list, ...}`
-                    // for a directory or `_ list` for a data file.
-                    // If expansion changes the child's state, the
-                    // recorded field type in the parent is stale —
-                    // request a retry so the resolver rebuilds
-                    // against the now-widened child.
-                    let needed =
-                        matches!(*c.state.borrow(), FileState::Unexpanded);
-                    if needed {
-                        c.expand();
-                        *self.retry_requested.borrow_mut() = true;
+                let (child, widened) = match tv.child(&self.field_name) {
+                    Ok(Some(child)) => child,
+                    Ok(None) => return,
+                    Err(e) => {
+                        self.raised.borrow_mut().get_or_insert(e);
+                        return;
                     }
-                    let v_field_root = match substitution
-                        .resolve_term(&Term::Variable(v_field))
-                    {
+                };
+                if widened {
+                    *self.retry_requested.borrow_mut() = true;
+                }
+                let v_field_root =
+                    match substitution.resolve_term(&Term::Variable(v_field)) {
                         Term::Variable(v) => v,
                         _ => v_field,
                     };
-                    self.typed_values
-                        .borrow_mut()
-                        .insert(v_field_root, c as Rc<dyn TypedValue>);
-                }
+                self.typed_values.borrow_mut().insert(v_field_root, child);
             }
         }
         self.actions.push((
@@ -6449,6 +6459,7 @@ impl TypeResolver {
                 found: RefCell::new(false),
                 typed_values: Rc::clone(&self.typed_values),
                 retry_requested: Rc::clone(&self.retry_requested),
+                raised: Rc::clone(&self.raised),
             }),
         ));
 
@@ -6862,6 +6873,29 @@ impl TypeResolver {
     /// Converts a type to a unification term.
     //
     // Internally, use [Self::type_term], which allows a [Subst].
+    /// Returns the binding of a name whose value is `value`, a typed
+    /// value: a variable of the value's current type, registered as the
+    /// value's, so that the field-selector action can widen it. If the
+    /// value cannot say its type, what it raised is recorded, and the
+    /// variable is unconstrained.
+    pub fn typed_value_binding(
+        &mut self,
+        value: Rc<dyn TypedValue>,
+    ) -> BindType {
+        let v = match value.current_type() {
+            Ok(t) => {
+                let v = self.type_to_term(&t);
+                self.typed_values.borrow_mut().insert(v, value);
+                v
+            }
+            Err(e) => {
+                self.raised.borrow_mut().get_or_insert(e);
+                self.variable()
+            }
+        };
+        BindType::Val(Term::Variable(v))
+    }
+
     pub fn type_to_term(&mut self, type_: &Type) -> Var {
         let v = self.variable();
         // For `Forall` types the `type_term` Forall handler creates fresh

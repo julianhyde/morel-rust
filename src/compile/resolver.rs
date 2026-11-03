@@ -3369,13 +3369,16 @@ impl<'a> Resolver<'a> {
             }
             PostfixKind::Tupled3 => {
                 // `recv.m (a, b)` — splice recv in as first tuple
-                // element, producing (recv, a, b).
+                // element, producing (recv, a, b). Only a pair is
+                // spliced: a function of three takes the receiver and
+                // two more, so any other argument is the second.
                 let c_arg = self.resolve_expr(arg);
                 let mut parts = vec![c_recv];
-                if let CoreExpr::Tuple(_, elems) = c_arg {
-                    parts.extend(elems);
-                } else {
-                    parts.push(c_arg);
+                match c_arg {
+                    CoreExpr::Tuple(_, elems) if elems.len() == 2 => {
+                        parts.extend(elems);
+                    }
+                    c_arg => parts.push(c_arg),
                 }
                 let tuple = CoreExpr::new_tuple(&parts);
                 CoreExpr::Apply(

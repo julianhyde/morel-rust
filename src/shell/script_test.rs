@@ -24,6 +24,44 @@ use std::fs::{self};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+/// Returns the first condition of a script's `(*) requires:` directives
+/// that does not hold, or `None` if all hold (or there are none).
+///
+/// A script whose header has a line `(*) requires: <conditions>` runs
+/// only when every condition, separated by spaces, holds. The
+/// conditions are those of morel-java's harness: `spark-adapter` (the
+/// Spark adapter is present), `no-spark-adapter` (it is not),
+/// `spark` (a live Spark Connect server is bound as `spark`), and
+/// `spark-prepare` (the `Spark` structure has `prepare`). This port has
+/// no Spark adapter, so `no-spark-adapter` and `spark-prepare` hold,
+/// and `spark-adapter` and `spark` do not.
+fn unmet_requirement(in_file: &Path) -> ShellResult<Option<String>> {
+    let Ok(contents) = fs::read_to_string(in_file) else {
+        return Ok(None);
+    };
+    for line in contents.lines().take(40) {
+        let Some(conditions) = line.strip_prefix("(*) requires: ") else {
+            continue;
+        };
+        for condition in conditions.split_whitespace() {
+            let holds = match condition {
+                "no-spark-adapter" | "spark-prepare" => true,
+                "spark" | "spark-adapter" => false,
+                _ => {
+                    return Err(Error::Runtime(format!(
+                        "unknown condition '{}' in requires directive",
+                        condition
+                    )));
+                }
+            };
+            if !holds {
+                return Ok(Some(condition.to_string()));
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// Test runner for script files, equivalent to Java ScriptTest.
 pub struct ScriptTest {
     config: SessionConfig,
@@ -47,6 +85,13 @@ impl ScriptTest {
     pub fn run<P: AsRef<Path>>(&self, path: P) -> ShellResult<()> {
         let path = path.as_ref();
         let (in_file, out_file) = self.resolve_files(path)?;
+
+        // A script that requires what this build lacks is skipped, and
+        // passes.
+        if let Some(condition) = unmet_requirement(&in_file)? {
+            eprintln!("{} skipped: requires {}", in_file.display(), condition);
+            return Ok(());
+        }
 
         // Determine if this is an idempotent test (*.smli files)
         let idempotent = path.to_string_lossy().ends_with(".smli")

@@ -237,6 +237,11 @@ fn built_in_relational() {
 }
 
 #[test]
+fn built_in_spark() {
+    run_script("tests/script/built-in/spark.smli");
+}
+
+#[test]
 fn built_in_string() {
     run_script("tests/script/built-in/string.smli");
 }
@@ -423,6 +428,46 @@ fn simple() {
 }
 
 #[test]
+fn spark() {
+    run_script("tests/script/spark.smli");
+}
+
+#[test]
+fn spark_disabled() {
+    run_script("tests/script/spark-disabled.smli");
+}
+
+#[test]
+fn spark_divergence() {
+    run_script("tests/script/spark-divergence.smli");
+}
+
+#[test]
+fn spark_error() {
+    run_script("tests/script/spark-error.smli");
+}
+
+#[test]
+fn spark_exec() {
+    run_script("tests/script/spark-exec.smli");
+}
+
+#[test]
+fn spark_live() {
+    run_script("tests/script/spark-live.smli");
+}
+
+#[test]
+fn spark_plan() {
+    run_script("tests/script/spark-plan.smli");
+}
+
+#[test]
+fn spark_plan_generated() {
+    run_script("tests/script/spark-plan-generated.smli");
+}
+
+#[test]
 fn such_that() {
     run_script("tests/script/such-that.smli");
 }
@@ -430,6 +475,11 @@ fn such_that() {
 #[test]
 fn tail_recursion() {
     run_script("tests/script/tail-recursion.smli");
+}
+
+#[test]
+fn triple() {
+    run_script("tests/script/triple.smli");
 }
 
 #[test]

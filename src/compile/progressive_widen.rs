@@ -15,31 +15,33 @@
 // language governing permissions and limitations under the
 // License.
 
-//! Post-resolution widening pass for progressive `Sys.file` records.
+//! Post-resolution widening pass for progressive records: the `file`
+//! value and Spark catalogs.
 //!
 //! Mirrors morel-java's `Resolver.toCore` widening. Where the unifier-
 //! action path in [`crate::compile::type_resolver`] handles direct
-//! file references (and val bindings that name a `Val::File`
-//! directly), this pass reaches Files through record literals, tuple
+//! references (and val bindings that name a typed value directly),
+//! this pass reaches typed values through record literals, tuple
 //! destructuring, and let-bindings — any value path the unifier-time
-//! [`crate::eval::file::TypedValue`] map does not cover.
+//! [`crate::eval::typed_value::TypedValue`] map does not cover.
 //!
 //! Strategy: walk the core decl. At each `Apply(_,
 //! RecordSelector(_, slot), arg, _)` whose `arg.type_()` is a
-//! progressive record, run `value_of(arg)`. If that yields
-//! `Val::File(f)`, call `f.discover_field(name)` to widen the file,
-//! then refine the recorded types on the Apply, the selector, and
-//! the arg.
+//! progressive record, run `value_of(arg)`. If that yields a
+//! `Val::Progressive(v)`, call `v.discover_field(name)` to widen the
+//! value, then refine the recorded types on the Apply, the selector,
+//! and the arg.
 
 use crate::compile::core::{Decl, Expr, Match, Step, StepKind};
 use crate::compile::types::Type;
-use crate::eval::file::{File, FileState, TypedValue, file_as_val};
+use crate::eval::file::File;
+use crate::eval::typed_value::TypedValue;
 use crate::eval::val::Val;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 /// Walks `decl` in place, widening any progressive-record field
-/// selector whose receiver value resolves to a `Val::File`. `env`
+/// selector whose receiver value resolves to a typed value. `env`
 /// is the runtime binding map from the shell (previous statements'
 /// val bindings); `file_root` is the session's root `File`.
 pub fn widen(
@@ -87,21 +89,27 @@ fn walk_expr(e: &mut Expr, env: &HashMap<String, Val>, file_root: &Rc<File>) {
             let slot = *slot;
 
             // Look up the field name in the current (stale) arg type
-            // and use the value-walk to find the underlying File.
+            // and use the value-walk to find the underlying value.
             let Some(field_name) =
                 arg.type_().field_name(slot).map(ToString::to_string)
             else {
                 return;
             };
-            let Some(Val::File(f)) = value_of(arg, env, file_root) else {
+            let Some(Val::Progressive(v)) = value_of(arg, env, file_root)
+            else {
                 return;
             };
 
-            // Widen the file. May be a no-op if already wide enough.
-            f.discover_field(&field_name);
+            // Widen the value. May be a no-op if already wide enough.
+            // What it raises, the resolver has already reported.
+            if v.discover_field(&field_name).is_err() {
+                return;
+            }
 
-            // Pull the new (post-widen) types out of the File.
-            let widened_arg_ty = f.type_();
+            // Pull the new (post-widen) types out of the value.
+            let Ok(widened_arg_ty) = v.current_type() else {
+                return;
+            };
             let widened_field_ty = match widened_arg_ty.as_ref() {
                 Type::Record(_, fields) => fields.values().nth(slot).cloned(),
                 _ => None,
@@ -201,8 +209,8 @@ fn walk_step(
     }
 }
 
-/// Walks `expr` as a value-producing tree, projecting through
-/// `Val::File` directories and `Val::List` record values. Returns
+/// Walks `expr` as a value-producing tree, projecting through typed
+/// values and `Val::List` record values. Returns
 /// `None` for anything that isn't an identifier-rooted record-
 /// selector chain — that covers everything the resolver-time
 /// `TypedValue` map already handles.
@@ -215,7 +223,9 @@ fn value_of(
         Expr::Identifier(_, name) => {
             if name == "file" {
                 file_root.expand();
-                Some(Val::File(Rc::clone(file_root)))
+                Some(Val::Progressive(
+                    Rc::clone(file_root) as Rc<dyn TypedValue>
+                ))
             } else {
                 env.get(name).cloned()
             }
@@ -223,7 +233,7 @@ fn value_of(
         Expr::Apply(_, fx, arg, _) => {
             if let Expr::RecordSelector(_, slot) = fx.as_ref() {
                 let inner = value_of(arg, env, file_root)?;
-                project(&inner, *slot)
+                project(&inner, &arg.type_(), *slot)
             } else {
                 None
             }
@@ -232,21 +242,15 @@ fn value_of(
     }
 }
 
-/// Projects slot `slot` of `v`. `Val::File` directories yield a
-/// child file (as a `Val::File` for sub-directories or a
-/// `Val::List` of records for data files); `Val::List`-encoded
-/// record values just index. Anything else gives `None`.
-fn project(v: &Val, slot: usize) -> Option<Val> {
+/// Projects slot `slot` of `v`, whose type is `type_`. A typed value
+/// yields its field of that name (a nested typed value, or the rows of
+/// a relation); a `Val::List`-encoded record value just indexes.
+/// Anything else gives `None`.
+fn project(v: &Val, type_: &Type, slot: usize) -> Option<Val> {
     match v {
-        Val::File(f) => {
-            f.expand();
-            let child = match &*f.state.borrow() {
-                FileState::Directory { entries } => {
-                    entries.values().nth(slot).cloned()
-                }
-                _ => None,
-            };
-            child.map(|c| file_as_val(&c))
+        Val::Progressive(tv) => {
+            let name = type_.field_name(slot)?.to_string();
+            tv.field_value(&name).ok().flatten()
         }
         Val::List(items) => items.get(slot).cloned(),
         _ => None,

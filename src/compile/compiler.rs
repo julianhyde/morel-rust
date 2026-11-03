@@ -2689,9 +2689,16 @@ impl Action for ValDeclAction {
                     // and indented per the shell configuration.
                     let mut line = String::new();
                     let id = p2.name().unwrap();
-                    let typed_val =
-                        Val::new_typed(&id, v2.clone(), &p2.type_());
-                    let _ = pretty.pretty(&mut line, &p2.type_(), &typed_val);
+                    // A typed value's type may yet widen, so it prints as
+                    // a progressive record, as morel-java prints it.
+                    let type_ = match (&v2, p2.type_().as_ref()) {
+                        (Val::Progressive(_), Type::Record(false, fields)) => {
+                            Rc::new(Type::Record(true, fields.clone()))
+                        }
+                        _ => p2.type_(),
+                    };
+                    let typed_val = Val::new_typed(&id, v2.clone(), &type_);
+                    let _ = pretty.pretty(&mut line, &type_, &typed_val);
 
                     let binding =
                         Binding::of_name_value(id.as_str(), &Some(v2.clone()));

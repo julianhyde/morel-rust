@@ -47,7 +47,6 @@ use crate::eval::date;
 use crate::eval::decimal;
 use crate::eval::discrete::Discrete;
 use crate::eval::either::Either;
-use crate::eval::file::file_as_val;
 use crate::eval::frame::FrameDef;
 use crate::eval::int::Int;
 use crate::eval::list::List;
@@ -60,9 +59,11 @@ use crate::eval::real::Real;
 use crate::eval::relational::Relational;
 use crate::eval::row_sink::RowSinkFactory;
 use crate::eval::session::Session;
+use crate::eval::spark;
 use crate::eval::string::Str;
 use crate::eval::string_cvt;
 use crate::eval::time;
+use crate::eval::typed_value::TypedValue;
 use crate::eval::val::{self, ClosureData, Val};
 use crate::eval::variant;
 use crate::eval::vector::Vector;
@@ -1742,14 +1743,13 @@ impl Code {
                 val.apply_f1(r, f, a0)
             }
             Code::Nth(type_, slot) => {
-                // For `Val::File`, the slots are the file's directory
-                // entries — looked up by name (from the field's
+                // For a typed value (a directory, a catalog), the slots
+                // are its fields, looked up by name (from the field's
                 // `Label` in the static type, which the type-resolver
-                // populated from the file's current state) and
-                // returned as a child `Val::File`. Missing entries
-                // surface as `Val::Unit`, matching morel-java's
+                // populated from the value's state). A missing field
+                // surfaces as `Val::Unit`, matching morel-java's
                 // behavior for an unknown / not-yet-expanded child.
-                if let Val::File(file) = &a0 {
+                if let Val::Progressive(v) = &a0 {
                     let field_name = match type_.as_ref() {
                         Type::Record(_, fields) => {
                             fields.keys().nth(*slot).map(Label::to_string)
@@ -1757,23 +1757,7 @@ impl Code {
                         _ => None,
                     };
                     if let Some(name) = field_name {
-                        use crate::eval::file::FileState;
-                        let child = match &*file.state.borrow() {
-                            FileState::Directory { entries } => {
-                                entries.get(&Label::from(name.clone())).cloned()
-                            }
-                            _ => None,
-                        };
-                        if let Some(c) = child {
-                            // Expand on access so successive field
-                            // accesses see the widened type.
-                            c.expand();
-                            // A data file (CSV / CSV.gz) materialises
-                            // as a `Val::List` of records here; a
-                            // sub-directory stays a `Val::File`.
-                            return Ok(file_as_val(&c));
-                        }
-                        return Ok(Val::Unit);
+                        return Ok(v.field_value(&name)?.unwrap_or(Val::Unit));
                     }
                 }
                 Ok(a0.expect_list()[*slot].clone())
@@ -2810,7 +2794,7 @@ impl EagerF0 {
             // Returns the session's progressive root `File`, cached
             // so successive references share state and accumulated
             // expansion.
-            SysFile => Val::File(r.session.file()),
+            SysFile => Val::Progressive(r.session.file()),
             SysPlan => {
                 let s = if let Some(c) = r.session.code.as_ref() {
                     if let Code::Fn(_, matches, _) = c.deref()
@@ -2899,6 +2883,11 @@ pub enum EagerF1 {
     RelationalOnly,
     RelationalSum,
     RelationalSumDecimal,
+    SparkCatalog,
+    SparkClose,
+    SparkConnect,
+    SparkConnectDefault,
+    SparkToString,
     StringFromString,
     SysParseTree,
     SysPlanEx,
@@ -3107,6 +3096,21 @@ impl EagerF1 {
                 }
             }
             RelationalSumDecimal => decimal_sum_val(a0.expect_list(), span),
+            SparkCatalog => {
+                let c = a0.expect_connection();
+                Ok(Val::Progressive(c.catalog() as Rc<dyn TypedValue>))
+            }
+            SparkClose => {
+                a0.expect_connection().close();
+                Ok(Val::Unit)
+            }
+            SparkConnect => spark_connect(a0.expect_string(), span),
+            SparkConnectDefault => match spark::Connection::default_uri() {
+                Ok(uri) => spark_connect(&uri, span),
+                Err(e) => Err(e.raise(span)),
+            },
+            // There is no plan to print: this port cannot prepare one.
+            SparkToString => Err(spark::adapter_unavailable().raise(span)),
             StringFromString => string_cvt::scan_str(
                 r,
                 f,
@@ -3191,6 +3195,29 @@ impl EagerF1 {
             TimeFromReal => time::from_real(a0.expect_real(), span),
         }
     }
+}
+
+/// Opens a connection, as `Spark.connect` does, and returns the record
+/// `{catalog, connection}`.
+fn spark_connect(uri: &str, span: &Span) -> Result<Val, MorelError> {
+    match spark::ConnectionRecord::open(uri, spark_data_sets()) {
+        Ok(record) => Ok(Val::Progressive(record as Rc<dyn TypedValue>)),
+        Err(e) => Err(e.raise(span)),
+    }
+}
+
+/// Returns the session's data sets, of which the offline Spark
+/// connection's catalog is made: in this port, `scott`.
+fn spark_data_sets() -> Vec<spark::DataSet> {
+    LIBRARY.with(|lib| {
+        let (type_, value) =
+            lib.structure_map.get(&BuiltInRecord::Scott).expect("scott");
+        vec![spark::DataSet {
+            name: BuiltInRecord::Scott.name().to_string(),
+            type_: Rc::clone(type_),
+            value: value.clone(),
+        }]
+    })
 }
 
 /// Function implementation that takes one argument.
@@ -4356,6 +4383,10 @@ pub enum EagerF2 {
     RelationalIterate,
     RelationalMaxBy,
     RelationalMinBy,
+    SparkExecute,
+    SparkPrepare,
+    SparkRemote,
+    SparkUsing,
     StringCollate,
     StringConcatWith,
     StringCvtScanString,
@@ -4694,6 +4725,28 @@ impl EagerF2 {
                 false,
                 span.unwrap(),
             ),
+            // This port has no adapter, so it cannot prepare a plan, and
+            // a plan that does not exist cannot be executed.
+            SparkExecute | SparkPrepare | SparkRemote => {
+                Err(spark::adapter_unavailable().raise(span.unwrap()))
+            }
+            SparkUsing => {
+                let span = span.unwrap();
+                let uri = spark::Connection::default_uri()
+                    .map_err(|e| e.raise(span))?;
+                let record =
+                    spark::ConnectionRecord::open(&uri, spark_data_sets())
+                        .map_err(|e| e.raise(span))?;
+                let connection = Rc::clone(&record.connection);
+                let arg = Val::List(Rc::new(vec![
+                    Val::Connection(Rc::clone(&connection)),
+                    a1,
+                ]));
+                // The connection is closed whether or not `f` raised.
+                let result = a0.apply_f1(r, f, &arg);
+                connection.close();
+                result
+            }
             StringCollate => {
                 let tuple = a1.expect_list();
                 if tuple.len() != 2 {
@@ -5756,6 +5809,15 @@ fn build_library() -> Lib {
     EagerF1::RelationalSumDecimal.implements(&mut b, RelationalSumDecimal);
     Eager1::RelationalSumInt.implements(&mut b, RelationalSumInt);
     Eager1::RelationalSumReal.implements(&mut b, RelationalSumReal);
+    EagerF1::SparkCatalog.implements(&mut b, SparkCatalog);
+    EagerF1::SparkClose.implements(&mut b, SparkClose);
+    EagerF1::SparkConnect.implements(&mut b, SparkConnect);
+    EagerF1::SparkConnectDefault.implements(&mut b, SparkConnectDefault);
+    EagerF2::SparkExecute.implements(&mut b, SparkExecute);
+    EagerF2::SparkPrepare.implements(&mut b, SparkPrepare);
+    EagerF2::SparkRemote.implements(&mut b, SparkRemote);
+    EagerF1::SparkToString.implements(&mut b, SparkToString);
+    EagerF2::SparkUsing.implements(&mut b, SparkUsing);
     Eager2::StringCaret.implements(&mut b, StringCaret);
     EagerF2::StringCollate.implements(&mut b, StringCollate);
     Eager2::StringCompare.implements(&mut b, StringCompare);

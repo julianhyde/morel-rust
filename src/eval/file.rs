@@ -33,10 +33,11 @@
 
 use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::session::Session;
+use crate::eval::typed_value::{Child, TypedValue};
 use crate::eval::val::Val;
+use crate::shell::kernel::MorelError;
 use crate::shell::prop::{Configurable, Prop};
 use flate2::read::GzDecoder;
-use std::any::Any;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fs;
@@ -192,30 +193,77 @@ pub enum ParsedField {
     String(String),
 }
 
-/// A value that knows its own (potentially progressive) type. Used
-/// by the type-resolver to widen progressive record types on
-/// demand. The Rust analog of morel-java's `TypedValue`.
-pub trait TypedValue {
-    /// Current type of this value. May widen over the lifetime of the
-    /// value as `discover_field` succeeds.
-    fn type_(&self) -> Rc<Type>;
-
-    /// Tries to widen the type to include `field_name`. Returns
-    /// `true` if the type widened (so the caller should re-resolve
-    /// the field access), `false` if the field is unknown.
-    fn discover_field(&self, field_name: &str) -> bool {
-        let _ = field_name;
-        false
+impl TypedValue for File {
+    fn current_type(&self) -> Result<Rc<Type>, MorelError> {
+        // The root is expanded so that its type lists its children,
+        // the first layer of progressive widening.
+        self.expand();
+        Ok(self.type_())
     }
 
-    /// Cast to `Any` so resolver hooks that only know they have a
-    /// `Rc<dyn TypedValue>` can downcast to specific implementors
-    /// (currently only [`File`]) to extract child values.
-    fn as_any(&self) -> &dyn Any;
+    fn discover_field(&self, field_name: &str) -> Result<bool, MorelError> {
+        // Make sure top-level is expanded so we know our children.
+        self.expand();
+        // Look up the child by name and expand it. If we're not a
+        // directory (or the child doesn't exist), no widening.
+        Ok(match self.entry(field_name) {
+            Some(c) => {
+                let before = matches!(*c.state.borrow(), FileState::Unexpanded);
+                c.expand();
+                before
+            }
+            None => false,
+        })
+    }
+
+    fn child(&self, field_name: &str) -> Result<Option<Child>, MorelError> {
+        // Expand the child one level so its type widens from `{...}`
+        // to e.g. `{answers:_ list, ...}` for a directory or `_ list`
+        // for a data file. If expansion changes the child's state, the
+        // field's type recorded in the parent is stale.
+        Ok(self.entry(field_name).map(|c| {
+            let widened = matches!(*c.state.borrow(), FileState::Unexpanded);
+            if widened {
+                c.expand();
+            }
+            (c as Rc<dyn TypedValue>, widened)
+        }))
+    }
+
+    fn field_value(&self, field_name: &str) -> Result<Option<Val>, MorelError> {
+        // Expand on access so successive field accesses see the
+        // widened type. A data file (CSV / CSV.gz) materialises as a
+        // `Val::List` of records; a sub-directory stays a typed value.
+        Ok(self.entry(field_name).map(|c| {
+            c.expand();
+            file_as_val(&c)
+        }))
+    }
+
+    fn known_fields(&self) -> Vec<(Label, Val)> {
+        match &*self.state.borrow() {
+            FileState::Directory { entries } => entries
+                .iter()
+                .map(|(l, c)| {
+                    (
+                        l.clone(),
+                        Val::Progressive(Rc::clone(c) as Rc<dyn TypedValue>),
+                    )
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn describe(&self) -> String {
+        display_file(self)
+    }
 }
 
-impl TypedValue for File {
-    fn type_(&self) -> Rc<Type> {
+impl File {
+    /// Returns this file's type as far as it is known, without
+    /// expanding anything.
+    pub fn type_(&self) -> Rc<Type> {
         match &*self.state.borrow() {
             FileState::Unexpanded => {
                 // We know the file's `FileType` (from its suffix)
@@ -245,33 +293,17 @@ impl TypedValue for File {
         }
     }
 
-    fn discover_field(&self, field_name: &str) -> bool {
-        // Make sure top-level is expanded so we know our children.
-        self.expand();
-        // Look up the child by name and expand it. If we're not a
-        // directory (or the child doesn't exist), no widening.
-        let child = match &*self.state.borrow() {
+    /// Returns the entry of this directory named `name`, if this is a
+    /// directory that has one.
+    fn entry(&self, name: &str) -> Option<Rc<File>> {
+        match &*self.state.borrow() {
             FileState::Directory { entries } => {
-                entries.get(&Label::from(field_name)).cloned()
+                entries.get(&Label::from(name)).cloned()
             }
             _ => None,
-        };
-        match child {
-            Some(c) => {
-                let before = matches!(*c.state.borrow(), FileState::Unexpanded);
-                c.expand();
-                before
-            }
-            None => false,
         }
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-impl File {
     /// Constructs an [`Rc<File>`] for the given path. The file's
     /// [`FileType`] is determined from `path`; the state starts
     /// [`FileState::Unexpanded`]. Callers typically follow up with
@@ -367,7 +399,7 @@ pub fn session_file(session: &Session) -> Rc<File> {
 }
 
 /// Converts a [`File`] to its Morel runtime value: a directory becomes
-/// a `Val::File`, a data file becomes `Val::List` of record values
+/// a typed value, a data file becomes `Val::List` of record values
 /// (one per CSV row), and an unexpanded / plain file becomes
 /// `Val::Unit`. Used when projecting a directory entry through field
 /// access.
@@ -375,7 +407,7 @@ pub fn file_as_val(file: &Rc<File>) -> Val {
     file.expand();
     match &*file.state.borrow() {
         FileState::Directory { .. } | FileState::Unexpanded => {
-            Val::File(Rc::clone(file))
+            Val::Progressive(Rc::clone(file) as Rc<dyn TypedValue>)
         }
         FileState::Data {
             field_parsers,

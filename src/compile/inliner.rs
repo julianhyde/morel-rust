@@ -409,7 +409,7 @@ impl Transformer for Inliner {
                 // Constant-fold a record selector applied to a
                 // literal record. Only fires when the literal's
                 // shape actually has a value for that slot —
-                // `Val::Fn(Sys.file)` and `Val::File` carry no list
+                // `Val::Fn(Sys.file)` and `Val::Progressive` carry no list
                 // of pre-extracted fields and must be resolved at
                 // runtime.
                 if let Expr::RecordSelector(_fn_type, slot) = f.as_ref()
@@ -600,7 +600,7 @@ impl Expr {
                     {
                         // Records compile to `Val::List` and can be
                         // constant-folded by slot. Other shapes
-                        // (e.g. `Val::Fn(Sys.file)`, `Val::File`)
+                        // (e.g. `Val::Fn(Sys.file)`, `Val::Progressive`)
                         // need runtime dispatch — leave them as
                         // `Expr::Apply` for the compiler to handle.
                         Expr::Literal(

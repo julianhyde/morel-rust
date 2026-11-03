@@ -667,6 +667,27 @@ define_props! {
         type: T_BOOL,
     },
 
+    SparkFallback => {
+        doc: "Boolean property 'sparkFallback' controls what happens to a \
+              query that 'sparkPushDown' sends to Spark and Spark cannot \
+              do: whether it is evaluated here instead, with a warning, or \
+              the statement fails. It governs refusals only, never a \
+              failure on the server. Default is true.",
+        camel_name: "sparkFallback",
+        default: Some(PropVal::Bool(true)),
+        type: T_BOOL,
+    },
+
+    SparkPushDown => {
+        doc: "Boolean property 'sparkPushDown' controls whether each query \
+              is translated for Apache Spark and run there, on the \
+              connection that the session has bound as 'spark'. Default \
+              is false.",
+        camel_name: "sparkPushDown",
+        default: Some(PropVal::Bool(false)),
+        type: T_BOOL,
+    },
+
     StringDepth => {
         doc: "Integer property 'stringDepth' is the length of strings at \
                which ellipsis begins. It is based upon the 'stringDepth' \
@@ -822,7 +843,7 @@ mod tests {
     #[test]
     fn test_all_properties() {
         let all_props = Prop::all();
-        assert_eq!(all_props.len(), 28);
+        assert_eq!(all_props.len(), 30);
         assert!(all_props.contains(&Prop::Directory));
         assert!(all_props.contains(&Prop::LineWidth));
         assert!(all_props.contains(&Prop::MaxUseDepth));

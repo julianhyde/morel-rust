@@ -32,7 +32,8 @@ use crate::compile::types::{Checks, Type, displace, shadow_name};
 use crate::eval::big_int::BigInt;
 use crate::eval::code::Code;
 use crate::eval::color_scheme;
-use crate::eval::file::{self, File, TypedValue};
+use crate::eval::file::{self, File};
+use crate::eval::typed_value::TypedValue;
 use crate::eval::val::Val;
 use crate::shell::error::Error;
 use crate::shell::prop::{Configurable, Output, Prop, PropVal};
@@ -218,7 +219,7 @@ impl Session {
     /// Deduces a statement's type. The statement is represented by an AST node.
     /// `runtime_bindings` is the map of top-level user val bindings from prior
     /// statements (`Shell::environment.bindings`). The wrapper env uses it to
-    /// project runtime [`Val::File`] values into [`TypedValue`] registrations
+    /// project runtime [`Val::Progressive`] values into [`TypedValue`] registrations
     /// for the resolver's progressive-widening hook.
     pub fn deduce_type_inner(
         &mut self,
@@ -250,7 +251,7 @@ impl Session {
         // Use the accumulated type environment from previous statements,
         // wrapped in a session-aware layer that resolves the `file`
         // identifier against the session's progressive root file and
-        // promotes any prior `Val::File` runtime binding to a
+        // promotes any prior `Val::Progressive` runtime binding to a
         // `TypedValue` registration for the resolver's progressive
         // widening hook.
         let env = SessionAwareEnv {
@@ -654,7 +655,7 @@ pub struct SessionAwareEnv {
     pub file: Rc<File>,
     /// Snapshot of [`crate::shell::kernel::Environment::bindings`] at
     /// the moment this env was built. Used to discover that a name
-    /// from a previous statement is bound to a `Val::File`, which we
+    /// from a previous statement is bound to a typed value, which we
     /// then re-register as a [`TypedValue`] for the field-selector
     /// action's widening hook.
     pub runtime_bindings: HashMap<String, Val>,
@@ -663,31 +664,17 @@ pub struct SessionAwareEnv {
 impl TypeEnv for SessionAwareEnv {
     fn get(&self, name: &str, tr: &mut TypeResolver) -> Option<BindType> {
         if name == "file" {
-            // Make sure the root is expanded so its type lists its
-            // children (the first layer of progressive widening).
-            self.file.expand();
-            let v = tr.type_to_term(&self.file.type_());
-            // Register the File as the TypedValue behind this var,
-            // so the field-selector action can call discover_field
-            // on it when a missing field is requested.
-            tr.typed_values
-                .borrow_mut()
-                .insert(v, Rc::clone(&self.file) as Rc<dyn file::TypedValue>);
-            return Some(BindType::Val(Term::Variable(v)));
+            return Some(tr.typed_value_binding(
+                Rc::clone(&self.file) as Rc<dyn TypedValue>
+            ));
         }
-        // If a prior statement's val binding evaluated to a
-        // `Val::File`, use the file's *current* type (which reflects
-        // any expansion that's happened since the binding was
-        // resolved) rather than the type that was frozen at binding
-        // time. Also register the file as a [`TypedValue`] for the
-        // field-selector action's progressive widening hook.
-        if let Some(Val::File(f)) = self.runtime_bindings.get(name) {
-            f.expand();
-            let v = tr.type_to_term(&f.type_());
-            tr.typed_values
-                .borrow_mut()
-                .insert(v, Rc::clone(f) as Rc<dyn file::TypedValue>);
-            return Some(BindType::Val(Term::Variable(v)));
+        // If a prior statement's val binding evaluated to a typed value
+        // (a directory, a Spark catalog), use the value's *current*
+        // type, which reflects any expansion that's happened since the
+        // binding was resolved, rather than the type that was frozen at
+        // binding time.
+        if let Some(Val::Progressive(v)) = self.runtime_bindings.get(name) {
+            return Some(tr.typed_value_binding(Rc::clone(v)));
         }
         self.parent.get(name, tr)
     }

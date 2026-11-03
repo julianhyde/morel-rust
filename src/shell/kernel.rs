@@ -990,6 +990,12 @@ impl Kernel {
             Ok(statement) => statement,
         };
 
+        // With "sparkPushDown" set, a query is sent to Spark.
+        let statement = match self.push_down(statement, base_line) {
+            Ok(statement) => statement,
+            Err(output) => return Ok(output),
+        };
+
         // Mode for just this statement.
         let mut statement_mode = self.config.mode.unwrap();
 
@@ -1051,6 +1057,7 @@ impl Kernel {
                 );
                 return Ok(s);
             }
+            Err(Error::Raised(s)) => return Ok(format!("{}\n", s)),
             Err(e) => return Err(e),
         };
 
@@ -1087,6 +1094,80 @@ impl Kernel {
             Ok(s) => Ok(format!("{}{}", warning_prefix, s)),
             Err(_) => output,
         }
+    }
+
+    /// Returns a statement with its query pushed down to Spark, or the
+    /// statement itself if the session is not asking for that. A query
+    /// becomes `(Spark.remote (spark.connection, fn () => e)) ()`.
+    ///
+    /// Only a query is rewritten: a `from` with at least one step. A
+    /// declaration binds a name of the session's own, and a call to
+    /// `Sys` configures the session rather than asking a question.
+    ///
+    /// Every statement passes here, so the property means the same in a
+    /// shell, a script and `--eval`. If no connection is bound as
+    /// `spark`, the error says so, rather than the "unbound variable"
+    /// that the rewrite would raise. Returns that error as the
+    /// statement's output.
+    fn push_down(
+        &self,
+        statement: Statement,
+        base_line: usize,
+    ) -> Result<Statement, String> {
+        use crate::syntax::ast::{
+            ExprKind, LiteralKind, Match, PatKind, StatementKind,
+        };
+        let push_down = matches!(
+            self.session.borrow().config.shown(Prop::SparkPushDown),
+            Some(PropVal::Bool(true))
+        );
+        let is_query = matches!(
+            &statement.kind,
+            StatementKind::Expr(ExprKind::From(steps)) if !steps.is_empty()
+        );
+        if !push_down || !is_query {
+            return Ok(statement);
+        }
+        let span = statement.span.clone();
+        if !self.environment.bindings.contains_key("spark") {
+            let span2 = Span::from_pest_span(&span.to_pest_span(), base_line);
+            return Err(format!(
+                "{} Error: sparkPushDown is set, but no connection is bound \
+                 as 'spark'; start Morel with --spark, or bind one with \
+                 'val spark = Spark.connect uri'\n  raised at: {}\n",
+                span2, span2
+            ));
+        }
+        // Built as a tree rather than as text, because writing a query
+        // out and parsing it again is not faithful.
+        let StatementKind::Expr(query) = statement.kind else {
+            unreachable!("a query is an expression");
+        };
+        let e = |kind: ExprKind<_>| kind.spanned(&span);
+        let field = |name: &str, of: &str| {
+            e(ExprKind::Apply(
+                Box::new(e(ExprKind::RecordSelector(name.to_string()))),
+                Box::new(e(ExprKind::Identifier(of.to_string()))),
+            ))
+        };
+        let connection = field("connection", "spark");
+        let remote = field("remote", "Spark");
+        let fn_ = e(ExprKind::Fn(vec![Match {
+            pat: PatKind::Tuple(vec![]).spanned(&span),
+            expr: e(query),
+        }]));
+        let unit = e(ExprKind::Literal(LiteralKind::Unit.spanned(&span)));
+        let call = e(ExprKind::Apply(
+            Box::new(e(ExprKind::Apply(
+                Box::new(remote),
+                Box::new(e(ExprKind::Tuple(vec![connection, fn_]))),
+            ))),
+            Box::new(unit),
+        ));
+        Ok(Statement {
+            kind: StatementKind::Expr(call.kind),
+            ..statement
+        })
     }
 
     /// Stores the current command's pre- and post-inlining declarations
@@ -1194,7 +1275,7 @@ impl Kernel {
 
         // Post-resolution progressive-record widening: walks the
         // core decl and refines any field-selector whose receiver
-        // value resolves (through `valueOf`) to a `Val::File`. This
+        // value resolves (through `valueOf`) to a typed value. This
         // catches paths the unifier-time `TypedValue` map does not
         // — record literals, tuple destructuring, let-bindings —
         // by reaching through runtime values rather than type

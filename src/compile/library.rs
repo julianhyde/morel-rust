@@ -1416,6 +1416,47 @@ pub enum BuiltInFunction {
     #[strum(props(name = "sum$real"))]
     #[strum(props(type = "real bag -> real"))]
     RelationalSumReal,
+    /// `Spark.catalog c`: the root of connection `c`'s catalog.
+    #[strum(props(p = "Spark", name = "catalog", throws = "Spark"))]
+    #[strum(props(type = "connection -> {...}"))]
+    SparkCatalog,
+    /// `Spark.close c`: closes connection `c`.
+    #[strum(props(p = "Spark", name = "close"))]
+    #[strum(props(type = "connection -> unit"))]
+    SparkClose,
+    /// `Spark.connect uri`: opens a connection, returning its catalog
+    /// and the connection.
+    #[strum(props(p = "Spark", name = "connect", throws = "Spark"))]
+    #[strum(props(
+        type = "string -> {catalog: {...}, connection: connection}"
+    ))]
+    SparkConnect,
+    /// `Spark.connectDefault ()`: opens a connection to the server that
+    /// `SPARK_REMOTE` names.
+    #[strum(props(p = "Spark", name = "connectDefault", throws = "Spark"))]
+    #[strum(props(type = "unit -> {catalog: {...}, connection: connection}"))]
+    SparkConnectDefault,
+    /// `Spark.execute (p, a)`: runs plan `p` with argument `a`.
+    #[strum(props(p = "Spark", name = "execute", throws = "Spark"))]
+    #[strum(props(type = "forall 2 ('a, 'b) plan * 'a -> 'b"))]
+    SparkExecute,
+    /// `Spark.prepare (c, f)`: translates `f` into a plan on `c`.
+    #[strum(props(p = "Spark", name = "prepare", throws = "Spark"))]
+    #[strum(props(type = "forall 2 connection * ('a -> 'b) -> ('a, 'b) plan"))]
+    SparkPrepare,
+    /// `Spark.remote (c, f)`: `f`, prepared and executed on `c`.
+    #[strum(props(p = "Spark", name = "remote", throws = "Spark"))]
+    #[strum(props(type = "forall 2 connection * ('a -> 'b) -> 'a -> 'b"))]
+    SparkRemote,
+    /// `Spark.toString p`: plan `p` as text.
+    #[strum(props(p = "Spark", name = "toString", throws = "Spark"))]
+    #[strum(props(type = "forall 2 ('a, 'b) plan -> string"))]
+    SparkToString,
+    /// `Spark.using f`: a function that applies `f` to the default
+    /// connection and its argument, closing the connection afterwards.
+    #[strum(props(p = "Spark", name = "using", throws = "Spark"))]
+    #[strum(props(type = "forall 2 (connection * 'a -> 'b) -> 'a -> 'b"))]
+    SparkUsing,
     #[strum(props(p = "String", name = "^", alias = "op ^", global = true))]
     #[strum(props(type = "string * string -> string"))]
     StringCaret,
@@ -2423,6 +2464,8 @@ pub enum BuiltInRecord {
     /// `emps`, `salgrades`. Each field is a `bag` of records.
     #[strum(props(name = "scott"))]
     Scott,
+    #[strum(props(name = "Spark"))]
+    Spark,
     #[strum(props(name = "String"))]
     String,
     #[strum(props(name = "StringCvt"))]
@@ -2486,6 +2529,8 @@ pub enum BuiltInExn {
     Size,
     #[strum(props(p = "General"))]
     Span,
+    #[strum(props(p = "Spark"))]
+    Spark,
     #[strum(props(p = "General", explain = "subscript out of bounds"))]
     Subscript,
     #[strum(props(p = "Time"))]
@@ -2649,6 +2694,10 @@ pub enum BuiltInEqtype {
     /// write it.
     #[strum(props(name = "$collection", varCount = "1"))]
     Collection,
+    /// A connection to a Spark Connect server, or the offline
+    /// connection whose catalog is the session's data sets.
+    #[strum(props(name = "connection", varCount = "0"))]
+    Connection,
     #[strum(props(name = "date", varCount = "0"))]
     Date,
     #[strum(props(name = "decimal", varCount = "0"))]
@@ -2657,6 +2706,10 @@ pub enum BuiltInEqtype {
     Doc,
     #[strum(props(name = "list", varCount = "1"))]
     List,
+    /// A query translated for a Spark connection. Its parameters are
+    /// phantom: what the plan takes, and what it computes.
+    #[strum(props(name = "plan", varCount = "2"))]
+    Plan,
     #[strum(props(name = "time", varCount = "0"))]
     Time,
     #[strum(props(name = "vector", varCount = "1"))]
