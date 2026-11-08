@@ -2897,7 +2897,7 @@ mod tests {
     fn datatype_constructors_match_built_in_functions() {
         let by_name: HashMap<&'static str, BuiltInFunction> =
             BuiltInFunction::iter()
-                .filter(|f| f.is_constructor())
+                .filter(BuiltInFunction::is_constructor)
                 .map(|f| (f.name(), f))
                 .collect();
         let mut missing: Vec<String> = Vec::new();

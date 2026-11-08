@@ -773,7 +773,7 @@ mod tests {
             }
         }
         let mut defined: Vec<String> =
-            words.values().map(|w| w.to_string()).collect();
+            words.values().map(ToString::to_string).collect();
         defined.sort();
         let start = pest.find("\nkeywords = {\n").expect("keywords rule");
         let end = pest[start..].find("\n}\n").expect("end of rule") + start;

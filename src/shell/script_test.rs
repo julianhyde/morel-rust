@@ -297,8 +297,10 @@ mod tests {
         let st = ScriptTest::default();
         assert_eq!(st.directory(), None);
 
-        let mut config = SessionConfig::default();
-        config.directory = Some(Rc::new(PathBuf::from("/tmp")));
+        let config = SessionConfig {
+            directory: Some(Rc::new(PathBuf::from("/tmp"))),
+            ..SessionConfig::default()
+        };
         let st = ScriptTest::new(config);
         assert_eq!(st.directory(), Some(Path::new("/tmp")));
     }

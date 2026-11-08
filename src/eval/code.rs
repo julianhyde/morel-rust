@@ -2531,7 +2531,7 @@ pub enum Eager0 {
 
 impl Eager0 {
     pub(crate) fn apply(&self) -> Val {
-        #[expect(clippy::enum_glob_use)]
+        #[allow(clippy::enum_glob_use)]
         use crate::eval::code::Eager0::*;
 
         match &self {
@@ -2677,7 +2677,7 @@ impl EagerF0 {
     }
 
     fn apply(&self, r: &mut EvalEnv, _f: &mut Frame) -> Val {
-        #[expect(clippy::enum_glob_use)]
+        #[allow(clippy::enum_glob_use)]
         use crate::eval::code::EagerF0::*;
 
         match &self {
@@ -2940,7 +2940,7 @@ impl EagerF1 {
         a0: Val,
         span: Option<&Span>,
     ) -> Result<Val, MorelError> {
-        #[expect(clippy::enum_glob_use)]
+        #[allow(clippy::enum_glob_use)]
         use crate::eval::code::EagerF1::*;
 
         // A built-in applied as a value -- passed to `o`, say, rather than
@@ -3417,7 +3417,7 @@ impl Eager1 {
     // Passing Val by value is OK because it is small.
     #[allow(clippy::needless_pass_by_value)]
     pub(crate) fn apply(&self, a0: Val) -> Val {
-        #[expect(clippy::enum_glob_use)]
+        #[allow(clippy::enum_glob_use)]
         use crate::eval::code::Eager1::*;
 
         match &self {
@@ -4019,7 +4019,7 @@ impl Eager2 {
     // Passing Val by value is OK because it is small.
     #[allow(clippy::needless_pass_by_value)]
     pub(crate) fn apply(&self, a0: Val, a1: Val) -> Val {
-        #[expect(clippy::enum_glob_use)]
+        #[allow(clippy::enum_glob_use)]
         use crate::eval::code::Eager2::*;
 
         match &self {
@@ -4410,7 +4410,7 @@ impl EagerF2 {
         a1: Val,
         span: Option<&Span>,
     ) -> Result<Val, MorelError> {
-        #[expect(clippy::enum_glob_use)]
+        #[allow(clippy::enum_glob_use)]
         use crate::eval::code::EagerF2::*;
 
         match &self {
@@ -4829,7 +4829,7 @@ impl EagerF3 {
 
     /// See [`EagerF1::is_throwing`].
     fn is_throwing(&self) -> bool {
-        #[expect(clippy::enum_glob_use)]
+        #[allow(clippy::enum_glob_use)]
         use EagerF3::*;
         matches!(
             self,
@@ -4852,7 +4852,7 @@ impl EagerF3 {
         a2: Val,
         span: Option<&Span>,
     ) -> Result<Val, MorelError> {
-        #[expect(clippy::enum_glob_use)]
+        #[allow(clippy::enum_glob_use)]
         use crate::eval::code::EagerF3::*;
 
         match &self {
@@ -5022,7 +5022,7 @@ impl Eager3 {
     // Passing Val by value is OK because it is small.
     #[allow(clippy::needless_pass_by_value)]
     fn apply(&self, a0: Val, a1: Val, a2: Val) -> Val {
-        #[expect(clippy::enum_glob_use)]
+        #[allow(clippy::enum_glob_use)]
         use crate::eval::code::Eager3::*;
 
         match self {
@@ -5078,7 +5078,7 @@ impl Custom {
     // Passing Val by value is OK because it is small.
     #[allow(clippy::needless_pass_by_value)]
     pub(crate) fn apply(&self, a0: Val, a1: Val) -> Val {
-        #[expect(clippy::enum_glob_use)]
+        #[allow(clippy::enum_glob_use)]
         use crate::eval::code::Custom::*;
 
         // Normalize empty list (empty record {}) to Unit so that

@@ -207,9 +207,9 @@ fn lint_file(file_name: &str, warnings: &mut Vec<String>) {
         "std::ptr::addr_of",
         "std::ptr::addr_of_mut",
     ];
-    if file_type.header.is_some() {
+    if let Some(header) = file_type.header.as_ref() {
         let contents = fs::read_to_string(file_name).unwrap();
-        if !contents.starts_with(file_type.header.unwrap().as_str()) {
+        if !contents.starts_with(header.as_str()) {
             warnings.push(format!(
                 "{}:{}: File does not start with a header",
                 file_name, 1

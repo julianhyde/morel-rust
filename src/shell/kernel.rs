@@ -1619,7 +1619,7 @@ mod tests {
             .unwrap();
         let out = String::from_utf8(output).unwrap();
         let mut lines: Vec<String> =
-            out.split('\n').map(|s| s.to_string()).collect();
+            out.split('\n').map(ToString::to_string).collect();
         assert!(
             lines.first().map(|s| s.starts_with("morel-rust version"))
                 == Some(true),

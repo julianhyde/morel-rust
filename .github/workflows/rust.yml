@@ -57,9 +57,8 @@ jobs:
       if: matrix.rust == 'stable'
       run: wasm-pack build --target web --out-dir web/pkg
     # Clippy and rustdoc are run on stable only. Their output moves
-    # between releases -- `#[expect(clippy::enum_glob_use)]` in
-    # `eval/code.rs`, for one, is unfulfilled on 1.93.1 -- so pinning
-    # them to one toolchain keeps `-D warnings` meaningful.
+    # between releases, so pinning them to one toolchain keeps
+    # `-D warnings` meaningful.
     - name: Clippy
       if: matrix.rust == 'stable'
       run: cargo clippy --message-format=short -- -D warnings
