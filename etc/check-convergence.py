@@ -128,6 +128,25 @@ ACCEPTED = {
     ),
 }
 
+# Scripts that morel-rust does not have yet because they test the Spark
+# adapter, whose propagation is held back until morel-java's Spark work
+# settles. While morel-rust lacks such a file, the gate skips it, rather
+# than counting every morel-java change to it as divergence; once
+# morel-rust has the file, it is measured like any other.
+DEFERRED = {
+    "built-in/spark.smli",
+    "spark.smli",
+    "spark-disabled.smli",
+    "spark-divergence.smli",
+    "spark-error.smli",
+    "spark-exec.smli",
+    "spark-live.smli",
+    "spark-plan.smli",
+    "spark-plan-generated.smli",
+    "triple.smli",
+    "tpcds-10m.smli",
+}
+
 
 def script_files(repo, commit, prefix):
     """Relative script paths (below `prefix`) present at `commit`."""
@@ -257,7 +276,13 @@ def main():
     accepted = []
     net_before = net_after = 0
     rows = []
+    deferred = []
     for rel in sorted(rels):
+        if (rel in DEFERRED
+                and not file_at(rust_repo, rust, RUST_PREFIX, rel)
+                and not file_at(rust_repo, rust_parent, RUST_PREFIX, rel)):
+            deferred.append(rel)
+            continue
         before = diff_lines(
             file_at(rust_repo, rust_parent, RUST_PREFIX, rel),
             file_at(args.java_repo, java_parent, JAVA_PREFIX, rel),
@@ -290,6 +315,10 @@ def main():
     print(f"net divergence: {net_before} -> {net_after} "
           f"({net_after - net_before:+d} lines)")
     print()
+
+    if deferred:
+        print(f"deferred with Spark, not measured: {len(deferred)} file(s)")
+        print()
 
     for rel, after in accepted:
         limit, why = ACCEPTED[rel]
