@@ -1196,7 +1196,11 @@ pub struct TypeResolver {
     /// share. Their type is not known until unification has run, so the
     /// check that it is one the operator is defined for waits until then;
     /// see [`Self::check_arithmetic`].
-    arithmetic: Vec<(library::BuiltInFunction, Var, Span)>,
+    /// Each overloaded operator application to check after unification:
+    /// the operator, its result's type variable, the application's span,
+    /// and whether the operator is applied as a value, as in
+    /// `(op /) (6, 4)`, rather than written infix or prefix.
+    arithmetic: Vec<(library::BuiltInFunction, Var, Span, bool)>,
     /// The fields a record with modifiers ends up with, keyed by the
     /// extent of its span. A `yield` step binds them; the record's own
     /// term may be the operand's, which says nothing about them.
@@ -3567,7 +3571,14 @@ impl TypeResolver {
                     && name == "abs"
                     && !self.user_bindings.contains(name)
                 {
-                    self.note_operator("abs", v, &expr.span);
+                    self.note_operator("abs", v, &expr.span, false);
+                }
+                // An operator section applied to its operands, as in
+                // `(op /) (6, 4)`, is checked as the operator written
+                // infix is, but reports an error as morel-java does.
+                if let ExprKind::OpSection(name) = &left.kind {
+                    let op_name = format!("op {}", name);
+                    self.note_operator(&op_name, v, &expr.span, true);
                 }
                 let apply2 = ExprKind::Apply(Box::new(left2), Box::new(right2));
                 self.reg_expr(&apply2, &expr.span, expr.id, v)
@@ -3730,7 +3741,7 @@ impl TypeResolver {
             ExprKind::Div(left, right) => {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op div", left, right, v)?;
-                self.note_operator("op div", v, &expr.span);
+                self.note_operator("op div", v, &expr.span, false);
                 self.erase_alias(v);
                 let x = ExprKind::Div(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
@@ -3738,7 +3749,7 @@ impl TypeResolver {
             ExprKind::Divide(left, right) => {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op /", left, right, v)?;
-                self.note_operator("op /", v, &expr.span);
+                self.note_operator("op /", v, &expr.span, false);
                 self.erase_alias(v);
                 let x = ExprKind::Divide(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
@@ -4043,7 +4054,7 @@ impl TypeResolver {
             ExprKind::Minus(left, right) => {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op -", left, right, v)?;
-                self.note_operator("op -", v, &expr.span);
+                self.note_operator("op -", v, &expr.span, false);
                 self.erase_alias(v);
                 let x = ExprKind::Minus(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
@@ -4051,7 +4062,7 @@ impl TypeResolver {
             ExprKind::Mod(left, right) => {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op mod", left, right, v)?;
-                self.note_operator("op mod", v, &expr.span);
+                self.note_operator("op mod", v, &expr.span, false);
                 self.erase_alias(v);
                 let x = ExprKind::Mod(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
@@ -4061,7 +4072,7 @@ impl TypeResolver {
                     self.deduce_call1_type(env, "op ~", e, &expr.span, v)?;
                 // `~` blames its operand, not the whole expression: that
                 // is where the type it is not defined for came from.
-                self.note_operator("op ~", v, &e.span);
+                self.note_operator("op ~", v, &e.span, false);
                 self.erase_alias(v);
                 let x = ExprKind::Negate(Box::new(e2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
@@ -4138,7 +4149,7 @@ impl TypeResolver {
             ExprKind::Plus(left, right) => {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op +", left, right, v)?;
-                self.note_operator("op +", v, &expr.span);
+                self.note_operator("op +", v, &expr.span, false);
                 self.erase_alias(v);
                 let x = ExprKind::Plus(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
@@ -4256,7 +4267,7 @@ impl TypeResolver {
             ExprKind::Times(left, right) => {
                 let (left2, right2) =
                     self.deduce_call2_type(env, "op *", left, right, v)?;
-                self.note_operator("op *", v, &expr.span);
+                self.note_operator("op *", v, &expr.span, false);
                 self.erase_alias(v);
                 let x = ExprKind::Times(Box::new(left2), Box::new(right2));
                 self.reg_expr(&x, &expr.span, expr.id, v)
@@ -4538,13 +4549,19 @@ impl TypeResolver {
     /// when nothing else decides it, and is checked after unification
     /// against the types the operator is defined for; see
     /// [`Self::check_arithmetic`]. Any other operator needs neither.
-    fn note_operator(&mut self, name: &str, v: &Var, span: &Span) {
+    fn note_operator(
+        &mut self,
+        name: &str,
+        v: &Var,
+        span: &Span,
+        section: bool,
+    ) {
         if let Some(library::BuiltIn::Fn(f)) = library::lookup(name)
             && let Some(prim) = f.preferred_type()
         {
             let op = self.unifier.op(prim.as_str(), Some(0));
             self.preferred_vars.push((*v, op));
-            self.arithmetic.push((f, *v, span.clone()));
+            self.arithmetic.push((f, *v, span.clone(), section));
         }
     }
 
@@ -4586,7 +4603,7 @@ impl TypeResolver {
     /// alone: the operator does not say which of its types was meant,
     /// and `preferred_vars` has already defaulted what it could.
     fn check_arithmetic(&self, type_map: &TypeMap) {
-        for (f, v, span) in &self.arithmetic {
+        for (f, v, span, section) in &self.arithmetic {
             let type_ = type_map.var_type(v);
             let ok = match peel_type(&type_) {
                 Type::Variable(_) => true,
@@ -4598,7 +4615,14 @@ impl TypeResolver {
                 }
                 _ => false,
             };
-            if !ok {
+            if !ok && *section {
+                // A section offers one candidate type for each type the
+                // operator is defined for, and none of them fits.
+                self.field_errors.borrow_mut().push((
+                    "Cannot deduce type: no valid overloads".to_string(),
+                    span.clone(),
+                ));
+            } else if !ok {
                 let name = f.name();
                 self.field_errors.borrow_mut().push((
                     format!(

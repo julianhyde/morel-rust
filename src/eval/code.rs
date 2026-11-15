@@ -4402,7 +4402,7 @@ impl EagerF2 {
 
     // Passing Val by value is OK because it is small.
     #[allow(clippy::needless_pass_by_value)]
-    fn apply(
+    pub(crate) fn apply(
         &self,
         r: &mut EvalEnv,
         f: &mut Frame,

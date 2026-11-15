@@ -18,6 +18,7 @@
 use crate::compile::core::inlined;
 use crate::compile::library::BuiltInFunction;
 use crate::compile::lindig::Doc;
+use crate::compile::span::Span;
 use crate::compile::types::Type;
 use crate::eval::code::{
     Code, EvalEnv, Frame as CodeFrame, Frame, Impl, LIBRARY,
@@ -432,6 +433,20 @@ impl Val {
                     Impl::EF1(eagerf1) => {
                         eagerf1.apply(r, f, arg.clone(), None)
                     }
+                    // A binary operator that may raise, such as
+                    // `Decimal.+` passed as `op +` to `List.foldl`,
+                    // takes a pair.
+                    Impl::EF2(eagerf2) => match arg {
+                        Val::List(args) if args.len() == 2 => eagerf2.apply(
+                            r,
+                            f,
+                            args[0].clone(),
+                            args[1].clone(),
+                            // A value has no position of its own.
+                            Some(&Span::new("")),
+                        ),
+                        _ => panic!("Expected pair argument for {:?}", eagerf2),
+                    },
                     Impl::E2(eager2) => {
                         // Binary operators take a tuple as a single argument
                         if let Val::List(args) = arg {

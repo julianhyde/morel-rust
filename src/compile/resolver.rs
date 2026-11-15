@@ -4533,8 +4533,13 @@ impl<'a> Resolver<'a> {
         arg_type: &Type,
     ) -> BuiltInFunction {
         use BuiltInFunction::{
-            GeneralO, IntDiv, IntMinus, IntMod, IntPlus, IntTimes, ListAt,
-            ListCons, RealDivide, RealMinus, RealPlus, RealTimes, StringCaret,
+            DecimalDivide, DecimalMinus, DecimalPlus, DecimalTimes, GeneralO,
+            IntDiv, IntMinus, IntMod, IntPlus, IntTimes, ListAt, ListCons,
+            RealDivide, RealMinus, RealPlus, RealTimes, StringCaret, WordDiv,
+            WordMod, WordOpMinus, WordOpPlus, WordOpTimes,
+        };
+        let is_decimal = |name: &str, args: &[Rc<Type>]| {
+            args.is_empty() && name == "decimal"
         };
         match (op_name, arg_type) {
             // Function composition is polymorphic over its operand types.
@@ -4551,6 +4556,27 @@ impl<'a> Resolver<'a> {
             ("-", Type::Primitive(PrimitiveType::Real)) => RealMinus,
             ("*", Type::Primitive(PrimitiveType::Real)) => RealTimes,
             ("/", Type::Primitive(PrimitiveType::Real)) => RealDivide,
+
+            // Word operators
+            ("+", Type::Primitive(PrimitiveType::Word)) => WordOpPlus,
+            ("-", Type::Primitive(PrimitiveType::Word)) => WordOpMinus,
+            ("*", Type::Primitive(PrimitiveType::Word)) => WordOpTimes,
+            ("div", Type::Primitive(PrimitiveType::Word)) => WordDiv,
+            ("mod", Type::Primitive(PrimitiveType::Word)) => WordMod,
+
+            // Decimal operators
+            ("+", Type::Data(name, args)) if is_decimal(name, args) => {
+                DecimalPlus
+            }
+            ("-", Type::Data(name, args)) if is_decimal(name, args) => {
+                DecimalMinus
+            }
+            ("*", Type::Data(name, args)) if is_decimal(name, args) => {
+                DecimalTimes
+            }
+            ("/", Type::Data(name, args)) if is_decimal(name, args) => {
+                DecimalDivide
+            }
 
             // String operators
             ("^", Type::Primitive(PrimitiveType::String)) => StringCaret,
