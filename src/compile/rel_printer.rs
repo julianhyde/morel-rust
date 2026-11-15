@@ -53,8 +53,8 @@
 #![allow(dead_code)]
 
 use crate::compile::core::{
-    Decl, Expr, ORDINAL, Rel, id_name, needs_brackets_as_function,
-    written_infix,
+    Decl, Expr, Match, ORDINAL, Pat, PatField, Rel, id_name,
+    needs_brackets_as_function, written_infix,
 };
 use crate::compile::free_finder::free_names_in;
 use crate::compile::lindig::{self, Doc};
@@ -103,6 +103,7 @@ pub fn plan_decl(decl: &Decl, line_width: usize) -> String {
             index: HashMap::new(),
             defs: Vec::new(),
             ids: HashMap::new(),
+            binders: HashMap::new(),
         }))
     });
     let mut w = Writer::new(true, line_width);
@@ -134,6 +135,32 @@ pub fn plan_decl(decl: &Decl, line_width: usize) -> String {
     text.trim_end_matches('\n').to_string()
 }
 
+/// Returns an expression that is not a query, but holds one, as
+/// `Sys.planOf` prints it: the expression laid out to the width, with
+/// each query inside it broken out as `r$0`, `r$1` and so on, and their
+/// trees below, as [`plan_decl`] prints a declaration's value. Returns
+/// `None` if the expression holds no query that translates.
+pub fn plan_expr(exp: &Expr, line_width: usize) -> Option<String> {
+    let value = rel_translator::trees_within(exp);
+    let previous = FRAGMENTS.with(|cell| {
+        cell.replace(Some(Fragments {
+            outer: free_names_in(&value),
+            index: HashMap::new(),
+            defs: Vec::new(),
+            ids: HashMap::new(),
+            binders: HashMap::new(),
+        }))
+    });
+    let mut w = Writer::new(true, line_width);
+    w.out
+        .push_str(&lindig::render(line_width as i32, doc(&value)));
+    w.out.push('\n');
+    let has_fragments = fragment(0).is_some();
+    let text = w.finish();
+    FRAGMENTS.with(|cell| cell.replace(previous));
+    has_fragments.then_some(text)
+}
+
 /// Returns the plan of the tree rooted at `exp`.
 ///
 /// With `with_types`, every node line ends in its collection type,
@@ -152,6 +179,7 @@ pub fn plan(exp: &Expr, with_types: bool, line_width: usize) -> String {
             index: HashMap::new(),
             defs: Vec::new(),
             ids: HashMap::new(),
+            binders: HashMap::new(),
         }))
     });
     let mut w = Writer::new(with_types, line_width);
@@ -188,6 +216,12 @@ struct Fragments {
     /// row is read outside its node -- in a dependent join's right
     /// input, and in a fragment's header -- under the same name.
     ids: HashMap<String, String>,
+    /// How many binders of each name -- a function's or a `case` arm's
+    /// variable -- the plan has printed so far. The first binder of a
+    /// name prints as the name; each later one, as the name with the
+    /// next suffix, `x_1`, so two variables that a plan holds are never
+    /// written alike.
+    binders: HashMap<String, usize>,
 }
 
 /// Returns the name a row prints under, or `None` for a name that is
@@ -342,7 +376,7 @@ impl Writer {
                     docs.push(lindig::text(&format!(" {}", name)));
                     self.visible.push(name);
                 }
-                let open = Rc::new(opened(rel));
+                let open = Rc::new(opened(rel, &self.visible));
                 self.opened.push(Rc::clone(&open));
                 for arg in args(&open, rel) {
                     docs.push(lindig::text(" ["));
@@ -355,7 +389,7 @@ impl Writer {
             // A leaf is an ordinary expression, and prints as one; a
             // row it reads, as a dependent join's right input reads the
             // left, prints under its id's name.
-            leaf => (vec![doc(&renamed(leaf))], leaf.type_()),
+            leaf => (vec![doc(&renamed(leaf, &self.visible))], leaf.type_()),
         };
         if let Some(suffix) = self.type_suffix(&t) {
             docs.push(lindig::text(&suffix));
@@ -732,23 +766,195 @@ fn args(rel: &Rel, original: &Rel) -> Vec<Doc> {
 /// names they print under, in its own expressions only: a node nested in
 /// one prints as a fragment of its own, and is renamed when it is
 /// printed.
-fn opened(rel: &Rel) -> Rel {
+fn opened(rel: &Rel, visible: &[String]) -> Rel {
+    // An input is printed as a node of its own, and renamed there;
+    // renaming it here too would number its binders twice.
+    let inputs = rel.inputs();
     rel.map_children(&|e| match e {
         Expr::Rel(..) => e.clone(),
-        _ => renamed(e),
+        _ if inputs.iter().any(|x| ptr::eq(*x, e)) => e.clone(),
+        _ => renamed(e, visible),
     })
 }
 
 /// Returns an expression with the rows it reads renamed to the names
 /// they print under, stopping at a nested node.
-fn renamed(e: &Expr) -> Expr {
+///
+/// The variables it binds are numbered too, so that no two binders of a
+/// name in the plan print alike, and none prints as an id in `visible`.
+fn renamed(e: &Expr, visible: &[String]) -> Expr {
     let mut e = e.clone();
     for name in free_names_in(&e) {
         if let Some(printed) = printed_id(&name) {
             e = rename_here(&e, &name, &printed);
         }
     }
-    e
+    number_binders(&e, visible)
+}
+
+/// Returns `e` with each variable that a function or a `case` arm binds
+/// renamed, where an earlier binder of the plan has its name, to the
+/// name with the next suffix: `x_1`, `x_2`. A suffix that would make it
+/// the name an id in `visible` prints under is skipped. Stops at a
+/// nested node, which is numbered when it is printed.
+fn number_binders(e: &Expr, visible: &[String]) -> Expr {
+    let arms = |matches: &[Match]| -> Vec<Match> {
+        matches
+            .iter()
+            .map(|m| {
+                let mut names = Vec::new();
+                m.pat.for_each_id_pat(&mut |(_, name): (&Type, &str)| {
+                    names.push(name.to_string())
+                });
+                let mut pat = m.pat.clone();
+                let mut body = m.expr.clone();
+                for name in names {
+                    if let Some(to) = next_binder_name(&name, visible) {
+                        pat = rename_pat(&pat, &name, &to);
+                        body = rename_free(&body, &name, &to);
+                    }
+                }
+                Match {
+                    pat,
+                    expr: number_binders(&body, visible),
+                }
+            })
+            .collect()
+    };
+    match e {
+        Expr::Rel(..) => e.clone(),
+        Expr::Fn(t, matches, span) => {
+            Expr::Fn(t.clone(), arms(matches), span.clone())
+        }
+        Expr::Case(t, scrutinee, matches, span) => {
+            let scrutinee = number_binders(scrutinee, visible);
+            Expr::Case(
+                t.clone(),
+                Box::new(scrutinee),
+                arms(matches),
+                span.clone(),
+            )
+        }
+        _ => rel_lowerer::map_children(e, &|x| number_binders(x, visible)),
+    }
+}
+
+/// Counts a binder of `name`, and returns the name it prints under if
+/// that is not `name` itself, or `None` outside a plan.
+fn next_binder_name(name: &str, visible: &[String]) -> Option<String> {
+    if name.starts_with('$') {
+        return None;
+    }
+    FRAGMENTS.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        let f = slot.as_mut()?;
+        let n = f.binders.entry(name.to_string()).or_insert(0);
+        let mut i = *n;
+        *n += 1;
+        if i == 0 {
+            return None;
+        }
+        loop {
+            let candidate = format!("{}_{}", name, i);
+            if !visible.contains(&candidate) {
+                return Some(candidate);
+            }
+            i += 1;
+            *n = (*n).max(i + 1);
+        }
+    })
+}
+
+/// Returns a pattern with the variable `from` renamed `to`.
+fn rename_pat(p: &Pat, from: &str, to: &str) -> Pat {
+    let r = |q: &Pat| rename_pat(q, from, to);
+    match p {
+        Pat::Identifier(t, name) if name == from => {
+            Pat::Identifier(t.clone(), to.to_string())
+        }
+        Pat::As(t, name, q) => {
+            let name = if name == from { to } else { name };
+            Pat::As(t.clone(), name.to_string(), Box::new(r(q)))
+        }
+        Pat::Constructor(t, name, q) => Pat::Constructor(
+            t.clone(),
+            name.clone(),
+            q.as_ref().map(|q| Box::new(r(q))),
+        ),
+        Pat::Tuple(t, ps) => Pat::Tuple(t.clone(), ps.iter().map(r).collect()),
+        Pat::List(t, ps) => Pat::List(t.clone(), ps.iter().map(r).collect()),
+        Pat::Record(t, fields, ellipsis) => Pat::Record(
+            t.clone(),
+            fields
+                .iter()
+                .map(|f| match f {
+                    PatField::Labeled(label, q) => {
+                        PatField::Labeled(label.clone(), Box::new(r(q)))
+                    }
+                    PatField::Anonymous(q) => {
+                        PatField::Anonymous(Box::new(r(q)))
+                    }
+                })
+                .collect(),
+            *ellipsis,
+        ),
+        Pat::Cons(t, h, tl) => {
+            Pat::Cons(t.clone(), Box::new(r(h)), Box::new(r(tl)))
+        }
+        _ => p.clone(),
+    }
+}
+
+/// Returns `e` with each free occurrence of the variable `from` renamed
+/// `to`: not inside an arm that binds `from` again, nor a `let` that
+/// does, nor a nested node.
+fn rename_free(e: &Expr, from: &str, to: &str) -> Expr {
+    let binds = |p: &Pat| {
+        let mut b = false;
+        p.for_each_id_pat(&mut |(_, name): (&Type, &str)| b |= name == from);
+        b
+    };
+    let arms = |matches: &[Match]| -> Vec<Match> {
+        matches
+            .iter()
+            .map(|m| Match {
+                pat: m.pat.clone(),
+                expr: if binds(&m.pat) {
+                    m.expr.clone()
+                } else {
+                    rename_free(&m.expr, from, to)
+                },
+            })
+            .collect()
+    };
+    match e {
+        Expr::Identifier(t, name) if name == from => {
+            Expr::Identifier(t.clone(), to.to_string())
+        }
+        Expr::Rel(..) => e.clone(),
+        Expr::Fn(t, matches, span) => {
+            Expr::Fn(t.clone(), arms(matches), span.clone())
+        }
+        Expr::Case(t, scrutinee, matches, span) => Expr::Case(
+            t.clone(),
+            Box::new(rename_free(scrutinee, from, to)),
+            arms(matches),
+            span.clone(),
+        ),
+        // A `let` that binds the name again is left alone, its
+        // declarations included; a plan's `let` is rare, and leaving
+        // a name as it is cannot make it read another variable.
+        Expr::Let(_, decls, _)
+            if decls.iter().any(|d| match d {
+                Decl::NonRecVal(b) => binds(&b.pat),
+                Decl::RecVal(bs) => bs.iter().any(|b| binds(&b.pat)),
+                _ => false,
+            }) =>
+        {
+            e.clone()
+        }
+        _ => rel_lowerer::map_children(e, &|x| rename_free(x, from, to)),
+    }
 }
 
 /// Returns the names of the ordinary variables that occur where a node's

@@ -4712,6 +4712,11 @@ fn plan_of(exp: &CoreExpr, is_query: bool, line_width: usize) -> String {
         // collection with nothing above it -- is a tree of one node.
         return rel_printer::plan(exp, true, line_width);
     }
+    // An expression that holds a query, such as a function whose body
+    // is one, prints with each query broken out below it.
+    if !is_query && let Some(text) = rel_printer::plan_expr(exp, line_width) {
+        return text;
+    }
     format!("{}", exp)
 }
 
