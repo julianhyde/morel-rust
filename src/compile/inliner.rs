@@ -16,7 +16,7 @@
 // License.
 
 use crate::compile::core::{
-    Decl, Expr, Match, Pat, Rel, Step, StepKind, ValBind,
+    Decl, Expr, Match, Pat, Rel, Step, StepKind, ValBind, is_simple,
 };
 use crate::compile::free_finder::free_names_in;
 use crate::compile::library::BuiltInFunction;
@@ -386,32 +386,6 @@ impl Analyzer {
 
 fn is_atom(expr: &Expr) -> bool {
     matches!(expr, Expr::Literal(_, _) | Expr::Identifier(_, _))
-}
-
-/// Returns whether an expression is simple: an atom, or a tuple, field
-/// selection or constructor application of simple expressions.
-/// Evaluating one can neither raise nor have an effect, and repeats no
-/// work worth avoiding.
-fn is_simple(expr: &Expr) -> bool {
-    match expr {
-        Expr::Tuple(_, args) => args.iter().all(is_simple),
-        Expr::Apply(_, f, a, _) => {
-            let selects_or_constructs = match f.as_ref() {
-                Expr::RecordSelector(..) => true,
-                Expr::Identifier(t, name) => {
-                    let result = match t.as_ref() {
-                        Type::Fn(_, r) => r.as_ref(),
-                        t => t,
-                    };
-                    matches!(result, Type::Data(..))
-                        && name.starts_with(|c: char| c.is_ascii_uppercase())
-                }
-                _ => false,
-            };
-            selects_or_constructs && is_simple(a)
-        }
-        _ => is_atom(expr),
-    }
 }
 
 /// Counts how many times each binding is used. Mirrors

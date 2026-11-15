@@ -35,6 +35,7 @@ use crate::eval::comparator::Comparator;
 use crate::eval::val::Val;
 use crate::shell::kernel::MorelError;
 use indexmap::IndexMap;
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -266,6 +267,165 @@ impl RowSink for ScanRowSink {
         if left_join && !any_match {
             // `left join` with no matching right row: emit the input row once
             // with `NONE` for the newly scanned fields.
+            for &slot in &self.optional_slots {
+                f.vals[slot] = Val::Unit;
+            }
+            self.row_sink.accept(r, f)?;
+        }
+        Ok(())
+    }
+
+    fn result(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<Val, MorelError> {
+        self.row_sink.result(r, f)
+    }
+}
+
+/// Implementation of RowSink for a `join` (or `left join`) step whose
+/// condition has an equality between a key over the input row and a key
+/// over the scanned element: a hash join.
+///
+/// The collection does not read the input row, so it is evaluated once,
+/// on the first row of an execution, and its elements put into buckets
+/// by their key; each input row then reads only the bucket of its own
+/// key, in the order of the collection, and evaluates the whole
+/// condition for each element there. The answer, and its order, are
+/// those of [ScanRowSink]'s nested loop.
+pub struct HashScanRowSink {
+    pat_code: Code,
+    collection_code: Code,
+    condition_code: Code,
+    /// Evaluated for each input row, over the row.
+    left_key_code: Code,
+    /// Evaluated for each element, over the element bound to the pattern.
+    right_key_code: Code,
+    row_sink: Box<dyn RowSink>,
+    /// As for [ScanRowSink]: for a `left join`, the slots bound by the
+    /// pattern, wrapped in `SOME` on a match. Empty for an inner join.
+    optional_slots: Vec<usize>,
+    /// The elements of the collection, by key; built on the first row.
+    buckets: Option<Rc<HashMap<Val, Vec<Val>>>>,
+}
+
+impl HashScanRowSink {
+    /// Creates a hash join sink. `optional_slots` non-empty makes it a
+    /// `left join`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        pat_code: Code,
+        collection_code: Code,
+        condition_code: Code,
+        left_key_code: Code,
+        right_key_code: Code,
+        row_sink: Box<dyn RowSink>,
+        optional_slots: Vec<usize>,
+    ) -> Self {
+        Self {
+            pat_code,
+            collection_code,
+            condition_code,
+            left_key_code,
+            right_key_code,
+            row_sink,
+            optional_slots,
+            buckets: None,
+        }
+    }
+
+    /// Puts the collection's elements into buckets by key.
+    #[allow(clippy::mutable_key_type)] // a hashable key never holds RecCell
+    fn build(
+        &self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<HashMap<Val, Vec<Val>>, MorelError> {
+        let collection = self.collection_code.eval_f0(r, f)?;
+        let mut buckets: HashMap<Val, Vec<Val>> = HashMap::new();
+        for item in collection.expect_list() {
+            if self.pat_code.eval_f1(r, f, item)?.expect_bool() {
+                let key = hash_key(self.right_key_code.eval_f0(r, f)?);
+                buckets.entry(key).or_default().push(item.clone());
+            }
+        }
+        Ok(buckets)
+    }
+}
+
+/// Returns a value as a key of a hash join: as Morel's `=` compares it,
+/// an empty list is the unit.
+fn hash_key(v: Val) -> Val {
+    match v {
+        Val::List(ref items) if items.is_empty() => Val::Unit,
+        other => other,
+    }
+}
+
+impl RowSink for HashScanRowSink {
+    fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
+        write!(
+            f,
+            "hashJoin(pat {}, exp {}, leftKey {}, rightKey {}, condition {}, \
+             sink ",
+            self.pat_code,
+            self.collection_code,
+            self.left_key_code,
+            self.right_key_code,
+            self.condition_code
+        )?;
+        self.row_sink.fmt_plan(f)?;
+        write!(f, ")")
+    }
+
+    fn start(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        // The collection may read what the query does, such as the
+        // argument of the function it is in, so it is read again for
+        // each execution.
+        self.buckets = None;
+        self.row_sink.start(r, f)
+    }
+
+    fn accept(
+        &mut self,
+        r: &mut EvalEnv,
+        f: &mut Frame,
+    ) -> Result<(), MorelError> {
+        let buckets = if let Some(buckets) = &self.buckets {
+            Rc::clone(buckets)
+        } else {
+            let buckets = Rc::new(self.build(r, f)?);
+            self.buckets = Some(Rc::clone(&buckets));
+            buckets
+        };
+        let key = hash_key(self.left_key_code.eval_f0(r, f)?);
+        let left_join = !self.optional_slots.is_empty();
+        let mut any_match = false;
+        for item in buckets.get(&key).into_iter().flatten() {
+            if !self.pat_code.eval_f1(r, f, item)?.expect_bool() {
+                continue;
+            }
+            // The condition is evaluated only for the elements of the
+            // bucket, so one that would raise for a pair whose keys
+            // differ does not.
+            if !self.condition_code.eval_f0(r, f)?.expect_bool() {
+                continue;
+            }
+            if left_join {
+                for &slot in &self.optional_slots {
+                    let v = std::mem::replace(&mut f.vals[slot], Val::Unit);
+                    f.vals[slot] = Val::Some(Box::new(v));
+                }
+                any_match = true;
+            }
+            self.row_sink.accept(r, f)?;
+        }
+        if left_join && !any_match {
             for &slot in &self.optional_slots {
                 f.vals[slot] = Val::Unit;
             }

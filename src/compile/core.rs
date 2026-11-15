@@ -1110,6 +1110,35 @@ pub fn id_name(name: &str) -> Option<&str> {
         .then_some(binder)
 }
 
+/// Returns whether an expression is simple: an atom (a literal or an
+/// identifier), or a tuple, field selection or constructor application
+/// of simple expressions. Evaluating one can neither raise nor have an
+/// effect, and repeats no work worth avoiding. It is morel-java's
+/// `Exps.isSimple`.
+pub(crate) fn is_simple(expr: &Expr) -> bool {
+    match expr {
+        Expr::Literal(..) | Expr::Identifier(..) => true,
+        Expr::Tuple(_, args) => args.iter().all(is_simple),
+        Expr::Apply(_, f, a, _) => {
+            let selects_or_constructs = match f.as_ref() {
+                Expr::RecordSelector(..) => true,
+                Expr::Literal(_, Val::Fn(builtin)) => builtin.is_constructor(),
+                Expr::Identifier(t, name) => {
+                    let result = match t.as_ref() {
+                        Type::Fn(_, r) => r.as_ref(),
+                        t => t,
+                    };
+                    matches!(result, Type::Data(..))
+                        && name.starts_with(|c: char| c.is_ascii_uppercase())
+                }
+                _ => false,
+            };
+            selects_or_constructs && is_simple(a)
+        }
+        _ => false,
+    }
+}
+
 /// Returns `e` with every identifier `from` renamed `to`, through the
 /// nodes of a tree. A row's name is unique, so nothing shadows it.
 pub fn rename(e: &Expr, from: &str, to: &str) -> Expr {

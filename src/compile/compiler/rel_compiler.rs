@@ -40,9 +40,10 @@
 use super::{Compiler, Context};
 use crate::compile::core::{
     Expr, JoinKind, JoinRows, ORDINAL, Pat, Rel, Row, element_type,
-    group_out_name, join_part_name, rel_out_name,
+    group_out_name, is_simple, join_part_name, rel_out_name,
 };
 use crate::compile::free_finder::free_names_in;
+use crate::compile::library::BuiltInFunction;
 use crate::compile::rel_lowerer::{component_count, field_at, substitute_name};
 use crate::compile::replacer::substitute;
 use crate::compile::types::{Label, PrimitiveType, Type};
@@ -50,12 +51,12 @@ use crate::eval::code::Code;
 use crate::eval::comparator::comparator_for;
 use crate::eval::row_sink::{
     BuildJoinRowSink, CollectRowSink, ExceptRowSink, GroupRowSink,
-    IntersectRowSink, OrderRowSink, OrdinalRowSink, RowSinkFactory,
-    ScanRowSink, SkipRowSink, TakeRowSink, UnionRowSink, WhereRowSink,
-    YieldRowSink,
+    HashScanRowSink, IntersectRowSink, OrderRowSink, OrdinalRowSink,
+    RowSinkFactory, ScanRowSink, SkipRowSink, TakeRowSink, UnionRowSink,
+    WhereRowSink, YieldRowSink,
 };
 use crate::eval::val::Val;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
 /// Returns whether a tree is one this compiler compiles; the kernel
@@ -897,6 +898,7 @@ impl Compiler<'_> {
             None
         };
         let condition_code = self.code(cx, &scanned, join.condition);
+        let scanned_keys = scanned.clone();
         // The element is the inputs' components in order.
         let mut parts = left_parts;
         parts.extend(right_parts);
@@ -919,6 +921,35 @@ impl Compiler<'_> {
             }));
         }
         let optional = if right_optional { source_slots } else { vec![] };
+        // An equality between a key over the left row and a key over the
+        // right element: put the elements into buckets by the one, once,
+        // and read with the other. The right input must not read the left
+        // row, nor the condition the pair's position, which a bucket does
+        // not count.
+        let dependent = free_names_in(right).contains(&rows.left)
+            || rows
+                .ordinal
+                .as_ref()
+                .is_some_and(|o| free_names_in(right).contains(o));
+        if !dependent
+            && !join.condition_reads_ordinal
+            && let Some((left_key, right_key)) =
+                equi_keys(join.condition, &rows.right)
+        {
+            let left_key_code = self.code(cx, slots, &left_key);
+            let right_key_code = self.code(cx, &scanned_keys, &right_key);
+            return Some(RowSinkFactory::new(move || {
+                Box::new(HashScanRowSink::new(
+                    pat_code.clone(),
+                    right_code.clone(),
+                    condition_code.clone(),
+                    left_key_code.clone(),
+                    right_key_code.clone(),
+                    nf.create(),
+                    optional.clone(),
+                ))
+            }));
+        }
         Some(RowSinkFactory::new(move || {
             Box::new(ScanRowSink::new_with_join(
                 pat_code.clone(),
@@ -943,6 +974,105 @@ struct Join<'a> {
 }
 
 /// A tuple of expressions, or the one expression where there is one.
+/// Returns the keys of a join condition that a hash join can use: a pair
+/// `(left_key, right_key)` such that the condition implies `left_key =
+/// right_key`, the right key reads the right element (`right`) and
+/// nothing else, the left key does not read it, both are simple (see
+/// [`is_simple`]), and their type is one whose values are equal by `=`
+/// exactly when they are equal as keys (see [`is_hashable`]). If the
+/// condition has several such equalities, the keys are tuples. Returns
+/// `None` if it has none. It is morel-java's `RelCompiler.equiKeys`.
+fn equi_keys(condition: &Expr, right: &str) -> Option<(Expr, Expr)> {
+    let mut left_keys = Vec::new();
+    let mut right_keys = Vec::new();
+    for conjunct in conjuncts(condition) {
+        let Expr::Apply(_, f, arg, _) = conjunct else {
+            continue;
+        };
+        let (Expr::Literal(_, Val::Fn(builtin)), Expr::Tuple(_, args)) =
+            (f.as_ref(), arg.as_ref())
+        else {
+            continue;
+        };
+        if builtin.infix_op().is_none_or(|(op, _, _)| op != "=")
+            || args.len() != 2
+        {
+            continue;
+        }
+        let (e0, e1) = (&args[0], &args[1]);
+        if !is_hashable(&e0.type_()) || !is_simple(e0) || !is_simple(e1) {
+            continue;
+        }
+        let (vars0, vars1) = (variables(e0), variables(e1));
+        let left0 = !vars0.contains(right);
+        let left1 = !vars1.contains(right);
+        let right0 = vars0.len() == 1 && vars0.contains(right);
+        let right1 = vars1.len() == 1 && vars1.contains(right);
+        if left0 && right1 {
+            left_keys.push(e0.clone());
+            right_keys.push(e1.clone());
+        } else if right0 && left1 {
+            left_keys.push(e1.clone());
+            right_keys.push(e0.clone());
+        }
+    }
+    if left_keys.is_empty() {
+        return None;
+    }
+    Some((tuple_of(left_keys), tuple_of(right_keys)))
+}
+
+/// Returns the conjuncts of an `andalso`.
+fn conjuncts(e: &Expr) -> Vec<&Expr> {
+    if let Expr::Apply(_, f, arg, _) = e
+        && let Expr::Literal(_, Val::Fn(BuiltInFunction::BoolAndAlso)) =
+            f.as_ref()
+        && let Expr::Tuple(_, args) = arg.as_ref()
+        && let [a, b] = args.as_slice()
+    {
+        let mut v = conjuncts(a);
+        v.extend(conjuncts(b));
+        return v;
+    }
+    vec![e]
+}
+
+/// Returns the variables that an expression reads; not the constructors
+/// it applies.
+fn variables(e: &Expr) -> BTreeSet<String> {
+    free_names_in(e)
+        .into_iter()
+        .filter(|name| !name.starts_with(|c: char| c.is_ascii_uppercase()))
+        .collect()
+}
+
+/// Returns whether values of a type can be hashed: whether two are
+/// equal, by Morel's `=`, exactly when they are equal as keys. Not
+/// `real`, whose `nan` and `~0.0` differ; nor, for now, `date`, whose
+/// values' equality is not yet their `=`.
+fn is_hashable(t: &Type) -> bool {
+    match t {
+        Type::Primitive(p) => matches!(
+            p,
+            PrimitiveType::Bool
+                | PrimitiveType::Char
+                | PrimitiveType::Int
+                | PrimitiveType::String
+                | PrimitiveType::Unit
+        ),
+        Type::Tuple(ts) => ts.iter().all(|t| is_hashable(t)),
+        Type::Record(_, fields) => fields.values().all(|t| is_hashable(t)),
+        Type::List(t) => is_hashable(t),
+        Type::Data(name, args) => match name.as_str() {
+            "decimal" => true,
+            "option" => args.first().is_some_and(|t| is_hashable(t)),
+            _ => false,
+        },
+        Type::Alias(_, t, _, _) => is_hashable(t),
+        _ => false,
+    }
+}
+
 fn tuple_of(mut parts: Vec<Expr>) -> Expr {
     if parts.len() == 1 {
         return parts.remove(0);
