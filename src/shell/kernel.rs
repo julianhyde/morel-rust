@@ -31,7 +31,7 @@ use crate::compile::span::Span;
 use crate::compile::type_env::{Binding, EmptyTypeEnv, FunTypeEnv, TypeEnv};
 use crate::compile::type_resolver::Resolved;
 use crate::compile::types::{PrimitiveType, Type};
-use crate::compile::{compiler, inliner, rel_lowerer};
+use crate::compile::{compiler, inliner, rel_lowerer, rel_rules};
 use crate::eval::big_int::BigInt;
 use crate::eval::code::Effect;
 use crate::eval::link_table::LinkTable;
@@ -1119,6 +1119,9 @@ impl Kernel {
             env2 = env2.child(k, &Type::Primitive(PrimitiveType::Unit), v);
         }
         let decl2 = inliner::inline_decl(&env2, &decl, self.inline_passes());
+        // The rules that rewrite a tree once grounding has built it, as
+        // morel-java's do.
+        let decl2 = rel_rules::apply_decl(&decl2);
         if !is_plan_or_plan_ex_call(&decl2) {
             let mut session = self.session.borrow_mut();
             session.pre_inline_decl = Some(decl);
@@ -1222,6 +1225,9 @@ impl Kernel {
             env2 = env2.child_expr(name, &t, e);
         }
         let decl2 = inliner::inline_decl(&env2, &decl, self.inline_passes());
+        // The rules that rewrite a tree once grounding has built it, as
+        // morel-java's do.
+        let decl2 = rel_rules::apply_decl(&decl2);
 
         // Save the pre- and post-inlining declarations so that
         // `Sys.planEx` can re-print the previous command's plan at the

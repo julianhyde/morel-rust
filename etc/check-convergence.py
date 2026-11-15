@@ -93,10 +93,14 @@ ACCEPTED = {
         "morel-java prints the tree.",
     ),
     "optimize.smli": (
-        145,
+        169,
         "tests of `inlinePassCount` added here and not yet in "
-        "morel-java, to be propagated there; and `Sys.planEx` still "
-        "prints the step list where morel-java prints the tree.",
+        "morel-java, to be propagated there; `Sys.planEx` still "
+        "prints the step list where morel-java prints the tree; "
+        "`Sys.plan` writes morel-rust's own format (`pat bind(0)`, "
+        "`get(0)`); and a list bound in an earlier statement prints in "
+        "a tree as its value, where morel-java's literal remembers the "
+        "name it was inlined from and prints that.",
     ),
     "hybrid.smli": (
         394,

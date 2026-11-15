@@ -1139,6 +1139,45 @@ pub(crate) fn is_simple(expr: &Expr) -> bool {
     }
 }
 
+/// Returns whether an expression is safe: a simple expression (see
+/// [`is_simple`]), or a comparison, `elem`, `notelem`, `andalso`,
+/// `orelse` or `not` of safe expressions, or a tuple, field selection or
+/// constructor application of safe expressions. Evaluating one can
+/// neither raise nor have an effect, so a condition that is safe may be
+/// evaluated earlier, or on fewer rows, than it was written to be. It is
+/// morel-java's `Exps.isSafe`.
+pub(crate) fn is_safe(expr: &Expr) -> bool {
+    match expr {
+        Expr::Tuple(_, args) => args.iter().all(is_safe),
+        Expr::Apply(_, f, a, _) => {
+            let safe_fn = match f.as_ref() {
+                Expr::RecordSelector(..) => true,
+                Expr::Literal(_, Val::Fn(builtin)) => {
+                    let name = builtin.name();
+                    builtin.is_constructor()
+                        || matches!(
+                            builtin,
+                            BuiltInFunction::BoolNot
+                                | BuiltInFunction::BoolAndAlso
+                                | BuiltInFunction::BoolOrElse
+                                | BuiltInFunction::ListElem
+                                | BuiltInFunction::ListNotElem
+                        )
+                        || matches!(
+                            name.strip_prefix("op ").unwrap_or(name),
+                            "<" | "<=" | "<>" | "=" | ">" | ">="
+                        )
+                }
+                // A constructor of a user's datatype.
+                Expr::Identifier(..) => is_simple(expr),
+                _ => false,
+            };
+            safe_fn && is_safe(a)
+        }
+        _ => is_simple(expr),
+    }
+}
+
 /// Returns `e` with every identifier `from` renamed `to`, through the
 /// nodes of a tree. A row's name is unique, so nothing shadows it.
 pub fn rename(e: &Expr, from: &str, to: &str) -> Expr {

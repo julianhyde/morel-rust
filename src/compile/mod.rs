@@ -37,6 +37,7 @@ pub mod record_modifiers;
 pub mod rel_expander;
 pub mod rel_lowerer;
 pub mod rel_printer;
+pub mod rel_rules;
 pub mod rel_translator;
 pub mod rel_validator;
 pub mod replacer;
