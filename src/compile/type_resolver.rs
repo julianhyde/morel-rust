@@ -7657,7 +7657,9 @@ impl TypeResolver {
     /// character, taking into account quoted substrings.
     ///
     /// For example, `split_quoted("a,'b,c',d", ',', '\'')` returns the list
-    /// `["a", "b,c", "d"]`.
+    /// `["a", "b,c", "d"]`. Within quotes, a doubled quote stands for one
+    /// quote: `split_quoted("'it''s',a", ',', '\'')` returns
+    /// `["it's", "a"]`.
     fn split_quoted(s: &str, sep: char, quote: char) -> Vec<String> {
         if s.is_empty() {
             return Vec::new();
@@ -7667,9 +7669,15 @@ impl TypeResolver {
         let mut current = String::new();
         let mut in_quote = false;
 
-        for c in s.chars() {
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
             if c == quote {
-                in_quote = !in_quote;
+                if in_quote && chars.peek() == Some(&quote) {
+                    current.push(quote);
+                    chars.next();
+                } else {
+                    in_quote = !in_quote;
+                }
             } else if c == sep && !in_quote {
                 result.push(current.clone());
                 current.clear();
@@ -7703,10 +7711,16 @@ impl TypeResolver {
             first = false;
 
             let s_ref = s.as_ref();
-            // Quote the string if it contains the separator
-            if s_ref.contains(sep) {
+            // Quote the string if it contains the separator or the quote;
+            // double each quote within it.
+            if s_ref.contains(sep) || s_ref.contains(quote) {
                 result.push(quote);
-                result.push_str(s_ref);
+                for c in s_ref.chars() {
+                    if c == quote {
+                        result.push(quote);
+                    }
+                    result.push(c);
+                }
                 result.push(quote);
             } else {
                 result.push_str(s_ref);
@@ -9828,6 +9842,8 @@ mod tests {
         check_split_join("", &[]);
         check_split_join("a,'b,c',d", &["a", "b,c", "d"]);
         check_split_join(",a,,bc,", &["", "a", "", "bc", ""]);
+        check_split_join("'it''s',a", &["it's", "a"]);
+        check_split_join("'''',''',x,'''", &["'", "',x,'"]);
         // Test with colon separator and backtick quote (what we use for
         // record fields)
         let result = TypeResolver::split_quoted("a:`b:c`:d", ':', '`');
