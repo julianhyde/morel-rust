@@ -21,7 +21,7 @@
 #![allow(clippy::useless_format)]
 #![allow(clippy::redundant_closure)]
 
-use crate::compile::core::{Decl, Expr};
+use crate::compile::core::{self, Decl, Expr};
 use crate::compile::library::{
     BuiltInExn, BuiltInFunction, name_to_fn, name_to_rec,
 };
@@ -1118,6 +1118,9 @@ impl Kernel {
         for (k, v) in &self.environment.bindings {
             env2 = env2.child(k, &Type::Primitive(PrimitiveType::Unit), v);
         }
+        // A value the inliner puts in place of one of these names is
+        // written, in a plan, as the name.
+        core::set_named_values(&self.environment.bindings);
         let decl2 = inliner::inline_decl(&env2, &decl, self.inline_passes());
         // The rules that rewrite a tree once grounding has built it, as
         // morel-java's do.
@@ -1214,6 +1217,9 @@ impl Kernel {
         for (k, v) in &self.environment.bindings {
             env2 = env2.child(k, &Type::Primitive(PrimitiveType::Unit), v);
         }
+        // A value the inliner puts in place of one of these names is
+        // written, in a plan, as the name.
+        core::set_named_values(&self.environment.bindings);
         // Bring in expressions from previous compile units so that
         // identifiers like `inc` (bound to `fn x => x + 1` in an
         // earlier statement) can be inlined. The inliner's identifier

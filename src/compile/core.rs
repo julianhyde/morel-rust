@@ -30,6 +30,7 @@ use crate::eval::val::Val;
 use crate::syntax::ast::JoinType;
 use crate::syntax::parser;
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use std::ops::Deref;
 use std::rc::Rc;
@@ -384,6 +385,12 @@ impl Expr {
             Expr::List(_, elems) => {
                 enclosed("[", "]", elems.iter().map(Expr::to_doc).collect())
             }
+            // A value that the inliner put in place of a name bound in
+            // an earlier statement is written as the name, as
+            // morel-java's value literal is.
+            Expr::Literal(_, lit) if let Some(name) = value_name(lit) => {
+                text(&name)
+            }
             Expr::Literal(t, lit) => match relation_name(t, lit) {
                 // A foreign relation is named, not written out: a
                 // plan says where the rows come from, and a table
@@ -470,6 +477,60 @@ thread_local! {
     /// each with the type and the rows that identify it.
     static RELATIONS: RefCell<Vec<(String, Rc<Type>, String)>> =
         const { RefCell::new(Vec::new()) };
+}
+
+thread_local! {
+    /// The values bound to names in earlier statements, by the address
+    /// of their elements, each with its name. The value is held, so that
+    /// its address is not reused while it is here.
+    static NAMED_VALUES: RefCell<NamedValues> = RefCell::new(HashMap::new());
+}
+
+/// Values bound to names, by the address of their elements; see
+/// [`set_named_values`].
+type NamedValues = HashMap<usize, (Rc<Vec<Val>>, String)>;
+
+/// Records the values bound to names in earlier statements, so that a
+/// value the inliner puts in place of its name is written, in a plan, as
+/// the name, as morel-java writes it.
+///
+/// Only a value that is a list -- a collection, a record or a tuple -- is
+/// recorded: it is recognized by the address of its elements, which the
+/// inliner's copy shares, so a value that is merely equal to it is not
+/// mistaken for it. A primitive value has no address, and is written as
+/// itself, as morel-java writes it. `it` is not recorded, since it so
+/// often names a value that another name also does. Where two names
+/// share a value, the first in alphabetical order is used.
+pub fn set_named_values(bindings: &HashMap<String, Val>) {
+    let mut names: Vec<&String> = bindings.keys().collect();
+    names.sort();
+    names.reverse();
+    let mut map = HashMap::new();
+    for name in names {
+        if name == "it" {
+            continue;
+        }
+        if let Some(Val::List(items)) = bindings.get(name) {
+            map.insert(
+                Rc::as_ptr(items) as usize,
+                (Rc::clone(items), name.clone()),
+            );
+        }
+    }
+    NAMED_VALUES.with(|cell| *cell.borrow_mut() = map);
+}
+
+/// The name of a value bound in an earlier statement; see
+/// [`set_named_values`].
+fn value_name(value: &Val) -> Option<String> {
+    let Val::List(items) = value else {
+        return None;
+    };
+    NAMED_VALUES.with(|cell| {
+        cell.borrow()
+            .get(&(Rc::as_ptr(items) as usize))
+            .map(|(_, name)| name.clone())
+    })
 }
 
 /// Registers a relation that a plan names rather than writes out.

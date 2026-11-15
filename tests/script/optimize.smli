@@ -993,8 +993,8 @@ Sys.planEx "-1";
 > val it =
 >   project r [{a = #a (#1 r), d = #d (#2 r)}] : {a:int, d:int} list
 >     join x y [#b x = #c y] : t$0
->       [[1,2],[2,3],[3,2],[4,9]] : {a:int, b:int} list
->       [[2,5],[3,6],[2,7],[8,8]] : {c:int, d:int} list
+>       xs : {a:int, b:int} list
+>       ys : {c:int, d:int} list
 >
 > t$0 ({a:int, b:int} * {c:int, d:int}) list
 > |_} : string
@@ -1020,10 +1020,10 @@ Sys.planEx "-1";
 >     join r z [#d (#2 r) = #e z] : t$0
 >       join x y [#b x = #c y] : t$1
 >         filter x [#a x > 1] : {a:int, b:int} list
->           [[1,2],[2,3],[3,2],[4,9]] : {a:int, b:int} list
->         [[2,5],[3,6],[2,7],[8,8]] : {c:int, d:int} list
+>           xs : {a:int, b:int} list
+>         ys : {c:int, d:int} list
 >       filter z [#f z <> "q"] : {e:int, f:string} list
->         [[5,"five"],[7,"seven"]] : {e:int, f:string} list
+>         zs : {e:int, f:string} list
 >
 > t$0 ({a:int, b:int} * {c:int, d:int} * {e:int, f:string}) list
 > t$1 ({a:int, b:int} * {c:int, d:int}) list
@@ -1042,8 +1042,8 @@ Sys.planEx "-1";
 >   project r [{a = #a (#1 r), d = #d (#2 r)}] : {a:int, d:int} list
 >     filter r [#div Int (10, #a (#1 r)) > 1] : t$0
 >       join x y [#b x = #c y] : t$0
->         [[1,2],[2,3],[3,2],[4,9]] : {a:int, b:int} list
->         [[2,5],[3,6],[2,7],[8,8]] : {c:int, d:int} list
+>         xs : {a:int, b:int} list
+>         ys : {c:int, d:int} list
 >
 > t$0 ({a:int, b:int} * {c:int, d:int}) list
 > |_} : string
@@ -1058,8 +1058,8 @@ Sys.planEx "-1";
 > val it =
 >   project r [{a = #a (#1 r), d = #d (#2 r)}] : {a:int, d:int} list
 >     join x y [#b x = #c y andalso #a x < #c y] : t$0
->       [[1,2],[2,3],[3,2],[4,9]] : {a:int, b:int} list
->       [[2,5],[3,6],[2,7],[8,8]] : {c:int, d:int} list
+>       xs : {a:int, b:int} list
+>       ys : {c:int, d:int} list
 >
 > t$0 ({a:int, b:int} * {c:int, d:int}) list
 > |_} : string
@@ -1074,8 +1074,8 @@ Sys.planEx "-1";
 >   project r [{a = #a (#1 r), d = #d (#2 r)}] : {a:int, d:int} list
 >     join x y [#b x = #c y] : t$0
 >       filter x [#a x > 1] : {a:int, b:int} list
->         [[1,2],[2,3],[3,2],[4,9]] : {a:int, b:int} list
->       [[2,5],[3,6],[2,7],[8,8]] : {c:int, d:int} list
+>         xs : {a:int, b:int} list
+>       ys : {c:int, d:int} list
 >
 > t$0 ({a:int, b:int} * {c:int, d:int}) list
 > |_} : string
@@ -1097,8 +1097,8 @@ Sys.planEx "-1";
 >     filter r [#isSome Option (#2 r)] : t$0
 >       join x y [left] [#b x = #c y] : t$0
 >         filter x [#a x > 1] : {a:int, b:int} list
->           [[1,2],[2,3],[3,2],[4,9]] : {a:int, b:int} list
->         [[2,5],[3,6],[2,7],[8,8]] : {c:int, d:int} list
+>           xs : {a:int, b:int} list
+>         ys : {c:int, d:int} list
 >
 > t$0 ({a:int, b:int} * {c:int, d:int} option) list
 > |_} : string
@@ -1116,9 +1116,9 @@ Sys.planEx "-1";
 >   project r [#d (#2 r)] : int list
 >     filter r [#isSome Option (#1 r)] : t$0
 >       join x y [right] [#b x = #c y] : t$0
->         [[1,2],[2,3],[3,2],[4,9]] : {a:int, b:int} list
+>         xs : {a:int, b:int} list
 >         filter y [#d y > 5] : {c:int, d:int} list
->           [[2,5],[3,6],[2,7],[8,8]] : {c:int, d:int} list
+>           ys : {c:int, d:int} list
 >
 > t$0 ({a:int, b:int} option * {c:int, d:int}) list
 > |_} : string
@@ -1139,8 +1139,8 @@ Sys.planEx "-1";
 >   project r [{x = #1 r, y = #2 r}] : t$0
 >     filter r [#isSome Option (#1 r) andalso #isSome Option (#2 r)] : t$1
 >       join x y [full] [#b x = #c y] : t$1
->         [[1,2],[2,3],[3,2],[4,9]] : {a:int, b:int} list
->         [[2,5],[3,6],[2,7],[8,8]] : {c:int, d:int} list
+>         xs : {a:int, b:int} list
+>         ys : {c:int, d:int} list
 >
 > t$0 {x:{a:int, b:int} option, y:{c:int, d:int} option} list
 > t$1 ({a:int, b:int} option * {c:int, d:int} option) list
@@ -1157,8 +1157,8 @@ Sys.planEx "-1";
 >     project r [{x = #1 r, y = #2 r}] : t$0
 >       filter r $ordinal [#b (#1 r) = #c (#2 r) andalso $ordinal < 2] : t$1
 >         join x y : t$1
->           [[1,2],[2,3],[3,2],[4,9]] : {a:int, b:int} list
->           [[2,5],[3,6],[2,7],[8,8]] : {c:int, d:int} list
+>           xs : {a:int, b:int} list
+>           ys : {c:int, d:int} list
 >
 > t$0 {x:{a:int, b:int}, y:{c:int, d:int}} list
 > t$1 ({a:int, b:int} * {c:int, d:int}) list
@@ -1179,12 +1179,12 @@ Sys.planEx "-1";
 >   project r [{a = #a (#1 r), d = #d (#2 r)}] : {a:int, d:int} list
 >     filter r [#nonEmpty Relational (r$0[r])] : t$0
 >       join x y [#b x = #c y] : t$0
->         [[1,2],[2,3],[3,2],[4,9]] : {a:int, b:int} list
->         [[2,5],[3,6],[2,7],[8,8]] : {c:int, d:int} list
+>         xs : {a:int, b:int} list
+>         ys : {c:int, d:int} list
 >
 > r$0[r] =
 >   filter z [#e z = #d (#2 r)] : {e:int, f:string} list
->     [[5,"five"],[7,"seven"]] : {e:int, f:string} list
+>     zs : {e:int, f:string} list
 >
 > t$0 ({a:int, b:int} * {c:int, d:int}) list
 > |_} : string
