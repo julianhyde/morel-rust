@@ -2933,18 +2933,42 @@ fn is_plain_label(label: &str) -> bool {
             .all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
 }
 
+/// Characters that may make up a symbolic identifier, such as `<=`.
+const SYMBOLIC_CHARS: &str = "!%&$#+-/:<=>?@\\~^|*";
+
+/// Appends an identifier or label, enclosing it in back-ticks if necessary
+/// (because it is a reserved word, or is not an alphanumeric identifier, a
+/// numeric label or a symbolic identifier).
 pub fn append_id(buf: &mut String, id: &str) {
-    if id.contains('`') {
+    if is_reserved_word(id) || !is_plain_id(id) {
         buf.push('`');
         buf.push_str(&id.replace('`', "``"));
-        buf.push('`');
-    } else if id.contains(' ') || is_reserved_word(id) {
-        buf.push('`');
-        buf.push_str(id);
         buf.push('`');
     } else {
         buf.push_str(id);
     }
+}
+
+/// Returns whether a name can be written without back-ticks: an
+/// alphanumeric identifier such as `x1'`, a numeric label such as `2`, or a
+/// symbolic identifier such as `<=`. Allows `$` in an alphanumeric
+/// identifier, for names that Morel generates, such as `v$0` and `$r`.
+fn is_plain_id(id: &str) -> bool {
+    let mut chars = id.chars();
+    let Some(c0) = chars.next() else {
+        return false;
+    };
+    if c0.is_alphabetic()
+        || c0 == '$' && chars.next().is_some_and(char::is_alphabetic)
+    {
+        return id
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '\'' || c == '$');
+    }
+    if ('1'..='9').contains(&c0) {
+        return id.chars().all(|c| c.is_ascii_digit());
+    }
+    id.chars().all(|c| SYMBOLIC_CHARS.contains(c))
 }
 
 struct StringParser<'a> {
