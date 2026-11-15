@@ -1243,6 +1243,17 @@ impl Code {
             }
             Code::Native2(eager, code0, code1, gather) => {
                 let v0 = code0.eval_f0(r, f)?;
+                // `andalso` and `orelse` evaluate their right operand only
+                // if the left does not decide the answer.
+                if !*gather {
+                    match (eager, &v0) {
+                        (Eager2::BoolAndAlso, Val::Bool(false))
+                        | (Eager2::BoolOrElse, Val::Bool(true)) => {
+                            return Ok(v0);
+                        }
+                        _ => {}
+                    }
+                }
                 let v1 = code1.eval_f0(r, f)?;
                 // If `gather` is set, no real second arg was supplied
                 // at the call site; `v0` is a 2-tuple to unpack into
