@@ -38,7 +38,7 @@ use crate::shell::error::Error;
 use crate::shell::prop::{Configurable, Output, Prop, PropVal};
 use crate::syntax::ast::Statement;
 use crate::unify::unifier::Term;
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -119,6 +119,10 @@ pub struct Session {
     /// Reset when the `directory` property is set (so a script can
     /// repoint the file root mid-session).
     file_root: RefCell<Option<Rc<File>>>,
+    /// How many times `Test.tick` has been called since `Test.zeroTicks`;
+    /// for tests of how often an expression is evaluated. `None` until
+    /// `Test.zeroTicks` is called.
+    pub ticks: Cell<Option<i32>>,
 }
 
 // static SESSION_COUNTER: std::sync::atomic::AtomicUsize =
@@ -172,6 +176,7 @@ impl Session {
             rec_fn_bindings: HashMap::new(),
             base_env: OnceCell::new(),
             file_root: RefCell::new(None),
+            ticks: Cell::new(None),
         }
     }
 

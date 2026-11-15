@@ -1663,6 +1663,23 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Test", name = "overSum"))]
     #[strum(props(type = "forall 1 'a bag -> 'a"))]
     TestOverSum,
+    /// Test-only function `Test.tick`, of type `'a -> 'a`. Returns its
+    /// argument, and adds one to a counter that `Test.ticks` reads; so a
+    /// test can count how many times an expression is evaluated. Raises
+    /// `Fail` if `Test.zeroTicks` has not been called in this session.
+    #[strum(props(p = "Test", name = "tick", type = "forall 1 'a -> 'a"))]
+    #[strum(props(throws = "Fail"))]
+    TestTick,
+    /// Test-only function `Test.ticks`, of type `unit -> int`. Returns how
+    /// many times `Test.tick` has been called since `Test.zeroTicks` was
+    /// last called. Raises `Fail` if `Test.zeroTicks` has not been called.
+    #[strum(props(p = "Test", name = "ticks", type = "unit -> int"))]
+    #[strum(props(throws = "Fail"))]
+    TestTicks,
+    /// Test-only function `Test.zeroTicks`, of type `unit -> unit`. Sets to
+    /// zero the counter that `Test.tick` increments and `Test.ticks` reads.
+    #[strum(props(p = "Test", name = "zeroTicks", type = "unit -> unit"))]
+    TestZeroTicks,
     /// `Time.+ (t1, t2)`: time addition.
     #[strum(props(p = "Time", name = "+", type = "time * time -> time"))]
     TimeAdd,

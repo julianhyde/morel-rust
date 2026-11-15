@@ -2905,6 +2905,9 @@ pub enum EagerF1 {
     SysPlanOf,
     SysShow,
     SysUnset,
+    TestTick,
+    TestTicks,
+    TestZeroTicks,
     TimeFromReal,
 }
 
@@ -3134,21 +3137,16 @@ impl EagerF1 {
             }
             SysPlanEx => {
                 // Re-plan the most recently executed expression at the
-                // requested optimizer phase. The phase string is parsed
-                // as an integer: a negative value (e.g. "~1") returns the
-                // declaration before any inlining; a non-negative value
-                // returns the declaration after all inlining passes have
-                // run. Intermediate-pass replanning is not yet supported,
-                // so any non-negative value yields the post-inline form.
+                // requested optimizer phase. As in morel-java, a phase
+                // that is not an integer, such as "~1" or "core", returns
+                // the declaration before any inlining; an integer, such
+                // as "-1" or "3", the declaration after the inlining
+                // passes up to that one, "-1" meaning all of them.
+                // Intermediate-pass replanning is not yet supported, so
+                // every integer yields the post-inline form.
                 let phase = a0.expect_string();
-                let target_pass = phase.replace('~', "-").parse::<i32>();
+                let target_pass = phase.parse::<i32>();
                 let s = match target_pass {
-                    Ok(p) if p < 0 => r
-                        .session
-                        .pre_inline_decl
-                        .as_ref()
-                        .map(|d| plan_decl(d, line_width(r)))
-                        .unwrap_or_default(),
                     Ok(_) => print_inlined(|| {
                         r.session
                             .post_inline_decl
@@ -3156,8 +3154,8 @@ impl EagerF1 {
                             .map(|d| plan_decl(d, line_width(r)))
                             .unwrap_or_default()
                     }),
-                    // A named phase, such as "core", is the declaration
-                    // the resolver made, printed as a plan is.
+                    // A named phase, such as "core", or "~1", is the
+                    // declaration the resolver made, printed as a plan is.
                     Err(_) => r
                         .session
                         .pre_inline_decl
@@ -3186,6 +3184,28 @@ impl EagerF1 {
                 let prop_name = a0.expect_string();
                 lookup_prop("unset", prop_name, span)?;
                 r.emit_effect(Effect::UnsetShellProp(prop_name.to_string()));
+                Ok(Val::Unit)
+            }
+            TestTick | TestTicks => {
+                // Each raises `Fail` until `Test.zeroTicks` has been
+                // called, so that a test cannot count calls made before
+                // it began.
+                let Some(ticks) = r.session.ticks.get() else {
+                    return Err(MorelError::Runtime2(
+                        BuiltInExn::Fail,
+                        Some("call Test.zeroTicks first".to_string()),
+                        span.clone(),
+                    ));
+                };
+                if matches!(self, TestTick) {
+                    r.session.ticks.set(Some(ticks + 1));
+                    Ok(a0.clone())
+                } else {
+                    Ok(Val::Int(ticks))
+                }
+            }
+            TestZeroTicks => {
+                r.session.ticks.set(Some(0));
                 Ok(Val::Unit)
             }
             TimeFromReal => time::from_real(a0.expect_real(), span),
@@ -5822,6 +5842,9 @@ fn build_library() -> Lib {
     Eager1::TestOverCountBag.implements(&mut b, TestOverCountBag);
     Eager1::TestOverCountList.implements(&mut b, TestOverCountList);
     Eager1::TestOverSum.implements(&mut b, TestOverSum);
+    EagerF1::TestTick.implements(&mut b, TestTick);
+    EagerF1::TestTicks.implements(&mut b, TestTicks);
+    EagerF1::TestZeroTicks.implements(&mut b, TestZeroTicks);
     Eager2::TimeAdd.implements(&mut b, TimeAdd);
     Eager2::TimeCompare.implements(&mut b, TimeCompare);
     EagerF2::TimeFmt.implements(&mut b, TimeFmt);

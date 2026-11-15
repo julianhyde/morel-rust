@@ -15,7 +15,9 @@
 // language governing permissions and limitations under the
 // License.
 
-use crate::compile::core::{Decl, Expr, Match, Pat, Step, StepKind, ValBind};
+use crate::compile::core::{
+    Decl, Expr, Match, Pat, Rel, Step, StepKind, ValBind,
+};
 use crate::compile::free_finder::free_names_in;
 use crate::compile::library::BuiltInFunction;
 use crate::compile::types::Type;
@@ -23,6 +25,7 @@ use crate::eval::order::Order;
 use crate::eval::val::Val;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
+use std::ptr;
 use std::rc::Rc;
 
 /// Can transform any expression, declaration, or pattern in a tree.
@@ -60,6 +63,11 @@ pub enum Use {
     /// Binding is bound to an atomic expression (literal or identifier).
     /// Inlining is unconditionally safe regardless of use count.
     Atomic,
+    /// Binding occurs exactly once, but inside a lambda or an expression
+    /// that a query evaluates for each row, which its declaration is not
+    /// inside. Inlining would evaluate it each time that is evaluated;
+    /// do not inline.
+    OnceUnsafe,
     /// Binding occurs at most once in each of several distinct case
     /// branches. Inlining may duplicate code but not work.
     MultiSafe,
@@ -68,12 +76,34 @@ pub enum Use {
     MultiUnsafe,
 }
 
-#[derive(Default)]
 struct MutableUse {
     top: bool,
     atomic: bool,
     parallel: bool,
+    /// Whether the expression is a lambda, or is simple (see
+    /// [`is_simple`]); inlining it into a loop repeats no work worth
+    /// avoiding.
+    value: bool,
+    /// Whether a use is inside a lambda or query that its declaration is
+    /// not.
+    repeated: bool,
+    /// Depth of the declaration, or -1 if not seen.
+    depth: i32,
     use_count: u32,
+}
+
+impl Default for MutableUse {
+    fn default() -> Self {
+        Self {
+            top: false,
+            atomic: false,
+            parallel: false,
+            value: false,
+            repeated: false,
+            depth: -1,
+            use_count: 0,
+        }
+    }
 }
 
 impl MutableUse {
@@ -85,7 +115,11 @@ impl MutableUse {
         } else if self.atomic {
             Use::Atomic
         } else if self.use_count == 1 {
-            if self.parallel {
+            if self.repeated && !self.value {
+                // Inlining would evaluate it each time the lambda or the
+                // query's row expression is evaluated.
+                Use::OnceUnsafe
+            } else if self.parallel {
                 Use::MultiSafe
             } else {
                 Use::OnceSafe
@@ -112,23 +146,64 @@ impl Analysis {
 
 struct Analyzer {
     map: HashMap<String, MutableUse>,
+    /// How many lambdas and per-row expressions of a query enclose the
+    /// node being visited. A binding read at a greater depth than it was
+    /// declared may be read many times.
+    depth: i32,
+    /// The depths of the bindings declared in the enclosing expression,
+    /// if this analyzer counts the uses in one branch of a `case`. A
+    /// binding declared outside the branch has its declaration's depth
+    /// there.
+    outer: HashMap<String, i32>,
 }
 
 impl Analyzer {
     fn new() -> Self {
         Self {
             map: HashMap::new(),
+            depth: 0,
+            outer: HashMap::new(),
         }
     }
 
     fn entry(&mut self, name: &str) -> &mut MutableUse {
-        self.map.entry(name.to_string()).or_default()
+        let outer_depth = self.outer.get(name).copied();
+        self.map
+            .entry(name.to_string())
+            .or_insert_with(|| MutableUse {
+                depth: outer_depth.unwrap_or(-1),
+                ..MutableUse::default()
+            })
     }
 
     fn ensure_bindings(&mut self, pat: &Pat) {
+        let depth = self.depth;
         pat.for_each_id_pat(&mut |(_, name)| {
-            self.entry(name);
+            let use_ = self.entry(name);
+            if use_.depth < 0 {
+                use_.depth = depth;
+            }
         });
+    }
+
+    /// Visits an expression that may be evaluated many times: a lambda's
+    /// body, or an expression that a query evaluates for each row.
+    fn visit_deeper(&mut self, expr: &Expr) {
+        self.depth += 1;
+        self.visit_expr(expr);
+        self.depth -= 1;
+    }
+
+    /// Notes what a declaration binds its pattern to.
+    fn note_value(&mut self, pat: &Pat, expr: &Expr) {
+        if let Some(name) = pat.name() {
+            if is_atom(expr) {
+                self.entry(&name).atomic = true;
+            }
+            if matches!(expr, Expr::Fn(..)) || is_simple(expr) {
+                self.entry(&name).value = true;
+            }
+        }
     }
 
     fn visit_decl(&mut self, decl: &Decl) {
@@ -136,11 +211,7 @@ impl Analyzer {
             Decl::NonRecVal(vb) => {
                 self.ensure_bindings(&vb.pat);
                 self.visit_expr(&vb.expr);
-                if is_atom(&vb.expr)
-                    && let Some(name) = vb.pat.name()
-                {
-                    self.entry(&name).atomic = true;
-                }
+                self.note_value(&vb.pat, &vb.expr);
             }
             Decl::RecVal(vbs) => {
                 for vb in vbs {
@@ -148,11 +219,7 @@ impl Analyzer {
                 }
                 for vb in vbs {
                     self.visit_expr(&vb.expr);
-                    if is_atom(&vb.expr)
-                        && let Some(name) = vb.pat.name()
-                    {
-                        self.entry(&name).atomic = true;
-                    }
+                    self.note_value(&vb.pat, &vb.expr);
                 }
             }
             Decl::Type(_) | Decl::Datatype(_) | Decl::Over(_) => {}
@@ -162,11 +229,28 @@ impl Analyzer {
     fn visit_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Identifier(_, name) => {
-                self.entry(name).use_count += 1;
+                let depth = self.depth;
+                let use_ = self.entry(name);
+                use_.use_count += 1;
+                if use_.depth >= 0 && depth > use_.depth {
+                    use_.repeated = true;
+                }
             }
             Expr::Rel(_, rel) => {
+                // A node's inputs are evaluated once; its own expressions,
+                // and a join's right input, once per row.
+                let inputs = rel.inputs();
+                let right = match rel.as_ref() {
+                    Rel::Join(..) => inputs.get(1).copied(),
+                    _ => None,
+                };
                 for child in rel.children() {
-                    self.visit_expr(child);
+                    let is_input = inputs.iter().any(|x| ptr::eq(*x, child));
+                    if is_input && !right.is_some_and(|r| ptr::eq(r, child)) {
+                        self.visit_expr(child);
+                    } else {
+                        self.visit_deeper(child);
+                    }
                 }
             }
             Expr::Literal(_, _)
@@ -202,17 +286,15 @@ impl Analyzer {
                 }
             }
             Expr::Fn(_, matches, _) => {
-                // Conservatively count uses inside a lambda the same as
-                // outside. morel-java's analyzer also does not treat
-                // lambdas specially when producing `Use`.
+                // A lambda's body may be evaluated many times.
                 for m in matches {
                     self.ensure_bindings(&m.pat);
-                    self.visit_expr(&m.expr);
+                    self.visit_deeper(&m.expr);
                 }
             }
             Expr::From(_, steps) => {
-                for step in steps {
-                    self.visit_step(&step.kind);
+                for (i, step) in steps.iter().enumerate() {
+                    self.visit_step(&step.kind, i == 0);
                 }
             }
             Expr::Raise(_, e, _) => {
@@ -224,8 +306,16 @@ impl Analyzer {
 
     fn visit_parallel(&mut self, matches: &[Match]) {
         let mut branch_uses: HashMap<String, Vec<MutableUse>> = HashMap::new();
+        let mut outer = self.outer.clone();
+        for (name, use_) in &self.map {
+            outer.insert(name.clone(), use_.depth);
+        }
         for m in matches {
-            let mut sub = Analyzer::new();
+            let mut sub = Analyzer {
+                map: HashMap::new(),
+                depth: self.depth,
+                outer: outer.clone(),
+            };
             sub.ensure_bindings(&m.pat);
             sub.visit_expr(&m.expr);
             for (name, mu) in sub.map {
@@ -240,28 +330,46 @@ impl Analyzer {
                 entry.parallel = true;
             }
             entry.use_count += max_count;
+            // What a branch learned about the binding: whether a use is
+            // inside a lambda or a query that its declaration is not, and,
+            // for a binding that a branch declares, what it is bound to.
+            for u in &uses {
+                entry.repeated |= u.repeated;
+                entry.value |= u.value;
+                entry.atomic |= u.atomic;
+                if entry.depth < 0 {
+                    entry.depth = u.depth;
+                }
+            }
         }
     }
 
-    fn visit_step(&mut self, kind: &StepKind) {
+    /// Visits a step of a query. The expressions that the query evaluates
+    /// for each row -- a `where`, `yield`, `order`, `compute` or `group`,
+    /// a scan's condition, and every scan's source but the first's -- may
+    /// be evaluated many times.
+    fn visit_step(&mut self, kind: &StepKind, first: bool) {
         match kind {
             StepKind::Compute(e)
             | StepKind::Order(e)
             | StepKind::Where(e)
-            | StepKind::Yield(e)
-            | StepKind::Skip(e)
-            | StepKind::Take(e) => self.visit_expr(e),
+            | StepKind::Yield(e) => self.visit_deeper(e),
+            StepKind::Skip(e) | StepKind::Take(e) => self.visit_expr(e),
             StepKind::Group(e, opt) => {
-                self.visit_expr(e);
+                self.visit_deeper(e);
                 if let Some(o) = opt {
-                    self.visit_expr(o);
+                    self.visit_deeper(o);
                 }
             }
             StepKind::Scan(pat, expr, cond) => {
+                if first {
+                    self.visit_expr(expr);
+                } else {
+                    self.visit_deeper(expr);
+                }
                 self.ensure_bindings(pat);
-                self.visit_expr(expr);
                 if let Some(c) = cond {
-                    self.visit_expr(c);
+                    self.visit_deeper(c);
                 }
             }
             StepKind::Except(_, exprs)
@@ -278,6 +386,32 @@ impl Analyzer {
 
 fn is_atom(expr: &Expr) -> bool {
     matches!(expr, Expr::Literal(_, _) | Expr::Identifier(_, _))
+}
+
+/// Returns whether an expression is simple: an atom, or a tuple, field
+/// selection or constructor application of simple expressions.
+/// Evaluating one can neither raise nor have an effect, and repeats no
+/// work worth avoiding.
+fn is_simple(expr: &Expr) -> bool {
+    match expr {
+        Expr::Tuple(_, args) => args.iter().all(is_simple),
+        Expr::Apply(_, f, a, _) => {
+            let selects_or_constructs = match f.as_ref() {
+                Expr::RecordSelector(..) => true,
+                Expr::Identifier(t, name) => {
+                    let result = match t.as_ref() {
+                        Type::Fn(_, r) => r.as_ref(),
+                        t => t,
+                    };
+                    matches!(result, Type::Data(..))
+                        && name.starts_with(|c: char| c.is_ascii_uppercase())
+                }
+                _ => false,
+            };
+            selects_or_constructs && is_simple(a)
+        }
+        _ => is_atom(expr),
+    }
 }
 
 /// Counts how many times each binding is used. Mirrors
@@ -405,7 +539,7 @@ impl Transformer for Inliner {
         let expr = expr.visit(env, self);
         match &expr {
             // lint: sort until '#}' where '##Expr::'
-            Expr::Apply(result_type, f, a, span) => {
+            Expr::Apply(result_type, f, a, _) => {
                 // Constant-fold a record selector applied to a
                 // literal record. Only fires when the literal's
                 // shape actually has a value for that slot —
@@ -427,7 +561,9 @@ impl Transformer for Inliner {
                 // `let val pat = arg in body end`. Mirrors morel-java's
                 // visit(Core.Apply). Only applies when the lambda has a
                 // single match arm.
-                if let Expr::Fn(_fn_t, matches, _) = f.as_ref()
+                // A failure to bind is reported, as morel-java reports
+                // it, at the lambda.
+                if let Expr::Fn(_fn_t, matches, fn_span) = f.as_ref()
                     && matches.len() == 1
                 {
                     let m = &matches[0];
@@ -437,7 +573,7 @@ impl Transformer for Inliner {
                         t: (*pat_t).clone(),
                         expr: (**a).clone(),
                         overload_pat: None,
-                        span: Some(span.clone()),
+                        span: Some(fn_span.clone()),
                     };
                     let body = m.expr.clone();
                     let let_expr = Expr::Let(
@@ -701,7 +837,10 @@ impl Expr {
                 let mut decl_list2: Vec<(Option<String>, Decl)> = Vec::new();
                 let mut body_env = env.clone();
                 for d in decl_list {
+                    // A `fun` that does not call itself is a value like
+                    // any other, and may be inlined.
                     let d2 = x.transform_decl(env, d);
+                    let d2 = d2.as_non_recursive().unwrap_or(d2);
                     let mut handled = false;
                     if let Decl::NonRecVal(vb) = &d2
                         && let Some(name) = vb.pat.name()

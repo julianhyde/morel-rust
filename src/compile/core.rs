@@ -2435,6 +2435,25 @@ pub enum Decl {
 }
 
 impl Decl {
+    /// Returns this declaration as a non-recursive one, if it is a
+    /// recursive declaration of one name, such as `val rec inc = fn i =>
+    /// i + 1`, whose expression does not reference the name; `None`
+    /// otherwise. morel-java's resolver makes such a declaration
+    /// non-recursive, so that it can be inlined, and prints as `val`.
+    pub(crate) fn as_non_recursive(&self) -> Option<Decl> {
+        let Decl::RecVal(binds) = self else {
+            return None;
+        };
+        let [bind] = binds.as_slice() else {
+            return None;
+        };
+        let name = bind.pat.name()?;
+        if free_finder::free_names_in(&bind.expr).contains(&name) {
+            return None;
+        }
+        Some(Decl::NonRecVal(Box::new(bind.clone())))
+    }
+
     /// Returns whether any expression this declaration binds references
     /// an `ordinal` counting the enclosing step's rows.
     pub(crate) fn uses_ordinal(&self) -> bool {

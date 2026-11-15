@@ -89,7 +89,10 @@ const MONIKER_LIMIT: usize = 24;
 /// of a query would begin `val it = r$0` and its one interesting line
 /// would be an indirection.
 pub fn plan_decl(decl: &Decl, line_width: usize) -> String {
-    let Decl::NonRecVal(bind) = decl else {
+    // A `fun` that does not call itself prints as a `val`, as in
+    // morel-java.
+    let non_recursive = decl.as_non_recursive();
+    let Decl::NonRecVal(bind) = non_recursive.as_ref().unwrap_or(decl) else {
         return format!("{}", decl);
     };
     let value = match &bind.expr {
@@ -106,6 +109,7 @@ pub fn plan_decl(decl: &Decl, line_width: usize) -> String {
             binders: HashMap::new(),
         }))
     });
+    let value = number_binders(&value, &[]);
     let mut w = Writer::new(true, line_width);
     let is_tree = matches!(&value, Expr::Rel(_, _));
     if is_tree {
@@ -123,11 +127,13 @@ pub fn plan_decl(decl: &Decl, line_width: usize) -> String {
         w.out.push_str(&lindig::render(line_width as i32, doc));
         w.out.push('\n');
     }
+    let has_fragments = fragment(0).is_some();
     let text = w.finish();
     FRAGMENTS.with(|cell| cell.replace(previous));
-    if is_tree {
+    if is_tree || has_fragments {
         // A tree is written a line per node, and the last line ends
-        // as the others do. An expression is written as one line,
+        // as the others do; so do the trees broken out below an
+        // expression. An expression alone is written as one line,
         // which the newline the writer puts after it does not
         // belong to.
         return text;
@@ -151,6 +157,7 @@ pub fn plan_expr(exp: &Expr, line_width: usize) -> Option<String> {
             binders: HashMap::new(),
         }))
     });
+    let value = number_binders(&value, &[]);
     let mut w = Writer::new(true, line_width);
     w.out
         .push_str(&lindig::render(line_width as i32, doc(&value)));
@@ -532,6 +539,44 @@ fn doc(e: &Expr) -> Doc {
     doc_bounded(e, 0, 0)
 }
 
+/// Builds the document for a declaration in a `let`. A value that is a
+/// relation is written in place, as a tree on the lines below `val p
+/// =`, indented two, followed by a line of its own; any other value
+/// may break after the `=`; any other declaration is its `Display`
+/// text.
+fn decl_doc(decl: &Decl) -> Doc {
+    if let Decl::NonRecVal(bind) = decl
+        && let Expr::Rel(..) = &bind.expr
+    {
+        // A tree's lines are not folded to fit, as morel-java's are
+        // not.
+        let mut w = Writer::new(true, i32::MAX as usize);
+        w.node(&bind.expr, 0);
+        let mut lines = Vec::new();
+        for line in w.out.lines() {
+            lines.push(lindig::hard_line());
+            lines.push(lindig::text(line));
+        }
+        return lindig::hcat(vec![
+            lindig::text(&format!("val {} =", bind.pat)),
+            lindig::nest(2, lindig::hcat(lines)),
+            lindig::hard_line(),
+        ]);
+    }
+    // Any other value may start on the next line, indented two.
+    if let Decl::NonRecVal(bind) = decl {
+        return lindig::group(lindig::nest(
+            2,
+            lindig::hcat(vec![
+                lindig::text(&format!("val {} =", bind.pat)),
+                lindig::line(),
+                doc(&bind.expr),
+            ]),
+        ));
+    }
+    lindig::text(&format!("{}", decl))
+}
+
 /// Builds the document for `e` inside an operator context whose
 /// precedence bounds are `left` and `right`, so that an operand is
 /// bracketed exactly where [`Display`] brackets it.
@@ -550,7 +595,7 @@ fn doc_bounded(e: &Expr, left: u8, right: u8) -> Doc {
                     head.push(lindig::text(";"));
                 }
                 head.push(lindig::line());
-                head.push(lindig::text(&format!("{}", decl)));
+                head.push(decl_doc(decl));
             }
             lindig::group(lindig::hcat(vec![
                 lindig::nest(2, lindig::hcat(head)),
@@ -560,6 +605,33 @@ fn doc_bounded(e: &Expr, left: u8, right: u8) -> Doc {
                 lindig::line(),
                 lindig::text("end"),
             ]))
+        }
+        // A function of one arm is `fn`, its parameter and its body,
+        // which may break. A parameter that is not a name is matched by
+        // a `case`, as in morel-java's Core, where a function binds one
+        // name: `fn (b, xs) => e` is `fn v => case v of (b, xs) => e`.
+        Expr::Fn(t, arms, span) if arms.len() == 1 => {
+            let arm = &arms[0];
+            let (param, body) = match &arm.pat {
+                Pat::Identifier(..) | Pat::Wildcard(_) => {
+                    (format!("{}", arm.pat), doc(&arm.expr))
+                }
+                pat => {
+                    let v = "v".to_string();
+                    let param_t = match t.as_ref() {
+                        Type::Fn(p, _) => p.clone(),
+                        _ => pat.type_(),
+                    };
+                    let case = Expr::Case(
+                        arm.expr.type_(),
+                        Box::new(Expr::Identifier(param_t, v.clone())),
+                        vec![arm.clone()],
+                        span.clone(),
+                    );
+                    (v, doc(&case))
+                }
+            };
+            lindig::hcat(vec![lindig::text(&format!("fn {} => ", param)), body])
         }
         // A `case` that does not fit puts each arm after the first on a
         // line of its own, behind the `|` that introduces it. `if`
