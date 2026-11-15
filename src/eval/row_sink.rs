@@ -123,6 +123,34 @@ fn write_args(f: &mut Formatter<'_>, codes: &[Code]) -> FmtResult {
     Ok(())
 }
 
+/// What a join's scan passes on for an input row.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum Emit {
+    /// A row for each element that matches.
+    Each,
+    /// The input row, once, if an element matches: a semi-join. The
+    /// scan stops at the first match.
+    IfAny,
+    /// The input row, once, if no element matches: an anti-join. The
+    /// scan stops at the first match.
+    IfNone,
+}
+
+impl Emit {
+    /// The name a join that emits this way has in a plan, after
+    /// `prefix`, which is `join` or `hashJoin`.
+    fn plan_name(self, hash: bool) -> &'static str {
+        match (self, hash) {
+            (Emit::Each, false) => "join",
+            (Emit::IfAny, false) => "semiJoin",
+            (Emit::IfNone, false) => "antiJoin",
+            (Emit::Each, true) => "hashJoin",
+            (Emit::IfAny, true) => "hashSemiJoin",
+            (Emit::IfNone, true) => "hashAntiJoin",
+        }
+    }
+}
+
 /// Implementation of RowSink for a scan or `join` step.
 ///
 /// Iterates over a collection, binds each element to a pattern,
@@ -148,6 +176,8 @@ pub struct ScanRowSink {
     /// values are wrapped in `SOME` on a match (and set to `NONE` when an
     /// input row matches nothing). Empty for an inner scan/join.
     optional_slots: Vec<usize>,
+    /// What to pass on for an input row.
+    emit: Emit,
 }
 
 impl ScanRowSink {
@@ -170,7 +200,14 @@ impl ScanRowSink {
             next_ordinal: 0,
             row_sink,
             optional_slots,
+            emit: Emit::Each,
         }
+    }
+
+    /// Makes this scan a semi-join or anti-join.
+    pub fn with_emit(mut self, emit: Emit) -> Self {
+        self.emit = emit;
+        self
     }
 
     /// Writes the candidate pair's ordinal into its slot, if the condition
@@ -188,8 +225,10 @@ impl RowSink for ScanRowSink {
     fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(
             f,
-            "join(pat {}, exp {}",
-            self.pat_code, self.collection_code
+            "{}(pat {}, exp {}",
+            self.emit.plan_name(false),
+            self.pat_code,
+            self.collection_code
         )?;
         if !is_constant_true(&self.condition_code) {
             write!(f, ", condition {}", self.condition_code)?;
@@ -246,6 +285,12 @@ impl RowSink for ScanRowSink {
                 self.advance_ordinal(f);
                 let condition = self.condition_code.eval_f0(r, f)?;
                 if condition.expect_bool() {
+                    if self.emit != Emit::Each {
+                        // A semi-join or anti-join needs only to know
+                        // that an element matches.
+                        any_match = true;
+                        break;
+                    }
                     if left_join {
                         // Wrap the newly scanned fields in `SOME` — they are
                         // optional downstream.
@@ -263,6 +308,12 @@ impl RowSink for ScanRowSink {
                     self.row_sink.accept(r, f)?;
                 }
             }
+        }
+        match self.emit {
+            Emit::Each => {}
+            Emit::IfAny if any_match => return self.row_sink.accept(r, f),
+            Emit::IfNone if !any_match => return self.row_sink.accept(r, f),
+            Emit::IfAny | Emit::IfNone => return Ok(()),
         }
         if left_join && !any_match {
             // `left join` with no matching right row: emit the input row once
@@ -308,6 +359,8 @@ pub struct HashScanRowSink {
     optional_slots: Vec<usize>,
     /// The elements of the collection, by key; built on the first row.
     buckets: Option<Rc<HashMap<Val, Vec<Val>>>>,
+    /// What to pass on for an input row.
+    emit: Emit,
 }
 
 impl HashScanRowSink {
@@ -332,7 +385,14 @@ impl HashScanRowSink {
             row_sink,
             optional_slots,
             buckets: None,
+            emit: Emit::Each,
         }
+    }
+
+    /// Makes this join a semi-join or anti-join.
+    pub fn with_emit(mut self, emit: Emit) -> Self {
+        self.emit = emit;
+        self
     }
 
     /// Puts the collection's elements into buckets by key.
@@ -367,8 +427,9 @@ impl RowSink for HashScanRowSink {
     fn fmt_plan(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(
             f,
-            "hashJoin(pat {}, exp {}, leftKey {}, rightKey {}, condition {}, \
+            "{}(pat {}, exp {}, leftKey {}, rightKey {}, condition {}, \
              sink ",
+            self.emit.plan_name(true),
             self.pat_code,
             self.collection_code,
             self.left_key_code,
@@ -416,6 +477,12 @@ impl RowSink for HashScanRowSink {
             if !self.condition_code.eval_f0(r, f)?.expect_bool() {
                 continue;
             }
+            if self.emit != Emit::Each {
+                // A semi-join or anti-join needs only to know that an
+                // element matches.
+                any_match = true;
+                break;
+            }
             if left_join {
                 for &slot in &self.optional_slots {
                     let v = std::mem::replace(&mut f.vals[slot], Val::Unit);
@@ -424,6 +491,12 @@ impl RowSink for HashScanRowSink {
                 any_match = true;
             }
             self.row_sink.accept(r, f)?;
+        }
+        match self.emit {
+            Emit::Each => {}
+            Emit::IfAny if any_match => return self.row_sink.accept(r, f),
+            Emit::IfNone if !any_match => return self.row_sink.accept(r, f),
+            Emit::IfAny | Emit::IfNone => return Ok(()),
         }
         if left_join && !any_match {
             for &slot in &self.optional_slots {

@@ -1697,6 +1697,10 @@ impl Rel {
                 }
                 Some(Rc::new(types::record_type(fields.into_iter().collect())))
             }
+            // A semi-join's or anti-join's element is its left input's.
+            Rel::Join(kind, _, _, left, _) if kind.filters_left() => {
+                element_type(&left.type_())
+            }
             // The inputs' components, concatenated.
             Rel::Join(kind, _, _, left, right) => {
                 Some(Rc::new(Type::Tuple(join_components(*kind, left, right)?)))
@@ -1722,6 +1726,11 @@ impl Rel {
             | Rel::Project(_, input, _)
             | Rel::Skip(input, _)
             | Rel::Take(input, _) => Kind::of(&input.type_()),
+            // A semi-join or anti-join keeps its left input's elements,
+            // in their order.
+            Rel::Join(kind, _, _, left, _) if kind.filters_left() => {
+                Kind::of(&left.type_())
+            }
             Rel::Join(_, _, _, left, right) => Some(Kind::all([
                 Kind::of(&left.type_())?,
                 Kind::of(&right.type_())?,
@@ -1950,6 +1959,10 @@ fn join_components(
             .collect()
     }
     let mut v = wrap(components(left)?, kind.left_may_be_absent());
+    if kind.filters_left() {
+        // The element is the left input's.
+        return Some(v);
+    }
     v.extend(wrap(components(right)?, kind.right_may_be_absent()));
     Some(v)
 }
@@ -1968,6 +1981,12 @@ pub enum JoinKind {
     Right,
     /// Both, so a component of either side may be absent.
     Full,
+    /// A left element that matches at least one right element, once;
+    /// the element is the left input's. It is `exists`, decorrelated.
+    Semi,
+    /// A left element that matches no right element; the element is the
+    /// left input's. It is `not (exists ...)`, decorrelated.
+    Anti,
 }
 
 #[allow(dead_code)]
@@ -1991,7 +2010,15 @@ impl JoinKind {
             JoinKind::Left => Some("left"),
             JoinKind::Right => Some("right"),
             JoinKind::Full => Some("full"),
+            JoinKind::Semi => Some("semi"),
+            JoinKind::Anti => Some("anti"),
         }
+    }
+
+    /// Returns whether a join of this kind passes on only its left
+    /// elements, each at most once: a semi-join or an anti-join.
+    pub fn filters_left(self) -> bool {
+        matches!(self, JoinKind::Semi | JoinKind::Anti)
     }
 }
 

@@ -730,6 +730,15 @@ impl Lowerer {
                 },
                 *distinct,
             ),
+            // A semi-join or anti-join is lowered as the `exists` it was:
+            // a filter of the left input by whether the right input has
+            // an element that, with the left element, meets the condition.
+            Rel::Join(kind, rows, condition, left, right)
+                if kind.filters_left() =>
+            {
+                let filter = exists_filter(*kind, rows, condition, left, right);
+                self.into(b, &filter)
+            }
             Rel::Join(kind, rows, condition, left, right) => {
                 let dependent = rel.is_dependent();
                 self.join(b, *kind, rows, dependent, condition, left, right)
@@ -828,6 +837,9 @@ impl Lowerer {
             JoinKind::Inner => JoinType::Inner,
             JoinKind::Left => JoinType::Left,
             JoinKind::Right => JoinType::Right,
+            JoinKind::Semi | JoinKind::Anti => {
+                unreachable!("a semi-join is lowered as a filter")
+            }
         };
         let mut names = BTreeMap::from([
             (rows.left.clone(), left_element.clone()),
@@ -1292,9 +1304,60 @@ fn components_of(node: &Expr, exp: Expr) -> Vec<Expr> {
 
 /// How many components a node's element has: a join's is its inputs'
 /// concatenated, and any other node's is one.
+/// Returns a semi-join or anti-join as the filter with `exists` that it
+/// decorrelates: `filter l [nonEmpty (filter r [c] right)] left`, or
+/// `empty` for an anti-join.
+pub(crate) fn exists_filter(
+    kind: JoinKind,
+    rows: &JoinRows,
+    condition: &Expr,
+    left: &Expr,
+    right: &Expr,
+) -> Expr {
+    let bool_t = Rc::new(Type::Primitive(PrimitiveType::Bool));
+    let inner = Expr::Rel(
+        right.type_(),
+        Box::new(Rel::Filter(
+            Row {
+                name: rows.right.clone(),
+                ordinal: None,
+            },
+            Box::new(right.clone()),
+            Box::new(condition.clone()),
+        )),
+    );
+    let f = if kind == JoinKind::Anti {
+        BuiltInFunction::RelationalEmpty
+    } else {
+        BuiltInFunction::RelationalNonEmpty
+    };
+    let fn_t = Rc::new(Type::Fn(right.type_(), bool_t.clone()));
+    let test = Expr::Apply(
+        bool_t,
+        Box::new(Expr::Literal(fn_t, Val::Fn(f))),
+        Box::new(inner),
+        Span::new(""),
+    );
+    Expr::Rel(
+        left.type_(),
+        Box::new(Rel::Filter(
+            Row {
+                name: rows.left.clone(),
+                ordinal: None,
+            },
+            Box::new(left.clone()),
+            Box::new(test),
+        )),
+    )
+}
+
 pub(crate) fn component_count(node: &Expr) -> usize {
     match node {
         Expr::Rel(_, rel) => match rel.as_ref() {
+            // A semi-join's or anti-join's element is its left input's.
+            Rel::Join(kind, _, _, left, _) if kind.filters_left() => {
+                component_count(left)
+            }
             Rel::Join(_, _, _, left, right) => {
                 component_count(left) + component_count(right)
             }

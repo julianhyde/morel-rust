@@ -50,7 +50,7 @@ use crate::compile::types::{Label, PrimitiveType, Type};
 use crate::eval::code::Code;
 use crate::eval::comparator::comparator_for;
 use crate::eval::row_sink::{
-    BuildJoinRowSink, CollectRowSink, ExceptRowSink, GroupRowSink,
+    BuildJoinRowSink, CollectRowSink, Emit, ExceptRowSink, GroupRowSink,
     HashScanRowSink, IntersectRowSink, OrderRowSink, OrdinalRowSink,
     RowSinkFactory, ScanRowSink, SkipRowSink, TakeRowSink, UnionRowSink,
     WhereRowSink, YieldRowSink,
@@ -899,10 +899,18 @@ impl Compiler<'_> {
         };
         let condition_code = self.code(cx, &scanned, join.condition);
         let scanned_keys = scanned.clone();
-        // The element is the inputs' components in order.
+        // The element is the inputs' components in order; a semi-join's
+        // or anti-join's is its left input's.
         let mut parts = left_parts;
-        parts.extend(right_parts);
+        if !join.kind.filters_left() {
+            parts.extend(right_parts);
+        }
         let element = tuple_of(parts);
+        let emit = match join.kind {
+            JoinKind::Semi => Emit::IfAny,
+            JoinKind::Anti => Emit::IfNone,
+            _ => Emit::Each,
+        };
         let nf = next.sink(self, cx, scanned.defer(&target.name, &element))?;
         if matches!(join.kind, JoinKind::Right | JoinKind::Full) {
             let left_slots = Self::slot_indexes(cx, slots)?;
@@ -939,26 +947,32 @@ impl Compiler<'_> {
             let left_key_code = self.code(cx, slots, &left_key);
             let right_key_code = self.code(cx, &scanned_keys, &right_key);
             return Some(RowSinkFactory::new(move || {
-                Box::new(HashScanRowSink::new(
-                    pat_code.clone(),
-                    right_code.clone(),
-                    condition_code.clone(),
-                    left_key_code.clone(),
-                    right_key_code.clone(),
-                    nf.create(),
-                    optional.clone(),
-                ))
+                Box::new(
+                    HashScanRowSink::new(
+                        pat_code.clone(),
+                        right_code.clone(),
+                        condition_code.clone(),
+                        left_key_code.clone(),
+                        right_key_code.clone(),
+                        nf.create(),
+                        optional.clone(),
+                    )
+                    .with_emit(emit),
+                )
             }));
         }
         Some(RowSinkFactory::new(move || {
-            Box::new(ScanRowSink::new_with_join(
-                pat_code.clone(),
-                right_code.clone(),
-                condition_code.clone(),
-                nf.create(),
-                optional.clone(),
-                condition_slot,
-            ))
+            Box::new(
+                ScanRowSink::new_with_join(
+                    pat_code.clone(),
+                    right_code.clone(),
+                    condition_code.clone(),
+                    nf.create(),
+                    optional.clone(),
+                    condition_slot,
+                )
+                .with_emit(emit),
+            )
         }))
     }
 }
