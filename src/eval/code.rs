@@ -1792,7 +1792,15 @@ impl Code {
                             // A data file (CSV / CSV.gz) materialises
                             // as a `Val::List` of records here; a
                             // sub-directory stays a `Val::File`.
-                            return Ok(file_as_val(&c));
+                            return file_as_val(&c).map_err(|message| {
+                                MorelError::Runtime2(
+                                    BuiltInExn::Fail,
+                                    Some(message),
+                                    // The file has no position in the
+                                    // program; morel-java's is zero.
+                                    Span::new("0.0-0.0"),
+                                )
+                            });
                         }
                         return Ok(Val::Unit);
                     }

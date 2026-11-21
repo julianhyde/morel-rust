@@ -32,9 +32,11 @@
 //! including the parent's `entries` map.
 
 use crate::compile::types::{Label, PrimitiveType, Type};
+use crate::eval::decimal;
 use crate::eval::session::Session;
 use crate::eval::val::Val;
 use crate::shell::prop::{Configurable, Prop};
+use chrono::NaiveDate;
 use flate2::read::GzDecoder;
 use std::any::Any;
 use std::cell::RefCell;
@@ -79,7 +81,7 @@ pub enum FileState {
     /// `row_type` field order.
     Data {
         row_type: Rc<Type>,
-        field_parsers: Vec<(usize, FieldParser)>,
+        field_parsers: Vec<(usize, Column)>,
     },
 }
 
@@ -138,58 +140,190 @@ impl FileType {
     }
 }
 
-/// Per-column parser, one per non-string scalar primitive we
-/// recognise in a CSV header (`name:type` syntax).
+/// The type of a column of a CSV file, as its header declares it.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum FieldParser {
+pub enum ColumnKind {
+    Bool,
+    Date,
+    Decimal,
     Int,
     Real,
-    Bool,
     String,
 }
 
-impl FieldParser {
-    /// Parses a single CSV cell into the appropriate scalar form,
-    /// returned as a Morel runtime [`super::val::Val`] string-or-int-or-… value.
-    /// Mirrors morel-java's `Files.parser` plus `unquoteString`.
-    pub fn parse(self, s: &str) -> ParsedField {
-        match self {
-            FieldParser::Int => {
-                let v = if s == "NULL" {
-                    0
-                } else {
-                    s.parse().unwrap_or(0)
-                };
-                ParsedField::Int(v)
+/// A column of a CSV file: its name, its type, and whether it is an
+/// `option`. It is morel-java's `Files.Column`.
+///
+/// The header of a file declares each column as `name:type`, where
+/// type is `bool`, `int`, `real` (or its synonym `double`), `decimal`,
+/// `date` or `string`, optionally followed by `option`; a missing or
+/// unknown type is `string`. In an option column, an empty field or
+/// `NULL` is `NONE`; in any other column, it raises `Fail` when the
+/// file is read, because the column's type has no room for it, except
+/// that in a `string` column an empty field is the empty string. A
+/// field that is not a value of its column's type (a `bool` other than
+/// `true` or `false`, a malformed number or date) raises `Fail`. A
+/// field may be quoted, whatever its type.
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct Column {
+    pub name: String,
+    pub kind: ColumnKind,
+    pub optional: bool,
+}
+
+impl Column {
+    /// Creates a column from its name and type, as the header gives them.
+    fn of(name: &str, type_: &str) -> Column {
+        let words: Vec<&str> = type_.split_whitespace().collect();
+        let optional = words.len() == 2 && words[1] == "option";
+        let kind = match words.first().copied().unwrap_or("") {
+            "bool" => ColumnKind::Bool,
+            "date" => ColumnKind::Date,
+            "decimal" => ColumnKind::Decimal,
+            "double" | "real" => ColumnKind::Real,
+            "int" => ColumnKind::Int,
+            _ => ColumnKind::String,
+        };
+        Column {
+            name: name.to_string(),
+            kind,
+            optional,
+        }
+    }
+
+    /// The name of the column's type, without `option`.
+    fn kind_name(&self) -> &'static str {
+        match self.kind {
+            ColumnKind::Bool => "bool",
+            ColumnKind::Date => "date",
+            ColumnKind::Decimal => "decimal",
+            ColumnKind::Int => "int",
+            ColumnKind::Real => "real",
+            ColumnKind::String => "string",
+        }
+    }
+
+    /// The type of the column's values.
+    fn type_(&self) -> Type {
+        let t = match self.kind {
+            ColumnKind::Bool => Type::Primitive(PrimitiveType::Bool),
+            ColumnKind::Date => Type::Data("date".to_string(), vec![]),
+            ColumnKind::Decimal => Type::Data("decimal".to_string(), vec![]),
+            ColumnKind::Int => Type::Primitive(PrimitiveType::Int),
+            ColumnKind::Real => Type::Primitive(PrimitiveType::Real),
+            ColumnKind::String => Type::Primitive(PrimitiveType::String),
+        };
+        if self.optional {
+            Type::Data("option".to_string(), vec![Rc::new(t)])
+        } else {
+            t
+        }
+    }
+
+    /// Converts a field to a value of the column's type, or returns the
+    /// message of the `Fail` it raises.
+    pub fn parse(&self, field: &str) -> Result<Val, String> {
+        let is_null = field.is_empty() || field == "NULL";
+        if self.optional {
+            if is_null {
+                return Ok(Val::Unit);
             }
-            FieldParser::Real => {
-                let v: f32 = if s == "NULL" {
-                    0.0
-                } else {
-                    s.parse().unwrap_or(0.0)
-                };
-                ParsedField::Real(v)
+            return self.parse_value(field).map(|v| Val::Some(Box::new(v)));
+        }
+        if field == "NULL" || is_null && self.kind != ColumnKind::String {
+            return Err(format!(
+                "null in column {}, whose type {} has no room for it",
+                self.name,
+                self.kind_name()
+            ));
+        }
+        self.parse_value(field)
+    }
+
+    /// Converts a field that is not null.
+    fn parse_value(&self, field: &str) -> Result<Val, String> {
+        let s = unquote(field);
+        let invalid = || {
+            format!(
+                "value {} in column {} is not a valid {}",
+                field,
+                self.name,
+                self.kind_name()
+            )
+        };
+        match self.kind {
+            ColumnKind::Bool => match s {
+                "true" => Ok(Val::Bool(true)),
+                "false" => Ok(Val::Bool(false)),
+                _ => Err(invalid()),
+            },
+            ColumnKind::Date => {
+                let date = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .map_err(|_| invalid())?;
+                let midnight = date
+                    .and_hms_opt(0, 0, 0)
+                    .ok_or_else(invalid)?
+                    .and_utc()
+                    .timestamp_nanos_opt()
+                    .ok_or_else(invalid)?;
+                Ok(Val::Date(midnight, 0))
             }
-            FieldParser::Bool => {
-                let v = matches!(
-                    s.to_ascii_lowercase().as_str(),
-                    "true" | "t" | "1"
-                );
-                ParsedField::Bool(v)
-            }
-            FieldParser::String => ParsedField::String(unquote(s).to_string()),
+            ColumnKind::Decimal => decimal::parse_exact(s)
+                .map(Val::Decimal)
+                .ok_or_else(invalid),
+            ColumnKind::Int => s.parse().map(Val::Int).map_err(|_| invalid()),
+            ColumnKind::Real => s.parse().map(Val::Real).map_err(|_| invalid()),
+            ColumnKind::String => Ok(Val::String(s.into())),
         }
     }
 }
 
-/// Result of parsing one CSV cell. Lives in this module so the
-/// runtime conversion to `Val` happens at a higher layer (Stage 3).
-#[derive(Clone, PartialEq, Debug)]
-pub enum ParsedField {
-    Int(i32),
-    Real(f32),
-    Bool(bool),
-    String(String),
+/// Splits a line of a CSV file into its fields.
+///
+/// Fields are separated by commas. A field that starts with a single
+/// quote runs to the next single quote that is not doubled, and may
+/// contain commas; a doubled quote inside it stands for one quote. The
+/// quotes stay in the field, so that a quoted empty string, `''`, can be
+/// told from an empty field; [`unquote`] removes them. A trailing empty
+/// field is a field, so that "1," has two. It is morel-java's
+/// `Files.LineParser`.
+fn split_line(line: &str) -> Vec<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let n = chars.len();
+    let mut fields = Vec::new();
+    let mut i = 0;
+    loop {
+        let mut field = String::new();
+        if i < n && chars[i] == '\'' {
+            // A quoted field. Find the closing quote, skipping doubled
+            // quotes, which stand for one.
+            field.push('\'');
+            i += 1;
+            while i < n {
+                let c = chars[i];
+                i += 1;
+                if c == '\'' {
+                    field.push('\'');
+                    if i < n && chars[i] == '\'' {
+                        i += 1;
+                        continue;
+                    }
+                    break;
+                }
+                field.push(c);
+            }
+        }
+        // Anything up to the comma is part of the field.
+        while i < n && chars[i] != ',' {
+            field.push(chars[i]);
+            i += 1;
+        }
+        fields.push(field);
+        if i >= n {
+            return fields;
+        }
+        i += 1; // skip the comma
+    }
 }
 
 /// A value that knows its own (potentially progressive) type. Used
@@ -314,8 +448,8 @@ impl File {
     /// vector per row, in field-declaration order. Returns `None` if
     /// the file is not a data file or cannot be opened. Only valid
     /// after [`Self::expand`] has been called.
-    pub fn read_rows(&self) -> Option<Vec<Vec<ParsedField>>> {
-        let parsers: Vec<(usize, FieldParser)> = match &*self.state.borrow() {
+    pub fn read_rows(&self) -> Option<Result<Vec<Vec<Val>>, String>> {
+        let parsers: Vec<(usize, Column)> = match &*self.state.borrow() {
             FileState::Data { field_parsers, .. } => field_parsers.clone(),
             _ => return None,
         };
@@ -323,25 +457,34 @@ impl File {
         let mut rows = Vec::new();
         let mut lines = reader.lines();
         // Skip the header line.
-        if lines.next().is_none() {
-            return Some(rows);
-        }
+        let Some(header) = lines.next() else {
+            return Some(Ok(rows));
+        };
+        let column_count = header.ok()?.split(',').count();
         for line in lines {
             let line = line.ok()?;
-            let cells: Vec<&str> = line.split(',').collect();
+            let cells = split_line(&line);
+            if cells.len() < column_count {
+                return Some(Err(format!(
+                    "line has {} fields, but the header has {}: {}",
+                    cells.len(),
+                    column_count,
+                    line
+                )));
+            }
             // Reorder cells from CSV-column order into row_type field
-            // order: parsers[j] = (i, p) means field j's value comes
-            // from CSV column `i`, parsed via `p`.
-            let mut values =
-                vec![ParsedField::String(String::new()); parsers.len()];
-            for (j, (i, parser)) in parsers.iter().enumerate() {
-                if let Some(cell) = cells.get(*i) {
-                    values[j] = parser.parse(cell);
+            // order: parsers[j] = (i, c) means field j's value comes
+            // from CSV column `i`, parsed as column `c`.
+            let mut values = Vec::with_capacity(parsers.len());
+            for (i, column) in &parsers {
+                match column.parse(&cells[*i]) {
+                    Ok(v) => values.push(v),
+                    Err(message) => return Some(Err(message)),
                 }
             }
             rows.push(values);
         }
-        Some(rows)
+        Some(Ok(rows))
     }
 }
 
@@ -371,35 +514,22 @@ pub fn session_file(session: &Session) -> Rc<File> {
 /// (one per CSV row), and an unexpanded / plain file becomes
 /// `Val::Unit`. Used when projecting a directory entry through field
 /// access.
-pub fn file_as_val(file: &Rc<File>) -> Val {
+///
+/// Returns the message of the `Fail` that reading a data file raises, if
+/// a field is not a value of its column's type.
+pub fn file_as_val(file: &Rc<File>) -> Result<Val, String> {
     file.expand();
     match &*file.state.borrow() {
         FileState::Directory { .. } | FileState::Unexpanded => {
-            Val::File(Rc::clone(file))
+            Ok(Val::File(Rc::clone(file)))
         }
-        FileState::Data {
-            field_parsers,
-            row_type,
-        } => {
-            let rows = file.read_rows().unwrap_or_default();
-            let field_count = field_parsers.len();
-            let mut vals = Vec::with_capacity(rows.len());
-            for row in rows {
-                let mut fields = Vec::with_capacity(field_count);
-                for v in row {
-                    fields.push(match v {
-                        ParsedField::Int(n) => Val::Int(n),
-                        ParsedField::Real(x) => Val::Real(x),
-                        ParsedField::Bool(b) => Val::Bool(b),
-                        ParsedField::String(s) => Val::String((s).into()),
-                    });
-                }
-                vals.push(Val::List(Rc::new(fields)));
-            }
-            // `row_type` is unused at runtime — kept only to placate
-            // the type-resolver. Silence the unused-binding warning.
-            let _ = row_type;
-            Val::List(Rc::new(vals))
+        FileState::Data { .. } => {
+            let rows = file.read_rows().unwrap_or(Ok(Vec::new()))?;
+            Ok(Val::List(Rc::new(
+                rows.into_iter()
+                    .map(|row| Val::List(Rc::new(row)))
+                    .collect(),
+            )))
         }
     }
 }
@@ -480,53 +610,37 @@ fn expand_data(path: &Path, file_type: FileType) -> Option<FileState> {
         });
     }
     // Parse each "name[:type]" header column; default type is string.
-    let mut declared: Vec<(String, FieldParser)> = Vec::new();
+    let mut declared: Vec<Column> = Vec::new();
     for field in header.split(',') {
         let mut split = field.splitn(2, ':');
-        let name = split.next().unwrap_or("").to_string();
+        let name = split.next().unwrap_or("");
         let ty = split.next().unwrap_or("string");
-        let parser = match ty {
-            "bool" => FieldParser::Bool,
-            "decimal" | "double" => FieldParser::Real,
-            "int" => FieldParser::Int,
-            _ => FieldParser::String,
-        };
-        declared.push((name, parser));
+        declared.push(Column::of(name, ty));
     }
     // Row type: BTreeMap, so fields end up in label order. We
     // remember each field's *CSV column index* so `read_rows` can
     // reorder the cells at parse time.
     let mut field_types: BTreeMap<Label, Rc<Type>> = BTreeMap::new();
     let mut name_to_csv_index: BTreeMap<String, usize> = BTreeMap::new();
-    for (i, (name, parser)) in declared.iter().enumerate() {
+    for (i, column) in declared.iter().enumerate() {
         field_types
-            .insert(Label::from(name.clone()), Rc::new(parser_type(*parser)));
-        name_to_csv_index.insert(name.clone(), i);
+            .insert(Label::from(column.name.clone()), Rc::new(column.type_()));
+        name_to_csv_index.insert(column.name.clone(), i);
     }
-    let mut field_parsers: Vec<(usize, FieldParser)> = Vec::new();
+    let mut field_parsers: Vec<(usize, Column)> = Vec::new();
     for label in field_types.keys() {
         let name = match label {
             Label::String(s) => s.to_string(),
             Label::Ordinal(n) => n.to_string(),
         };
         let csv_index = name_to_csv_index[&name];
-        let parser = declared[csv_index].1;
-        field_parsers.push((csv_index, parser));
+        field_parsers.push((csv_index, declared[csv_index].clone()));
     }
     let row_type = Type::Record(false, field_types);
     Some(FileState::Data {
         row_type: Rc::new(row_type),
         field_parsers,
     })
-}
-
-fn parser_type(parser: FieldParser) -> Type {
-    match parser {
-        FieldParser::Int => Type::Primitive(PrimitiveType::Int),
-        FieldParser::Real => Type::Primitive(PrimitiveType::Real),
-        FieldParser::Bool => Type::Primitive(PrimitiveType::Bool),
-        FieldParser::String => Type::Primitive(PrimitiveType::String),
-    }
 }
 
 /// Strips a single pair of leading/trailing `'` quotes, if present.
@@ -586,12 +700,48 @@ mod tests {
     }
 
     #[test]
+    fn split_line_honors_quotes() {
+        assert_eq!(split_line("1,2"), vec!["1", "2"]);
+        assert_eq!(split_line("1,"), vec!["1", ""]);
+        assert_eq!(split_line("'a, b',c"), vec!["'a, b'", "c"]);
+        assert_eq!(split_line("'it''s',x"), vec!["'it's'", "x"]);
+        assert_eq!(split_line("'',x"), vec!["''", "x"]);
+    }
+
+    #[test]
+    fn column_parses_by_type() {
+        let int = Column::of("i", "int");
+        assert_eq!(int.parse("7"), Ok(Val::Int(7)));
+        assert_eq!(int.parse("'7'"), Ok(Val::Int(7)));
+        assert!(int.parse("NULL").is_err());
+        assert!(int.parse("").is_err());
+        assert!(int.parse("x").is_err());
+        let opt = Column::of("i", "int option");
+        assert_eq!(opt.parse("NULL"), Ok(Val::Unit));
+        assert_eq!(opt.parse(""), Ok(Val::Unit));
+        assert_eq!(opt.parse("7"), Ok(Val::Some(Box::new(Val::Int(7)))));
+        let string = Column::of("s", "string");
+        assert_eq!(string.parse(""), Ok(Val::String("".into())));
+        assert!(string.parse("NULL").is_err());
+        let boolean = Column::of("b", "bool");
+        assert_eq!(boolean.parse("true"), Ok(Val::Bool(true)));
+        assert!(boolean.parse("t").is_err());
+        let date = Column::of("d", "date");
+        // `Val`'s equality does not yet compare dates, so match instead.
+        assert!(matches!(
+            date.parse("1970-01-02"),
+            Ok(Val::Date(86_400_000_000_000, 0))
+        ));
+        assert!(date.parse("1970-13-01").is_err());
+    }
+
+    #[test]
     fn read_csv_gz_decompresses() {
         let path = data_dir().join("scott/emps.csv.gz");
         let file = File::create(&path);
         file.expand();
         assert!(matches!(*file.state.borrow(), FileState::Data { .. }));
-        let rows = file.read_rows().unwrap();
+        let rows = file.read_rows().unwrap().unwrap();
         assert!(!rows.is_empty());
     }
 

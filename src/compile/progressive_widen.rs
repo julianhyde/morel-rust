@@ -246,7 +246,7 @@ fn project(v: &Val, slot: usize) -> Option<Val> {
                 }
                 _ => None,
             };
-            child.map(|c| file_as_val(&c))
+            child.and_then(|c| file_as_val(&c).ok())
         }
         Val::List(items) => items.get(slot).cloned(),
         _ => None,
