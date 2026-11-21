@@ -152,6 +152,11 @@ impl Session {
                 .or_default()
                 .push((*f.get_type()).clone());
         }
+        // And for the aggregates with a variant for each type of element
+        // and kind of collection, such as `avg`, in their order.
+        for (name, types) in library::aggregate_overloads() {
+            overloads.insert(name.to_string(), types);
+        }
         // Seed the datatype constructor map with the built-in datatypes
         // (`bool`, `either`, `list`, `option`, `order`, ...); user-
         // declared datatypes are added incrementally as their

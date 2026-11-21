@@ -1356,12 +1356,99 @@ pub enum BuiltInFunction {
     #[strum(props(p = "Real", name = "unordered"))]
     #[strum(props(type = "real * real -> bool"))]
     RealUnordered,
+    #[strum(props(
+        p = "Relational",
+        name = "avg",
+        global = "avg",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "decimal bag -> decimal"))]
+    RelationalAvgDecimalBag,
+    #[strum(props(
+        p = "Relational",
+        name = "avg",
+        global = "avg",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "decimal list -> decimal"))]
+    RelationalAvgDecimalList,
+    #[strum(props(
+        p = "Relational",
+        name = "avg",
+        global = "avg",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "int bag -> real"))]
+    RelationalAvgIntBag,
+    #[strum(props(
+        p = "Relational",
+        name = "avg",
+        global = "avg",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "int list -> real"))]
+    RelationalAvgIntList,
+    #[strum(props(p = "Relational", name = "avgOpt", global = "avgOpt"))]
+    #[strum(props(type = "decimal bag -> decimal option"))]
+    RelationalAvgOptDecimalBag,
+    #[strum(props(p = "Relational", name = "avgOpt", global = "avgOpt"))]
+    #[strum(props(type = "decimal list -> decimal option"))]
+    RelationalAvgOptDecimalList,
+    #[strum(props(p = "Relational", name = "avgOpt", global = "avgOpt"))]
+    #[strum(props(type = "int bag -> real option"))]
+    RelationalAvgOptIntBag,
+    #[strum(props(p = "Relational", name = "avgOpt", global = "avgOpt"))]
+    #[strum(props(type = "int list -> real option"))]
+    RelationalAvgOptIntList,
+    #[strum(props(p = "Relational", name = "avgOpt", global = "avgOpt"))]
+    #[strum(props(type = "real bag -> real option"))]
+    RelationalAvgOptRealBag,
+    #[strum(props(p = "Relational", name = "avgOpt", global = "avgOpt"))]
+    #[strum(props(type = "real list -> real option"))]
+    RelationalAvgOptRealList,
+    #[strum(props(
+        p = "Relational",
+        name = "avg",
+        global = "avg",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "real bag -> real"))]
+    RelationalAvgRealBag,
+    #[strum(props(
+        p = "Relational",
+        name = "avg",
+        global = "avg",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "real list -> real"))]
+    RelationalAvgRealList,
+    #[strum(props(p = "Relational", name = "avgSome", global = "avgSome"))]
+    #[strum(props(type = "decimal option bag -> decimal option"))]
+    RelationalAvgSomeDecimalBag,
+    #[strum(props(p = "Relational", name = "avgSome", global = "avgSome"))]
+    #[strum(props(type = "decimal option list -> decimal option"))]
+    RelationalAvgSomeDecimalList,
+    #[strum(props(p = "Relational", name = "avgSome", global = "avgSome"))]
+    #[strum(props(type = "int option bag -> real option"))]
+    RelationalAvgSomeIntBag,
+    #[strum(props(p = "Relational", name = "avgSome", global = "avgSome"))]
+    #[strum(props(type = "int option list -> real option"))]
+    RelationalAvgSomeIntList,
+    #[strum(props(p = "Relational", name = "avgSome", global = "avgSome"))]
+    #[strum(props(type = "real option bag -> real option"))]
+    RelationalAvgSomeRealBag,
+    #[strum(props(p = "Relational", name = "avgSome", global = "avgSome"))]
+    #[strum(props(type = "real option list -> real option"))]
+    RelationalAvgSomeRealList,
     #[strum(props(p = "Relational", name = "compare", global = "compare"))]
     #[strum(props(type = "forall 1 'a * 'a -> `order`"))]
     RelationalCompare,
     #[strum(props(p = "Relational", name = "count", global = true))]
     #[strum(props(type = "forall 1 'a collection -> int"))]
     RelationalCount,
+    #[strum(props(p = "Relational", name = "countSome", global = true))]
+    #[strum(props(type = "forall 1 'a option collection -> int"))]
+    RelationalCountSome,
     #[strum(props(p = "Relational", name = "empty", global = true))]
     #[strum(props(type = "forall 1 'a collection -> bool"))]
     RelationalEmpty,
@@ -1384,6 +1471,12 @@ pub enum BuiltInFunction {
         throws = "Empty"
     ))]
     RelationalMaxBy,
+    #[strum(props(p = "Relational", name = "maxOpt", global = true))]
+    #[strum(props(type = "forall 1 'a collection -> 'a option"))]
+    RelationalMaxOpt,
+    #[strum(props(p = "Relational", name = "maxSome", global = true))]
+    #[strum(props(type = "forall 1 'a option collection -> 'a option"))]
+    RelationalMaxSome,
     #[strum(props(p = "Relational", name = "min", global = true))]
     #[strum(props(type = "forall 1 'a collection -> 'a", throws = "Empty"))]
     RelationalMin,
@@ -1394,12 +1487,282 @@ pub enum BuiltInFunction {
         throws = "Empty"
     ))]
     RelationalMinBy,
+    #[strum(props(p = "Relational", name = "minOpt", global = true))]
+    #[strum(props(type = "forall 1 'a collection -> 'a option"))]
+    RelationalMinOpt,
+    #[strum(props(p = "Relational", name = "minSome", global = true))]
+    #[strum(props(type = "forall 1 'a option collection -> 'a option"))]
+    RelationalMinSome,
     #[strum(props(p = "Relational", name = "nonEmpty", global = true))]
     #[strum(props(type = "forall 1 'a collection -> bool"))]
     RelationalNonEmpty,
     #[strum(props(p = "Relational", name = "only", global = "only"))]
     #[strum(props(type = "forall 1 'a collection -> 'a", throws = "Empty"))]
     RelationalOnly,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPop",
+        global = "stddevPop",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "decimal bag -> real"))]
+    RelationalStddevPopDecimalBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPop",
+        global = "stddevPop",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "decimal list -> real"))]
+    RelationalStddevPopDecimalList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPop",
+        global = "stddevPop",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "int bag -> real"))]
+    RelationalStddevPopIntBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPop",
+        global = "stddevPop",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "int list -> real"))]
+    RelationalStddevPopIntList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPopOpt",
+        global = "stddevPopOpt"
+    ))]
+    #[strum(props(type = "decimal bag -> real option"))]
+    RelationalStddevPopOptDecimalBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPopOpt",
+        global = "stddevPopOpt"
+    ))]
+    #[strum(props(type = "decimal list -> real option"))]
+    RelationalStddevPopOptDecimalList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPopOpt",
+        global = "stddevPopOpt"
+    ))]
+    #[strum(props(type = "int bag -> real option"))]
+    RelationalStddevPopOptIntBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPopOpt",
+        global = "stddevPopOpt"
+    ))]
+    #[strum(props(type = "int list -> real option"))]
+    RelationalStddevPopOptIntList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPopOpt",
+        global = "stddevPopOpt"
+    ))]
+    #[strum(props(type = "real bag -> real option"))]
+    RelationalStddevPopOptRealBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPopOpt",
+        global = "stddevPopOpt"
+    ))]
+    #[strum(props(type = "real list -> real option"))]
+    RelationalStddevPopOptRealList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPop",
+        global = "stddevPop",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "real bag -> real"))]
+    RelationalStddevPopRealBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPop",
+        global = "stddevPop",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "real list -> real"))]
+    RelationalStddevPopRealList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPopSome",
+        global = "stddevPopSome"
+    ))]
+    #[strum(props(type = "decimal option bag -> real option"))]
+    RelationalStddevPopSomeDecimalBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPopSome",
+        global = "stddevPopSome"
+    ))]
+    #[strum(props(type = "decimal option list -> real option"))]
+    RelationalStddevPopSomeDecimalList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPopSome",
+        global = "stddevPopSome"
+    ))]
+    #[strum(props(type = "int option bag -> real option"))]
+    RelationalStddevPopSomeIntBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPopSome",
+        global = "stddevPopSome"
+    ))]
+    #[strum(props(type = "int option list -> real option"))]
+    RelationalStddevPopSomeIntList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPopSome",
+        global = "stddevPopSome"
+    ))]
+    #[strum(props(type = "real option bag -> real option"))]
+    RelationalStddevPopSomeRealBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevPopSome",
+        global = "stddevPopSome"
+    ))]
+    #[strum(props(type = "real option list -> real option"))]
+    RelationalStddevPopSomeRealList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSamp",
+        global = "stddevSamp",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "decimal bag -> real"))]
+    RelationalStddevSampDecimalBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSamp",
+        global = "stddevSamp",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "decimal list -> real"))]
+    RelationalStddevSampDecimalList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSamp",
+        global = "stddevSamp",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "int bag -> real"))]
+    RelationalStddevSampIntBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSamp",
+        global = "stddevSamp",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "int list -> real"))]
+    RelationalStddevSampIntList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSampOpt",
+        global = "stddevSampOpt"
+    ))]
+    #[strum(props(type = "decimal bag -> real option"))]
+    RelationalStddevSampOptDecimalBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSampOpt",
+        global = "stddevSampOpt"
+    ))]
+    #[strum(props(type = "decimal list -> real option"))]
+    RelationalStddevSampOptDecimalList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSampOpt",
+        global = "stddevSampOpt"
+    ))]
+    #[strum(props(type = "int bag -> real option"))]
+    RelationalStddevSampOptIntBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSampOpt",
+        global = "stddevSampOpt"
+    ))]
+    #[strum(props(type = "int list -> real option"))]
+    RelationalStddevSampOptIntList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSampOpt",
+        global = "stddevSampOpt"
+    ))]
+    #[strum(props(type = "real bag -> real option"))]
+    RelationalStddevSampOptRealBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSampOpt",
+        global = "stddevSampOpt"
+    ))]
+    #[strum(props(type = "real list -> real option"))]
+    RelationalStddevSampOptRealList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSamp",
+        global = "stddevSamp",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "real bag -> real"))]
+    RelationalStddevSampRealBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSamp",
+        global = "stddevSamp",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "real list -> real"))]
+    RelationalStddevSampRealList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSampSome",
+        global = "stddevSampSome"
+    ))]
+    #[strum(props(type = "decimal option bag -> real option"))]
+    RelationalStddevSampSomeDecimalBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSampSome",
+        global = "stddevSampSome"
+    ))]
+    #[strum(props(type = "decimal option list -> real option"))]
+    RelationalStddevSampSomeDecimalList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSampSome",
+        global = "stddevSampSome"
+    ))]
+    #[strum(props(type = "int option bag -> real option"))]
+    RelationalStddevSampSomeIntBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSampSome",
+        global = "stddevSampSome"
+    ))]
+    #[strum(props(type = "int option list -> real option"))]
+    RelationalStddevSampSomeIntList,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSampSome",
+        global = "stddevSampSome"
+    ))]
+    #[strum(props(type = "real option bag -> real option"))]
+    RelationalStddevSampSomeRealBag,
+    #[strum(props(
+        p = "Relational",
+        name = "stddevSampSome",
+        global = "stddevSampSome"
+    ))]
+    #[strum(props(type = "real option list -> real option"))]
+    RelationalStddevSampSomeRealList,
     #[strum(props(p = "Relational", name = "sum", global = true))]
     #[strum(props(type = "forall 1 'a collection -> 'a"))]
     RelationalSum,
@@ -1413,9 +1776,274 @@ pub enum BuiltInFunction {
     #[strum(props(name = "sum$int"))]
     #[strum(props(type = "int bag -> int"))]
     RelationalSumInt,
+    #[strum(props(
+        p = "Relational",
+        name = "sumOpt",
+        global = true,
+        throws = "Overflow"
+    ))]
+    #[strum(props(type = "forall 1 'a collection -> 'a option"))]
+    RelationalSumOpt,
+    #[strum(props(name = "sumOpt$decimal", throws = "Overflow"))]
+    #[strum(props(type = "decimal bag -> decimal option"))]
+    RelationalSumOptDecimal,
+    #[strum(props(name = "sumOpt$int"))]
+    #[strum(props(type = "int bag -> int option"))]
+    RelationalSumOptInt,
+    #[strum(props(name = "sumOpt$real"))]
+    #[strum(props(type = "real bag -> real option"))]
+    RelationalSumOptReal,
     #[strum(props(name = "sum$real"))]
     #[strum(props(type = "real bag -> real"))]
     RelationalSumReal,
+    #[strum(props(
+        p = "Relational",
+        name = "sumSome",
+        global = true,
+        throws = "Overflow"
+    ))]
+    #[strum(props(type = "forall 1 'a option collection -> 'a option"))]
+    RelationalSumSome,
+    #[strum(props(
+        p = "Relational",
+        name = "varPop",
+        global = "varPop",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "decimal bag -> real"))]
+    RelationalVarPopDecimalBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varPop",
+        global = "varPop",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "decimal list -> real"))]
+    RelationalVarPopDecimalList,
+    #[strum(props(
+        p = "Relational",
+        name = "varPop",
+        global = "varPop",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "int bag -> real"))]
+    RelationalVarPopIntBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varPop",
+        global = "varPop",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "int list -> real"))]
+    RelationalVarPopIntList,
+    #[strum(props(p = "Relational", name = "varPopOpt", global = "varPopOpt"))]
+    #[strum(props(type = "decimal bag -> real option"))]
+    RelationalVarPopOptDecimalBag,
+    #[strum(props(p = "Relational", name = "varPopOpt", global = "varPopOpt"))]
+    #[strum(props(type = "decimal list -> real option"))]
+    RelationalVarPopOptDecimalList,
+    #[strum(props(p = "Relational", name = "varPopOpt", global = "varPopOpt"))]
+    #[strum(props(type = "int bag -> real option"))]
+    RelationalVarPopOptIntBag,
+    #[strum(props(p = "Relational", name = "varPopOpt", global = "varPopOpt"))]
+    #[strum(props(type = "int list -> real option"))]
+    RelationalVarPopOptIntList,
+    #[strum(props(p = "Relational", name = "varPopOpt", global = "varPopOpt"))]
+    #[strum(props(type = "real bag -> real option"))]
+    RelationalVarPopOptRealBag,
+    #[strum(props(p = "Relational", name = "varPopOpt", global = "varPopOpt"))]
+    #[strum(props(type = "real list -> real option"))]
+    RelationalVarPopOptRealList,
+    #[strum(props(
+        p = "Relational",
+        name = "varPop",
+        global = "varPop",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "real bag -> real"))]
+    RelationalVarPopRealBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varPop",
+        global = "varPop",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "real list -> real"))]
+    RelationalVarPopRealList,
+    #[strum(props(
+        p = "Relational",
+        name = "varPopSome",
+        global = "varPopSome"
+    ))]
+    #[strum(props(type = "decimal option bag -> real option"))]
+    RelationalVarPopSomeDecimalBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varPopSome",
+        global = "varPopSome"
+    ))]
+    #[strum(props(type = "decimal option list -> real option"))]
+    RelationalVarPopSomeDecimalList,
+    #[strum(props(
+        p = "Relational",
+        name = "varPopSome",
+        global = "varPopSome"
+    ))]
+    #[strum(props(type = "int option bag -> real option"))]
+    RelationalVarPopSomeIntBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varPopSome",
+        global = "varPopSome"
+    ))]
+    #[strum(props(type = "int option list -> real option"))]
+    RelationalVarPopSomeIntList,
+    #[strum(props(
+        p = "Relational",
+        name = "varPopSome",
+        global = "varPopSome"
+    ))]
+    #[strum(props(type = "real option bag -> real option"))]
+    RelationalVarPopSomeRealBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varPopSome",
+        global = "varPopSome"
+    ))]
+    #[strum(props(type = "real option list -> real option"))]
+    RelationalVarPopSomeRealList,
+    #[strum(props(
+        p = "Relational",
+        name = "varSamp",
+        global = "varSamp",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "decimal bag -> real"))]
+    RelationalVarSampDecimalBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varSamp",
+        global = "varSamp",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "decimal list -> real"))]
+    RelationalVarSampDecimalList,
+    #[strum(props(
+        p = "Relational",
+        name = "varSamp",
+        global = "varSamp",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "int bag -> real"))]
+    RelationalVarSampIntBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varSamp",
+        global = "varSamp",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "int list -> real"))]
+    RelationalVarSampIntList,
+    #[strum(props(
+        p = "Relational",
+        name = "varSampOpt",
+        global = "varSampOpt"
+    ))]
+    #[strum(props(type = "decimal bag -> real option"))]
+    RelationalVarSampOptDecimalBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varSampOpt",
+        global = "varSampOpt"
+    ))]
+    #[strum(props(type = "decimal list -> real option"))]
+    RelationalVarSampOptDecimalList,
+    #[strum(props(
+        p = "Relational",
+        name = "varSampOpt",
+        global = "varSampOpt"
+    ))]
+    #[strum(props(type = "int bag -> real option"))]
+    RelationalVarSampOptIntBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varSampOpt",
+        global = "varSampOpt"
+    ))]
+    #[strum(props(type = "int list -> real option"))]
+    RelationalVarSampOptIntList,
+    #[strum(props(
+        p = "Relational",
+        name = "varSampOpt",
+        global = "varSampOpt"
+    ))]
+    #[strum(props(type = "real bag -> real option"))]
+    RelationalVarSampOptRealBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varSampOpt",
+        global = "varSampOpt"
+    ))]
+    #[strum(props(type = "real list -> real option"))]
+    RelationalVarSampOptRealList,
+    #[strum(props(
+        p = "Relational",
+        name = "varSamp",
+        global = "varSamp",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "real bag -> real"))]
+    RelationalVarSampRealBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varSamp",
+        global = "varSamp",
+        throws = "Empty"
+    ))]
+    #[strum(props(type = "real list -> real"))]
+    RelationalVarSampRealList,
+    #[strum(props(
+        p = "Relational",
+        name = "varSampSome",
+        global = "varSampSome"
+    ))]
+    #[strum(props(type = "decimal option bag -> real option"))]
+    RelationalVarSampSomeDecimalBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varSampSome",
+        global = "varSampSome"
+    ))]
+    #[strum(props(type = "decimal option list -> real option"))]
+    RelationalVarSampSomeDecimalList,
+    #[strum(props(
+        p = "Relational",
+        name = "varSampSome",
+        global = "varSampSome"
+    ))]
+    #[strum(props(type = "int option bag -> real option"))]
+    RelationalVarSampSomeIntBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varSampSome",
+        global = "varSampSome"
+    ))]
+    #[strum(props(type = "int option list -> real option"))]
+    RelationalVarSampSomeIntList,
+    #[strum(props(
+        p = "Relational",
+        name = "varSampSome",
+        global = "varSampSome"
+    ))]
+    #[strum(props(type = "real option bag -> real option"))]
+    RelationalVarSampSomeRealBag,
+    #[strum(props(
+        p = "Relational",
+        name = "varSampSome",
+        global = "varSampSome"
+    ))]
+    #[strum(props(type = "real option list -> real option"))]
+    RelationalVarSampSomeRealList,
     #[strum(props(p = "String", name = "^", alias = "op ^", global = true))]
     #[strum(props(type = "string * string -> string"))]
     StringCaret,
@@ -2329,6 +2957,41 @@ impl BuiltInFunction {
         })
     }
 
+    /// Returns where this function stands among the variants of an
+    /// overloaded aggregate such as `avg`, which has one for each type of
+    /// element and kind of collection, in morel-java's order: `int bag`,
+    /// `int list`, `real bag`, `real list`, `decimal bag`, `decimal list`.
+    /// Where a name is bound once, as in the environment or a structure,
+    /// the first variant is the one bound. Read from the `type` prop, so
+    /// that it may be asked while the library is being built.
+    pub(crate) fn overload_rank(&self) -> u32 {
+        let t = self.get_str("type").unwrap_or("");
+        let element = if t.starts_with("int") {
+            0
+        } else if t.starts_with("real") {
+            2
+        } else if t.starts_with("decimal") {
+            4
+        } else {
+            6
+        };
+        let param = t.split("->").next().unwrap_or("");
+        element + u32::from(param.contains("list"))
+    }
+
+    /// Returns whether, where `other` is already bound under this
+    /// function's name, `other` is to stay bound: if the two are variants
+    /// of the same overloaded aggregate, by element type, and `other` is
+    /// the earlier (see [`Self::overload_rank`]). Otherwise the later
+    /// binding replaces the earlier, as for any name.
+    pub(crate) fn yields_to(&self, other: &BuiltInFunction) -> bool {
+        self.overloaded_name().is_some()
+            && self.overloaded_name() == other.overloaded_name()
+            && self.parent() == other.parent()
+            && self.overload_rank() < 6
+            && other.overload_rank() < self.overload_rank()
+    }
+
     /// Returns whether `name` is the global name of a built-in overloaded
     /// function (for example `only`, which is both `List.only` and
     /// `Bag.only`).
@@ -2789,6 +3452,28 @@ static BY_NAME: LazyLock<BTreeMap<&str, BuiltIn>> = LazyLock::new(|| {
     }
     map
 });
+/// Returns each aggregate that has a variant for each type of element
+/// and kind of collection, such as `avg`, with the types of its variants,
+/// in morel-java's order (see [`BuiltInFunction::overload_rank`]).
+pub(crate) fn aggregate_overloads() -> BTreeMap<&'static str, Vec<Type>> {
+    let mut variants: BTreeMap<&'static str, Vec<BuiltInFunction>> =
+        BTreeMap::new();
+    for f in BuiltInFunction::iter() {
+        if let Some(name) = f.overloaded_name()
+            && f.overload_rank() < 6
+        {
+            variants.entry(name).or_default().push(f);
+        }
+    }
+    variants
+        .into_iter()
+        .filter(|(_, fs)| fs.len() > 1)
+        .map(|(name, mut fs)| {
+            fs.sort_by_key(BuiltInFunction::overload_rank);
+            (name, fs.iter().map(|f| (*f.get_type()).clone()).collect())
+        })
+        .collect()
+}
 
 /// Returns the bag and list variants of an overloaded aggregate structure
 /// member (e.g. `Test.overCount`), if both exist. An aggregate applied via
@@ -2850,6 +3535,12 @@ pub(crate) fn populate_env(map: &mut BTreeMap<&str, (Type, Option<Val>)>) {
                 Val::Fn(*f)
             };
             for name in f.global_names() {
+                // An overloaded aggregate's first variant is the one bound.
+                if let Some((_, Some(Val::Fn(g)))) = map.get(name)
+                    && f.yields_to(g)
+                {
+                    continue;
+                }
                 map.insert(name, ((**t).clone(), Some(value.clone())));
             }
         }

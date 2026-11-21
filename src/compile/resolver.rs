@@ -2296,53 +2296,69 @@ impl<'a> Resolver<'a> {
                 // element type, so plans read `Relational.sum$int` as in
                 // morel-java. The bare-identifier `sum` is handled by
                 // `specialize_sum` in the identifier arm.
-                let is_relational_sum = match &func.kind {
-                    ExprKind::Apply(sel, recv) => matches!(
-                        (&sel.kind, &recv.kind),
+                let sum_name = match &func.kind {
+                    ExprKind::Apply(sel, recv) => match (&sel.kind, &recv.kind)
+                    {
                         (
                             ExprKind::RecordSelector(member),
                             ExprKind::Identifier(structure),
-                        ) if member == "sum" && structure == "Relational"
-                    ),
-                    // The global alias `sum` needs the same treatment.
-                    ExprKind::Identifier(name) => name == "sum",
-                    _ => false,
-                };
-                if is_relational_sum
+                        ) if structure == "Relational" => Some(member.as_str()),
+                        _ => None,
+                    },
+                    // The global aliases need the same treatment.
+                    ExprKind::Identifier(name) => Some(name.as_str()),
+                    _ => None,
+                }
+                .filter(|name| matches!(*name, "sum" | "sumOpt"));
+                if let Some(sum_name) = sum_name
                     && let Some(ty) = arg.get_type(self.type_map)
                 {
                     let elem = match ty.as_ref() {
                         Type::Bag(e) | Type::List(e) => Some(e.as_ref()),
                         _ => None,
                     };
-                    match elem {
+                    let opt = sum_name == "sumOpt";
+                    let instance = match elem {
                         Some(Type::Primitive(PrimitiveType::Int)) => {
-                            return self.call1(
-                                t,
-                                BuiltInFunction::RelationalSumInt,
-                                arg,
-                                &span,
-                            );
+                            Some(if opt {
+                                BuiltInFunction::RelationalSumOptInt
+                            } else {
+                                BuiltInFunction::RelationalSumInt
+                            })
                         }
                         Some(Type::Primitive(PrimitiveType::Real)) => {
-                            return self.call1(
-                                t,
-                                BuiltInFunction::RelationalSumReal,
-                                arg,
-                                &span,
-                            );
+                            Some(if opt {
+                                BuiltInFunction::RelationalSumOptReal
+                            } else {
+                                BuiltInFunction::RelationalSumReal
+                            })
                         }
                         Some(Type::Data(name, args))
                             if args.is_empty() && name == "decimal" =>
                         {
-                            return self.call1(
-                                t,
-                                BuiltInFunction::RelationalSumDecimal,
-                                arg,
-                                &span,
-                            );
+                            Some(if opt {
+                                BuiltInFunction::RelationalSumOptDecimal
+                            } else {
+                                BuiltInFunction::RelationalSumDecimal
+                            })
                         }
-                        _ => {}
+                        _ => None,
+                    };
+                    if let Some(f) = instance {
+                        return self.call1(t, f, arg, &span);
+                    }
+                    // A sum of anything but numbers -- of options, say --
+                    // is an error, as it is in morel-java.
+                    if let Some(e) = elem
+                        && !matches!(e, Type::Variable(_))
+                    {
+                        self.errors.borrow_mut().push((
+                            format!(
+                                "operator '{}' not defined for type '{}'",
+                                sum_name, ty
+                            ),
+                            span.clone(),
+                        ));
                     }
                 }
                 // Try postfix method-call rewriting. Pattern: outer

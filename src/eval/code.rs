@@ -57,7 +57,7 @@ use crate::eval::option::Opt;
 use crate::eval::order::Order;
 use crate::eval::real;
 use crate::eval::real::Real;
-use crate::eval::relational::Relational;
+use crate::eval::relational::{Form, Relational, Stat};
 use crate::eval::row_sink::RowSinkFactory;
 use crate::eval::session::Session;
 use crate::eval::string::Str;
@@ -2475,6 +2475,28 @@ pub enum Impl {
     EF4(EagerF4),
 }
 
+/// Returns the type of a structure, as `Sys.env` writes it, with each
+/// aggregate that has a variant for each type of element, such as `avg`,
+/// written as all of them, `avg:multi(int bag -> real,int list -> real,
+/// ...)`, as morel-java writes an overloaded member.
+fn multi(record_type: &str) -> String {
+    let mut s = record_type.to_string();
+    for (name, types) in library::aggregate_overloads() {
+        let Some(first) = types.first() else {
+            continue;
+        };
+        let all: Vec<String> = types.iter().map(|t| format!("{}", t)).collect();
+        for (before, after) in [("{", ","), ("{", "}"), (" ", ","), (" ", "}")]
+        {
+            let from = format!("{}{}:{}{}", before, name, first, after);
+            let to =
+                format!("{}{}:multi({}){}", before, name, all.join(","), after);
+            s = s.replace(&from, &to);
+        }
+    }
+    s
+}
+
 /// The elements of a constant collection, for [`Code::ElemSet`]: a set
 /// to look values up in, and the collection, in its order, to print.
 #[derive(Debug)]
@@ -2814,7 +2836,10 @@ impl EagerF0 {
                         continue;
                     }
                     if let Some(ty) = record.get_type() {
-                        pairs.push((name.to_string(), format!("{}", ty)));
+                        pairs.push((
+                            name.to_string(),
+                            multi(&format!("{}", ty)),
+                        ));
                     }
                 }
 
@@ -2831,6 +2856,15 @@ impl EagerF0 {
                     // A hidden structure's globals are hidden with it.
                     if let Some(p) = f.parent()
                         && exclude.as_ref().is_some_and(|re| re.is_match(p))
+                    {
+                        continue;
+                    }
+                    // An aggregate with a variant for each type of
+                    // element is listed under its first variant.
+                    if f.overload_rank() > 0
+                        && f.overloaded_name().is_some_and(|n| {
+                            library::aggregate_overloads().contains_key(n)
+                        })
                     {
                         continue;
                     }
@@ -2965,11 +2999,36 @@ pub enum EagerF1 {
     RealRound,
     RealSign,
     RealTrunc,
+    RelationalAvg,
+    RelationalAvgOpt,
+    RelationalAvgSome,
+    RelationalCountSome,
     RelationalMax,
+    RelationalMaxOpt,
+    RelationalMaxSome,
     RelationalMin,
+    RelationalMinOpt,
+    RelationalMinSome,
     RelationalOnly,
+    RelationalStddevPop,
+    RelationalStddevPopOpt,
+    RelationalStddevPopSome,
+    RelationalStddevSamp,
+    RelationalStddevSampOpt,
+    RelationalStddevSampSome,
     RelationalSum,
     RelationalSumDecimal,
+    RelationalSumOpt,
+    RelationalSumOptDecimal,
+    RelationalSumOptInt,
+    RelationalSumOptReal,
+    RelationalSumSome,
+    RelationalVarPop,
+    RelationalVarPopOpt,
+    RelationalVarPopSome,
+    RelationalVarSamp,
+    RelationalVarSampOpt,
+    RelationalVarSampSome,
     StringFromString,
     SysParseTree,
     SysPlanEx,
@@ -3163,8 +3222,75 @@ impl EagerF1 {
             RealRound => Real::round(a0.expect_real(), span),
             RealSign => Real::sign(a0.expect_real(), span),
             RealTrunc => Real::trunc(a0.expect_real(), span),
+            RelationalAvg => Relational::statistic(
+                Stat::Avg,
+                Form::Plain,
+                a0.expect_list(),
+                span,
+            ),
+            RelationalAvgOpt => Relational::statistic(
+                Stat::Avg,
+                Form::Opt,
+                a0.expect_list(),
+                span,
+            ),
+            RelationalAvgSome => Relational::statistic(
+                Stat::Avg,
+                Form::Some,
+                a0.expect_list(),
+                span,
+            ),
+            RelationalCountSome => Ok(Relational::count_some(a0.expect_list())),
             RelationalMax => Relational::max(a0.expect_list(), span),
+            RelationalMaxOpt => {
+                Relational::extreme(true, Form::Opt, a0.expect_list(), span)
+            }
+            RelationalMaxSome => {
+                Relational::extreme(true, Form::Some, a0.expect_list(), span)
+            }
             RelationalMin => Relational::min(a0.expect_list(), span),
+            RelationalMinOpt => {
+                Relational::extreme(false, Form::Opt, a0.expect_list(), span)
+            }
+            RelationalMinSome => {
+                Relational::extreme(false, Form::Some, a0.expect_list(), span)
+            }
+            RelationalStddevPop => Relational::statistic(
+                Stat::StddevPop,
+                Form::Plain,
+                a0.expect_list(),
+                span,
+            ),
+            RelationalStddevPopOpt => Relational::statistic(
+                Stat::StddevPop,
+                Form::Opt,
+                a0.expect_list(),
+                span,
+            ),
+            RelationalStddevPopSome => Relational::statistic(
+                Stat::StddevPop,
+                Form::Some,
+                a0.expect_list(),
+                span,
+            ),
+            RelationalStddevSamp => Relational::statistic(
+                Stat::StddevSamp,
+                Form::Plain,
+                a0.expect_list(),
+                span,
+            ),
+            RelationalStddevSampOpt => Relational::statistic(
+                Stat::StddevSamp,
+                Form::Opt,
+                a0.expect_list(),
+                span,
+            ),
+            RelationalStddevSampSome => Relational::statistic(
+                Stat::StddevSamp,
+                Form::Some,
+                a0.expect_list(),
+                span,
+            ),
             RelationalSum => {
                 // `sum` is `'a bag -> 'a` where `'a` is numeric; dispatch
                 // on the element type, for the calls whose type the
@@ -3181,6 +3307,51 @@ impl EagerF1 {
                 }
             }
             RelationalSumDecimal => decimal_sum_val(a0.expect_list(), span),
+            RelationalSumOpt
+            | RelationalSumOptDecimal
+            | RelationalSumOptInt
+            | RelationalSumOptReal => {
+                Relational::sum_form(Form::Opt, a0.expect_list(), span)
+            }
+            RelationalSumSome => {
+                Relational::sum_form(Form::Some, a0.expect_list(), span)
+            }
+            RelationalVarPop => Relational::statistic(
+                Stat::VarPop,
+                Form::Plain,
+                a0.expect_list(),
+                span,
+            ),
+            RelationalVarPopOpt => Relational::statistic(
+                Stat::VarPop,
+                Form::Opt,
+                a0.expect_list(),
+                span,
+            ),
+            RelationalVarPopSome => Relational::statistic(
+                Stat::VarPop,
+                Form::Some,
+                a0.expect_list(),
+                span,
+            ),
+            RelationalVarSamp => Relational::statistic(
+                Stat::VarSamp,
+                Form::Plain,
+                a0.expect_list(),
+                span,
+            ),
+            RelationalVarSampOpt => Relational::statistic(
+                Stat::VarSamp,
+                Form::Opt,
+                a0.expect_list(),
+                span,
+            ),
+            RelationalVarSampSome => Relational::statistic(
+                Stat::VarSamp,
+                Form::Some,
+                a0.expect_list(),
+                span,
+            ),
             StringFromString => string_cvt::scan_str(
                 r,
                 f,
@@ -5333,6 +5504,11 @@ fn plan_label(variant: &str) -> String {
         }
         "RelationalSumInt" => return "Relational.sum$int".to_string(),
         "RelationalSumReal" => return "Relational.sum$real".to_string(),
+        "RelationalSumOptDecimal" => {
+            return "Relational.sumOpt$decimal".to_string();
+        }
+        "RelationalSumOptInt" => return "Relational.sumOpt$int".to_string(),
+        "RelationalSumOptReal" => return "Relational.sumOpt$real".to_string(),
         _ => {}
     }
     let variant = match variant {
@@ -5357,6 +5533,17 @@ fn plan_label(variant: &str) -> String {
         "BagHd" => "ListHd",
         "BagTl" => "ListTl",
         other => other,
+    };
+    // The implementation shared by the variants of an overloaded
+    // aggregate, `RelationalAvg`, is labelled as its first variant is,
+    // `Relational.avg`.
+    let first_variant = format!("{}IntBag", variant);
+    let variant = if BuiltInFunction::from_str(variant).is_err()
+        && BuiltInFunction::from_str(&first_variant).is_ok()
+    {
+        first_variant.as_str()
+    } else {
+        variant
     };
     BuiltInFunction::from_str(variant).map_or_else(
         |_| variant.to_string(),
@@ -5856,18 +6043,27 @@ fn build_library() -> Lib {
     Eager2::RealUnordered.implements(&mut b, RealUnordered);
     Eager2::RelationalCompare.implements(&mut b, RelationalCompare);
     Eager1::RelationalCount.implements(&mut b, RelationalCount);
+    EagerF1::RelationalCountSome.implements(&mut b, RelationalCountSome);
     Eager1::RelationalEmpty.implements(&mut b, RelationalEmpty);
     EagerF2::RelationalIterate.implements(&mut b, RelationalIterate);
     EagerF1::RelationalMax.implements(&mut b, RelationalMax);
     EagerF2::RelationalMaxBy.implements(&mut b, RelationalMaxBy);
+    EagerF1::RelationalMaxOpt.implements(&mut b, RelationalMaxOpt);
+    EagerF1::RelationalMaxSome.implements(&mut b, RelationalMaxSome);
     EagerF1::RelationalMin.implements(&mut b, RelationalMin);
     EagerF2::RelationalMinBy.implements(&mut b, RelationalMinBy);
+    EagerF1::RelationalMinOpt.implements(&mut b, RelationalMinOpt);
+    EagerF1::RelationalMinSome.implements(&mut b, RelationalMinSome);
     Eager1::RelationalNonEmpty.implements(&mut b, RelationalNonEmpty);
     EagerF1::RelationalOnly.implements(&mut b, RelationalOnly);
     EagerF1::RelationalSum.implements(&mut b, RelationalSum);
     EagerF1::RelationalSumDecimal.implements(&mut b, RelationalSumDecimal);
     Eager1::RelationalSumInt.implements(&mut b, RelationalSumInt);
+    EagerF1::RelationalSumOpt.implements(&mut b, RelationalSumOpt);
+    EagerF1::RelationalSumOptInt.implements(&mut b, RelationalSumOptInt);
+    EagerF1::RelationalSumOptReal.implements(&mut b, RelationalSumOptReal);
     Eager1::RelationalSumReal.implements(&mut b, RelationalSumReal);
+    EagerF1::RelationalSumSome.implements(&mut b, RelationalSumSome);
     Eager2::StringCaret.implements(&mut b, StringCaret);
     EagerF2::StringCollate.implements(&mut b, StringCollate);
     Eager2::StringCompare.implements(&mut b, StringCompare);
@@ -6045,6 +6241,184 @@ fn build_library() -> Lib {
     Eager0::ZCheck.implements(&mut b, ZCheck);
     Eager0::ZRequire.implements(&mut b, ZRequire);
 
+    // Too long a line to sort with the rest.
+    EagerF1::RelationalSumOptDecimal
+        .implements(&mut b, RelationalSumOptDecimal);
+    // The variants of an overloaded aggregate, one for each type of
+    // element and kind of collection, share an implementation, which
+    // reads what the elements are off the elements.
+    for (eager, element_types) in [
+        (
+            EagerF1::RelationalAvg,
+            [
+                RelationalAvgIntBag,
+                RelationalAvgIntList,
+                RelationalAvgRealBag,
+                RelationalAvgRealList,
+                RelationalAvgDecimalBag,
+                RelationalAvgDecimalList,
+            ],
+        ),
+        (
+            EagerF1::RelationalAvgOpt,
+            [
+                RelationalAvgOptIntBag,
+                RelationalAvgOptIntList,
+                RelationalAvgOptRealBag,
+                RelationalAvgOptRealList,
+                RelationalAvgOptDecimalBag,
+                RelationalAvgOptDecimalList,
+            ],
+        ),
+        (
+            EagerF1::RelationalAvgSome,
+            [
+                RelationalAvgSomeIntBag,
+                RelationalAvgSomeIntList,
+                RelationalAvgSomeRealBag,
+                RelationalAvgSomeRealList,
+                RelationalAvgSomeDecimalBag,
+                RelationalAvgSomeDecimalList,
+            ],
+        ),
+        (
+            EagerF1::RelationalStddevPop,
+            [
+                RelationalStddevPopIntBag,
+                RelationalStddevPopIntList,
+                RelationalStddevPopRealBag,
+                RelationalStddevPopRealList,
+                RelationalStddevPopDecimalBag,
+                RelationalStddevPopDecimalList,
+            ],
+        ),
+        (
+            EagerF1::RelationalStddevPopOpt,
+            [
+                RelationalStddevPopOptIntBag,
+                RelationalStddevPopOptIntList,
+                RelationalStddevPopOptRealBag,
+                RelationalStddevPopOptRealList,
+                RelationalStddevPopOptDecimalBag,
+                RelationalStddevPopOptDecimalList,
+            ],
+        ),
+        (
+            EagerF1::RelationalStddevPopSome,
+            [
+                RelationalStddevPopSomeIntBag,
+                RelationalStddevPopSomeIntList,
+                RelationalStddevPopSomeRealBag,
+                RelationalStddevPopSomeRealList,
+                RelationalStddevPopSomeDecimalBag,
+                RelationalStddevPopSomeDecimalList,
+            ],
+        ),
+        (
+            EagerF1::RelationalStddevSamp,
+            [
+                RelationalStddevSampIntBag,
+                RelationalStddevSampIntList,
+                RelationalStddevSampRealBag,
+                RelationalStddevSampRealList,
+                RelationalStddevSampDecimalBag,
+                RelationalStddevSampDecimalList,
+            ],
+        ),
+        (
+            EagerF1::RelationalStddevSampOpt,
+            [
+                RelationalStddevSampOptIntBag,
+                RelationalStddevSampOptIntList,
+                RelationalStddevSampOptRealBag,
+                RelationalStddevSampOptRealList,
+                RelationalStddevSampOptDecimalBag,
+                RelationalStddevSampOptDecimalList,
+            ],
+        ),
+        (
+            EagerF1::RelationalStddevSampSome,
+            [
+                RelationalStddevSampSomeIntBag,
+                RelationalStddevSampSomeIntList,
+                RelationalStddevSampSomeRealBag,
+                RelationalStddevSampSomeRealList,
+                RelationalStddevSampSomeDecimalBag,
+                RelationalStddevSampSomeDecimalList,
+            ],
+        ),
+        (
+            EagerF1::RelationalVarPop,
+            [
+                RelationalVarPopIntBag,
+                RelationalVarPopIntList,
+                RelationalVarPopRealBag,
+                RelationalVarPopRealList,
+                RelationalVarPopDecimalBag,
+                RelationalVarPopDecimalList,
+            ],
+        ),
+        (
+            EagerF1::RelationalVarPopOpt,
+            [
+                RelationalVarPopOptIntBag,
+                RelationalVarPopOptIntList,
+                RelationalVarPopOptRealBag,
+                RelationalVarPopOptRealList,
+                RelationalVarPopOptDecimalBag,
+                RelationalVarPopOptDecimalList,
+            ],
+        ),
+        (
+            EagerF1::RelationalVarPopSome,
+            [
+                RelationalVarPopSomeIntBag,
+                RelationalVarPopSomeIntList,
+                RelationalVarPopSomeRealBag,
+                RelationalVarPopSomeRealList,
+                RelationalVarPopSomeDecimalBag,
+                RelationalVarPopSomeDecimalList,
+            ],
+        ),
+        (
+            EagerF1::RelationalVarSamp,
+            [
+                RelationalVarSampIntBag,
+                RelationalVarSampIntList,
+                RelationalVarSampRealBag,
+                RelationalVarSampRealList,
+                RelationalVarSampDecimalBag,
+                RelationalVarSampDecimalList,
+            ],
+        ),
+        (
+            EagerF1::RelationalVarSampOpt,
+            [
+                RelationalVarSampOptIntBag,
+                RelationalVarSampOptIntList,
+                RelationalVarSampOptRealBag,
+                RelationalVarSampOptRealList,
+                RelationalVarSampOptDecimalBag,
+                RelationalVarSampOptDecimalList,
+            ],
+        ),
+        (
+            EagerF1::RelationalVarSampSome,
+            [
+                RelationalVarSampSomeIntBag,
+                RelationalVarSampSomeIntList,
+                RelationalVarSampSomeRealBag,
+                RelationalVarSampSomeRealList,
+                RelationalVarSampSomeDecimalBag,
+                RelationalVarSampSomeDecimalList,
+            ],
+        ),
+    ] {
+        for f in element_types {
+            eager.implements(&mut b, f);
+        }
+    }
+
     b.build()
 }
 
@@ -6200,6 +6574,12 @@ impl LibBuilder {
             }
 
             for global_name in f.global_names() {
+                // An overloaded aggregate's first variant is the one bound.
+                if let Some(BuiltIn::Fn(g)) = name_to_built_in.get(global_name)
+                    && f.yields_to(g)
+                {
+                    continue;
+                }
                 name_to_built_in
                     .insert(global_name.to_string(), BuiltIn::Fn(f));
             }
@@ -6216,10 +6596,11 @@ impl LibBuilder {
                 // only functions, not constructors. But `List.nil` /
                 // `Bag.nil` are conventional values (empty list/bag)
                 // and DO appear in their parent structure.
-                structure_names_fns
-                    .entry(r)
-                    .or_default()
-                    .insert(name.to_string(), f);
+                let names_fns = structure_names_fns.entry(r).or_default();
+                // An overloaded aggregate's first variant is the one bound.
+                if names_fns.get(name).is_none_or(|g| !f.yields_to(g)) {
+                    names_fns.insert(name.to_string(), f);
+                }
             }
             // Skip functions with parents that aren't records
             // (like "G" for global)

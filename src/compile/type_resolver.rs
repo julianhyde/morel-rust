@@ -2118,6 +2118,14 @@ impl TypeResolver {
         self.node_var_map.clear();
         self.overload_constraints.clear();
         self.preferred_vars.clear();
+        // Each of these holds variables of the unifier that is about to
+        // be replaced, which in the new one stand for other terms: an
+        // operator checked against one would be checked against
+        // whatever the next attempt gives that variable.
+        self.arithmetic.clear();
+        self.preferred_collection_vars.clear();
+        self.erased_vars.clear();
+        self.claimed_after_erasure.clear();
         self.var_alias_map.clear();
         self.datatype_bindings.clear();
         self.decl_type_vars.clear();
@@ -5971,6 +5979,25 @@ impl TypeResolver {
         _v_arg: &Var,
         _v: &Var,
     ) -> Result<Expr, Error> {
+        // A member of `Relational` that has a variant for each type of
+        // element and kind of collection, such as `Relational.avg`, is
+        // overloaded, as the global `avg` is.
+        if let ExprKind::Apply(selector, structure) = &fun.kind
+            && let ExprKind::RecordSelector(member) = &selector.kind
+            && let ExprKind::Identifier(name) = &structure.kind
+            && name == "Relational"
+            && !self.user_bindings.contains(name)
+            && library::aggregate_overloads().contains_key(member.as_str())
+            && let Some(candidates) = self.overloads.get(member).cloned()
+        {
+            // The selection is typed as usual, so that its parts have
+            // types, but the function's type is the overload's.
+            let v_member = self.variable();
+            let fun2 = self.deduce_expr_type(env, fun, &v_member)?;
+            self.overload_constraints
+                .push(Constraint::new(*v_fun, candidates));
+            return Ok(self.reg_expr(&fun2.kind, &fun.span, fun.id, v_fun));
+        }
         self.deduce_expr_type(env, fun, v_fun)
     }
 
@@ -6068,6 +6095,28 @@ impl TypeResolver {
             }
             return Ok(None);
         };
+
+        // An aggregate with a variant for each type of element, such as
+        // `avg`, is called as its overloaded global, `avg xs`, which
+        // chooses the variant; the table knows only the kind of
+        // collection.
+        if let Some(global) = builtin.overloaded_name()
+            && builtin.overload_rank() < 6
+            && library::aggregate_overloads().contains_key(global)
+            && !self.user_bindings.contains(global)
+            && matches!(&arg.kind,
+                ExprKind::Literal(l) if matches!(l.kind, LiteralKind::Unit))
+        {
+            let name_id = Expr {
+                kind: ExprKind::Identifier(global.to_string()),
+                span: recv.span.clone(),
+                id: None,
+                attributes: Vec::new(),
+            };
+            let (fun2, arg2) =
+                self.deduce_apply_type(env, &name_id, recv, v_result)?;
+            return Ok(Some((fun2, arg2)));
+        }
 
         // Build `Literal(Fn(builtin))` as the new function.
         let span = recv.span.clone();
