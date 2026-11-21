@@ -23,6 +23,7 @@
 #![allow(clippy::nonminimal_bool)]
 #![allow(clippy::collapsible_if)]
 
+use crate::compile::types::TypeVariable;
 use crate::unify;
 use std::cell::RefCell;
 use std::cmp::{Ordering, PartialEq, max};
@@ -243,6 +244,10 @@ impl FromTerm for Term {
 /// A registered variable.
 ///
 /// Its id is unique within a Unifier,
+/// The names that an error message gives the variables it prints; see
+/// [`Unifier::render_named`].
+pub type VarNames = HashMap<Var, String>;
+
 /// and disjoint from Op id values.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct Var {
@@ -1398,10 +1403,35 @@ impl Unifier {
     /// `$collection(e, ordered)` as `list(e)` and `$collection(e, unordered)`
     /// as `bag(e)`.
     pub fn render(&self, term: &Term) -> String {
+        self.render_named(term, &mut HashMap::new())
+    }
+
+    /// Renders a term for an error message, as [`Unifier::render`] does,
+    /// naming each variable as a type variable is, `'a`, `'b`, ..., in the
+    /// order that the message meets it; `names` holds the names given so
+    /// far, so that two terms of one message share them. A message so does
+    /// not depend on the unifier's internal numbering. (morel-java issue
+    /// #357.)
+    pub fn render_named(&self, term: &Term, names: &mut VarNames) -> String {
         match term {
-            Term::Sequence(seq) => self.render_sequence(seq),
-            Term::Variable(_) => self.term_string(term),
+            Term::Sequence(seq) => self.render_sequence_named(seq, names),
+            Term::Variable(v) => {
+                let next = names.len();
+                names
+                    .entry(*v)
+                    .or_insert_with(|| TypeVariable::new(next).name())
+                    .clone()
+            }
         }
+    }
+
+    /// Renders the message for two terms that cannot be unified, naming
+    /// the variables of both with one set of names.
+    pub fn render_conflict(&self, left: &Sequence, right: &Sequence) -> String {
+        let mut names = VarNames::new();
+        let left = self.render_sequence_named(left, &mut names);
+        let right = self.render_sequence_named(right, &mut names);
+        format!("conflict: {} vs {}", left, right)
     }
 
     /// Renders the argument type of an overloaded function's type for an
@@ -1422,6 +1452,16 @@ impl Unifier {
     /// rather than `tuple(int, int)`, `T list` rather than `list(T)`.
     /// See [`Unifier::render`].
     pub fn render_sequence(&self, seq: &Sequence) -> String {
+        self.render_sequence_named(seq, &mut HashMap::new())
+    }
+
+    /// Renders a sequence, as [`Unifier::render_sequence`] does, with the
+    /// variable names in `names`; see [`Unifier::render_named`].
+    fn render_sequence_named(
+        &self,
+        seq: &Sequence,
+        names: &mut VarNames,
+    ) -> String {
         if let Some(ord) = self.orderedness_atom(&Term::Sequence(seq.clone())) {
             // A bare orderedness atom surfaces when two collections are
             // unified on a shared orderedness variable and clash; render it
@@ -1434,37 +1474,52 @@ impl Unifier {
                 Some(ord) => collection_name(ord),
                 None => "bag",
             };
-            return format!("{} {}", self.render_atomic(&seq.terms[0]), kind);
+            return format!(
+                "{} {}",
+                self.render_atomic(&seq.terms[0], names),
+                kind
+            );
         }
         if let Some(name) = op_name.strip_prefix(ALIAS_PREFIX) {
             // "$alias:t(int)" reads "t (alias for int)".
             return format!(
                 "{} (alias for {})",
                 name,
-                self.render(&seq.terms[0])
+                self.render_named(&seq.terms[0], names)
             );
         }
         if op_name == "tuple" && !seq.terms.is_empty() {
-            return self.render_join(&seq.terms, " * ");
+            // A component that is a function or a tuple is bracketed:
+            // "(int -> int) * int", "(int * int) * int".
+            return seq
+                .terms
+                .iter()
+                .map(|t| self.render_bracketed(t, names, &["fn", "tuple"]))
+                .collect::<Vec<_>>()
+                .join(" * ");
         }
         if op_name == "fn" && seq.terms.len() == 2 {
+            // "->" associates to the right, so a parameter that is a
+            // function is bracketed: "(int -> int) -> int".
             return format!(
                 "{} -> {}",
-                self.render(&seq.terms[0]),
-                self.render(&seq.terms[1])
+                self.render_bracketed(&seq.terms[0], names, &["fn"]),
+                self.render_named(&seq.terms[1], names)
             );
         }
         if let Some(labels) = op_name.strip_prefix("record:") {
             // The operator carries the field names, e.g. "record:a:b".
-            let names: Vec<&str> = labels.split(':').collect();
-            if names.len() == seq.terms.len() {
-                let fields = zip(names, seq.terms.iter())
-                    .map(|(name, term)| {
-                        format!("{}:{}", name, self.render(term))
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                return format!("{{{}}}", fields);
+            let labels: Vec<&str> = labels.split(':').collect();
+            if labels.len() == seq.terms.len() {
+                let mut fields = Vec::with_capacity(labels.len());
+                for (label, term) in zip(labels, seq.terms.iter()) {
+                    fields.push(format!(
+                        "{}:{}",
+                        label,
+                        self.render_named(term, names)
+                    ));
+                }
+                return format!("{{{}}}", fields.join(", "));
             }
         }
         if seq.terms.is_empty() {
@@ -1472,9 +1527,9 @@ impl Unifier {
         }
         // A type constructor applied to arguments, e.g. "int option".
         let args = if seq.terms.len() == 1 {
-            self.render_atomic(&seq.terms[0])
+            self.render_atomic(&seq.terms[0], names)
         } else {
-            format!("({})", self.render_join(&seq.terms, ", "))
+            format!("({})", self.render_join(&seq.terms, ", ", names))
         };
         format!("{} {}", args, op_name)
     }
@@ -1482,8 +1537,8 @@ impl Unifier {
     /// Renders a term, parenthesized if it would otherwise bind less
     /// tightly than the postfix type constructor it is the argument of:
     /// `(int * int) list`, not `int * int list`.
-    fn render_atomic(&self, term: &Term) -> String {
-        let s = self.render(term);
+    fn render_atomic(&self, term: &Term, names: &mut VarNames) -> String {
+        let s = self.render_named(term, names);
         if !s.contains(' ') || s.starts_with('(') || s.starts_with('{') {
             s
         } else {
@@ -1491,11 +1546,36 @@ impl Unifier {
         }
     }
 
+    /// Renders a term, bracketed if it is a sequence, with arguments,
+    /// whose operator is one of `ops`.
+    fn render_bracketed(
+        &self,
+        term: &Term,
+        names: &mut VarNames,
+        ops: &[&str],
+    ) -> String {
+        let s = self.render_named(term, names);
+        match term {
+            Term::Sequence(seq)
+                if !seq.terms.is_empty()
+                    && ops.contains(&self.op_name(&seq.op)) =>
+            {
+                format!("({})", s)
+            }
+            _ => s,
+        }
+    }
+
     /// Renders terms, separated.
-    fn render_join(&self, terms: &[Term], separator: &str) -> String {
+    fn render_join(
+        &self,
+        terms: &[Term],
+        separator: &str,
+        names: &mut VarNames,
+    ) -> String {
         terms
             .iter()
-            .map(|t| self.render(t))
+            .map(|t| self.render_named(t, names))
             .collect::<Vec<_>>()
             .join(separator)
     }
@@ -1663,11 +1743,7 @@ impl Unifier {
                         // what they expand to.
                     }
                     tracer.on_conflict(&left, &right);
-                    let reason = format!(
-                        "conflict: {} vs {}",
-                        self.render_sequence(&left),
-                        self.render_sequence(&right)
-                    );
+                    let reason = self.render_conflict(&left, &right);
                     return Err(UnificationFailure { reason });
                 }
 
@@ -1679,11 +1755,7 @@ impl Unifier {
                 // "list(T) vs bag(T)".
                 if self.is_orderedness_conflict(&left, &right) {
                     tracer.on_conflict(&left, &right);
-                    let reason = format!(
-                        "conflict: {} vs {}",
-                        self.render_sequence(&left),
-                        self.render_sequence(&right)
-                    );
+                    let reason = self.render_conflict(&left, &right);
                     return Err(UnificationFailure { reason });
                 }
 
@@ -1700,8 +1772,15 @@ impl Unifier {
                 // Occurs check
                 if self.occurs && term.contains(&variable) {
                     tracer.on_cycle(&variable, &term);
-                    let reason =
-                        format!("cycle: variable (id={}) in term", variable.id);
+                    let mut names = VarNames::new();
+                    let reason = format!(
+                        "cycle: variable {} in {}",
+                        self.render_named(
+                            &Term::Variable(variable),
+                            &mut names
+                        ),
+                        self.render_named(&term, &mut names)
+                    );
                     return Err(UnificationFailure { reason });
                 }
 
