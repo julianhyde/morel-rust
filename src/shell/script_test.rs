@@ -19,7 +19,7 @@ use crate::eval::session::Config as SessionConfig;
 use crate::shell::config::Config;
 use crate::shell::error::Error;
 use crate::shell::{Kernel, ScriptRunner, ShellResult, utils};
-use std::env::temp_dir;
+use std::env::{self, temp_dir};
 use std::fs::{self};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -47,6 +47,13 @@ impl ScriptTest {
     pub fn run<P: AsRef<Path>>(&self, path: P) -> ShellResult<()> {
         let path = path.as_ref();
         let (in_file, out_file) = self.resolve_files(path)?;
+
+        // A script runs only if each condition that a `(*) requires:`
+        // line of its header names holds; see `requirement`.
+        let requirement = match requirement(&in_file) {
+            Requirement::Unmet => return Ok(()),
+            r => r,
+        };
 
         // Determine if this is an idempotent test (*.smli files)
         let idempotent = path.to_string_lossy().ends_with(".smli")
@@ -93,6 +100,11 @@ impl ScriptTest {
             if path_str.contains("/file.") {
                 directory.push("data");
             }
+            // A script that requires the TPC-DS data set runs in its
+            // directory.
+            if let Requirement::Tpcds(dir) = &requirement {
+                directory = dir.clone();
+            }
             session_config.script_directory = Some(Rc::new(script_dir));
             session_config.directory = Some(Rc::new(directory));
         }
@@ -102,6 +114,13 @@ impl ScriptTest {
 
         // Apply session config (script directory, etc.)
         shell.apply_session_config(&session_config);
+
+        // Bind `tpcds` to the data set's files before the script, printing
+        // nothing, as morel-java's prelude does.
+        if let Requirement::Tpcds(_) = &requirement {
+            ScriptRunner::new(&mut shell)
+                .run(&b"val tpcds = file;\n"[..], &mut Vec::new())?;
+        }
 
         // Run the input file and capture output
         let mut output = Vec::new();
@@ -288,6 +307,38 @@ impl Default for ScriptTest {
     }
 }
 
+/// What a script's header says it requires.
+enum Requirement {
+    /// Nothing.
+    None,
+    /// The TPC-DS data set, in this directory.
+    Tpcds(PathBuf),
+    /// Something that is not available here; the script does not run.
+    Unmet,
+}
+
+/// Reads the `(*) requires: <condition>` line of a script's header, if
+/// it has one. The only condition that can hold here is `tpcds`, which
+/// holds when environment variable `MOREL_TPCDS` names the directory of
+/// the TPC-DS data set that morel-java's `tpcds/generate.sh` wrote.
+fn requirement(in_file: &Path) -> Requirement {
+    let Ok(content) = fs::read_to_string(in_file) else {
+        return Requirement::None;
+    };
+    let Some(condition) = content
+        .lines()
+        .find_map(|line| line.strip_prefix("(*) requires: "))
+    else {
+        return Requirement::None;
+    };
+    match (condition.trim(), env::var_os("MOREL_TPCDS")) {
+        ("tpcds", Some(dir)) if !dir.is_empty() => {
+            Requirement::Tpcds(PathBuf::from(dir))
+        }
+        _ => Requirement::Unmet,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,3 +375,5 @@ mod tests {
         println!("Found {} test files", files.len());
     }
 }
+
+// End script_test.rs

@@ -432,6 +432,13 @@ fn tail_recursion() {
     run_script("tests/script/tail-recursion.smli");
 }
 
+/// Runs only when `MOREL_TPCDS` names the TPC-DS data set; see
+/// `ScriptTest`'s handling of `(*) requires:`.
+#[test]
+fn tpcds_10m() {
+    run_script("tests/script/tpcds-10m.smli");
+}
+
 #[test]
 fn type_() {
     run_script("tests/script/type.smli");
