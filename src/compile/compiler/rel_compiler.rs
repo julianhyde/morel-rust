@@ -1062,8 +1062,7 @@ fn variables(e: &Expr) -> BTreeSet<String> {
 
 /// Returns whether values of a type can be hashed: whether two are
 /// equal, by Morel's `=`, exactly when they are equal as keys. Not
-/// `real`, whose `nan` and `~0.0` differ; nor, for now, `date`, whose
-/// values' equality is not yet their `=`.
+/// `real`, whose `nan` and `~0.0` differ.
 fn is_hashable(t: &Type) -> bool {
     match t {
         Type::Primitive(p) => matches!(
@@ -1078,7 +1077,7 @@ fn is_hashable(t: &Type) -> bool {
         Type::Record(_, fields) => fields.values().all(|t| is_hashable(t)),
         Type::List(t) => is_hashable(t),
         Type::Data(name, args) => match name.as_str() {
-            "decimal" => true,
+            "date" | "decimal" => true,
             "option" => args.first().is_some_and(|t| is_hashable(t)),
             _ => false,
         },

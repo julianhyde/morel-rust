@@ -57,6 +57,9 @@ impl Comparator for NaturalComparator {
             ) => ord_a
                 .cmp(ord_b)
                 .then_with(|| self.compare(inner_a, inner_b)),
+            // Dates are ordered as instants, whatever offset each is
+            // written in.
+            (Val::Date(x, _), Val::Date(y, _)) => x.cmp(y),
             (Val::Decimal(x), Val::Decimal(y)) => x.cmp(y),
             (Val::Inl(_), Val::Inr(_)) => Ordering::Less,
             (Val::Inl(a), Val::Inl(b)) => self.compare(a, b),
@@ -77,6 +80,7 @@ impl Comparator for NaturalComparator {
             (Val::Some(_), Val::Unit) => Ordering::Greater,
             (Val::Some(a), Val::Some(b)) => self.compare(a, b),
             (Val::String(x), Val::String(y)) => x.cmp(y),
+            (Val::Time(x), Val::Time(y)) => x.cmp(y),
             (Val::Unit, Val::Some(_)) => Ordering::Less,
             (Val::Unit, Val::Unit) => Ordering::Equal,
             (Val::Word(x), Val::Word(y)) => x.cmp(y),

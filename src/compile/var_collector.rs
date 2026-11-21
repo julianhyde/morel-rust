@@ -204,10 +204,13 @@ impl Expr {
     pub(crate) fn collect_vars(&self, collector: &mut VarCollector) {
         match self {
             // lint: sort until '#}' where '##Expr::'
-            Expr::Aggregate(_, f, _e, _) => {
+            Expr::Aggregate(_, f, e, _) => {
                 // `f over e`: f is applied to 'elements'. Collect vars from f,
-                // and ensure 'elements' has a frame slot.
+                // and ensure 'elements' has a frame slot. `e` is evaluated in
+                // this frame for each element, so the variables that its
+                // patterns bind need slots here too.
                 f.collect_vars(collector);
+                e.collect_vars(collector);
                 let has_elements =
                     collector.defs.iter().any(|b| b.id.name == "elements");
                 if !has_elements {

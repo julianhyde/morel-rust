@@ -610,6 +610,10 @@ impl PartialEq for Val {
             (Val::Bool(a), Val::Bool(b)) => a == b,
             (Val::Char(a), Val::Char(b)) => a == b,
             (Val::Decimal(a), Val::Decimal(b)) => a == b,
+            // Two dates are equal if they are the same instant, whatever
+            // offset each is written in.
+            (Val::Date(a, _), Val::Date(b, _)) => a == b,
+            (Val::Time(a), Val::Time(b)) => a == b,
             (Val::Int(a), Val::Int(b)) => a == b,
             (Val::Order(a), Val::Order(b)) => a == b,
             (Val::Real(a), Val::Real(b)) => a == b,
@@ -676,10 +680,10 @@ impl Hash for Val {
                 22.hash(state);
                 t.hash(state);
             }
-            Val::Date(d, o) => {
+            // As equality, by instant only.
+            Val::Date(d, _) => {
                 23.hash(state);
                 d.hash(state);
-                o.hash(state);
             }
             Val::Decimal(d) => {
                 24.hash(state);

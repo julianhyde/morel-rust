@@ -44,7 +44,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
+use std::time::SystemTime;
 
 /// A file-system entry: a directory, a parseable data file, or
 /// something we haven't yet decided about (an unexpanded entry whose
@@ -63,6 +64,20 @@ pub struct File {
     /// to [`FileState::Directory`] or [`FileState::Data`] on the first
     /// call to [`Self::expand`].
     pub state: RefCell<FileState>,
+    /// The rows last read from a data file, with the file's modification
+    /// time and length when they were read. A scan of the file reuses
+    /// them while the file is unchanged and something else still holds
+    /// them: they are held weakly, so that a table that nothing is using
+    /// takes no memory, at the cost of reading it again.
+    rows: RefCell<Option<CachedRows>>,
+}
+
+/// The rows of a data file, as [`File::rows`] holds them.
+#[derive(Debug)]
+struct CachedRows {
+    modified: Option<SystemTime>,
+    len: u64,
+    rows: Weak<Vec<Val>>,
 }
 
 /// Discovered structure of a [`File`].
@@ -419,6 +434,7 @@ impl File {
             base_name,
             file_type,
             state: RefCell::new(FileState::Unexpanded),
+            rows: RefCell::new(None),
         })
     }
 
@@ -524,12 +540,30 @@ pub fn file_as_val(file: &Rc<File>) -> Result<Val, String> {
             Ok(Val::File(Rc::clone(file)))
         }
         FileState::Data { .. } => {
+            // Reuse the rows last read, if the file has not changed since,
+            // and they are still held.
+            let metadata = fs::metadata(&file.path).ok();
+            let modified = metadata.as_ref().and_then(|m| m.modified().ok());
+            let len = metadata.as_ref().map_or(0, fs::Metadata::len);
+            if let Some(cached) = &*file.rows.borrow()
+                && cached.modified == modified
+                && cached.len == len
+                && let Some(rows) = cached.rows.upgrade()
+            {
+                return Ok(Val::List(rows));
+            }
             let rows = file.read_rows().unwrap_or(Ok(Vec::new()))?;
-            Ok(Val::List(Rc::new(
+            let rows: Rc<Vec<Val>> = Rc::new(
                 rows.into_iter()
                     .map(|row| Val::List(Rc::new(row)))
                     .collect(),
-            )))
+            );
+            *file.rows.borrow_mut() = Some(CachedRows {
+                modified,
+                len,
+                rows: Rc::downgrade(&rows),
+            });
+            Ok(Val::List(rows))
         }
     }
 }
@@ -727,11 +761,10 @@ mod tests {
         assert_eq!(boolean.parse("true"), Ok(Val::Bool(true)));
         assert!(boolean.parse("t").is_err());
         let date = Column::of("d", "date");
-        // `Val`'s equality does not yet compare dates, so match instead.
-        assert!(matches!(
+        assert_eq!(
             date.parse("1970-01-02"),
             Ok(Val::Date(86_400_000_000_000, 0))
-        ));
+        );
         assert!(date.parse("1970-13-01").is_err());
     }
 

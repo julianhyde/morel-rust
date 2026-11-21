@@ -620,18 +620,36 @@ impl MorelParser {
     }
 
     fn id_postfix_chain(input: ParseInput) -> ParseResult<Expr> {
-        Ok(match_nodes!(input.children();
-            [identifier_expr(e), postfix_tail(labels)..] => {
-                labels.fold(e, |acc, label| {
-                    let selector =
-                        ExprKind::RecordSelector(label.name.to_string())
-                            .spanned(&label.span);
-                    let sel_span = acc.span.union(&label.span);
-                    ExprKind::Apply(Box::new(selector), Box::new(acc))
-                        .spanned(&sel_span)
-                })
-            },
-        ))
+        // `identifier_expr (postfix_tail | safe_postfix_tail)+`; as in
+        // `expr_postfix`, the children are walked by hand, because the
+        // tails are of two rules.
+        let mut e: Option<Expr> = None;
+        for child in input.children() {
+            let (label, safe) = match child.as_rule() {
+                Rule::identifier_expr => {
+                    e = Some(Self::identifier_expr(child)?);
+                    continue;
+                }
+                Rule::postfix_tail => (Self::postfix_tail(child)?, false),
+                Rule::safe_postfix_tail => {
+                    (Self::safe_postfix_tail(child)?, true)
+                }
+                _ => continue,
+            };
+            let acc = e.take().expect("id_postfix_chain missing identifier");
+            let kind = if safe {
+                ExprKind::SafeRecordSelector(label.name.to_string())
+            } else {
+                ExprKind::RecordSelector(label.name.to_string())
+            };
+            let selector = kind.spanned(&label.span);
+            let sel_span = acc.span.union(&label.span);
+            e = Some(
+                ExprKind::Apply(Box::new(selector), Box::new(acc))
+                    .spanned(&sel_span),
+            );
+        }
+        Ok(e.expect("id_postfix_chain missing identifier"))
     }
 
     fn expr_unary(input: ParseInput) -> ParseResult<Expr> {
