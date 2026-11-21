@@ -20,6 +20,7 @@ use crate::compile::core::{
     DatatypeBind, Decl, Expr, Match, ORDINAL_SLOT, Pat, PatField, Step,
     StepEnv, StepKind, TypeBind, ValBind,
 };
+use crate::compile::folder;
 use crate::compile::library::{self, BuiltInExn, BuiltInFunction, name_to_rec};
 use crate::compile::postfix::peel_type;
 use crate::compile::pretty::Pretty;
@@ -30,7 +31,7 @@ use crate::compile::type_resolver::TypeMap;
 use crate::compile::types::{Checks, Label, PrimitiveType, Type};
 use crate::compile::var_collector::VarCollector;
 use crate::eval::code::{
-    self, CmpRef, Code, Effect, EvalEnv, EvalMode, Frame, Impl,
+    self, CmpRef, Code, Effect, ElemSet, EvalEnv, EvalMode, Frame, Impl,
 };
 use crate::eval::comparator::{self, comparator_for};
 use crate::eval::discrete::discrete_for_with;
@@ -58,13 +59,16 @@ use strum::IntoEnumIterator;
 /// it; the slots remain valid forever, so functions defined in
 /// this statement can resolve their self-references when invoked
 /// from later statements. See [`LinkTable`] for the rationale.
-pub fn compile_statement(
-    type_map: &TypeMap,
+/// `consts`, if given, is the session and the shell in which the compiler
+/// evaluates an expression made of constants, once, at compile time.
+pub fn compile_statement<'a>(
+    type_map: &'a TypeMap,
     env: &Environment,
     decl: &Decl,
-    link_table: &mut LinkTable,
+    link_table: &'a mut LinkTable,
+    consts: Option<(&'a Session, &'a Kernel)>,
 ) -> Box<dyn CompiledStatement> {
-    let mut compiler = Compiler::new(type_map, link_table);
+    let mut compiler = Compiler::new(type_map, link_table, consts);
     compiler.compile_statement(env, decl, None, &HashSet::new())
 }
 
@@ -81,6 +85,9 @@ struct Compiler<'a> {
     /// across statement boundaries, allowing recursive functions
     /// to be invoked from a later statement.
     link_table: &'a mut LinkTable,
+    /// The session and shell in which to evaluate, at compile time, an
+    /// expression made of constants; see [`Compiler::folded`].
+    consts: Option<(&'a Session, &'a Kernel)>,
 }
 
 const UNIT_TYPE: Type = Type::Primitive(PrimitiveType::Unit);
@@ -90,10 +97,39 @@ impl<'a> Compiler<'a> {
         static ORDINAL_CODE: RefCell<Vec<i32>> = RefCell::new(vec![0]);
     }
 
-    fn new(type_map: &'a TypeMap, link_table: &'a mut LinkTable) -> Self {
+    fn new(
+        type_map: &'a TypeMap,
+        link_table: &'a mut LinkTable,
+        consts: Option<(&'a Session, &'a Kernel)>,
+    ) -> Self {
         Self {
             type_map,
             link_table,
+            consts,
+        }
+    }
+
+    /// Returns the code for an expression made of constants, such as
+    /// `[SOME 1, SOME 3]`, as the constant it evaluates to, so that it is
+    /// evaluated once rather than each time the code runs. If evaluating
+    /// it raises, the code is left to raise at run time.
+    fn folded(&self, expr: &Expr, code: Code) -> Code {
+        if matches!(code, Code::Constant(..)) {
+            return code;
+        }
+        let Some((session, kernel)) = self.consts else {
+            return code;
+        };
+        let mut effects = Vec::new();
+        let mut r = EvalEnv::new(session, kernel, &mut effects);
+        let mut vals: Vec<Val> = Vec::new();
+        let mut f = Frame {
+            vals: &mut vals,
+            frame_def: None,
+        };
+        match code.eval_f0(&mut r, &mut f) {
+            Ok(v) if effects.is_empty() => Code::new_constant(&expr.type_(), v),
+            _ => code,
         }
     }
 
@@ -772,6 +808,21 @@ impl<'a> Compiler<'a> {
     pub fn compile_expr(
         &mut self,
         cx: &Context,
+        pcx: Option<&Context>,
+        expr: &Expr,
+    ) -> Code {
+        if matches!(expr, Expr::Tuple(..) | Expr::Apply(..) | Expr::List(..))
+            && folder::is_constant(expr)
+        {
+            let code = self.compile_expr2(cx, pcx, expr);
+            return self.folded(expr, code);
+        }
+        self.compile_expr2(cx, pcx, expr)
+    }
+
+    fn compile_expr2(
+        &mut self,
+        cx: &Context,
         _pcx: Option<&Context>,
         expr: &Expr,
     ) -> Code {
@@ -812,6 +863,25 @@ impl<'a> Compiler<'a> {
                 }
             }
             Expr::Apply(result_type, f, a, span) => match f.as_ref() {
+                // `x elem [1, 2, 3]` looks up `x` in a set.
+                Expr::Literal(_t, Val::Fn(f))
+                    if matches!(
+                        f,
+                        BuiltInFunction::ListElem
+                            | BuiltInFunction::ListNotElem
+                    ) && let Expr::Tuple(_, args) = a.as_ref()
+                        && args.len() == 2
+                        && folder::is_constant(&args[1])
+                        && let Code::Constant(_, Val::List(items)) =
+                            self.compile_expr(cx, None, &args[1]) =>
+                {
+                    let code = self.compile_expr(cx, None, &args[0]);
+                    Code::ElemSet(
+                        Box::new(code),
+                        Rc::new(ElemSet::new(&items)),
+                        *f == BuiltInFunction::ListNotElem,
+                    )
+                }
                 Expr::Literal(_t, Val::Fn(f)) => {
                     let impl_ = f.get_impl();
                     // `$check` needs the value's type, to quote it in the

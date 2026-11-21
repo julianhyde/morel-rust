@@ -18,6 +18,7 @@
 use crate::compile::core::{
     Decl, Expr, Match, Pat, Rel, Step, StepKind, ValBind, is_simple,
 };
+use crate::compile::folder;
 use crate::compile::free_finder::free_names_in;
 use crate::compile::library::BuiltInFunction;
 use crate::compile::types::Type;
@@ -530,6 +531,26 @@ impl Transformer for Inliner {
                         Rc::new(field_type.clone()),
                         v2.clone(),
                     );
+                }
+                // A field of a record or tuple whose other fields are
+                // constant, such as `#b {a = 1, b = x}`, is that field,
+                // `x`. (If another field is not constant, it might raise,
+                // so the record is evaluated.)
+                if let Expr::RecordSelector(_, slot) = f.as_ref()
+                    && let Expr::Tuple(_, args) = a.as_ref()
+                    && *slot < args.len()
+                    && args
+                        .iter()
+                        .enumerate()
+                        .all(|(i, e)| i == *slot || folder::is_constant(e))
+                {
+                    return args[*slot].clone();
+                }
+                // Evaluate at compile time a call that converts or
+                // constructs a value, such as `Decimal.fromInt 100`. If
+                // the call would raise, leave it to raise at run time.
+                if let Some(folded) = folder::fold_call(&expr) {
+                    return folded;
                 }
                 // Beta-reduction: `(fn pat => body) arg` becomes
                 // `let val pat = arg in body end`. Mirrors morel-java's

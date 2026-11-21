@@ -93,7 +93,7 @@ ACCEPTED = {
         "morel-java prints the tree.",
     ),
     "optimize.smli": (
-        168,
+        184,
         "tests of `inlinePassCount` added here and not yet in "
         "morel-java, to be propagated there; `Sys.planEx` still "
         "prints the step list where morel-java prints the tree; "

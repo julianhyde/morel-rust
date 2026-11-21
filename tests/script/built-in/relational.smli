@@ -53,8 +53,7 @@ Relational.count (bag []);
 Relational.count (bag [false]);
 > val it = 1 : int
 Sys.plan ();
-> val it =
->   "apply(fnValue Relational.count, argCode apply(fnValue Bag.fromList, argCode tuple(constant(false))))"
+> val it = "apply(fnValue Relational.count, argCode constant([false]))"
 >   : string
 
 Relational.nonEmpty (bag [1, 2, 3]);
@@ -65,8 +64,7 @@ Relational.nonEmpty (bag [false]);
 > val it = true : bool
 
 Sys.plan ();
-> val it =
->   "apply(fnValue Relational.nonEmpty, argCode apply(fnValue Bag.fromList, argCode tuple(constant(false))))"
+> val it = "apply(fnValue Relational.nonEmpty, argCode constant([false]))"
 >   : string
 
 Relational.empty (bag [1, 2, 3]);
@@ -77,8 +75,7 @@ Relational.empty (bag [false]);
 > val it = false : bool
 
 Sys.plan ();
-> val it =
->   "apply(fnValue Relational.empty, argCode apply(fnValue Bag.fromList, argCode tuple(constant(false))))"
+> val it = "apply(fnValue Relational.empty, argCode constant([false]))"
 >   : string
 
 val emps = [
@@ -139,21 +136,20 @@ set("mode", "evaluate");
 Relational.sum (bag [1, 2, 3]);
 > val it = 6 : int
 Sys.plan ();
-> val it =
->   "apply(fnValue Relational.sum$int, argCode apply(fnValue Bag.fromList, argCode tuple(constant(1), constant(2), constant(3))))"
+> val it = "apply(fnValue Relational.sum$int, argCode constant([1, 2, 3]))"
 >   : string
 
 Relational.sum (bag [1.0, 2.5, 3.5]);
 > val it = 7 : real
 Sys.plan ();
 > val it =
->   "apply(fnValue Relational.sum$real, argCode apply(fnValue Bag.fromList, argCode tuple(constant(1.0), constant(2.5), constant(3.5))))"
+>   "apply(fnValue Relational.sum$real, argCode constant([1.0, 2.5, 3.5]))"
 >   : string
 Relational.sum (bag [decimal "0.1", decimal "0.2", decimal "12.30"]);
 > val it = 12.6 : decimal
 Sys.plan ();
 > val it =
->   "apply(fnValue Relational.sum$decimal, argCode apply(fnValue Bag.fromList, argCode tuple(constant(0.1), constant(0.2), constant(12.3))))"
+>   "apply(fnValue Relational.sum$decimal, argCode constant([0.1, 0.2, 12.3]))"
 >   : string
 Relational.sum (bag [Decimal.maxFinite, Decimal.maxFinite]);
 > uncaught exception Overflow [overflow]
@@ -269,7 +265,7 @@ Relational.only [];
 >   raised at: stdIn:1.1-1.19
 
 Sys.plan ();
-> val it = "apply(fnValue Relational.only, argCode tuple)" : string
+> val it = "apply(fnValue Relational.only, argCode constant([]))" : string
 
 1 elem [1, 2, 3];
 > val it = true : bool
@@ -294,9 +290,7 @@ bag [1, 2] elem [bag [0], bag [], bag [1, 2]];
 (1, 2) elem [(0, 1), (2, 3)];
 > val it = false : bool
 Sys.plan ();
-> val it =
->   "apply2(fnValue elem, tuple(constant(1), constant(2)), tuple(tuple(constant(0), constant(1)), tuple(constant(2), constant(3))))"
->   : string
+> val it = "elemSet(constant([1, 2]), set [[0, 1], [2, 3]])" : string
 
 (* Repeat the above tests for the bag version of elem. *)
 1 elem bag [1, 2, 3];
@@ -333,9 +327,7 @@ bag [] elem bag [bag [0], bag [], bag [1, 2]];
 set("mode", "validate");
 > val it = () : unit
 Sys.plan ();
-> val it =
->   "apply2(fnValue notelem, tuple(constant(1), constant(2)), tuple(tuple(constant(0), constant(1)), tuple(constant(2), constant(3))))"
->   : string
+> val it = "notElemSet(constant([1, 2]), set [[0, 1], [2, 3]])" : string
 set("mode", "evaluate");
 > val it = () : unit
 

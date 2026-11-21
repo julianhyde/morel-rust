@@ -1253,11 +1253,13 @@ impl Kernel {
                 .unwrap_or_else(|| decl2.clone());
         let compiled_statement = {
             let mut link_table = self.link_table.borrow_mut();
+            let session = self.session.borrow();
             compiler::compile_statement(
                 &resolved.type_map,
                 &self.environment,
                 &decl3,
                 &mut link_table,
+                Some((&session, self)),
             )
         };
         let mut result = String::new();

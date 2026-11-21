@@ -132,7 +132,7 @@ Option.mapPartial (fn s => if s = "" then NONE else (SOME (String.size s))) (SOM
 > val it = NONE : int option
 Sys.plan ();
 > val it =
->   "apply2(fnValue Option.mapPartial, fn(bind(0) => case(apply2(fnValue =, get(0), constant()), true, constant([NONE]), _, apply(fnValue Option.SOME, argCode apply(fnValue String.size, argCode get(0))))), apply(fnValue Option.SOME, argCode constant()))"
+>   "apply2(fnValue Option.mapPartial, fn(bind(0) => case(apply2(fnValue =, get(0), constant()), true, constant([NONE]), _, apply(fnValue Option.SOME, argCode apply(fnValue String.size, argCode get(0))))), constant([SOME, ]))"
 >   : string
 
 (*) val compose : ('a -> 'b) * ('c -> 'a option) -> 'c -> 'b option

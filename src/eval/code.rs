@@ -292,6 +292,11 @@ pub enum Code {
     /// false. The keys are compared with a comparator made for the key's
     /// type, so a `DESC` key reverses as it does in an `order`. Raises
     /// `Empty` at `span` if the list is empty.
+    /// `ElemSet(code, elements, negate)` evaluates whether the value of
+    /// `code` is one of `elements`, a constant collection, by looking it
+    /// up in a set; or, if `negate`, whether it is not. It is `elem` (or
+    /// `notelem`) whose collection is a constant.
+    ElemSet(Box<Code>, Rc<ElemSet>, bool),
     ExtremeBy(CmpRef, bool, Box<Code>, Box<Code>, Span),
     Fn(Arc<FrameDef>, Arc<[(Code, Code)]>, Option<MorelError>),
 
@@ -853,6 +858,7 @@ impl Code {
             // A non-capturing lambda is also a value: in a position such as
             // a `case` subject or arm body it is evaluated, not applied,
             // and yields itself as a `Val::Code`.
+            Code::ElemSet(_, _, _) => *mode == EvalMode::EagerF0,
             Code::ExtremeBy(_, _, _, _, _) => *mode == EvalMode::EagerF0,
             Code::Fn(_, _, _) => {
                 *mode == EvalMode::EagerV1 || *mode == EvalMode::EagerF0
@@ -1085,6 +1091,10 @@ impl Code {
                         });
                     Ok(Val::Closure(arc))
                 }
+            }
+            Code::ElemSet(code, elements, negate) => {
+                let v = code.eval_f0(r, f)?;
+                Ok(Val::Bool(elements.contains(&v) != *negate))
             }
             Code::ExtremeBy(cmp, greatest, key_code, list_code, span) => {
                 let key_fn = key_code.eval_f0(r, f)?;
@@ -2050,6 +2060,9 @@ impl Display for Code {
                 // Plans render integers Java-style (`-1`), not with morel's
                 // unary-minus spelling (`~1`) that `Val`'s own `Display` uses.
                 Val::Int(i) => write!(f, "constant({})", i),
+                Val::List(_) | Val::Some(_) => {
+                    write!(f, "constant({})", plan_value(v))
+                }
                 _ => write!(f, "constant({})", v),
             },
             Self::ConstructorWrap(tag) => {
@@ -2071,6 +2084,13 @@ impl Display for Code {
                 }
                 write!(f, "))")
             }
+            Self::ElemSet(code, elements, negate) => write!(
+                f,
+                "{}({}, set {})",
+                if *negate { "notElemSet" } else { "elemSet" },
+                code,
+                plan_value(&Val::List(Rc::new(elements.list.clone())))
+            ),
             Self::ExtremeBy(_, greatest, key, code, _) => write!(
                 f,
                 "{}({}, {})",
@@ -2453,6 +2473,46 @@ pub enum Impl {
     EF2(EagerF2),
     EF3(EagerF3),
     EF4(EagerF4),
+}
+
+/// The elements of a constant collection, for [`Code::ElemSet`]: a set
+/// to look values up in, and the collection, in its order, to print.
+#[derive(Debug)]
+pub struct ElemSet {
+    set: HashSet<Val>,
+    list: Vec<Val>,
+}
+
+impl ElemSet {
+    /// Creates a set of the elements of a collection.
+    #[allow(clippy::mutable_key_type)] // a constant never holds RecCell
+    pub(crate) fn new(list: &[Val]) -> Self {
+        // An empty list and the unit are equal, as `=` compares them.
+        let norm = |v: &Val| match v {
+            Val::List(items) if items.is_empty() => Val::Unit,
+            other => other.clone(),
+        };
+        ElemSet {
+            set: list.iter().map(norm).collect(),
+            list: list.to_vec(),
+        }
+    }
+
+    /// Returns whether a value is an element.
+    fn contains(&self, v: &Val) -> bool {
+        match v {
+            Val::List(items) if items.is_empty() => {
+                self.set.contains(&Val::Unit)
+            }
+            _ => self.set.contains(v),
+        }
+    }
+}
+
+impl PartialEq for ElemSet {
+    fn eq(&self, other: &Self) -> bool {
+        self.list == other.list
+    }
 }
 
 /// Function implementation that takes no arguments (constants).
@@ -5228,6 +5288,27 @@ impl Custom {
 /// Renders a real constant as it appears in a plan dump: always with a
 /// decimal point (`13.0`, `-0.0`), and `Infinity`/`-Infinity`/`NaN` for
 /// the special values, rather than morel's `13`/`inf`/`nan` value form.
+/// Returns a value inside a constant as a plan writes it, as morel-java
+/// writes it: a list, record or tuple as `[a, b]`, its elements written
+/// the same way; `SOME x` as `[SOME, x]` and `NONE` as `[NONE]`; a string
+/// or a character without quotes; a time as its nanoseconds.
+fn plan_value(v: &Val) -> String {
+    match v {
+        Val::List(items) => {
+            let items: Vec<String> = items.iter().map(plan_value).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Val::Some(x) => format!("[SOME, {}]", plan_value(x)),
+        Val::Unit => "[NONE]".to_string(),
+        Val::Char(c) => c.to_string(),
+        Val::String(s) => s.to_string(),
+        Val::Int(i) => i.to_string(),
+        Val::Real(x) => real_plan_constant(*x),
+        Val::Time(t) => t.to_string(),
+        other => format!("{}", other),
+    }
+}
+
 fn real_plan_constant(x: f32) -> String {
     if x.is_nan() {
         return "NaN".to_string();

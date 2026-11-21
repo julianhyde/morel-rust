@@ -21,6 +21,7 @@ mod conditions;
 pub mod core;
 pub mod expander;
 pub mod fbbt;
+pub mod folder;
 pub mod free_finder;
 pub mod from_builder;
 pub mod generator;

@@ -63,9 +63,7 @@ Bag.null (bag [1]);
 (bag [1]).null ();
 > val it = false : bool
 Sys.plan ();
-> val it =
->   "apply(fnValue Bag.null, argCode apply(fnValue Bag.fromList, argCode tuple(constant(1))))"
->   : string
+> val it = "apply(fnValue Bag.null, argCode constant([1]))" : string
 
 (*) val only : 'a bag -> 'a
 Bag.only (bag [2]);
@@ -103,9 +101,7 @@ Bag.length (bag [1,2]);
 (bag [1,2]).length ();
 > val it = 2 : int
 Sys.plan ();
-> val it =
->   "apply(fnValue Bag.length, argCode apply(fnValue Bag.fromList, argCode tuple(constant(1), constant(2))))"
->   : string
+> val it = "apply(fnValue Bag.length, argCode constant([1, 2]))" : string
 
 (*) val fromList : 'a list -> 'a bag
 Bag.fromList;
@@ -133,9 +129,7 @@ Bag.`@` (bag [], bag [2]);
 Bag.`@` (bag [], bag []);
 > val it = [] : 'a bag
 Sys.plan ();
-> val it =
->   "apply2(fnValue Bag.@, apply(fnValue Bag.fromList, argCode tuple), apply(fnValue Bag.fromList, argCode tuple))"
->   : string
+> val it = "apply2(fnValue Bag.@, constant([]), constant([]))" : string
 
 (*) val hd : 'a bag -> 'a
 Bag.hd;
@@ -148,9 +142,7 @@ Bag.hd (bag []);
 > uncaught exception Empty
 >   raised at: stdIn:1.1-1.16
 Sys.plan ();
-> val it =
->   "apply(fnValue List.hd, argCode apply(fnValue Bag.fromList, argCode tuple))"
->   : string
+> val it = "apply(fnValue List.hd, argCode constant([]))" : string
 
 (*) val tl : 'a bag -> 'a bag
 Bag.tl;
@@ -161,9 +153,7 @@ Bag.tl (bag []);
 > uncaught exception Empty
 >   raised at: stdIn:1.1-1.16
 Sys.plan ();
-> val it =
->   "apply(fnValue List.tl, argCode apply(fnValue Bag.fromList, argCode tuple))"
->   : string
+> val it = "apply(fnValue List.tl, argCode constant([]))" : string
 
 (*) val getItem : 'a bag -> ('a * 'a bag) option
 Bag.getItem;
@@ -173,9 +163,7 @@ Bag.getItem (bag [1,2,3]);
 Bag.getItem (bag [1]);
 > val it = SOME (1,[]) : (int * int bag) option
 Sys.plan ();
-> val it =
->   "apply(fnValue Bag.getItem, argCode apply(fnValue Bag.fromList, argCode tuple(constant(1))))"
->   : string
+> val it = "apply(fnValue Bag.getItem, argCode constant([1]))" : string
 
 (*) val take : 'a bag * int -> 'a bag
 Bag.`take`;
@@ -193,8 +181,7 @@ Bag.`take` (bag [1,2,3], ~1);
 > uncaught exception Subscript [subscript out of bounds]
 >   raised at: stdIn:1.1-1.29
 Sys.plan ();
-> val it =
->   "apply2(fnValue Bag.take, apply(fnValue Bag.fromList, argCode tuple(constant(1), constant(2), constant(3))), constant(-1))"
+> val it = "apply2(fnValue Bag.take, constant([1, 2, 3]), constant(-1))"
 >   : string
 
 (*) val drop : 'a bag * int -> 'a bag
@@ -209,8 +196,7 @@ Bag.drop (bag [1,2,3], 1);
 Bag.drop (bag [1,2,3], 3);
 > val it = [] : int bag
 Sys.plan ();
-> val it =
->   "apply2(fnValue Bag.drop, apply(fnValue Bag.fromList, argCode tuple(constant(1), constant(2), constant(3))), constant(3))"
+> val it = "apply2(fnValue Bag.drop, constant([1, 2, 3]), constant(3))"
 >   : string
 
 (*) val concat : 'a bag list -> 'a bag
@@ -227,7 +213,7 @@ Bag.concat [bag [], bag [], bag []];
 Bag.concat [];
 > val it = [] : 'a bag
 Sys.plan ();
-> val it = "apply(fnValue Bag.concat, argCode tuple)" : string
+> val it = "apply(fnValue Bag.concat, argCode constant([]))" : string
 
 (*) val app : ('a -> unit) -> 'a bag -> unit
 Bag.app;
@@ -240,7 +226,7 @@ set("mode", "validate");
 > val it = () : unit
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.app, match(x, tailApply(fnValue General.ignore, argCode apply2(fnValue Int.+, stack(offset 1, name x), constant(2)))), apply(fnValue Bag.fromList, argCode tuple))"
+>   "apply2(fnValue Bag.app, match(x, tailApply(fnValue General.ignore, argCode apply2(fnValue Int.+, stack(offset 1, name x), constant(2)))), constant([]))"
 >   : string
 set("mode", "evaluate");
 > val it = () : unit
@@ -256,7 +242,7 @@ set("mode", "validate");
 > val it = () : unit
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.map, match(x, apply2(fnValue Int.+, stack(offset 1, name x), constant(1))), apply(fnValue Bag.fromList, argCode tuple))"
+>   "apply2(fnValue Bag.map, match(x, apply2(fnValue Int.+, stack(offset 1, name x), constant(1))), constant([]))"
 >   : string
 set("mode", "evaluate");
 > val it = () : unit
@@ -272,7 +258,7 @@ set("mode", "validate");
 > val it = () : unit
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.mapPartial, match(x, tailApply(fnCode match(true, constant([NONE]), _, tailApply(fnValue tyCon, argCode apply2(fnValue Int.+, stack(offset 1, name x), constant(1)))), argCode apply2(fnValue =, apply2(fnValue Int.mod, stack(offset 1, name x), constant(2)), constant(0)))), apply(fnValue Bag.fromList, argCode tuple))"
+>   "apply2(fnValue Bag.mapPartial, match(x, tailApply(fnCode match(true, constant([NONE]), _, tailApply(fnValue tyCon, argCode apply2(fnValue Int.+, stack(offset 1, name x), constant(1)))), argCode apply2(fnValue =, apply2(fnValue Int.mod, stack(offset 1, name x), constant(2)), constant(0)))), constant([]))"
 >   : string
 set("mode", "evaluate");
 > val it = () : unit
@@ -288,7 +274,7 @@ set("mode", "validate");
 > val it = () : unit
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.find, match(x, apply2(fnValue =, apply2(fnValue Int.mod, stack(offset 1, name x), constant(11)), constant(0))), apply(fnValue Bag.fromList, argCode tuple(constant(2), constant(3), constant(5), constant(8), constant(13), constant(21), constant(34))))"
+>   "apply2(fnValue Bag.find, match(x, apply2(fnValue =, apply2(fnValue Int.mod, stack(offset 1, name x), constant(11)), constant(0))), constant([2, 3, 5, 8, 13, 21, 34]))"
 >   : string
 set("mode", "evaluate");
 > val it = () : unit
@@ -306,7 +292,7 @@ set("mode", "validate");
 > val it = () : unit
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.filter, match(x, apply2(fnValue =, apply2(fnValue Int.mod, stack(offset 1, name x), constant(2)), constant(0))), apply(fnValue Bag.fromList, argCode tuple))"
+>   "apply2(fnValue Bag.filter, match(x, apply2(fnValue =, apply2(fnValue Int.mod, stack(offset 1, name x), constant(2)), constant(0))), constant([]))"
 >   : string
 set("mode", "evaluate");
 > val it = () : unit
@@ -324,7 +310,7 @@ set("mode", "validate");
 > val it = () : unit
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.partition, match(x, apply2(fnValue =, apply2(fnValue Int.mod, stack(offset 1, name x), constant(2)), constant(0))), apply(fnValue Bag.fromList, argCode tuple))"
+>   "apply2(fnValue Bag.partition, match(x, apply2(fnValue =, apply2(fnValue Int.mod, stack(offset 1, name x), constant(2)), constant(0))), constant([]))"
 >   : string
 set("mode", "evaluate");
 > val it = () : unit
@@ -344,7 +330,7 @@ set("mode", "validate");
 > val it = () : unit
 Sys.plan ();
 > val it =
->   "apply3(fnValue Bag.fold, match(v, tailApply(fnCode match((a, b), apply2(fnValue Int.-, stack(offset 2, name a), stack(offset 1, name b))), argCode stack(offset 1, name v))), constant(0), apply(fnValue Bag.fromList, argCode tuple(constant(1), constant(2), constant(3), constant(4))))"
+>   "apply3(fnValue Bag.fold, match(v, tailApply(fnCode match((a, b), apply2(fnValue Int.-, stack(offset 2, name a), stack(offset 1, name b))), argCode stack(offset 1, name v))), constant(0), constant([1, 2, 3, 4]))"
 >   : string
 set("mode", "evaluate");
 > val it = () : unit
@@ -364,7 +350,7 @@ set("mode", "validate");
 > val it = () : unit
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.exists, match(x, apply2(fnValue =, apply2(fnValue Int.mod, stack(offset 1, name x), constant(2)), constant(0))), apply(fnValue Bag.fromList, argCode tuple))"
+>   "apply2(fnValue Bag.exists, match(x, apply2(fnValue =, apply2(fnValue Int.mod, stack(offset 1, name x), constant(2)), constant(0))), constant([]))"
 >   : string
 set("mode", "evaluate");
 > val it = () : unit
@@ -384,7 +370,7 @@ set("mode", "validate");
 > val it = () : unit
 Sys.plan ();
 > val it =
->   "apply2(fnValue Bag.all, match(x, apply2(fnValue =, apply2(fnValue Int.mod, stack(offset 1, name x), constant(2)), constant(0))), apply(fnValue Bag.fromList, argCode tuple))"
+>   "apply2(fnValue Bag.all, match(x, apply2(fnValue =, apply2(fnValue Int.mod, stack(offset 1, name x), constant(2)), constant(0))), constant([]))"
 >   : string
 set("mode", "evaluate");
 > val it = () : unit
