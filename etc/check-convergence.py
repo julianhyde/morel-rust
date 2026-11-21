@@ -125,12 +125,6 @@ ACCEPTED = {
         "union that holds one is scanned as the concatenation of "
         "its branches where morel-java merges them into one range.",
     ),
-    "tpcds-10m.smli": (
-        4,
-        "q51's rows have `d_date:date option`, where morel-java's type "
-        "is `'a option`, though the values are dates; morel-java's "
-        "imprecision, which it fixes in a later commit.",
-    ),
     "use.sml.out": (
         2,
         "a type-conflict message names its two types in the other "
