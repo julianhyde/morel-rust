@@ -549,8 +549,8 @@ impl Section {
                     }
                     let fields = fields_of(rec_val);
                     let mut row_cells = Vec::with_capacity(n);
-                    for i in 0..n {
-                        let cell = self.children[i].build_cell(
+                    for (i, child) in self.children.iter_mut().enumerate() {
+                        let cell = child.build_cell(
                             fields.get(i).unwrap_or(&Val::Unit),
                             print_length,
                             string_depth,
